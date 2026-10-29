@@ -12,6 +12,8 @@ pub enum Icon {
     Discard,
     Repository,
     Tag,
+    File,
+    Crab,
 }
 
 pub fn paint(ui: &mut Ui, icon: Icon, color: Color32, size: f32) {
@@ -20,6 +22,29 @@ pub fn paint(ui: &mut Ui, icon: Icon, color: Color32, size: f32) {
     let stroke = Stroke::new((size / 12.0).max(1.0), color);
 
     match icon {
+        Icon::File => {
+            polyline(&painter, rect, &[(0.2, 0.1), (0.6, 0.1), (0.85, 0.35), (0.85, 0.9), (0.2, 0.9), (0.2, 0.1)], stroke);
+            polyline(&painter, rect, &[(0.6, 0.1), (0.6, 0.35), (0.85, 0.35)], stroke);
+        }
+        Icon::Crab => {
+            circle(&painter, rect, (0.5, 0.55), 0.25, stroke);
+            for (from, to) in [
+                ((0.3, 0.4), (0.12, 0.22)),
+                ((0.7, 0.4), (0.88, 0.22)),
+                ((0.28, 0.62), (0.08, 0.72)),
+                ((0.72, 0.62), (0.92, 0.72)),
+                ((0.35, 0.75), (0.22, 0.9)),
+                ((0.65, 0.75), (0.78, 0.9)),
+            ] {
+                line(&painter, rect, from, to, stroke);
+            }
+            circle(&painter, rect, (0.12, 0.2), 0.1, stroke);
+            circle(&painter, rect, (0.88, 0.2), 0.1, stroke);
+            line(&painter, rect, (0.4, 0.35), (0.38, 0.18), stroke);
+            line(&painter, rect, (0.6, 0.35), (0.62, 0.18), stroke);
+            painter.circle_filled(point(rect, 0.38, 0.17), size * 0.035, color);
+            painter.circle_filled(point(rect, 0.62, 0.17), size * 0.035, color);
+        }
         Icon::Pull => {
             arrow(&painter, rect, (0.5, 0.1), (0.5, 0.65), stroke);
             tray(&painter, rect, stroke);

@@ -15,15 +15,17 @@ use crate::app::SannyGitApp;
 pub fn show(context: &Context, app: &mut SannyGitApp) {
     toolbar::show(context, app);
     status_bar::show(context, app);
+
     SidePanel::left("repositories_and_branches")
         .resizable(true)
-        .default_width(210.0)
-        .width_range(170.0..=340.0)
+        .default_width(250.0)
+        .width_range(190.0..=360.0)
         .show(context, |ui| {
             repositories::show(ui, app);
             ui.separator();
             branches::show(ui, app);
         });
+
     TopBottomPanel::bottom("commit_and_journal")
         .resizable(true)
         .default_height(230.0)
@@ -36,6 +38,7 @@ pub fn show(context: &Context, app: &mut SannyGitApp) {
                 .show_inside(ui, |ui| journal::show(ui, app));
             CentralPanel::default().show_inside(ui, |ui| commit_panel::show(ui, app));
         });
+
     CentralPanel::default().show(context, |ui| {
         SidePanel::right("diff")
             .resizable(true)

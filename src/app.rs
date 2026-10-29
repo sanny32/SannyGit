@@ -5,6 +5,14 @@ use crate::{
     ui,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangeFilter {
+    All,
+    Modified,
+    Added,
+    Deleted,
+}
+
 pub struct SannyGitApp {
     pub theme: ThemeChoice,
     applied_theme: ThemeChoice,
@@ -18,6 +26,8 @@ pub struct SannyGitApp {
     pub selected_change: usize,
     pub selected_branch: String,
     pub branch_filter: String,
+    pub change_filter: ChangeFilter,
+    pub journal_filter: String,
     pub current_branch: &'static str,
     pub commit_message: String,
     pub amend: bool,
@@ -52,6 +62,8 @@ impl SannyGitApp {
             selected_change: 3,
             selected_branch: "main".to_owned(),
             branch_filter: String::new(),
+            change_filter: ChangeFilter::All,
+            journal_filter: String::new(),
             current_branch: "main",
             commit_message: String::new(),
             amend: false,
