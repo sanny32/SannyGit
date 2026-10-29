@@ -1,13 +1,20 @@
 use eframe::egui::{Align, Button, Layout, RichText, TextEdit, Ui};
+
 use crate::app::SannyGitApp;
+
 use super::icons::{self, Icon};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.theme.palette();
+
     ui.add_space(6.0);
     ui.heading("Commit");
     ui.add_space(4.0);
-    TextEdit::multiline(&mut app.commit_message).hint_text("Write a commit message...").desired_width(f32::INFINITY).desired_rows(5).show(ui);
+    TextEdit::multiline(&mut app.commit_message)
+        .hint_text("Write a commit message...")
+        .desired_width(f32::INFINITY)
+        .desired_rows(5)
+        .show(ui);
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.add_enabled_ui(false, |ui| {
@@ -20,7 +27,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         icons::paint(ui, Icon::Branch, palette.text, 14.0);
         ui.label(RichText::new(app.current_branch).color(palette.text));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.add_enabled(false, Button::new("Commit")).on_disabled_hover_text("Repository integration is not implemented yet");
+            ui.add_enabled(false, Button::new("Commit"))
+                .on_disabled_hover_text("Repository integration is not implemented yet");
         });
     });
 }
