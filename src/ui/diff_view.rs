@@ -22,7 +22,7 @@ pub fn show(ui: &mut Ui, app: &SannyGitApp) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(file_name(change.path)).strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.label(RichText::new(format!("+{added}  −{removed}")).small().strong().color(palette.added_text));
+            ui.label(RichText::new(format!("+{added}  -{removed}")).small().strong().color(palette.added_text));
         });
     });
     ui.label(RichText::new(change.path).small().color(palette.muted));
@@ -54,7 +54,7 @@ fn show_line(ui: &mut Ui, line: &DiffLine, background: Color32) {
     };
     let marker = match line.kind {
         DiffLineKind::Added => "+",
-        DiffLineKind::Removed => "−",
+        DiffLineKind::Removed => "-",
         _ => " ",
     };
 

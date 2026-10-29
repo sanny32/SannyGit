@@ -2,6 +2,7 @@ mod branches;
 mod changes;
 mod commit_panel;
 mod diff_view;
+mod icons;
 mod journal;
 mod repositories;
 mod status_bar;
@@ -14,7 +15,6 @@ use crate::app::SannyGitApp;
 pub fn show(context: &Context, app: &mut SannyGitApp) {
     toolbar::show(context, app);
     status_bar::show(context, app);
-
     SidePanel::left("repositories_and_branches")
         .resizable(true)
         .default_width(210.0)
@@ -24,7 +24,6 @@ pub fn show(context: &Context, app: &mut SannyGitApp) {
             ui.separator();
             branches::show(ui, app);
         });
-
     TopBottomPanel::bottom("commit_and_journal")
         .resizable(true)
         .default_height(230.0)
@@ -37,7 +36,6 @@ pub fn show(context: &Context, app: &mut SannyGitApp) {
                 .show_inside(ui, |ui| journal::show(ui, app));
             CentralPanel::default().show_inside(ui, |ui| commit_panel::show(ui, app));
         });
-
     CentralPanel::default().show(context, |ui| {
         SidePanel::right("diff")
             .resizable(true)
