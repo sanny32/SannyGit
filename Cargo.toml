@@ -8,5 +8,5 @@ description = "A simple, fast, modern, open-source Git GUI client"
 
 [dependencies]
 eframe = { version = "0.31", features = ["persistence"] }
-egui_extras = "0.31"
+egui_extras = { version = "0.31", features = ["svg"] }
 serde = { version = "1", features = ["derive"] }

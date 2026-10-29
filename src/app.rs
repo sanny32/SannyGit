@@ -38,6 +38,7 @@ pub struct SannyGitApp {
 
 impl SannyGitApp {
     pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
+        egui_extras::install_image_loaders(&creation_context.egui_ctx);
         let system_theme = if creation_context.egui_ctx.style().visuals.dark_mode {
             ThemeChoice::Dark
         } else {
