@@ -1,76 +1,126 @@
-use eframe::egui::{Align, Color32, Layout, RichText, Sense, TextEdit, Ui, Vec2};
+use super::icons::{self, Icon};
+use crate::{app::SannyGitApp, models::Commit, theme::Palette};
+use eframe::egui::{Align, Button, Color32, Layout, RichText, Sense, TextEdit, Ui, Vec2};
 use egui_extras::{Column, TableBuilder};
 
-use crate::app::SannyGitApp;
-
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
+    let palette = app.theme.palette();
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let wide = ui.available_width() >= 580.0;
+    super::header(ui, 44.0, palette, |ui| {
         ui.heading("Journal");
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.add(
-                TextEdit::singleline(&mut app.journal_filter)
-                    .hint_text("Search commits...")
-                    .desired_width(180.0),
-            );
-        });
+        let reserved = if wide { 168.0 } else { 40.0 };
+        let search_width = (ui.available_width() - reserved).max(80.0);
+        ui.add(
+            TextEdit::singleline(&mut app.journal_filter)
+                .hint_text(RichText::new("Search commits...").color(palette.muted))
+                .desired_width(search_width)
+                .margin(Vec2::new(10.0, 6.0)),
+        );
+        if wide {
+            ui.add_enabled(
+                false,
+                Button::image_and_text(
+                    icons::image(Icon::Chevron, palette.text, 14.0),
+                    "All branches",
+                ),
+            )
+            .on_disabled_hover_text("Branch history filtering is not implemented yet");
+        }
+        icons::unavailable(
+            ui,
+            Icon::List,
+            "Additional history views are not implemented yet",
+        );
     });
-    ui.add_space(6.0);
-
     let filter = app.journal_filter.to_lowercase();
     let visible = app
         .commits
         .iter()
-        .filter(|commit| {
+        .filter(|c| {
             filter.is_empty()
-                || commit.message.to_lowercase().contains(&filter)
-                || commit.author.to_lowercase().contains(&filter)
-                || commit.hash.to_lowercase().contains(&filter)
+                || c.message.to_lowercase().contains(&filter)
+                || c.author.to_lowercase().contains(&filter)
+                || c.hash.to_lowercase().contains(&filter)
         })
         .collect::<Vec<_>>();
-
+    let row_height =
+        ((ui.available_height() - 34.0) / visible.len().max(1) as f32).clamp(23.0, 28.0);
     TableBuilder::new(ui)
-        .striped(true)
+        .striped(false)
         .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::initial(42.0))
-        .column(Column::remainder().at_least(140.0))
-        .column(Column::initial(72.0))
-        .column(Column::initial(88.0))
-        .column(Column::initial(74.0))
+        .column(Column::exact(if wide { 70.0 } else { 52.0 }))
+        .column(Column::remainder().at_least(80.0))
+        .column(Column::exact(if wide { 82.0 } else { 62.0 }))
+        .column(Column::exact(if wide { 116.0 } else { 88.0 }))
+        .column(Column::exact(if wide { 100.0 } else { 72.0 }))
         .min_scrolled_height(0.0)
-        .header(24.0, |mut header| {
+        .header(32.0, |mut header| {
             for title in ["Graph", "Message", "Author", "Date", "Hash"] {
                 header.col(|ui| {
-                    ui.label(RichText::new(title).strong());
+                    if title == "Graph" {
+                        ui.add_space(14.0);
+                    }
+                    ui.label(RichText::new(title).size(15.0));
                 });
             }
         })
         .body(|body| {
-            body.rows(24.0, visible.len(), |mut row| {
-                let commit = visible[row.index()];
-                let last = row.index() + 1 == visible.len();
-                row.col(|ui| graph(ui, ui.visuals().hyperlink_color, last));
+            body.rows(row_height, visible.len(), |mut row| {
+                let index = row.index();
+                let commit = visible[index];
+                row.col(|ui| graph(ui, &visible, index, row_height, palette));
                 row.col(|ui| {
-                    ui.label(commit.message);
+                    ui.label(commit.message).on_hover_text(commit.message);
                 });
                 row.col(|ui| {
-                    ui.label(commit.author);
+                    ui.label(RichText::new(commit.author).color(palette.muted));
                 });
                 row.col(|ui| {
-                    ui.label(commit.date);
+                    ui.label(RichText::new(commit.date).color(palette.muted));
                 });
                 row.col(|ui| {
-                    ui.label(RichText::new(commit.hash).monospace());
+                    ui.label(RichText::new(commit.hash).monospace().color(palette.muted));
                 });
             });
         });
 }
 
-fn graph(ui: &mut Ui, color: Color32, last: bool) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(30.0, 24.0), Sense::hover());
-    let x = rect.center().x;
-    let bottom = if last { rect.center().y } else { rect.bottom() };
-    ui.painter()
-        .line_segment([(x, rect.top()).into(), (x, bottom).into()], (1.5, color));
-    ui.painter().circle_filled(rect.center(), 3.5, color);
+fn graph(ui: &mut Ui, commits: &[&Commit], index: usize, height: f32, palette: Palette) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let position = |row: usize, lane: usize| {
+        eframe::egui::pos2(
+            rect.left() + 22.0 + lane as f32 * 22.0,
+            rect.center().y + (row as f32 - index as f32) * height,
+        )
+    };
+    for (child_index, commit) in commits.iter().enumerate() {
+        for parent in commit.parents {
+            if let Some(parent_index) = commits.iter().position(|c| c.hash == *parent) {
+                let parent_commit = commits[parent_index];
+                let color = if commit.lane == 1 || parent_commit.lane == 1 {
+                    palette.graph_branch
+                } else {
+                    palette.graph_main
+                };
+                painter.line_segment(
+                    [
+                        position(child_index, commit.lane),
+                        position(parent_index, parent_commit.lane),
+                    ],
+                    (1.25, color),
+                );
+            }
+        }
+    }
+    let commit = commits[index];
+    let color: Color32 = if commit.parents.is_empty() {
+        palette.graph_root
+    } else if commit.lane == 1 {
+        palette.graph_branch
+    } else {
+        palette.graph_main
+    };
+    painter.circle_filled(position(index, commit.lane), 4.0, color);
 }

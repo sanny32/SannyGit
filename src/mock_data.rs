@@ -89,24 +89,6 @@ pub fn changes() -> Vec<ChangeFile> {
             staged: false,
             diff: README_DIFF,
         },
-        ChangeFile {
-            path: "src/ui/toolbar.rs",
-            kind: ChangeKind::Renamed,
-            staged: false,
-            diff: "@@ -1 +1 @@\n-old toolbar\n+new toolbar",
-        },
-        ChangeFile {
-            path: "src/repository.rs",
-            kind: ChangeKind::Untracked,
-            staged: false,
-            diff: "@@ -0,0 +1 @@\n+pub struct Repository;",
-        },
-        ChangeFile {
-            path: "src/merge.rs",
-            kind: ChangeKind::Conflicted,
-            staged: false,
-            diff: "@@ -1 +1 @@\n-ours\n+theirs",
-        },
     ]
 }
 
@@ -117,36 +99,48 @@ pub fn commits() -> Vec<Commit> {
             author: "SaNNy",
             date: "2 hours ago",
             hash: "a1b2c3d",
+            parents: &["f4e5d6c", "9a8b7c6"],
+            lane: 0,
         },
         Commit {
             message: "Add commit panel and shortcuts",
             author: "SaNNy",
             date: "5 hours ago",
             hash: "f4e5d6c",
+            parents: &["3c2d1e0"],
+            lane: 1,
         },
         Commit {
             message: "Update icons and application name",
             author: "SaNNy",
             date: "1 day ago",
             hash: "9a8b7c6",
+            parents: &["1a2b3c4"],
+            lane: 0,
         },
         Commit {
             message: "Refactor UI layout",
             author: "SaNNy",
             date: "1 day ago",
             hash: "3c2d1e0",
+            parents: &["7f6e5d4"],
+            lane: 1,
         },
         Commit {
             message: "Initial egui application",
             author: "SaNNy",
             date: "2 days ago",
             hash: "7f6e5d4",
+            parents: &["1a2b3c4"],
+            lane: 1,
         },
         Commit {
             message: "Initial commit",
             author: "SaNNy",
             date: "2 days ago",
             hash: "1a2b3c4",
+            parents: &[],
+            lane: 0,
         },
     ]
 }

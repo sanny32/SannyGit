@@ -75,6 +75,8 @@ or mix Git logic with panel rendering.
 
 ## User Interface
 
+- Keep the OS-provided title bar and window controls. Do not replace them with
+  custom controls in the application toolbar.
 - Preserve the traditional Working Tree layout: toolbar at the top, repositories
   and branches on the left, changes and diff in the center, commit and journal
   panels below, and a status bar along the bottom edge.

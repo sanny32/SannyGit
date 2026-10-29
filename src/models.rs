@@ -1,4 +1,6 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// The reference fixture does not contain every supported Git status.
+#[allow(dead_code)]
 pub enum ChangeKind {
     Modified,
     Added,
@@ -49,6 +51,8 @@ pub struct Commit {
     pub author: &'static str,
     pub date: &'static str,
     pub hash: &'static str,
+    pub parents: &'static [&'static str],
+    pub lane: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
