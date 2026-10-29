@@ -80,7 +80,7 @@ pub fn paint(ui: &mut Ui, icon: Icon, color: Color32, size: f32) {
 
 pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str, size: Vec2) -> Response {
     ui.add(
-        Button::image(image(icon, ui.visuals().text_color(), 19.0))
+        Button::image(image(icon, ui.visuals().text_color(), 14.0))
             .frame(false)
             .min_size(size),
     )
@@ -90,9 +90,9 @@ pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str, size: Vec2) -> Response {
 pub fn unavailable(ui: &mut Ui, icon: Icon, tooltip: &str) {
     let response = ui.add_enabled(
         false,
-        Button::image(image(icon, ui.visuals().text_color(), 18.0))
+        Button::image(image(icon, ui.visuals().text_color(), 14.0))
             .frame(false)
-            .min_size(Vec2::splat(28.0)),
+            .min_size(Vec2::splat(20.0)),
     );
     response.on_disabled_hover_text(tooltip);
 }

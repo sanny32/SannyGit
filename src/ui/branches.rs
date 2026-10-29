@@ -5,7 +5,7 @@ use eframe::egui::{Align, CollapsingHeader, Id, Layout, RichText, ScrollArea, Te
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.theme.palette();
     ui.horizontal(|ui| {
-        ui.set_min_height(40.0);
+        ui.set_min_height(26.0);
         ui.heading("Branches");
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             icons::unavailable(
@@ -13,20 +13,20 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 Icon::Chevron,
                 "Branch management is not implemented yet",
             );
-            if icons::button(ui, Icon::Search, "Filter branches", Vec2::splat(28.0)).clicked() {
-                ui.memory_mut(|m| m.request_focus(Id::new("branch_filter")));
+            if icons::button(ui, Icon::Search, "Filter branches", Vec2::splat(20.0)).clicked() {
+                ui.memory_mut(|m| m.request_focus(Id::unique("branch_filter")));
             }
             icons::unavailable(ui, Icon::Plus, "Creating branches is not implemented yet");
         });
     });
     ui.add(
         TextEdit::singleline(&mut app.branch_filter)
-            .id(Id::new("branch_filter"))
+            .id(Id::unique("branch_filter"))
             .hint_text(RichText::new("Filter branches...").color(palette.muted))
-            .margin(Vec2::new(10.0, 7.0))
+            .margin(Vec2::new(5.0, 3.0))
             .desired_width(f32::INFINITY),
     );
-    ui.add_space(6.0);
+    ui.add_space(3.0);
     let filter = app.branch_filter.to_lowercase();
     ScrollArea::vertical()
         .id_salt("branches")
@@ -34,9 +34,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             branch_group(ui, app, "Local", &app.local_branches.clone(), &filter);
-            ui.add_space(10.0);
+            ui.add_space(4.0);
             branch_group(ui, app, "Remote", &app.remote_branches.clone(), &filter);
-            ui.add_space(10.0);
+            ui.add_space(4.0);
             branch_group(ui, app, "Tags", &app.tags.clone(), &filter);
             if !filter.is_empty()
                 && !app
@@ -66,7 +66,7 @@ fn branch_group(
     if matching.is_empty() {
         return;
     }
-    let height = if super::compact(ui) { 28.0 } else { 34.0 };
+    let height = 22.0;
     CollapsingHeader::new(title)
         .default_open(title != "Tags")
         .show_unindented(ui, |ui| {
@@ -80,7 +80,7 @@ fn branch_group(
                 };
                 let response =
                     super::selectable_row(ui, app.selected_branch == branch, height, |ui| {
-                        ui.add_space(16.0);
+                        ui.add_space(8.0);
                         icons::paint(
                             ui,
                             if title == "Tags" {
@@ -89,13 +89,13 @@ fn branch_group(
                                 Icon::Branch
                             },
                             palette.text,
-                            18.0,
+                            14.0,
                         );
-                        ui.add_space(6.0);
+                        ui.add_space(2.0);
                         ui.label(text);
                         if current {
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                icons::paint(ui, Icon::Star, palette.accent, 18.0)
+                                icons::paint(ui, Icon::Star, palette.accent, 14.0)
                             });
                         }
                     });

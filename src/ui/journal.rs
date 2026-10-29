@@ -7,7 +7,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.theme.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     let wide = ui.available_width() >= 580.0;
-    super::header(ui, 44.0, palette, |ui| {
+    super::header(ui, 28.0, palette, |ui| {
         ui.heading("Journal");
         let reserved = if wide { 168.0 } else { 40.0 };
         let search_width = (ui.available_width() - reserved).max(80.0);
@@ -15,7 +15,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             TextEdit::singleline(&mut app.journal_filter)
                 .hint_text(RichText::new("Search commits...").color(palette.muted))
                 .desired_width(search_width)
-                .margin(Vec2::new(10.0, 6.0)),
+                .margin(Vec2::new(5.0, 2.0)),
         );
         if wide {
             ui.add_enabled(
@@ -44,8 +44,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 || c.hash.to_lowercase().contains(&filter)
         })
         .collect::<Vec<_>>();
-    let row_height =
-        ((ui.available_height() - 34.0) / visible.len().max(1) as f32).clamp(23.0, 28.0);
+    let row_height = 20.0;
     TableBuilder::new(ui)
         .striped(false)
         .cell_layout(Layout::left_to_right(Align::Center))
@@ -55,13 +54,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .column(Column::exact(if wide { 116.0 } else { 88.0 }))
         .column(Column::exact(if wide { 100.0 } else { 72.0 }))
         .min_scrolled_height(0.0)
-        .header(32.0, |mut header| {
+        .header(24.0, |mut header| {
             for title in ["Graph", "Message", "Author", "Date", "Hash"] {
                 header.col(|ui| {
                     if title == "Graph" {
                         ui.add_space(14.0);
                     }
-                    ui.label(RichText::new(title).size(15.0));
+                    ui.label(RichText::new(title).size(12.0));
                 });
             }
         })

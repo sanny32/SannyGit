@@ -8,8 +8,10 @@ The project is in its initial UI foundation stage. Repository data and diffs are
 
 ## Requirements
 
-- Rust 1.81 or newer
+- Rust 1.95 or newer
 - A supported desktop platform: Windows, Linux, or macOS
+
+The UI uses eframe/egui 0.37 with font hinting enabled for sharper small text.
 
 ## Build and run
 

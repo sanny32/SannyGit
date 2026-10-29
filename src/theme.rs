@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub const THEME_STORAGE_KEY: &str = "sannygit.theme";
 
 pub fn semibold_family() -> FontFamily {
-    FontFamily::Name("Source Sans 3 Semibold".into())
+    FontFamily::Name("UI Semibold".into())
 }
 
 pub fn install_fonts(context: &Context) {
@@ -27,7 +27,54 @@ pub fn install_fonts(context: &Context) {
     let mut semibold = vec!["Source Sans 3 Semibold".into()];
     semibold.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
     fonts.families.insert(semibold_family(), semibold);
+    #[cfg(target_os = "windows")]
+    prefer_windows_ui_fonts(&mut fonts);
+    // Fit UI glyphs horizontally as well as vertically for small desktop text.
+    for name in [
+        "Source Sans 3",
+        "Source Sans 3 Semibold",
+        "Segoe UI",
+        "Segoe UI Semibold",
+    ] {
+        if let Some(font) = fonts.font_data.get_mut(name) {
+            std::sync::Arc::make_mut(font).tweak.hinting_target =
+                egui::epaint::text::HintingTarget::Smooth(egui::epaint::text::SmoothHinting {
+                    light: false,
+                    symmetric_rendering: false,
+                    preserve_linear_metrics: false,
+                });
+        }
+    }
     context.set_fonts(fonts);
+}
+
+#[cfg(target_os = "windows")]
+fn prefer_windows_ui_fonts(fonts: &mut egui::FontDefinitions) {
+    let Some(windows_dir) = std::env::var_os("WINDIR") else {
+        return;
+    };
+    let font_dir = std::path::PathBuf::from(windows_dir).join("Fonts");
+    // System fonts are optional and are never bundled with the application.
+    // Keep the embedded fonts when either face is unavailable.
+    let (Ok(regular), Ok(semibold)) = (
+        std::fs::read(font_dir.join("segoeui.ttf")),
+        std::fs::read(font_dir.join("seguisb.ttf")),
+    ) else {
+        return;
+    };
+    for (name, data, family) in [
+        ("Segoe UI", regular, FontFamily::Proportional),
+        ("Segoe UI Semibold", semibold, semibold_family()),
+    ] {
+        fonts
+            .font_data
+            .insert(name.into(), egui::FontData::from_owned(data).into());
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .insert(0, name.into());
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +118,9 @@ impl ThemeChoice {
         visuals.selection.bg_fill = palette.selection;
         visuals.selection.stroke = Stroke::new(1.0_f32, palette.accent);
         visuals.override_text_color = Some(palette.text);
+        visuals.text_options.font_hinting = true;
+        // Fractional glyph positions favor even spacing over sharp pixel edges.
+        visuals.text_options.subpixel_binning = false;
         visuals.widgets.noninteractive.weak_bg_fill = palette.panel_alt;
         visuals.widgets.inactive.weak_bg_fill = palette.panel_alt;
         visuals.widgets.hovered.weak_bg_fill = palette.hover;
@@ -94,16 +144,16 @@ impl ThemeChoice {
                 text_styles: text_styles(),
                 ..style.clone()
             };
-            style.spacing.item_spacing = egui::vec2(6.0, 5.0);
-            style.spacing.button_padding = egui::vec2(8.0, 4.0);
-            style.spacing.icon_width = 17.0;
-            style.spacing.icon_spacing = 8.0;
+            style.spacing.item_spacing = egui::vec2(4.0, 2.0);
+            style.spacing.button_padding = egui::vec2(5.0, 2.0);
+            style.spacing.icon_width = 14.0;
+            style.spacing.icon_spacing = 4.0;
             style.spacing.text_edit_width = 180.0;
             style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(4);
             style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(4);
             style.spacing.indent = 14.0;
             style.spacing.scroll.bar_width = 8.0;
-            style.spacing.interact_size.y = 26.0;
+            style.spacing.interact_size.y = 20.0;
             style.wrap_mode = Some(egui::TextWrapMode::Truncate);
             style.interaction.resize_grab_radius_side = 5.0;
         });
@@ -114,17 +164,17 @@ fn text_styles() -> std::collections::BTreeMap<TextStyle, FontId> {
     [
         (
             TextStyle::Small,
-            FontId::new(14.0, FontFamily::Proportional),
+            FontId::new(11.0, FontFamily::Proportional),
         ),
-        (TextStyle::Body, FontId::new(16.0, FontFamily::Proportional)),
+        (TextStyle::Body, FontId::new(13.0, FontFamily::Proportional)),
         (
             TextStyle::Button,
-            FontId::new(15.0, FontFamily::Proportional),
+            FontId::new(12.0, FontFamily::Proportional),
         ),
-        (TextStyle::Heading, FontId::new(18.0, semibold_family())),
+        (TextStyle::Heading, FontId::new(13.0, semibold_family())),
         (
             TextStyle::Monospace,
-            FontId::new(13.0, FontFamily::Monospace),
+            FontId::new(12.0, FontFamily::Monospace),
         ),
     ]
     .into()
@@ -229,12 +279,15 @@ mod tests {
         for choice in [ThemeChoice::Dark, ThemeChoice::Light, ThemeChoice::Dark] {
             choice.apply(&context);
             for _ in 0..2 {
-                let _ = context.run(egui::RawInput::default(), |context| {
-                    let style = context.style();
+                let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                    let style = ui.style();
                     assert_eq!(style.visuals.dark_mode, choice == ThemeChoice::Dark);
                     assert_eq!(style.visuals.panel_fill, choice.palette().panel);
-                    assert_eq!(style.text_styles[&TextStyle::Body].size, 16.0);
+                    assert_eq!(style.text_styles[&TextStyle::Body].size, 13.0);
+                    assert!(style.visuals.text_options.font_hinting);
+                    assert!(!style.visuals.text_options.subpixel_binning);
                 });
+                output.textures_delta.clear();
             }
         }
     }

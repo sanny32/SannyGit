@@ -2,11 +2,15 @@
 name = "sannygit"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.81"
+rust-version = "1.95"
 license = "MIT"
 description = "A simple, fast, modern, open-source Git GUI client"
 
 [dependencies]
-eframe = { version = "0.31", features = ["persistence"] }
-egui_extras = { version = "0.31", features = ["svg"] }
+eframe = { version = "0.37", default-features = false, features = [
+    "accesskit", "default_fonts", "glow", "persistence", "wayland", "x11",
+] }
+egui_extras = { version = "0.37", features = ["svg"] }
 serde = { version = "1", features = ["derive"] }
+display-info = "0.5.10"
+mouse_position = "0.1.4"

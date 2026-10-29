@@ -10,40 +10,35 @@ use egui_extras::{Column, TableBuilder};
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.theme.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
-    let tight = ui.available_width() < 510.0;
-    super::header(
-        ui,
-        if super::compact(ui) { 44.0 } else { 60.0 },
-        palette,
-        |ui| {
-            if let Some(repository) = app.repositories.get(app.selected_repository) {
-                ui.label(
-                    RichText::new(repository.name)
-                        .size(18.0)
-                        .family(semibold_family()),
-                );
-                ui.add_space(10.0);
-                ui.label(RichText::new("›").size(24.0).color(palette.muted));
-            }
-            ui.add_space(8.0);
+    let tight = ui.available_width() < 420.0;
+    super::header(ui, 28.0, palette, |ui| {
+        if let Some(repository) = app.repositories.get(app.selected_repository) {
             ui.label(
-                RichText::new(app.current_branch)
-                    .size(18.0)
+                RichText::new(repository.name)
+                    .size(13.0)
                     .family(semibold_family()),
             );
-            ui.add_space(18.0);
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(66.0, 26.0), Sense::hover());
-            ui.painter().rect_filled(rect, 4.0, palette.accent);
-            ui.painter().text(
-                rect.center(),
-                Align2::CENTER_CENTER,
-                format!("↑ {} ↓ {}", app.ahead, app.behind),
-                FontId::proportional(14.0),
-                Color32::WHITE,
-            );
-        },
-    );
-    let filter_height = if tight { 72.0 } else { 58.0 };
+            ui.add_space(4.0);
+            ui.label(RichText::new("›").size(16.0).color(palette.muted));
+        }
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(app.current_branch)
+                .size(13.0)
+                .family(semibold_family()),
+        );
+        ui.add_space(8.0);
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(54.0, 20.0), Sense::hover());
+        ui.painter().rect_filled(rect, 4.0, palette.accent);
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            format!("↑ {} ↓ {}", app.ahead, app.behind),
+            FontId::proportional(12.0),
+            Color32::WHITE,
+        );
+    });
+    let filter_height = if tight { 50.0 } else { 30.0 };
     super::header(ui, filter_height, palette, |ui| {
         if tight {
             ui.vertical(|ui| {
@@ -59,9 +54,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     Icon::List,
                     "Additional view options are not implemented yet",
                 );
-                ui.add_space(10.0);
+                ui.add_space(4.0);
                 ui.allocate_ui_with_layout(
-                    Vec2::new(332.0, 32.0),
+                    Vec2::new(270.0, 22.0),
                     Layout::left_to_right(Align::Center),
                     |ui| filters(ui, app, palette),
                 );
@@ -74,21 +69,20 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .enumerate()
         .filter(|(_, change)| filter_matches(app.change_filter, change.kind))
         .collect::<Vec<_>>();
-    let row_height =
-        ((ui.available_height() - 34.0) / visible.len().max(1) as f32).clamp(26.0, 39.0);
+    let row_height = 23.0;
     let table_clip = ui.clip_rect().intersect(ui.available_rect_before_wrap());
-    ui.spacing_mut().item_spacing.x = 8.0;
+    ui.spacing_mut().item_spacing.x = 4.0;
     TableBuilder::new(ui)
         .striped(false)
         .sense(Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::exact(52.0))
+        .column(Column::exact(30.0))
         .column(Column::remainder())
-        .column(Column::exact(112.0))
+        .column(Column::exact(58.0))
         .min_scrolled_height(0.0)
-        .header(34.0, |mut header| {
+        .header(24.0, |mut header| {
             header.col(|ui| {
-                ui.add_space(18.0);
+                ui.add_space(6.0);
                 checkmark(ui, false, palette);
             });
             header.col(|ui| {
@@ -103,7 +97,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 let (index, change) = visible[row.index()];
                 row.set_selected(app.selected_change == index);
                 row.col(|ui| {
-                    ui.add_space(18.0);
+                    ui.add_space(6.0);
                     checkmark(ui, change.staged, palette);
                 });
                 row.col(|ui| {
@@ -114,8 +108,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     } else {
                         Icon::File
                     };
-                    icons::paint(ui, icon, status_color(change.kind, palette), 20.0);
-                    ui.add_space(8.0);
+                    icons::paint(ui, icon, status_color(change.kind, palette), 16.0);
+                    ui.add_space(4.0);
                     ui.label(RichText::new(change.path).color(palette.text))
                         .on_hover_text(change.path);
                 });
@@ -127,13 +121,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         ChangeKind::Deleted | ChangeKind::Conflicted => palette.status_removed,
                     };
                     let (rect, response) =
-                        ui.allocate_exact_size(Vec2::new(27.0, 26.0), Sense::hover());
+                        ui.allocate_exact_size(Vec2::new(19.0, 18.0), Sense::hover());
                     ui.painter().rect_filled(rect, 4.0, fill);
                     ui.painter().text(
                         rect.center(),
                         Align2::CENTER_CENTER,
                         change.kind.code(),
-                        FontId::new(16.0, semibold_family()),
+                        FontId::new(12.0, semibold_family()),
                         color,
                     );
                     response.on_hover_text(change.kind.label());
@@ -163,7 +157,7 @@ fn changes_title(ui: &mut Ui, count: usize) {
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.label(
             RichText::new("Changes")
-                .size(18.0)
+                .size(13.0)
                 .family(semibold_family()),
         );
         ui.label(format!("({count} files)"));
@@ -171,13 +165,13 @@ fn changes_title(ui: &mut Ui, count: usize) {
 }
 
 fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
-    let width_scale = (ui.available_width() / 332.0).min(1.0);
+    let width_scale = (ui.available_width() / 270.0).min(1.0);
     ui.spacing_mut().item_spacing.x = 0.0;
     for (filter, label, width) in [
-        (ChangeFilter::All, "All", 48.0),
-        (ChangeFilter::Modified, "Modified", 104.0),
-        (ChangeFilter::Added, "Added", 88.0),
-        (ChangeFilter::Deleted, "Deleted", 92.0),
+        (ChangeFilter::All, "All", 34.0),
+        (ChangeFilter::Modified, "Modified", 88.0),
+        (ChangeFilter::Added, "Added", 72.0),
+        (ChangeFilter::Deleted, "Deleted", 76.0),
     ] {
         let count = app
             .changes
@@ -186,7 +180,7 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             .count();
         let selected = app.change_filter == filter;
         let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(width * width_scale, 32.0), Sense::click());
+            ui.allocate_exact_size(Vec2::new(width * width_scale, 22.0), Sense::click());
         ui.painter().rect_filled(
             rect,
             4.0,
@@ -204,16 +198,16 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             palette.text
         };
         ui.painter().text(
-            rect.left_center() + Vec2::new(12.0, 0.0),
+            rect.left_center() + Vec2::new(6.0, 0.0),
             Align2::LEFT_CENTER,
             label,
-            FontId::proportional(15.0),
+            FontId::proportional(12.0),
             text_color,
         );
         if filter != ChangeFilter::All {
             let badge = Rect::from_center_size(
-                rect.right_center() - Vec2::new(15.0, 0.0),
-                Vec2::new(19.0, 23.0),
+                rect.right_center() - Vec2::new(12.0, 0.0),
+                Vec2::new(16.0, 17.0),
             );
             ui.painter().rect_filled(
                 badge,
@@ -228,7 +222,7 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 badge.center(),
                 Align2::CENTER_CENTER,
                 count,
-                FontId::proportional(14.0),
+                FontId::proportional(11.0),
                 palette.text,
             );
         }
@@ -239,7 +233,7 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
 }
 
 fn checkmark(ui: &mut Ui, checked: bool, palette: Palette) {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(17.0), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
     ui.painter().rect_filled(
         rect,
         3.0,
@@ -264,9 +258,9 @@ fn checkmark(ui: &mut Ui, checked: bool, palette: Palette) {
     );
     if checked {
         let points = [
-            rect.min + Vec2::new(3.0, 8.0),
-            rect.min + Vec2::new(7.0, 12.0),
-            rect.min + Vec2::new(14.0, 4.0),
+            rect.min + Vec2::new(2.0, 6.0),
+            rect.min + Vec2::new(6.0, 10.0),
+            rect.min + Vec2::new(12.0, 3.0),
         ];
         ui.painter()
             .line_segment([points[0], points[1]], (1.8, Color32::WHITE));

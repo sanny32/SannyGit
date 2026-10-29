@@ -8,9 +8,9 @@ SannyGit is a compact, cross-platform desktop Git client built with Rust and
 egui, inspired by the SmartGit Working Tree interface. Target platforms are
 Windows, Linux, and macOS. The UI language is English. The license is MIT.
 
-- Rust edition 2021; minimum supported Rust version: 1.81.
-- GUI: `eframe` 0.31 and `egui` through `eframe::egui`.
-- `egui_extras` 0.31 provides tables and SVG support; `serde` handles serialization.
+- Rust edition 2021; minimum supported Rust version: 1.95.
+- GUI: `eframe` 0.37 and `egui` through `eframe::egui`.
+- `egui_extras` 0.37 provides tables and SVG support; `serde` handles serialization.
 - The current implementation is a UI foundation with mock data and persisted
   theme selection. Real repository integration and Git command execution are
   not implemented yet.
@@ -64,7 +64,7 @@ or mix Git logic with panel rendering.
   practical solution.
 - Follow the existing style and idiomatic Rust. Avoid unnecessary abstractions,
   duplication, and refactoring unrelated to the task.
-- Maintain compatibility with Rust 1.81. Do not upgrade dependencies or add
+- Maintain compatibility with Rust 1.95. Do not upgrade dependencies or add
   libraries unless the current task requires them.
 - Handle errors explicitly. Do not use `unwrap()` or `expect()` for recoverable
   runtime errors.

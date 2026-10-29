@@ -40,7 +40,7 @@ impl SannyGitApp {
     pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
         crate::theme::install_fonts(&creation_context.egui_ctx);
         egui_extras::install_image_loaders(&creation_context.egui_ctx);
-        let system_theme = if creation_context.egui_ctx.style().visuals.dark_mode {
+        let system_theme = if creation_context.egui_ctx.global_style().visuals.dark_mode {
             ThemeChoice::Dark
         } else {
             ThemeChoice::Light
@@ -81,12 +81,12 @@ impl SannyGitApp {
 }
 
 impl eframe::App for SannyGitApp {
-    fn update(&mut self, context: &eframe::egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
         if self.applied_theme != self.theme {
-            self.theme.apply(context);
+            self.theme.apply(ui.ctx());
             self.applied_theme = self.theme;
         }
-        ui::show(context, self);
+        ui::show(ui, self);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -138,9 +138,12 @@ mod tests {
                     screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
                     ..Default::default()
                 };
-                let mut output = context.run(input.clone(), |ctx| ui::show(ctx, &mut app));
+                let mut output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
+                // Headless layout checks do not upload textures to a renderer.
+                output.textures_delta.clear();
                 for _ in 0..2 {
-                    output = context.run(input.clone(), |ctx| ui::show(ctx, &mut app));
+                    output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
+                    output.textures_delta.clear();
                 }
                 for file in &app.changes {
                     assert!(
