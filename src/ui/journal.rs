@@ -46,7 +46,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .collect::<Vec<_>>();
     let row_height = 20.0;
     TableBuilder::new(ui)
-        .striped(false)
+        .striped(true)
         .cell_layout(Layout::left_to_right(Align::Center))
         .column(Column::exact(if wide { 70.0 } else { 52.0 }))
         .column(Column::remainder().at_least(80.0))

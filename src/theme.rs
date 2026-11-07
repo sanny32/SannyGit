@@ -149,8 +149,8 @@ impl ThemeChoice {
             style.spacing.icon_width = 14.0;
             style.spacing.icon_spacing = 4.0;
             style.spacing.text_edit_width = 180.0;
-            style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(4);
-            style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(4);
+            style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(2);
+            style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(2);
             style.spacing.indent = 14.0;
             style.spacing.scroll.bar_width = 8.0;
             style.spacing.interact_size.y = 20.0;
@@ -202,7 +202,6 @@ pub struct Palette {
     pub modified: Color32,
     pub modified_background: Color32,
     pub hunk_background: Color32,
-    pub orange: Color32,
     pub graph_main: Color32,
     pub graph_branch: Color32,
     pub graph_root: Color32,
@@ -211,12 +210,12 @@ pub struct Palette {
 impl Palette {
     fn dark() -> Self {
         Self {
-            background: Color32::from_rgb(16, 23, 30),
-            panel: Color32::from_rgb(22, 29, 37),
-            panel_alt: Color32::from_rgb(30, 39, 50),
-            header: Color32::from_rgb(25, 33, 42),
-            editor: Color32::from_rgb(30, 39, 50),
-            border: Color32::from_rgb(46, 58, 72),
+            background: Color32::from_rgb(30, 30, 32),
+            panel: Color32::from_rgb(37, 37, 39),
+            panel_alt: Color32::from_rgb(43, 43, 46),
+            header: Color32::from_rgb(45, 45, 48),
+            editor: Color32::from_rgb(43, 43, 46),
+            border: Color32::from_rgb(65, 65, 69),
             text: Color32::from_rgb(218, 229, 241),
             muted: Color32::from_rgb(128, 145, 166),
             accent: Color32::from_rgb(28, 131, 242),
@@ -231,7 +230,6 @@ impl Palette {
             modified: Color32::from_rgb(236, 190, 82),
             modified_background: Color32::from_rgb(113, 87, 41),
             hunk_background: Color32::from_rgb(28, 47, 67),
-            orange: Color32::from_rgb(247, 77, 43),
             graph_main: Color32::from_rgb(39, 190, 226),
             graph_branch: Color32::from_rgb(248, 82, 76),
             graph_root: Color32::from_rgb(79, 196, 72),
@@ -240,16 +238,16 @@ impl Palette {
 
     fn light() -> Self {
         Self {
-            background: Color32::from_rgb(244, 245, 248),
-            panel: Color32::from_rgb(251, 251, 253),
-            panel_alt: Color32::from_rgb(242, 244, 248),
-            header: Color32::from_rgb(247, 248, 251),
+            background: Color32::from_rgb(236, 236, 236),
+            panel: Color32::from_rgb(255, 255, 255),
+            panel_alt: Color32::from_rgb(246, 246, 246),
+            header: Color32::from_rgb(236, 236, 236),
             editor: Color32::from_rgb(255, 255, 255),
-            border: Color32::from_rgb(220, 225, 234),
-            text: Color32::from_rgb(18, 24, 39),
-            muted: Color32::from_rgb(110, 119, 139),
+            border: Color32::from_rgb(202, 202, 202),
+            text: Color32::from_rgb(32, 32, 32),
+            muted: Color32::from_rgb(120, 120, 124),
             accent: Color32::from_rgb(28, 126, 235),
-            selection: Color32::from_rgb(226, 237, 253),
+            selection: Color32::from_rgb(222, 228, 243),
             hover: Color32::from_rgb(234, 240, 249),
             added_background: Color32::from_rgb(232, 252, 230),
             added_text: Color32::from_rgb(0, 128, 24),
@@ -260,7 +258,6 @@ impl Palette {
             modified: Color32::from_rgb(174, 119, 12),
             modified_background: Color32::from_rgb(255, 225, 161),
             hunk_background: Color32::from_rgb(232, 240, 254),
-            orange: Color32::from_rgb(244, 78, 40),
             graph_main: Color32::from_rgb(0, 130, 167),
             graph_branch: Color32::from_rgb(230, 63, 54),
             graph_root: Color32::from_rgb(16, 153, 46),

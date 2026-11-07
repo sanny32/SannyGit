@@ -11,33 +11,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.theme.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     let tight = ui.available_width() < 420.0;
-    super::header(ui, 28.0, palette, |ui| {
-        if let Some(repository) = app.repositories.get(app.selected_repository) {
-            ui.label(
-                RichText::new(repository.name)
-                    .size(13.0)
-                    .family(semibold_family()),
-            );
-            ui.add_space(4.0);
-            ui.label(RichText::new("›").size(16.0).color(palette.muted));
-        }
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new(app.current_branch)
-                .size(13.0)
-                .family(semibold_family()),
-        );
-        ui.add_space(8.0);
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(54.0, 20.0), Sense::hover());
-        ui.painter().rect_filled(rect, 4.0, palette.accent);
-        ui.painter().text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            format!("↑ {} ↓ {}", app.ahead, app.behind),
-            FontId::proportional(12.0),
-            Color32::WHITE,
-        );
-    });
     let filter_height = if tight { 50.0 } else { 30.0 };
     super::header(ui, filter_height, palette, |ui| {
         if tight {
@@ -73,7 +46,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let table_clip = ui.clip_rect().intersect(ui.available_rect_before_wrap());
     ui.spacing_mut().item_spacing.x = 4.0;
     TableBuilder::new(ui)
-        .striped(false)
+        .striped(true)
         .sense(Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
         .column(Column::exact(30.0))
@@ -155,11 +128,7 @@ fn ui_line(response: &eframe::egui::Response, clip: Rect, palette: Palette) {
 fn changes_title(ui: &mut Ui, count: usize) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        ui.label(
-            RichText::new("Changes")
-                .size(13.0)
-                .family(semibold_family()),
-        );
+        ui.label(RichText::new("Files").size(13.0).family(semibold_family()));
         ui.label(format!("({count} files)"));
     });
 }

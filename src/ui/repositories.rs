@@ -23,7 +23,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let height = 24.0;
     ScrollArea::vertical()
         .id_salt("repositories")
-        .max_height(height * 4.0)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;

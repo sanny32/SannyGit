@@ -31,7 +31,6 @@ pub struct SannyGitApp {
     pub current_branch: &'static str,
     pub commit_message: String,
     pub amend: bool,
-    pub push_after_commit: bool,
     pub ahead: u32,
     pub behind: u32,
 }
@@ -73,7 +72,6 @@ impl SannyGitApp {
             current_branch: "main",
             commit_message: String::new(),
             amend: false,
-            push_after_commit: false,
             ahead: 2,
             behind: 0,
         }

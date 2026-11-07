@@ -32,7 +32,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
 
     ui.spacing_mut().item_spacing.y = 0.0;
     let mut close = false;
-    super::header(ui, 32.0, palette, |ui| {
+    super::header(ui, 26.0, palette, |ui| {
+        ui.label("Changes");
         Frame::new()
             .fill(palette.panel)
             .stroke((1.0, palette.border))
@@ -52,7 +53,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         app.selected_change = usize::MAX;
         return;
     }
-    super::header(ui, 50.0, palette, |ui| {
+    super::header(ui, 26.0, palette, |ui| {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 let path_width = (ui.available_width() - 118.0).max(100.0);
@@ -81,26 +82,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     ui,
                     Icon::More,
                     "Additional diff actions are not implemented yet",
-                );
-            });
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                icons::unavailable(
-                    ui,
-                    Icon::Settings,
-                    "Additional diff options are not implemented yet",
-                );
-                ui.separator();
-                ui.add_enabled_ui(false, |ui| {
-                    let mut ignore_whitespace = false;
-                    ui.checkbox(
-                        &mut ignore_whitespace,
-                        RichText::new("Ignore whitespace").size(12.0),
-                    );
-                    let _ = ui.button("Unified");
-                })
-                .response
-                .on_disabled_hover_text(
-                    "Only unified diff is supported; whitespace filtering is not implemented",
                 );
             });
         });

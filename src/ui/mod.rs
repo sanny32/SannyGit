@@ -29,7 +29,7 @@ fn selectable_row(
     } else {
         eframe::egui::Color32::TRANSPARENT
     };
-    ui.painter().rect_filled(rect, 4.0, fill);
+    ui.painter().rect_filled(rect, 0.0, fill);
     let mut child = ui.new_child(
         UiBuilder::new()
             .max_rect(rect.shrink2(Vec2::new(6.0, 1.0)))
@@ -64,7 +64,7 @@ fn panel_frame(palette: Palette) -> Frame {
     Frame::new()
         .fill(palette.panel)
         .stroke((1.0, palette.border))
-        .corner_radius(2)
+        .corner_radius(0)
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -73,68 +73,64 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     toolbar::show(ui, app);
     status_bar::show(ui, app);
 
-    Panel::left("working_tree.v2.sidebar")
+    Panel::left("working_tree.v3.sidebar")
         .resizable(true)
-        .default_size((context.content_rect().width() * 0.17).clamp(210.0, 270.0))
-        .size_range(200.0..=350.0)
-        .frame(Frame::new().fill(palette.background).inner_margin(Margin {
-            left: 6,
-            right: 6,
-            top: 2,
-            bottom: 0,
-        }))
+        .default_size((context.content_rect().width() * 0.17).clamp(200.0, 270.0))
+        .size_range(190.0..=350.0)
+        .frame(Frame::new().fill(palette.background).inner_margin(4))
         .show(ui, |ui| {
-            repositories::show(ui, app);
-            ui.add_space(4.0);
-            ui.separator();
-            branches::show(ui, app);
-        });
-
-    let bottom_max = (ui.available_rect_before_wrap().height() * 0.36).max(180.0);
-    Panel::bottom("working_tree.v2.lower")
-        .resizable(true)
-        .default_size((context.content_rect().height() * 0.21).clamp(180.0, 210.0))
-        .size_range(180.0..=bottom_max)
-        .frame(Frame::new().fill(palette.background).inner_margin(Margin {
-            left: 0,
-            right: 4,
-            top: 4,
-            bottom: 0,
-        }))
-        .show(ui, |ui| {
-            Panel::right("working_tree.v2.journal")
+            Panel::bottom("working_tree.v3.branches")
                 .resizable(true)
-                .default_size(ui.available_width() * 0.575)
-                .size_range(430.0..=(ui.available_width() - 350.0).max(430.0))
-                .frame(panel_frame(palette).outer_margin(Margin {
-                    left: 4,
-                    ..Margin::ZERO
-                }))
-                .show(ui, |ui| journal::show(ui, app));
+                .default_size(ui.available_height() * 0.36)
+                .size_range(180.0..=450.0)
+                .frame(panel_frame(palette))
+                .show(ui, |ui| branches::show(ui, app));
             CentralPanel::default()
                 .frame(panel_frame(palette))
-                .show(ui, |ui| commit_panel::show(ui, app));
+                .show(ui, |ui| repositories::show(ui, app));
         });
 
     CentralPanel::default()
         .frame(Frame::new().fill(palette.background).inner_margin(Margin {
             left: 0,
             right: 4,
-            top: 0,
-            bottom: 2,
+            top: 4,
+            bottom: 4,
         }))
         .show(ui, |ui| {
-            Panel::right("working_tree.v2.diff")
+            Panel::bottom("working_tree.v3.journal")
                 .resizable(true)
-                .default_size(ui.available_width() * 0.52)
-                .size_range(350.0..=(ui.available_width() - 360.0).max(350.0))
+                .default_size(180.0)
+                .size_range(150.0..=300.0)
+                .frame(panel_frame(palette))
+                .show(ui, |ui| journal::show(ui, app));
+            Panel::top("working_tree.v3.files")
+                .resizable(true)
+                .default_size((context.content_rect().height() * 0.38).max(300.0))
+                .size_range(260.0..=550.0)
+                .frame(Frame::new().fill(palette.background).inner_margin(Margin {
+                    bottom: 4,
+                    ..Margin::ZERO
+                }))
+                .show(ui, |ui| {
+                    Panel::right("working_tree.v3.commit")
+                        .resizable(true)
+                        .default_size(ui.available_width() * 0.29)
+                        .size_range(260.0..=450.0)
+                        .frame(panel_frame(palette).outer_margin(Margin {
+                            left: 4,
+                            ..Margin::ZERO
+                        }))
+                        .show(ui, |ui| commit_panel::show(ui, app));
+                    CentralPanel::default()
+                        .frame(panel_frame(palette))
+                        .show(ui, |ui| changes::show(ui, app));
+                });
+            CentralPanel::default()
                 .frame(panel_frame(palette).outer_margin(Margin {
-                    left: 4,
+                    bottom: 4,
                     ..Margin::ZERO
                 }))
                 .show(ui, |ui| diff_view::show(ui, app));
-            CentralPanel::default()
-                .frame(panel_frame(palette))
-                .show(ui, |ui| changes::show(ui, app));
         });
 }
