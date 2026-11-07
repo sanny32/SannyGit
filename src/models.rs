@@ -1,6 +1,4 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-// The reference fixture does not contain every supported Git status.
-#[allow(dead_code)]
 pub enum ChangeKind {
     Modified,
     Added,
@@ -35,15 +33,16 @@ impl ChangeKind {
 }
 
 pub struct Repository {
-    pub name: &'static str,
-    pub path: &'static str,
+    pub name: String,
+    pub path: String,
 }
 
 pub struct ChangeFile {
-    pub path: &'static str,
+    pub path: String,
+    pub original_path: Option<String>,
     pub kind: ChangeKind,
     pub staged: bool,
-    pub diff: &'static str,
+    pub diff: String,
 }
 
 pub struct Commit {
@@ -69,4 +68,50 @@ pub struct DiffLine {
     pub old_line: Option<u32>,
     pub new_line: Option<u32>,
     pub text: String,
+}
+
+/// Parsed once on the worker, then rendered using only visible rows.
+pub struct DiffPreview {
+    pub lines: Vec<DiffLine>,
+    pub added: usize,
+    pub removed: usize,
+    pub max_columns: usize,
+}
+
+impl DiffPreview {
+    pub fn new(patch: &str) -> Self {
+        let lines = crate::diff::parse_unified_diff(patch);
+        let added = lines
+            .iter()
+            .filter(|l| l.kind == DiffLineKind::Added)
+            .count();
+        let removed = lines
+            .iter()
+            .filter(|l| l.kind == DiffLineKind::Removed)
+            .count();
+        let max_columns = lines
+            .iter()
+            .map(|l| {
+                l.text
+                    .chars()
+                    .map(|c| {
+                        if c == '\t' {
+                            4
+                        } else if c.is_ascii() {
+                            1
+                        } else {
+                            2
+                        }
+                    })
+                    .sum()
+            })
+            .max()
+            .unwrap_or(0);
+        Self {
+            lines,
+            added,
+            removed,
+            max_columns,
+        }
+    }
 }

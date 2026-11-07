@@ -21,6 +21,33 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 let action_width = 58.0;
+                if ui
+                    .add(
+                        Button::image_and_text(
+                            icons::image(Icon::Folder, palette.accent, 18.0),
+                            "Open",
+                        )
+                        .frame(false),
+                    )
+                    .on_hover_text("Open local repository")
+                    .clicked()
+                {
+                    app.open_dialog = true;
+                }
+                if ui
+                    .add_enabled(
+                        !app.busy() && app.repositories.get(app.selected_repository).is_some(),
+                        Button::image_and_text(
+                            icons::image(Icon::Fetch, palette.accent, 18.0),
+                            "Refresh",
+                        )
+                        .frame(false),
+                    )
+                    .clicked()
+                {
+                    app.refresh();
+                }
+                ui.separator();
                 for (icon, label) in [
                     (Icon::Pull, "Pull"),
                     (Icon::Fetch, "Sync"),

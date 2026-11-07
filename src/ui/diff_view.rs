@@ -6,7 +6,6 @@ use egui_extras::syntax_highlighting::{self, CodeTheme};
 
 use crate::{
     app::SannyGitApp,
-    diff::parse_unified_diff,
     models::{DiffLine, DiffLineKind},
 };
 
@@ -20,15 +19,21 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         });
         return;
     };
-    let lines = parse_unified_diff(change.diff);
-    let added = lines
-        .iter()
-        .filter(|line| line.kind == DiffLineKind::Added)
-        .count();
-    let removed = lines
-        .iter()
-        .filter(|line| line.kind == DiffLineKind::Removed)
-        .count();
+    let Some(preview) = app.selected_diff() else {
+        ui.centered_and_justified(|ui| {
+            ui.label(
+                RichText::new(if app.busy() {
+                    "Loading diff…"
+                } else {
+                    "Select a file or refresh to load its diff"
+                })
+                .color(palette.muted),
+            );
+        });
+        return;
+    };
+    let added = preview.added;
+    let removed = preview.removed;
 
     ui.spacing_mut().item_spacing.y = 0.0;
     let mut close = false;
@@ -42,7 +47,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     icons::paint(ui, Icon::File, palette.accent, 14.0);
-                    ui.label(file_name(change.path));
+                    ui.label(file_name(&change.path));
                     ui.add_space(4.0);
                     close =
                         icons::button(ui, Icon::Close, "Close diff", Vec2::splat(18.0)).clicked();
@@ -62,8 +67,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     Layout::left_to_right(Align::Center),
                     |ui| {
                         ui.set_min_width(path_width);
-                        ui.label(RichText::new(change.path).size(12.0).color(palette.muted))
-                            .on_hover_text(change.path);
+                        ui.label(RichText::new(&change.path).size(12.0).color(palette.muted))
+                            .on_hover_text(&change.path);
                     },
                 );
                 ui.label(
@@ -87,28 +92,20 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         });
     });
     let code_theme = CodeTheme::from_style(ui.style());
+    ui.spacing_mut().item_spacing.y = 0.0;
+    ui.spacing_mut().interact_size.y = 18.0;
+    let font = eframe::egui::TextStyle::Monospace.resolve(ui.style());
+    let glyph_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, 'M'));
+    let width = ui
+        .available_width()
+        .max(preview.max_columns as f32 * glyph_width + 72.0);
     ScrollArea::both()
-        .id_salt(("diff_lines", change.path))
+        .id_salt(("diff_lines", &change.path))
         .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            ui.spacing_mut().interact_size.y = 18.0;
+        .show_rows(ui, 18.0, preview.lines.len(), |ui, rows| {
             ui.style_mut().wrap_mode = Some(TextWrapMode::Extend);
-            // Reserve the longest line before painting so every row background has
-            // the same width, including when the content scrolls horizontally.
-            let font = eframe::egui::TextStyle::Monospace.resolve(ui.style());
-            let width = lines
-                .iter()
-                .map(|line| {
-                    ui.painter()
-                        .layout_no_wrap(line.text.clone(), font.clone(), palette.text)
-                        .size()
-                        .x
-                        + 72.0
-                })
-                .fold(ui.available_width(), f32::max);
             ui.set_min_width(width);
-            for line in &lines {
+            for line in &preview.lines[rows] {
                 show_line(ui, line, palette, &code_theme, width);
             }
         });

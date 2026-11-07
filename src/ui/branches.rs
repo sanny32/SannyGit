@@ -13,12 +13,25 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 Icon::Chevron,
                 "Branch management is not implemented yet",
             );
-            if icons::button(ui, Icon::Search, "Filter branches", Vec2::splat(20.0)).clicked() {
+            if !app.local_branches.is_empty()
+                && icons::button(ui, Icon::Search, "Filter branches", Vec2::splat(20.0)).clicked()
+            {
                 ui.memory_mut(|m| m.request_focus(Id::unique("branch_filter")));
             }
             icons::unavailable(ui, Icon::Plus, "Creating branches is not implemented yet");
         });
     });
+    if !app.current_branch.is_empty() {
+        ui.label(RichText::new(&app.current_branch).family(semibold_family()));
+        ui.label(
+            RichText::new("Branch list and checkout coming next")
+                .small()
+                .color(palette.muted),
+        );
+    }
+    if app.local_branches.is_empty() && app.remote_branches.is_empty() && app.tags.is_empty() {
+        return;
+    }
     ui.add(
         TextEdit::singleline(&mut app.branch_filter)
             .id(Id::unique("branch_filter"))

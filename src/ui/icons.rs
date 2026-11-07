@@ -24,7 +24,6 @@ pub enum Icon {
     Check,
     Close,
     Star,
-    Cloud,
 }
 
 impl Icon {
@@ -60,7 +59,6 @@ impl Icon {
             Self::Check => svg!("check"),
             Self::Close => svg!("close"),
             Self::Star => svg!("star"),
-            Self::Cloud => svg!("cloud"),
         }
     }
 }

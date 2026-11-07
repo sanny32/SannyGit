@@ -1,0 +1,519 @@
+//! Read-only Git access. Called only by the application's background workers.
+use crate::models::{ChangeFile, ChangeKind, Repository};
+use std::{
+    fmt::Write,
+    io::Read,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
+
+const OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
+const FILE_LIMIT: usize = 5_000;
+const TIMEOUT: Duration = Duration::from_secs(15);
+
+pub struct Snapshot {
+    pub repository: Repository,
+    pub branch: String,
+    pub changes: Vec<ChangeFile>,
+}
+
+fn capture(mut reader: impl Read) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0; 8192];
+    loop {
+        let count = reader.read(&mut buffer).map_err(|e| e.to_string())?;
+        if count == 0 {
+            break;
+        }
+        // Continue draining the pipe so Git cannot block on a full pipe.
+        let remaining = (OUTPUT_LIMIT + 1).saturating_sub(bytes.len());
+        bytes.extend_from_slice(&buffer[..count.min(remaining)]);
+    }
+    Ok(bytes)
+}
+
+fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let mut command = Command::new("git");
+    command
+        .current_dir(path)
+        .args(["--no-pager", "--no-optional-locks", "-c", "color.ui=false"])
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_LITERAL_PATHSPECS", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("Cannot start Git: {e}"))?;
+    let stdout = child.stdout.take().ok_or("Cannot read Git output")?;
+    let stderr = child.stderr.take().ok_or("Cannot read Git errors")?;
+    let result = thread::scope(|scope| {
+        let out = scope.spawn(|| capture(stdout));
+        let err = scope.spawn(|| capture(stderr));
+        let start = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) if start.elapsed() < TIMEOUT => thread::sleep(Duration::from_millis(20)),
+                result => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err(match result {
+                        Err(e) => format!("Cannot wait for Git: {e}"),
+                        _ => "Git operation timed out after 15 seconds".into(),
+                    });
+                }
+            }
+        };
+        let output = out.join().map_err(|_| "Git output reader failed")??;
+        let errors = err.join().map_err(|_| "Git error reader failed")??;
+        if !status?.success() {
+            // Do not include stderr: repository configuration can contain private URLs.
+            return Err("Git command failed. Check the repository path, permissions and Git ownership settings.".into());
+        }
+        if output.len() > OUTPUT_LIMIT {
+            return Err("Git output exceeds the 2 MiB display limit".into());
+        }
+        drop(errors);
+        Ok(output)
+    });
+    result
+}
+
+fn text(bytes: Vec<u8>) -> Result<String, String> {
+    String::from_utf8(bytes).map_err(|_| "Non-UTF-8 Git output is not supported yet".into())
+}
+
+pub fn load(path: &Path) -> Result<Snapshot, String> {
+    let root = text(run(path, &["rev-parse", "--show-toplevel"])?)?;
+    // Git appends exactly one line ending; preserve whitespace in directory names.
+    let root = root.strip_suffix('\n').unwrap_or(&root);
+    let path = PathBuf::from(root);
+    let branch = run(&path, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .and_then(text)
+        .map(|value| value.trim().to_owned())
+        .or_else(|_| {
+            text(run(&path, &["symbolic-ref", "--short", "HEAD"])?).map(|s| s.trim().to_owned())
+        })?;
+    let branch = if branch == "HEAD" {
+        format!(
+            "Detached at {}",
+            text(run(&path, &["rev-parse", "--short", "HEAD"])?)?.trim()
+        )
+    } else {
+        branch
+    };
+    let changes = parse_status(&run(
+        &path,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+    )?)?;
+    Ok(Snapshot {
+        repository: Repository {
+            name: path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| root.into()),
+            path: root.into(),
+        },
+        branch,
+        changes,
+    })
+}
+
+pub fn parse_status(bytes: &[u8]) -> Result<Vec<ChangeFile>, String> {
+    if !bytes.is_empty() && bytes.last() != Some(&0) {
+        return Err("Truncated Git status output".into());
+    }
+    let mut records = bytes.split(|b| *b == 0);
+    let mut changes = Vec::new();
+    while let Some(record) = records.next() {
+        if record.is_empty() {
+            continue;
+        }
+        if record.len() < 4 || record[2] != b' ' {
+            return Err("Malformed Git status record".into());
+        }
+        let x = record[0];
+        let y = record[1];
+        let valid = |value| b" MADRCU?!T".contains(&value);
+        if !valid(x) || !valid(y) {
+            return Err("Unknown Git status code".into());
+        }
+        if x == b'!' && y == b'!' {
+            continue;
+        }
+        let kind = if x == b'?' && y == b'?' {
+            ChangeKind::Untracked
+        } else if x == b'U' || y == b'U' || matches!([x, y], [b'A', b'A'] | [b'D', b'D']) {
+            ChangeKind::Conflicted
+        } else if x == b'R' || y == b'R' {
+            ChangeKind::Renamed
+        } else if x == b'D' || y == b'D' {
+            ChangeKind::Deleted
+        } else if x == b'A' || y == b'A' || x == b'C' {
+            ChangeKind::Added
+        } else {
+            ChangeKind::Modified
+        };
+        let path = std::str::from_utf8(&record[3..])
+            .map_err(|_| "Non-UTF-8 file names are not supported yet")?
+            .to_owned();
+        let original_path = if x == b'R' || y == b'R' || x == b'C' || y == b'C' {
+            let source = records
+                .next()
+                .filter(|source| !source.is_empty())
+                .ok_or("Missing source path in Git rename record")?;
+            Some(
+                std::str::from_utf8(source)
+                    .map_err(|_| "Non-UTF-8 file names are not supported yet")?
+                    .to_owned(),
+            )
+        } else {
+            None
+        };
+        changes.push(ChangeFile {
+            path,
+            original_path,
+            kind,
+            staged: kind != ChangeKind::Conflicted && x != b' ' && x != b'?',
+            diff: String::new(),
+        });
+        if changes.len() > FILE_LIMIT {
+            return Err("Repository exceeds the 5,000 changed-file display limit".into());
+        }
+    }
+    Ok(changes)
+}
+
+pub fn diff(
+    root: &Path,
+    path: &str,
+    kind: ChangeKind,
+    original_path: Option<&str>,
+) -> Result<String, String> {
+    if kind == ChangeKind::Untracked {
+        let file = root.join(path);
+        if !std::fs::symlink_metadata(&file)
+            .map_err(|e| e.to_string())?
+            .is_file()
+        {
+            return Ok("Preview is unavailable for directories and symbolic links".into());
+        }
+        let mut bytes = Vec::new();
+        std::fs::File::open(file)
+            .map_err(|e| e.to_string())?
+            .take((OUTPUT_LIMIT + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() > OUTPUT_LIMIT {
+            return Err("File exceeds the 2 MiB preview limit".into());
+        }
+        if bytes.contains(&0) {
+            return Ok("Binary file — text preview unavailable".into());
+        }
+        let content = text(bytes)?;
+        let mut patch = format!(
+            "Untracked file\n--- /dev/null\n+++ {path}\n@@ -0,0 +1,{} @@\n",
+            content.lines().count()
+        );
+        for line in content.lines() {
+            writeln!(patch, "+{line}").map_err(|e| e.to_string())?;
+        }
+        return limit_diff(patch);
+    }
+    // Keep index and working-tree patches separate, including files changed in both.
+    let mut index_args = vec![
+        "diff",
+        "--cached",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--",
+        path,
+    ];
+    if let Some(source) = original_path {
+        index_args.push(source);
+    }
+    let index = text(run(root, &index_args)?)?;
+    let mut worktree_args = if kind == ChangeKind::Conflicted {
+        vec![
+            "diff",
+            "--ours",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--",
+            path,
+        ]
+    } else {
+        vec!["diff", "--no-ext-diff", "--no-textconv", "--", path]
+    };
+    if let Some(source) = original_path {
+        worktree_args.push(source);
+    }
+    let worktree = text(run(root, &worktree_args)?)?;
+    let mut result = String::new();
+    if !index.is_empty() {
+        result.push_str("Staged changes (HEAD → index)\n");
+        result.push_str(&index);
+    }
+    if !worktree.is_empty() {
+        result.push_str(if kind == ChangeKind::Conflicted {
+            "Conflict: working tree compared with ours\n"
+        } else {
+            "Working tree changes (index → working tree)\n"
+        });
+        result.push_str(&worktree);
+    }
+    if result.is_empty() {
+        result
+            .push_str("No text diff available. The file may have changed; refresh the repository.");
+    }
+    limit_diff(result)
+}
+
+fn limit_diff(patch: String) -> Result<String, String> {
+    if patch.len() > OUTPUT_LIMIT
+        || patch.lines().count() > 10_000
+        || patch.lines().any(|line| line.len() > 16_384)
+    {
+        Err("Diff exceeds the display limit (2 MiB, 10,000 lines or 16 KiB per line)".into())
+    } else {
+        Ok(patch)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    struct TempRepo(PathBuf);
+    impl TempRepo {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "sannygit-test-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            let repo = Self(path);
+            repo.git(&["init", "--initial-branch=main"]);
+            repo
+        }
+        fn git(&self, args: &[&str]) -> String {
+            let output = Command::new("git")
+                .current_dir(&self.0)
+                .args([
+                    "-c",
+                    "user.name=SannyGit Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "core.hooksPath=disabled-test-hooks",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap()
+        }
+        fn write(&self, path: &str, content: &str) {
+            std::fs::write(self.0.join(path), content).unwrap();
+        }
+    }
+    impl Drop for TempRepo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn parses_nul_paths_renames_mixed_and_conflicted_status() {
+        let files = parse_status(b"MM a file\0R  new\nname\0old name\0?? unicode-\xc3\xa9\0UU conflict\0 D deleted\0AA both\0").unwrap();
+        assert_eq!(files.len(), 6);
+        assert_eq!(files[0].kind, ChangeKind::Modified);
+        assert!(files[0].staged);
+        assert_eq!(files[1].path, "new\nname");
+        assert_eq!(files[1].kind, ChangeKind::Renamed);
+        assert_eq!(files[1].original_path.as_deref(), Some("old name"));
+        assert_eq!(files[2].kind, ChangeKind::Untracked);
+        assert!(!files[2].staged);
+        assert_eq!(files[3].kind, ChangeKind::Conflicted);
+        assert!(!files[3].staged);
+        assert_eq!(files[4].kind, ChangeKind::Deleted);
+        assert_eq!(files[5].kind, ChangeKind::Conflicted);
+    }
+
+    #[test]
+    fn rejects_malformed_oversized_and_non_utf8_status() {
+        for input in [
+            b"M\0".as_slice(),
+            b"M  missing terminator",
+            b"R  new\0",
+            b"ZZ file\0",
+            b"?? \xff\0",
+        ] {
+            assert!(parse_status(input).is_err());
+        }
+        assert!(parse_status(&b"?? file\0".repeat(FILE_LIMIT + 1)).is_err());
+        assert!(limit_diff("+line\n".repeat(10_001)).is_err());
+        assert!(limit_diff("a".repeat(OUTPUT_LIMIT + 1)).is_err());
+    }
+
+    #[test]
+    fn loads_unborn_repository_and_previews_untracked_files() {
+        let repo = TempRepo::new();
+        repo.write("hello é.txt", "hello\nworld\n");
+        repo.write("binary", "a\0b");
+        let snapshot = load(&repo.0).unwrap();
+        assert_eq!(snapshot.branch, "main");
+        assert_eq!(snapshot.changes.len(), 2);
+        let patch = diff(&repo.0, "hello é.txt", ChangeKind::Untracked, None).unwrap();
+        assert!(patch.contains("+hello\n+world"));
+        assert!(diff(&repo.0, "binary", ChangeKind::Untracked, None)
+            .unwrap()
+            .contains("Binary file"));
+        repo.git(&["add", "--", "hello é.txt"]);
+        assert!(diff(&repo.0, "hello é.txt", ChangeKind::Added, None)
+            .unwrap()
+            .contains("Staged changes"));
+    }
+
+    #[test]
+    fn loads_real_index_worktree_rename_deletion_and_detached_head() {
+        let repo = TempRepo::new();
+        repo.write("file.txt", "original\n");
+        repo.write("delete.txt", "delete\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "fixture"]);
+        repo.write("file.txt", "staged\n");
+        repo.git(&["add", "file.txt"]);
+        repo.write("file.txt", "unstaged\n");
+        repo.git(&["mv", "delete.txt", "renamed.txt"]);
+        let snapshot = load(&repo.0).unwrap();
+        assert!(snapshot
+            .changes
+            .iter()
+            .any(|c| c.kind == ChangeKind::Renamed));
+        let rename_patch = diff(
+            &repo.0,
+            "renamed.txt",
+            ChangeKind::Renamed,
+            Some("delete.txt"),
+        )
+        .unwrap();
+        assert!(rename_patch.contains("rename from delete.txt"));
+        assert!(rename_patch.contains("rename to renamed.txt"));
+        let patch = diff(&repo.0, "file.txt", ChangeKind::Modified, None).unwrap();
+        assert!(patch.contains("+staged"));
+        assert!(patch.contains("+unstaged"));
+        assert!(patch.contains("Staged changes"));
+        assert!(patch.contains("Working tree changes"));
+        std::fs::remove_file(repo.0.join("file.txt")).unwrap();
+        assert!(load(&repo.0)
+            .unwrap()
+            .changes
+            .iter()
+            .any(|c| c.kind == ChangeKind::Deleted));
+        repo.git(&["checkout", "--detach"]);
+        assert!(load(&repo.0).unwrap().branch.starts_with("Detached at "));
+    }
+
+    #[test]
+    fn literal_pathspec_does_not_include_other_files() {
+        let repo = TempRepo::new();
+        repo.write("[x].txt", "one\n");
+        repo.write("x.txt", "two\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "fixture"]);
+        repo.write("[x].txt", "literal\n");
+        repo.write("x.txt", "unrelated\n");
+        let patch = diff(&repo.0, "[x].txt", ChangeKind::Modified, None).unwrap();
+        assert!(patch.contains("+literal"));
+        assert!(!patch.contains("unrelated"));
+    }
+
+    #[test]
+    fn loads_linked_worktree_from_subdirectory() {
+        let repo = TempRepo::new();
+        repo.write("file", "fixture");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "fixture"]);
+        let linked = repo.0.join("linked");
+        repo.git(&["worktree", "add", "--detach", linked.to_str().unwrap()]);
+        std::fs::create_dir(linked.join("nested")).unwrap();
+        let snapshot = load(&linked.join("nested")).unwrap();
+        assert_eq!(
+            PathBuf::from(snapshot.repository.path)
+                .canonicalize()
+                .unwrap(),
+            linked.canonicalize().unwrap()
+        );
+        assert!(snapshot.changes.is_empty());
+        assert!(snapshot.branch.starts_with("Detached at "));
+    }
+
+    #[test]
+    fn previews_conflict_against_ours_without_combined_diff() {
+        let repo = TempRepo::new();
+        repo.write("file", "base\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "base"]);
+        repo.git(&["checkout", "-b", "other"]);
+        repo.write("file", "theirs\n");
+        repo.git(&["commit", "-am", "theirs"]);
+        repo.git(&["checkout", "main"]);
+        repo.write("file", "ours\n");
+        repo.git(&["commit", "-am", "ours"]);
+        let output = Command::new("git")
+            .current_dir(&repo.0)
+            .args([
+                "-c",
+                "core.hooksPath=disabled-test-hooks",
+                "merge",
+                "--no-commit",
+                "other",
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert_eq!(
+            load(&repo.0).unwrap().changes[0].kind,
+            ChangeKind::Conflicted
+        );
+        let patch = diff(&repo.0, "file", ChangeKind::Conflicted, None).unwrap();
+        assert!(patch.contains("Conflict: working tree compared with ours"));
+        assert!(patch.contains("+<<<<<<<"));
+        assert!(!patch.contains("@@@"));
+    }
+
+    #[test]
+    fn rejects_non_repository_and_bare_repository() {
+        let repo = TempRepo::new();
+        let missing = repo.0.join("missing");
+        assert!(load(&missing).is_err());
+        let bare = repo.0.join("bare.git");
+        repo.git(&["init", "--bare", bare.to_str().unwrap()]);
+        assert!(load(&bare).is_err());
+    }
+}

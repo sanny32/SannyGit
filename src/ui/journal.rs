@@ -11,7 +11,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         ui.heading("Journal");
         let reserved = if wide { 168.0 } else { 40.0 };
         let search_width = (ui.available_width() - reserved).max(80.0);
-        ui.add(
+        ui.add_enabled(
+            !app.commits.is_empty(),
             TextEdit::singleline(&mut app.journal_filter)
                 .hint_text(RichText::new("Search commits...").color(palette.muted))
                 .desired_width(search_width)
@@ -33,6 +34,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             "Additional history views are not implemented yet",
         );
     });
+    if app.commits.is_empty() {
+        ui.label(RichText::new("Repository history is not implemented yet").color(palette.muted));
+        return;
+    }
     let filter = app.journal_filter.to_lowercase();
     let visible = app
         .commits

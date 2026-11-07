@@ -16,22 +16,18 @@ pub fn show(ui: &mut Ui, app: &SannyGitApp) {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 5.0;
                 icons::paint(ui, Icon::Branch, palette.text, 14.0);
-                ui.label(app.current_branch);
-                icons::paint(ui, Icon::Chevron, palette.text, 12.0);
+                ui.label(if app.current_branch.is_empty() {
+                    "No repository"
+                } else {
+                    &app.current_branch
+                });
                 ui.separator();
-                icons::paint(ui, Icon::Check, palette.text, 14.0);
                 ui.label(format!("{} changes", app.changes.len()));
                 ui.separator();
-                icons::paint(ui, Icon::Fetch, palette.text, 14.0);
-                ui.label(format!("↑ {} ↓ {}", app.ahead, app.behind));
-                ui.separator();
-                ui.label(RichText::new("Demo data").size(12.0).color(palette.muted));
+                ui.label(RichText::new(&app.status).size(12.0).color(palette.muted));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new("origin/main").size(12.0));
-                    icons::paint(ui, Icon::Cloud, palette.text, 14.0);
-                    ui.add_space(6.0);
                     if let Some(repository) = app.repositories.get(app.selected_repository) {
-                        ui.label(RichText::new(repository.path).size(12.0));
+                        ui.label(RichText::new(&repository.path).size(12.0));
                         icons::paint(ui, Icon::Folder, palette.text, 14.0);
                     }
                 });

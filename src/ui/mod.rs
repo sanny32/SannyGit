@@ -71,6 +71,22 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let context = ui.ctx().clone();
     let palette = app.theme.palette();
     toolbar::show(ui, app);
+    if let Some(error) = app.error.clone() {
+        Panel::top("repository.error")
+            .frame(
+                Frame::new()
+                    .fill(palette.removed_background)
+                    .inner_margin(6),
+            )
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(eframe::egui::RichText::new(error).color(palette.removed_text));
+                    if ui.small_button("Dismiss").clicked() {
+                        app.error = None;
+                    }
+                });
+            });
+    }
     status_bar::show(ui, app);
 
     Panel::left("working_tree.v3.sidebar")

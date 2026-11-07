@@ -3,20 +3,20 @@ use crate::models::{ChangeFile, ChangeKind, Commit, Repository};
 pub fn repositories() -> Vec<Repository> {
     vec![
         Repository {
-            name: "SannyGit",
-            path: "D:\\Projects\\SannyGit",
+            name: "SannyGit".into(),
+            path: "D:\\Projects\\SannyGit".into(),
         },
         Repository {
-            name: "OpenModScan",
-            path: "D:\\Projects\\OpenModScan",
+            name: "OpenModScan".into(),
+            path: "D:\\Projects\\OpenModScan".into(),
         },
         Repository {
-            name: "OpenModSim",
-            path: "D:\\Projects\\OpenModSim",
+            name: "OpenModSim".into(),
+            path: "D:\\Projects\\OpenModSim".into(),
         },
         Repository {
-            name: "OpenUaExplorer",
-            path: "D:\\Projects\\OpenUaExplorer",
+            name: "OpenUaExplorer".into(),
+            path: "D:\\Projects\\OpenUaExplorer".into(),
         },
     ]
 }
@@ -48,46 +48,53 @@ pub fn tags() -> Vec<&'static str> {
 pub fn changes() -> Vec<ChangeFile> {
     vec![
         ChangeFile {
-            path: "crates/sannygit/src/main.rs",
+            original_path: None,
+            path: "crates/sannygit/src/main.rs".into(),
             kind: ChangeKind::Modified,
             staged: false,
-            diff: MAIN_DIFF,
+            diff: MAIN_DIFF.into(),
         },
         ChangeFile {
-            path: "crates/sannygit/src/app.rs",
+            original_path: None,
+            path: "crates/sannygit/src/app.rs".into(),
             kind: ChangeKind::Modified,
             staged: false,
-            diff: APP_DIFF,
+            diff: APP_DIFF.into(),
         },
         ChangeFile {
-            path: "crates/sannygit/src/ui/diff_view.rs",
+            original_path: None,
+            path: "crates/sannygit/src/ui/diff_view.rs".into(),
             kind: ChangeKind::Modified,
             staged: true,
-            diff: DIFF_VIEW_DIFF,
+            diff: DIFF_VIEW_DIFF.into(),
         },
         ChangeFile {
-            path: "crates/sannygit/src/ui/commit_panel.rs",
+            original_path: None,
+            path: "crates/sannygit/src/ui/commit_panel.rs".into(),
             kind: ChangeKind::Added,
             staged: false,
-            diff: COMMIT_PANEL_DIFF,
+            diff: COMMIT_PANEL_DIFF.into(),
         },
         ChangeFile {
-            path: "crates/sannygit/assets/icons/app_icon.png",
+            original_path: None,
+            path: "crates/sannygit/assets/icons/app_icon.png".into(),
             kind: ChangeKind::Added,
             staged: false,
-            diff: "Binary file added: crates/sannygit/assets/icons/app_icon.png",
+            diff: "Binary file added: crates/sannygit/assets/icons/app_icon.png".into(),
         },
         ChangeFile {
-            path: "crates/sannygit/Cargo.toml",
+            original_path: None,
+            path: "crates/sannygit/Cargo.toml".into(),
             kind: ChangeKind::Modified,
             staged: false,
-            diff: CARGO_DIFF,
+            diff: CARGO_DIFF.into(),
         },
         ChangeFile {
-            path: "README.md",
+            original_path: None,
+            path: "README.md".into(),
             kind: ChangeKind::Deleted,
             staged: false,
-            diff: README_DIFF,
+            diff: README_DIFF.into(),
         },
     ]
 }

@@ -7,6 +7,11 @@ pub fn parse_unified_diff(input: &str) -> Vec<DiffLine> {
     input
         .lines()
         .map(|line| {
+            if line.starts_with("diff --git ") {
+                old_line = None;
+                new_line = None;
+                return header_line(line);
+            }
             if line.starts_with("@@") {
                 let numbers = parse_hunk_header(line);
                 old_line = numbers.map(|(old, _)| old);
@@ -20,7 +25,7 @@ pub fn parse_unified_diff(input: &str) -> Vec<DiffLine> {
             }
 
             if let Some(text) = line.strip_prefix('+') {
-                if line.starts_with("+++") {
+                if new_line.is_none() && line.starts_with("+++") {
                     return header_line(line);
                 }
                 let current = new_line;
@@ -34,7 +39,7 @@ pub fn parse_unified_diff(input: &str) -> Vec<DiffLine> {
             }
 
             if let Some(text) = line.strip_prefix('-') {
-                if line.starts_with("---") {
+                if old_line.is_none() && line.starts_with("---") {
                     return header_line(line);
                 }
                 let current = old_line;
@@ -109,6 +114,18 @@ mod tests {
         assert_eq!((lines[2].old_line, lines[2].new_line), (Some(11), None));
         assert_eq!((lines[3].old_line, lines[3].new_line), (None, Some(13)));
         assert_eq!((lines[4].old_line, lines[4].new_line), (None, Some(14)));
+    }
+
+    #[test]
+    fn preserves_header_like_content_and_resets_numbers_between_patches() {
+        let lines = parse_unified_diff("@@ -1 +1 @@\n---old code\n+++new code\ndiff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -4 +5 @@\n context");
+        assert_eq!(lines[1].kind, DiffLineKind::Removed);
+        assert_eq!(lines[1].text, "--old code");
+        assert_eq!(lines[2].kind, DiffLineKind::Added);
+        assert_eq!(lines[2].text, "++new code");
+        assert_eq!(lines[4].kind, DiffLineKind::Header);
+        assert_eq!(lines[5].kind, DiffLineKind::Header);
+        assert_eq!((lines[7].old_line, lines[7].new_line), (Some(4), Some(5)));
     }
 
     #[test]

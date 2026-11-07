@@ -2,6 +2,8 @@
 
 mod app;
 mod diff;
+mod git;
+#[cfg(test)]
 mod mock_data;
 mod models;
 mod theme;

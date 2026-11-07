@@ -83,8 +83,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     };
                     icons::paint(ui, icon, status_color(change.kind, palette), 16.0);
                     ui.add_space(4.0);
-                    ui.label(RichText::new(change.path).color(palette.text))
-                        .on_hover_text(change.path);
+                    ui.label(RichText::new(&change.path).color(palette.text))
+                        .on_hover_text(if let Some(source) = &change.original_path {
+                            format!("{source} → {}", change.path)
+                        } else {
+                            change.path.clone()
+                        });
                 });
                 row.col(|ui| {
                     let color = status_color(change.kind, palette);
