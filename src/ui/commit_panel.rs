@@ -41,7 +41,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.add_sized(
                     [width, editor_height],
                     TextEdit::multiline(&mut app.commit_message)
-                        .hint_text(RichText::new("Write a commit message...").color(palette.muted))
                         .desired_rows(1)
                         .desired_width(f32::INFINITY)
                         .margin(Vec2::new(6.0, 4.0))

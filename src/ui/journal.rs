@@ -66,18 +66,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         ui.label(RichText::new(format!("History unavailable: {error} Reload to retry; any rows below are from the previous load.")).small().color(palette.removed_text));
     }
     if app.commits.is_empty() {
-        ui.label(
-            RichText::new(if app.history_loading {
-                "Loading history…"
-            } else if app.history_error.is_some() {
-                "History could not be loaded. Reload to retry."
-            } else if app.repositories.get(app.selected_repository).is_none() {
-                "Open a repository to view its history"
-            } else {
-                "No commits in this history scope"
-            })
-            .color(palette.muted),
-        );
+        if app.history_loading {
+            ui.label(RichText::new("Loading history…").color(palette.muted));
+        }
         return;
     }
     let filter = app.journal_filter.trim().to_lowercase();
@@ -88,7 +79,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .filter(|(_, c)| c.matches(&filter))
         .collect();
     if visible.is_empty() {
-        ui.label(RichText::new("No matching commits in loaded history").color(palette.muted));
         return;
     }
     let mut selected = None;

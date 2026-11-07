@@ -163,7 +163,7 @@ impl SannyGitApp {
             repository_path: String::new(),
             open_dialog: false,
             error: None,
-            status: "Open a repository to get started".into(),
+            status: "Ready".into(),
             worker: None,
             loaded_diff: None,
             diff_preview: None,
@@ -1165,12 +1165,7 @@ mod tests {
                     output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
                     output.textures_delta.clear();
                 }
-                for text in [
-                    "Open",
-                    "Settings",
-                    "Open repository",
-                    "Use + to open a local repository",
-                ] {
+                for text in ["Open", "Settings", "Open repository"] {
                     assert!(
                         visible_text(&output.shapes, text),
                         "{text} clipped at {size:?} in {theme:?}"

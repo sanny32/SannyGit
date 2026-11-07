@@ -100,18 +100,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     palette,
                 );
             }
-            if app.refs.is_empty() && !app.refs_loading && app.refs_error.is_none() {
-                ui.label(
-                    RichText::new(if app.repositories.get(app.selected_repository).is_none() {
-                        "Open a repository to view branches"
-                    } else {
-                        "No branches or tags yet"
-                    })
-                    .color(palette.muted),
-                );
-            } else if !filter.is_empty() && !app.refs.iter().any(|r| matches(r, &filter)) {
-                ui.label(RichText::new("No matching branches or tags").color(palette.muted));
-            }
         });
     ui.horizontal(|ui| {
         let blocker = app.switch_branch_blocker();

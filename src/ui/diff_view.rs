@@ -14,22 +14,14 @@ use super::icons::{self, Icon};
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.theme.palette();
     let Some(change) = app.changes.get(app.selected_change) else {
-        ui.centered_and_justified(|ui| {
-            ui.label(RichText::new("Select a file to view its diff").color(palette.muted));
-        });
         return;
     };
     let Some(preview) = app.selected_diff() else {
-        ui.centered_and_justified(|ui| {
-            ui.label(
-                RichText::new(if app.busy() {
-                    "Loading diff…"
-                } else {
-                    "Select a file or refresh to load its diff"
-                })
-                .color(palette.muted),
-            );
-        });
+        if app.busy() {
+            ui.centered_and_justified(|ui| {
+                ui.label(RichText::new("Loading diff…").color(palette.muted));
+            });
+        }
         return;
     };
     let added = preview.added;
