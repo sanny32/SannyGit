@@ -46,6 +46,8 @@ pub enum ChangeFilter {
 }
 
 pub struct SannyGitApp {
+    #[cfg(target_os = "macos")]
+    native_menu: Option<crate::native_menu::NativeMenu>,
     pub theme: ThemeChoice,
     applied_theme: ThemeChoice,
     pub repositories: Vec<Repository>,
@@ -107,6 +109,10 @@ impl SannyGitApp {
         theme.apply(&creation_context.egui_ctx);
 
         let mut app = Self::with_theme(theme);
+        #[cfg(target_os = "macos")]
+        {
+            app.native_menu = crate::native_menu::NativeMenu::new(&creation_context.egui_ctx);
+        }
         if let Some(paths) = creation_context
             .storage
             .and_then(|storage| eframe::get_value::<Vec<String>>(storage, "sannygit.repositories"))
@@ -127,6 +133,8 @@ impl SannyGitApp {
 
     fn with_theme(theme: ThemeChoice) -> Self {
         Self {
+            #[cfg(target_os = "macos")]
+            native_menu: None,
             theme,
             applied_theme: theme,
             repositories: Vec::new(),
@@ -789,11 +797,31 @@ impl eframe::App for SannyGitApp {
             self.applied_theme = self.theme;
         }
         self.poll_worker();
+        #[cfg(target_os = "macos")]
+        {
+            let actions = self
+                .native_menu
+                .as_ref()
+                .map(|menu| menu.take_actions())
+                .unwrap_or_default();
+            for action in actions {
+                match action {
+                    crate::native_menu::MenuAction::Open => self.open_dialog = true,
+                    crate::native_menu::MenuAction::Refresh => self.refresh(),
+                }
+            }
+        }
         ui::show(ui, self);
         self.load_selected_diff();
         self.load_refs();
         self.load_history();
         self.load_commit_preview();
+        #[cfg(target_os = "macos")]
+        if let Some(menu) = &self.native_menu {
+            menu.set_refresh_enabled(
+                !self.busy() && self.repositories.get(self.selected_repository).is_some(),
+            );
+        }
         if self.busy() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(50));
@@ -1095,7 +1123,6 @@ mod tests {
                 }
                 for text in [
                     "Open",
-                    "Refresh",
                     "Settings",
                     "Open repository",
                     "Use + to open a local repository",

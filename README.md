@@ -6,9 +6,10 @@ SannyGit is a simple, fast, modern, open-source Git GUI client built with Rust a
 
 Stages 1–4 connect the Working Tree interface to the installed Git executable:
 
-- Use **Open** (or **+** in Repositories) and enter a local working-tree directory. A subdirectory, an unborn repository, and a linked worktree are supported; bare repositories are not.
+- Use **Repository → Open…** (or **+** in Repositories) and enter a local working-tree directory. A subdirectory, an unborn repository, and a linked worktree are supported; bare repositories are not.
+- On macOS, Repository and View are native menus in the system menu bar (Open: ⌘O; Refresh: F5). Windows and Linux show these menus above the toolbar.
 - Select a saved repository to open it again. Repository paths and the selected theme are persisted locally.
-- View the current branch (including detached HEAD), changed files and staged status. **Refresh** reloads changes made outside the application.
+- View the current branch (including detached HEAD), changed files and staged status. **View → Refresh** reloads changes made outside the application.
 - Select a file to view separate staged and working-tree unified patches. Untracked text files have a preview; binary files show a notice. Conflict previews compare the working tree with ours.
 - Use **Stage / Unstage** for the selected file, or toggle its **Index** checkbox. Unstage preserves working-tree contents, including before the first commit. A dash indicates both staged and working-tree changes: clicking it unstages the file; Stage includes its remaining changes.
 - Enter a message and click **Commit** to commit all staged changes. The header shows the staged-file count. Unstaged changes are left out. Empty messages and unresolved conflicts block committing.

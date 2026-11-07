@@ -47,7 +47,59 @@ fn action_button(
     response
 }
 
+#[cfg(not(target_os = "macos"))]
+fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
+    let palette = app.theme.palette();
+    Panel::top("working_tree.menu")
+        .exact_size(24.0)
+        .frame(
+            Frame::new()
+                .fill(palette.header)
+                .inner_margin(Margin::symmetric(8, 0)),
+        )
+        .show(ui, |ui| {
+            eframe::egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("Repository", |ui| {
+                    if ui
+                        .add(Button::image_and_text(
+                            icons::image(Icon::Folder, palette.accent, 16.0),
+                            "Open…",
+                        ))
+                        .clicked()
+                    {
+                        app.open_dialog = true;
+                        ui.close();
+                    }
+                });
+                ui.menu_button("View", |ui| {
+                    let enabled =
+                        !app.busy() && app.repositories.get(app.selected_repository).is_some();
+                    if ui
+                        .add_enabled(
+                            enabled,
+                            Button::image_and_text(
+                                icons::image(Icon::Fetch, palette.accent, 16.0),
+                                "Refresh",
+                            ),
+                        )
+                        .on_disabled_hover_text(if app.busy() {
+                            "Wait for the current operation to finish"
+                        } else {
+                            "Open a repository first"
+                        })
+                        .clicked()
+                    {
+                        app.refresh();
+                        ui.close();
+                    }
+                });
+            });
+        });
+}
+
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
+    #[cfg(not(target_os = "macos"))]
+    menu_bar(ui, app);
     let palette = app.theme.palette();
     let height = 52.0;
     Panel::top("working_tree.v2.toolbar")
@@ -61,33 +113,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 let action_width = 58.0;
-                if ui
-                    .add(
-                        Button::image_and_text(
-                            icons::image(Icon::Folder, palette.accent, 18.0),
-                            "Open",
-                        )
-                        .frame(false),
-                    )
-                    .on_hover_text("Open local repository")
-                    .clicked()
-                {
-                    app.open_dialog = true;
-                }
-                if ui
-                    .add_enabled(
-                        !app.busy() && app.repositories.get(app.selected_repository).is_some(),
-                        Button::image_and_text(
-                            icons::image(Icon::Fetch, palette.accent, 18.0),
-                            "Refresh",
-                        )
-                        .frame(false),
-                    )
-                    .clicked()
-                {
-                    app.refresh();
-                }
-                ui.separator();
                 for (icon, label) in [
                     (Icon::Pull, "Pull"),
                     (Icon::Fetch, "Sync"),

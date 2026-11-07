@@ -8,6 +8,8 @@ mod history;
 #[cfg(test)]
 mod mock_data;
 mod models;
+#[cfg(target_os = "macos")]
+mod native_menu;
 mod theme;
 mod ui;
 
