@@ -61,24 +61,35 @@ fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
             eframe::egui::MenuBar::new().ui(ui, |ui| {
                 for menu in crate::menu::MENUS {
                     ui.menu_button(menu.title, |ui| {
-                        for item in menu.items {
-                            let enabled = item
-                                .action
-                                .is_some_and(|action| app.menu_action_enabled(action));
-                            let response = ui.add_enabled(enabled, Button::new(item.label));
-                            if let Some(action) = item.action {
-                                if response.clicked() {
-                                    app.handle_menu_action(action, ui.ctx());
-                                    ui.close();
-                                }
-                            } else {
-                                response.on_disabled_hover_text("Not implemented yet");
-                            }
-                        }
+                        menu_items(ui, app, menu.items);
                     });
                 }
             });
         });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem]) {
+    for item in items {
+        if item.separator {
+            ui.separator();
+        } else if !item.children.is_empty() {
+            ui.menu_button(item.label, |ui| menu_items(ui, app, item.children));
+        } else {
+            let enabled = item
+                .action
+                .is_some_and(|action| app.menu_action_enabled(action));
+            let response = ui.add_enabled(enabled, Button::new(item.label));
+            if let Some(action) = item.action {
+                if response.clicked() {
+                    app.handle_menu_action(action, ui.ctx());
+                    ui.close();
+                }
+            } else {
+                response.on_disabled_hover_text("Not implemented yet");
+            }
+        }
+    }
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {

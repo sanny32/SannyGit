@@ -5,6 +5,7 @@ use std::{
     io::{Read, Write as IoWrite},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -35,10 +36,38 @@ fn capture(mut reader: impl Read) -> Result<Vec<u8>, String> {
 }
 
 pub(crate) fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    run_with_input(path, args, None)
+    run_controlled(path, args, TIMEOUT, None)
+}
+
+pub(crate) fn run_controlled(
+    path: &Path,
+    args: &[&str],
+    timeout: Duration,
+    cancel: Option<&AtomicBool>,
+) -> Result<Vec<u8>, String> {
+    execute(path, args, None, timeout, cancel, false)
 }
 
 fn run_with_input(path: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    execute(path, args, input, TIMEOUT, None, false)
+}
+
+/// Successful diagnostic output for an explicit preview (never error logging).
+pub(crate) fn run_diagnostic(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    execute(path, args, None, TIMEOUT, None, true)
+}
+
+fn execute(
+    path: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+    timeout: Duration,
+    cancel: Option<&AtomicBool>,
+    diagnostics: bool,
+) -> Result<Vec<u8>, String> {
+    if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        return Err("Operation cancelled".into());
+    }
     let mut command = Command::new("git");
     command
         .current_dir(path)
@@ -53,6 +82,11 @@ fn run_with_input(path: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Ve
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -78,24 +112,53 @@ fn run_with_input(path: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Ve
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break Ok(status),
-                Ok(None) if start.elapsed() < TIMEOUT => thread::sleep(Duration::from_millis(20)),
+                Ok(None)
+                    if start.elapsed() < timeout
+                        && !cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) =>
+                {
+                    thread::sleep(Duration::from_millis(20))
+                }
                 result => {
+                    #[cfg(unix)]
+                    if let Ok(id) = i32::try_from(child.id()) {
+                        // SAFETY: This child was started in its own process group.
+                        unsafe {
+                            libc::kill(-id, libc::SIGKILL);
+                        }
+                    }
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = Command::new("taskkill")
+                            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .status();
+                    }
                     let _ = child.kill();
                     let _ = child.wait();
                     break Err(match result {
                         Err(e) => format!("Cannot wait for Git: {e}"),
-                        _ => "Git operation timed out after 15 seconds".into(),
+                        _ if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) => {
+                            "Operation cancelled; inspect the destination before retrying".into()
+                        }
+                        _ => format!(
+                            "Git operation timed out after {} seconds",
+                            timeout.as_secs()
+                        ),
                     });
                 }
             }
         };
-        let output = out.join().map_err(|_| "Git output reader failed")??;
+        let mut output = out.join().map_err(|_| "Git output reader failed")??;
         let errors = err.join().map_err(|_| "Git error reader failed")??;
         let written = writer.join().map_err(|_| "Git input writer failed")?;
         if !status?.success() {
             return Err(command_error(args.first().copied().unwrap_or("command")));
         }
         written?;
+        if diagnostics {
+            output.extend_from_slice(&errors);
+        }
         if output.len() > OUTPUT_LIMIT {
             return Err("Git output exceeds the 2 MiB display limit".into());
         }
@@ -109,6 +172,12 @@ fn command_error(operation: &str) -> String {
     // Do not parse localized diagnostics or echo private URLs and hook output.
     let reason = if operation == "commit" {
         "Check your Git identity, signing configuration and commit hooks. Refresh before retrying."
+    } else if operation == "clone" {
+        "Check the URL, destination, network access, credential helpers and SSH configuration. A partial destination may remain."
+    } else if operation == "worktree" {
+        "Check branch availability, worktree locks, local files and destination permissions. Refresh before retrying."
+    } else if operation == "config" {
+        "Check Git config file permissions and configuration syntax."
     } else if operation == "switch" {
         "Check for a branch used by another worktree, an in-progress Git operation, file conflicts or repository permissions. Refresh before retrying."
     } else if operation == "branch" {

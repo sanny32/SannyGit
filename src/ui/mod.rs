@@ -5,6 +5,7 @@ mod diff_view;
 mod icons;
 mod journal;
 mod repositories;
+mod repository_dialogs;
 mod status_bar;
 mod toolbar;
 
@@ -71,6 +72,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let context = ui.ctx().clone();
     let palette = app.theme.palette();
     toolbar::show(ui, app);
+    repository_dialogs::show(ui, app);
     eframe::egui::Window::new("About SannyGit")
         .open(&mut app.about_dialog)
         .resizable(false)

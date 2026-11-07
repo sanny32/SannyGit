@@ -11,6 +11,7 @@ mod mock_data;
 mod models;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod repository;
 mod theme;
 mod ui;
 
@@ -29,6 +30,16 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport,
         persist_window: false,
+        persistence_path: std::env::var_os("SANNYGIT_SECONDARY_WINDOW").map(|_| {
+            std::env::temp_dir().join(format!(
+                "sannygit-window-{}-{}.ron",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ))
+        }),
         // The event loop has initialized native DPI handling by this point.
         // Place the window before eframe renders and reveals its first frame.
         window_builder: Some(Box::new(move |viewport| {

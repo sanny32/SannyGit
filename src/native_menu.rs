@@ -65,56 +65,13 @@ impl NativeMenu {
             HandlerState {
                 sender,
                 context: context.clone(),
-                actions: MENUS
-                    .iter()
-                    .flat_map(|menu| menu.items.iter().filter_map(|item| item.action))
-                    .collect(),
+                actions: crate::menu::actions(),
             },
         );
         let mut items = Vec::new();
         for definition in MENUS {
             let menu = submenu(marker, &root, definition.title);
-            for definition in definition.items {
-                // SAFETY: The selector has the standard NSMenuItem target/action ABI.
-                let item = unsafe {
-                    NSMenuItem::initWithTitle_action_keyEquivalent(
-                        NSMenuItem::alloc(marker),
-                        &NSString::from_str(definition.label),
-                        definition.action.map(|_| sel!(performMenuAction:)),
-                        &NSString::from_str(match definition.action {
-                            Some(MenuAction::Open) => "o",
-                            Some(MenuAction::Refresh) => "\u{f708}",
-                            Some(MenuAction::Close) => "w",
-                            _ => "",
-                        }),
-                    )
-                };
-                if let Some(action) = definition.action {
-                    item.setTag(items.len() as isize);
-                    if action == MenuAction::Refresh {
-                        item.setKeyEquivalentModifierMask(
-                            objc2_app_kit::NSEventModifierFlags::empty(),
-                        );
-                    }
-                    // SAFETY: NativeMenu retains the handler until all targets are detached.
-                    unsafe {
-                        item.setTarget(Some(&handler));
-                    }
-                    item.setEnabled(matches!(
-                        action,
-                        MenuAction::Open
-                            | MenuAction::LightTheme
-                            | MenuAction::DarkTheme
-                            | MenuAction::Close
-                            | MenuAction::About
-                    ));
-                    items.push((action, item.clone()));
-                } else {
-                    item.setEnabled(false);
-                    item.setToolTip(Some(&NSString::from_str("Not implemented yet")));
-                }
-                menu.addItem(&item);
-            }
+            append_items(marker, &menu, definition.items, &handler, &mut items);
         }
         Some(Self {
             _handler: handler,
@@ -156,4 +113,78 @@ fn submenu(marker: MainThreadMarker, root: &NSMenu, title: &str) -> Retained<NSM
     item.setSubmenu(Some(&menu));
     root.addItem(&item);
     menu
+}
+
+fn append_items(
+    marker: MainThreadMarker,
+    menu: &NSMenu,
+    definitions: &[crate::menu::MenuItem],
+    handler: &MenuHandler,
+    items: &mut Vec<(MenuAction, Retained<NSMenuItem>)>,
+) {
+    for definition in definitions {
+        if definition.separator {
+            menu.addItem(&NSMenuItem::separatorItem(marker));
+            continue;
+        }
+        // SAFETY: The selector below has AppKit's NSMenuItem target/action ABI.
+        let item = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(marker),
+                &NSString::from_str(definition.label),
+                definition.action.map(|_| sel!(performMenuAction:)),
+                &NSString::from_str(match definition.action {
+                    Some(MenuAction::Open | MenuAction::Clone) => "o",
+                    Some(MenuAction::NewWindow) => "n",
+                    Some(MenuAction::Refresh) => "\u{f708}",
+                    Some(MenuAction::Close) => "w",
+                    _ => "",
+                }),
+            )
+        };
+        if !definition.children.is_empty() {
+            let child =
+                NSMenu::initWithTitle(NSMenu::alloc(marker), &NSString::from_str(definition.label));
+            child.setAutoenablesItems(false);
+            append_items(marker, &child, definition.children, handler, items);
+            item.setSubmenu(Some(&child));
+        } else if let Some(action) = definition.action {
+            item.setTag(items.len() as isize);
+            if action == MenuAction::Refresh {
+                item.setKeyEquivalentModifierMask(objc2_app_kit::NSEventModifierFlags::empty());
+            }
+            if action == MenuAction::RepositorySettings {
+                item.setKeyEquivalent(&NSString::from_str("\r"));
+                item.setKeyEquivalentModifierMask(objc2_app_kit::NSEventModifierFlags::Option);
+            }
+            if action == MenuAction::Clone {
+                item.setKeyEquivalentModifierMask(
+                    objc2_app_kit::NSEventModifierFlags::Command
+                        | objc2_app_kit::NSEventModifierFlags::Shift,
+                );
+            }
+            // SAFETY: NativeMenu retains the handler until its targets are detached.
+            unsafe {
+                item.setTarget(Some(handler));
+            }
+            item.setEnabled(matches!(
+                action,
+                MenuAction::NewWindow
+                    | MenuAction::Open
+                    | MenuAction::AddGroup
+                    | MenuAction::Clone
+                    | MenuAction::SearchRepositories
+                    | MenuAction::EditUserConfig
+                    | MenuAction::LightTheme
+                    | MenuAction::DarkTheme
+                    | MenuAction::Close
+                    | MenuAction::About
+            ));
+            items.push((action, item.clone()));
+        } else {
+            item.setEnabled(false);
+            item.setToolTip(Some(&NSString::from_str("Not implemented yet")));
+        }
+        menu.addItem(&item);
+    }
 }

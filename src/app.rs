@@ -1,9 +1,13 @@
+mod repositories;
+pub use repositories::{Dialog as RepositoryDialog, Job as RepositoryJob, RepositoryManager};
+
 use std::{
     path::PathBuf,
     sync::mpsc::{self, Receiver},
 };
 
 enum WorkerResult {
+    RepositoryTask(Box<repositories::ResultMessage>),
     Refs {
         path: String,
         result: Result<crate::models::RefSnapshot, String>,
@@ -46,6 +50,7 @@ pub enum ChangeFilter {
 }
 
 pub struct SannyGitApp {
+    pub manager: RepositoryManager,
     #[cfg(target_os = "macos")]
     native_menu: Option<crate::native_menu::NativeMenu>,
     pub theme: ThemeChoice,
@@ -129,11 +134,18 @@ impl SannyGitApp {
                 })
                 .collect();
         }
+        if let Some(preferences) = creation_context
+            .storage
+            .and_then(|storage| eframe::get_value(storage, "sannygit.repository_preferences"))
+        {
+            app.manager.preferences = preferences;
+        }
         app
     }
 
     fn with_theme(theme: ThemeChoice) -> Self {
         Self {
+            manager: RepositoryManager::default(),
             #[cfg(target_os = "macos")]
             native_menu: None,
             theme,
@@ -224,6 +236,19 @@ impl SannyGitApp {
     pub fn menu_action_enabled(&self, action: crate::menu::MenuAction) -> bool {
         use crate::menu::MenuAction;
         match action {
+            MenuAction::NewWindow
+            | MenuAction::AddGroup
+            | MenuAction::Clone
+            | MenuAction::SearchRepositories
+            | MenuAction::EditUserConfig => !self.busy(),
+            MenuAction::CloseRepository
+            | MenuAction::AddWorktree
+            | MenuAction::RemoveWorktree
+            | MenuAction::PruneWorktrees
+            | MenuAction::RepositorySettings
+            | MenuAction::EditRepositoryConfig => {
+                !self.busy() && self.repositories.get(self.selected_repository).is_some()
+            }
             MenuAction::Open
             | MenuAction::LightTheme
             | MenuAction::DarkTheme
@@ -252,6 +277,32 @@ impl SannyGitApp {
         }
         use crate::menu::MenuAction;
         match action {
+            MenuAction::NewWindow => self.run_repository_job(RepositoryJob::NewWindow),
+            MenuAction::AddGroup => self.manager.dialog = Some(RepositoryDialog::Group),
+            MenuAction::Clone => self.manager.dialog = Some(RepositoryDialog::Clone),
+            MenuAction::SearchRepositories => self.manager.dialog = Some(RepositoryDialog::Search),
+            MenuAction::CloseRepository => self.close_repository(false),
+            MenuAction::AddWorktree | MenuAction::RemoveWorktree => {
+                self.manager.dialog = Some(RepositoryDialog::Worktrees);
+                self.manager.confirm_remove = false;
+                self.run_repository_job(RepositoryJob::ListWorktrees);
+            }
+            MenuAction::PruneWorktrees => {
+                self.manager.dialog = Some(RepositoryDialog::Prune);
+                self.manager.prune_preview = None;
+                self.run_repository_job(RepositoryJob::PreviewPrune);
+            }
+            MenuAction::RepositorySettings => {
+                self.manager.dialog = Some(RepositoryDialog::Settings);
+                self.manager.settings = None;
+                self.run_repository_job(RepositoryJob::LoadSettings);
+            }
+            MenuAction::EditRepositoryConfig => {
+                self.run_repository_job(RepositoryJob::EditConfig { global: false })
+            }
+            MenuAction::EditUserConfig => {
+                self.run_repository_job(RepositoryJob::EditConfig { global: true })
+            }
             MenuAction::Open => self.open_dialog = true,
             MenuAction::Refresh => self.refresh(),
             MenuAction::Stage => self.set_staged(self.selected_change, true),
@@ -280,6 +331,10 @@ impl SannyGitApp {
             .changes
             .get(self.selected_change)
             .map(|c| c.path.clone());
+        let new_repository = !self
+            .repositories
+            .iter()
+            .any(|r| r.path == snapshot.repository.path);
         let index = self
             .repositories
             .iter()
@@ -290,6 +345,10 @@ impl SannyGitApp {
             });
         let same_repository = self.selected_repository == index;
         self.selected_repository = index;
+        if new_repository {
+            let path = self.repositories[index].path.clone();
+            self.assign_group(&path, self.manager.preferences.selected_group.clone());
+        }
         self.current_branch = snapshot.branch;
         self.changes = snapshot.changes;
         self.selected_change = if same_repository {
@@ -313,6 +372,9 @@ impl SannyGitApp {
         self.commit_preview_error = None;
         self.loaded_commit = None;
         if !same_repository {
+            self.manager.dialog = None;
+            self.manager.worktrees.clear();
+            self.manager.settings = None;
             self.selected_branch.clear();
             self.refs.clear();
             self.branch_head_exists = false;
@@ -635,6 +697,7 @@ impl SannyGitApp {
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.worker = None;
+                self.manager.cancel = None;
                 self.error = Some("Background worker stopped unexpectedly".into());
                 if self.refs_loading && !self.refs_pending {
                     self.refs_loading = false;
@@ -657,6 +720,7 @@ impl SannyGitApp {
         };
         self.worker = None;
         match result {
+            WorkerResult::RepositoryTask(result) => self.apply_repository_result(*result),
             WorkerResult::Refs { path, result } => {
                 if self
                     .repositories
@@ -872,10 +936,24 @@ impl eframe::App for SannyGitApp {
         }
     }
 
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(cancel) = &self.manager.cancel {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(receiver) = &self.worker {
+                let _ = receiver.recv_timeout(std::time::Duration::from_secs(3));
+            }
+        }
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, THEME_STORAGE_KEY, &self.theme);
         let paths: Vec<_> = self.repositories.iter().map(|r| &r.path).collect();
         eframe::set_value(storage, "sannygit.repositories", &paths);
+        eframe::set_value(
+            storage,
+            "sannygit.repository_preferences",
+            &self.manager.preferences,
+        );
     }
 }
 
@@ -1165,7 +1243,7 @@ mod tests {
                     output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
                     output.textures_delta.clear();
                 }
-                for text in ["Open", "Settings", "Open repository"] {
+                for text in ["Open", "Settings", "Add or Create Repository"] {
                     assert!(
                         visible_text(&output.shapes, text),
                         "{text} clipped at {size:?} in {theme:?}"
@@ -1277,6 +1355,43 @@ mod tests {
                     app.worker.is_none(),
                     "Rendering branch controls must not run Git commands"
                 );
+                app.branch_dialog_open = false;
+                app.manager.settings = Some(crate::repository::Settings::default());
+                app.manager.prune_preview = Some("Preview of obsolete metadata".into());
+                app.manager.found = vec![("Found repo".into(), "/tmp/found-repo".into(), true)];
+                app.manager.worktrees = vec![crate::repository::Worktree {
+                    path: "/tmp/linked-tree".into(),
+                    branch: Some("feature".into()),
+                    main: false,
+                    locked: false,
+                    prunable: false,
+                    bare: false,
+                }];
+                app.manager.selected_worktree = Some("/tmp/linked-tree".into());
+                app.manager.confirm_remove = true;
+                for (dialog, button) in [
+                    (RepositoryDialog::Group, "Add Group"),
+                    (RepositoryDialog::Clone, "Clone"),
+                    (RepositoryDialog::Search, "Add Selected"),
+                    (RepositoryDialog::Worktrees, "Remove Worktree"),
+                    (RepositoryDialog::Prune, "Prune Obsolete Metadata"),
+                    (RepositoryDialog::Settings, "Save Repository Settings"),
+                    (RepositoryDialog::CloseRepository, "Close Repository"),
+                ] {
+                    app.manager.dialog = Some(dialog);
+                    for _ in 0..3 {
+                        output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
+                        output.textures_delta.clear();
+                    }
+                    assert!(
+                        visible_text(&output.shapes, button),
+                        "Repository control {button} clipped at {size:?} in {theme:?}"
+                    );
+                    assert!(
+                        app.worker.is_none(),
+                        "Rendering repository dialogs must not execute Git operations"
+                    );
+                }
             }
         }
     }

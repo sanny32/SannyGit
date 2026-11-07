@@ -19,3 +19,6 @@ mouse_position = "0.1.4"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
