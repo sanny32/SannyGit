@@ -3,54 +3,33 @@ use crate::{
     app::{RepositoryJob, SannyGitApp},
     theme::semibold_family,
 };
-use eframe::egui::{
-    Align, Button, CollapsingHeader, Layout, RichText, ScrollArea, TextEdit, Ui, Window,
-};
+use eframe::egui::{Align, Button, CollapsingHeader, Layout, RichText, ScrollArea, TextEdit, Ui};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.theme.palette();
-    let mut open = app.open_dialog;
-    Window::new("Add or Create Repository")
-        .open(&mut open)
-        .resizable(false)
-        .show(ui.ctx(), |ui| {
+    if app.open_dialog {
+        eframe::egui::Modal::new(eframe::egui::Id::unique("repository.add")).show(ui.ctx(), |ui| {
+            ui.set_width(540.0);
+            ui.heading("Add existing or create new repository");
+            ui.label("Specify the local Git repository to open. To create a new repository, specify an empty directory.");
+            ui.add_space(18.0);
             ui.add_enabled_ui(!app.busy(), |ui| {
                 ui.horizontal(|ui| {
-                    ui.radio_value(
-                        &mut app.manager.create_new,
-                        false,
-                        "Add existing repository",
-                    );
-                    ui.radio_value(&mut app.manager.create_new, true, "Create new repository");
+                    ui.label("Repository:");
+                    ui.add(TextEdit::singleline(&mut app.repository_path).desired_width(390.0));
+                    super::clone_dialog::choose_folder(ui, &mut app.repository_path);
                 });
             });
-            ui.label("Repository directory");
-            ui.add(
-                TextEdit::singleline(&mut app.repository_path)
-                    .desired_width(420.0)
-                    .hint_text("Repository directory"),
-            );
-            super::repository_dialogs::group_picker(ui, app);
-            let enabled = !app.busy() && !app.repository_path.is_empty();
-            if ui
-                .add_enabled(
-                    enabled,
-                    Button::new(if app.manager.create_new {
-                        "Create"
-                    } else {
-                        "Open"
-                    }),
-                )
-                .clicked()
-            {
-                if app.manager.create_new {
-                    app.run_repository_job(RepositoryJob::Init(app.repository_path.clone()));
-                } else {
-                    app.open_repository(app.repository_path.clone());
+            if let Some(error) = &app.error { ui.colored_label(palette.removed_text, error); }
+            ui.add_space(18.0);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.add_enabled(!app.busy() && !app.repository_path.trim().is_empty(), Button::new("OK")).clicked() {
+                    app.run_repository_job(RepositoryJob::AddOrCreate(app.repository_path.clone()));
                 }
-            }
+                if ui.add_enabled(!app.busy(), Button::new("Cancel")).clicked() { app.open_dialog = false; }
+            });
         });
-    app.open_dialog = open;
+    }
     ui.horizontal(|ui| {
         ui.set_min_height(26.0);
         ui.heading("Repositories");

@@ -1,5 +1,6 @@
 mod branches;
 mod changes;
+mod clone_dialog;
 mod commit_panel;
 mod diff_view;
 mod icons;

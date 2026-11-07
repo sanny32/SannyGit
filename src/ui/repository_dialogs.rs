@@ -30,6 +30,10 @@ pub(super) fn group_picker(ui: &mut Ui, app: &mut SannyGitApp) {
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
+    if app.manager.dialog == Some(Dialog::Clone) {
+        super::clone_dialog::show(ui.ctx(), app);
+        return;
+    }
     if app.busy() && app.manager.cancel.is_some() {
         Window::new("Repository operation")
             .id(egui::Id::unique("repository.progress"))
@@ -68,14 +72,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     ui.label("Group name"); ui.add(TextEdit::singleline(&mut app.manager.group_name).desired_width(f32::INFINITY));
                     if ui.add_enabled(!app.manager.group_name.trim().is_empty(), Button::new("Add Group")).clicked() { app.add_group(); }
                 }
-                Dialog::Clone => {
-                    ui.label("Repository URL or local path"); ui.add(TextEdit::singleline(&mut app.manager.clone_source).desired_width(f32::INFINITY));
-                    ui.label("Destination (new directory)"); ui.add(TextEdit::singleline(&mut app.manager.destination).desired_width(f32::INFINITY));
-                    group_picker(ui, app);
-                    if ui.add_enabled(!app.manager.clone_source.is_empty() && !app.manager.destination.is_empty(), Button::new("Clone")).clicked() {
-                        job = Some(Job::Clone { source: app.manager.clone_source.clone(), destination: app.manager.destination.clone() });
-                    }
-                }
+                Dialog::Clone => {},
                 Dialog::Search => {
                     ui.label("Search directory"); ui.add(TextEdit::singleline(&mut app.manager.search_root).desired_width(f32::INFINITY));
                     ui.horizontal(|ui| { ui.label("Maximum depth"); ui.add(egui::DragValue::new(&mut app.manager.search_depth).range(0..=16)); });

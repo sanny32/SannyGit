@@ -25,7 +25,11 @@ pub enum Dialog {
 pub struct RepositoryManager {
     pub preferences: Preferences,
     pub dialog: Option<Dialog>,
-    pub create_new: bool,
+    pub clone_step: usize,
+    pub clone_options: repository::CloneOptions,
+    pub clone_branches: Vec<String>,
+    pub clone_parent: String,
+    pub clone_name: String,
     pub group_name: String,
     pub clone_source: String,
     pub destination: String,
@@ -47,7 +51,11 @@ impl Default for RepositoryManager {
         Self {
             preferences: Preferences::default(),
             dialog: None,
-            create_new: false,
+            clone_step: 0,
+            clone_options: repository::CloneOptions::default(),
+            clone_branches: Vec::new(),
+            clone_parent: "~".into(),
+            clone_name: String::new(),
             group_name: String::new(),
             clone_source: String::new(),
             destination: String::new(),
@@ -69,10 +77,12 @@ impl Default for RepositoryManager {
 
 pub enum Job {
     NewWindow,
-    Init(String),
+    AddOrCreate(String),
+    InspectClone(String),
     Clone {
         source: String,
         destination: String,
+        options: repository::CloneOptions,
     },
     Search {
         root: String,
@@ -94,6 +104,10 @@ pub enum Job {
     },
 }
 pub enum ResultMessage {
+    CloneBranches {
+        source: String,
+        result: Result<Vec<String>, String>,
+    },
     Window(Result<(), String>),
     Open(Result<git::Snapshot, String>),
     Search(Result<SearchResult, String>),
@@ -135,7 +149,8 @@ impl SannyGitApp {
         self.error = None;
         self.status = match &job {
             Job::NewWindow => "Opening new window…",
-            Job::Init(_) => "Creating repository…",
+            Job::AddOrCreate(_) => "Opening repository…",
+            Job::InspectClone(_) => "Inspecting repository…",
             Job::Clone { .. } => "Cloning repository…",
             Job::Search { .. } => "Searching repositories…",
             Job::ListWorktrees => "Loading worktrees…",
@@ -151,19 +166,25 @@ impl SannyGitApp {
         let cancel = Arc::new(AtomicBool::new(false));
         self.manager.cancel = matches!(
             job,
-            Job::Clone { .. } | Job::Search { .. } | Job::AddWorktree { .. }
+            Job::InspectClone(_) | Job::Clone { .. } | Job::Search { .. } | Job::AddWorktree { .. }
         )
         .then(|| cancel.clone());
         if !self.start_worker(move || {
             let result = match job {
                 Job::NewWindow => ResultMessage::Window(repository::new_window()),
-                Job::Init(path) => ResultMessage::Open(repository::init(&PathBuf::from(path))),
+                Job::AddOrCreate(path) => ResultMessage::Open(repository::add_or_create(&path)),
+                Job::InspectClone(source) => {
+                    let result = repository::clone_branches(&source, &cancel);
+                    ResultMessage::CloneBranches { source, result }
+                }
                 Job::Clone {
                     source,
                     destination,
-                } => ResultMessage::Open(repository::clone_repository(
+                    options,
+                } => ResultMessage::Open(repository::clone_with_options(
                     &source,
                     &PathBuf::from(destination),
+                    &options,
                     &cancel,
                 )),
                 Job::Search { root, depth } => {
@@ -242,11 +263,26 @@ impl SannyGitApp {
         self.manager.cancel = None;
         self.status = "Ready".into();
         let outcome = match message {
+            ResultMessage::CloneBranches { source, result } => result.map(|branches| {
+                if self.manager.dialog == Some(Dialog::Clone) && self.manager.clone_source == source
+                {
+                    self.manager.clone_options.branch =
+                        branches.first().cloned().unwrap_or_default();
+                    self.manager.clone_branches = branches;
+                    self.manager.clone_name = source
+                        .trim_end_matches('/')
+                        .rsplit(['/', ':'])
+                        .next()
+                        .unwrap_or("repository")
+                        .trim_end_matches(".git")
+                        .into();
+                    self.manager.clone_step = 1;
+                }
+            }),
             ResultMessage::Window(result) | ResultMessage::Editor(result) => result,
             ResultMessage::Open(result) => result.map(|snapshot| {
                 self.apply_snapshot(snapshot);
                 self.manager.dialog = None;
-                self.manager.create_new = false;
             }),
             ResultMessage::Search(result) => result.map(|result| {
                 self.manager.search_summary = format!(

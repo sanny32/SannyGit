@@ -87,11 +87,107 @@ pub fn init(path: &Path) -> Result<git::Snapshot, String> {
     git::load(&path)
 }
 
-pub fn clone_repository(
-    source: &str,
-    path: &Path,
-    cancel: &AtomicBool,
-) -> Result<git::Snapshot, String> {
+pub fn expand_path(value: &str) -> PathBuf {
+    if value == "~" || value.starts_with("~/") {
+        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+            return PathBuf::from(home).join(value.strip_prefix("~/").unwrap_or(""));
+        }
+    }
+    PathBuf::from(value)
+}
+
+pub fn add_or_create(value: &str) -> Result<git::Snapshot, String> {
+    if value.trim().is_empty() {
+        return Err("Choose a repository directory.".into());
+    }
+    let path = expand_path(value);
+    if path.exists() {
+        let loaded = git::load(&path);
+        if loaded.is_ok() {
+            return loaded;
+        }
+        if !path.is_dir() || fs::symlink_metadata(path.join(".git")).is_ok() {
+            return loaded;
+        }
+        if fs::read_dir(&path)
+            .map_err(|e| e.to_string())?
+            .next()
+            .is_some()
+        {
+            return Err("To create a repository, choose an empty directory.".into());
+        }
+    }
+    init(&path)
+}
+
+#[derive(Clone, Debug)]
+pub struct CloneOptions {
+    pub include_submodules: bool,
+    pub fetch_all: bool,
+    pub branch: String,
+}
+impl Default for CloneOptions {
+    fn default() -> Self {
+        Self {
+            include_submodules: true,
+            fetch_all: true,
+            branch: String::new(),
+        }
+    }
+}
+
+pub fn clone_branches(source: &str, cancel: &AtomicBool) -> Result<Vec<String>, String> {
+    let source = clone_source(source)?;
+    let root = std::env::current_dir().map_err(|e| e.to_string())?;
+    let output = git::run_controlled(
+        &root,
+        &[
+            "ls-remote",
+            "--symref",
+            "--",
+            &source,
+            "HEAD",
+            "refs/heads/*",
+        ],
+        Duration::from_secs(120),
+        Some(cancel),
+    )?;
+    parse_clone_branches(std::str::from_utf8(&output).map_err(|_| "Non-UTF-8 remote branches")?)
+}
+
+fn parse_clone_branches(output: &str) -> Result<Vec<String>, String> {
+    let mut branches = Vec::new();
+    let mut default = None;
+    for line in output.lines() {
+        if let Some(name) = line
+            .strip_prefix("ref: refs/heads/")
+            .and_then(|s| s.strip_suffix("\tHEAD"))
+        {
+            default = Some(name.to_owned());
+        } else if let Some((oid, name)) = line.split_once("\trefs/heads/") {
+            if !matches!(oid.len(), 40 | 64)
+                || !oid.bytes().all(|b| b.is_ascii_hexdigit())
+                || name.is_empty()
+            {
+                return Err("Invalid remote branch response".into());
+            }
+            branches.push(name.to_owned());
+            if branches.len() > 5000 {
+                return Err("Too many remote branches".into());
+            }
+        }
+    }
+    branches.sort();
+    branches.dedup();
+    if let Some(default) = default {
+        if let Some(index) = branches.iter().position(|b| b == &default) {
+            branches.swap(0, index);
+        }
+    }
+    Ok(branches)
+}
+
+fn clone_source(source: &str) -> Result<String, String> {
     if source.is_empty() || source.starts_with('-') || source.chars().any(char::is_control) {
         return Err("Enter a valid repository URL or local path.".into());
     }
@@ -115,8 +211,8 @@ pub fn clone_repository(
             }
         }
     }
-    let source = if Path::new(source).exists() {
-        Path::new(source)
+    let source = if expand_path(source).exists() {
+        expand_path(source)
             .canonicalize()
             .map_err(|e| e.to_string())?
             .to_string_lossy()
@@ -124,15 +220,44 @@ pub fn clone_repository(
     } else {
         source.into()
     };
+    Ok(source)
+}
+
+#[cfg(test)]
+pub fn clone_repository(
+    source: &str,
+    path: &Path,
+    cancel: &AtomicBool,
+) -> Result<git::Snapshot, String> {
+    clone_with_options(source, path, &CloneOptions::default(), cancel)
+}
+
+pub fn clone_with_options(
+    source: &str,
+    path: &Path,
+    options: &CloneOptions,
+    cancel: &AtomicBool,
+) -> Result<git::Snapshot, String> {
+    let source = clone_source(source)?;
     let path = new_destination(path)?;
+    let mut args = vec![
+        "clone",
+        if options.include_submodules {
+            "--recurse-submodules"
+        } else {
+            "--no-recurse-submodules"
+        },
+    ];
+    if !options.fetch_all {
+        args.extend(["--single-branch", "--no-tags"]);
+    }
+    if !options.branch.is_empty() {
+        args.extend(["--branch", &options.branch]);
+    }
+    args.extend(["--", &source, path.to_str().ok_or("Non-UTF-8 destination")?]);
     git::run_controlled(
         path.parent().ok_or("Missing parent")?,
-        &[
-            "clone",
-            "--",
-            &source,
-            path.to_str().ok_or("Non-UTF-8 destination")?,
-        ],
+        &args,
         Duration::from_secs(600),
         Some(cancel),
     )?;
@@ -572,6 +697,67 @@ mod tests {
             );
             assert!(!repo.0.join("invalid").exists());
         }
+    }
+
+    #[test]
+    fn add_or_create_preserves_nonempty_directories() {
+        let repo = TempRepo::new();
+        let empty = repo.0.join("empty");
+        fs::create_dir(&empty).unwrap();
+        // An empty child of an existing repository opens that repository.
+        assert!(add_or_create(empty.to_str().unwrap()).is_ok());
+        let outside = std::env::temp_dir().join(format!("sannygit-empty-{}", std::process::id()));
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("keep"), "contents").unwrap();
+        assert!(add_or_create(outside.to_str().unwrap()).is_err());
+        assert!(!outside.join(".git").exists());
+        assert_eq!(
+            fs::read_to_string(outside.join("keep")).unwrap(),
+            "contents"
+        );
+        fs::remove_file(outside.join("keep")).unwrap();
+        assert!(add_or_create(outside.to_str().unwrap()).is_ok());
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn clone_selects_branch_and_limits_fetch() {
+        let repo = TempRepo::new();
+        repo.write("file", "main");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "main"]);
+        repo.git(&["branch", "feature"]);
+        repo.git(&["tag", "v1"]);
+        let cancel = AtomicBool::new(false);
+        let branches = clone_branches(repo.0.to_str().unwrap(), &cancel).unwrap();
+        assert_eq!(branches.first().map(String::as_str), Some("main"));
+        assert!(branches.contains(&"feature".into()));
+        let destination = repo.0.join("limited");
+        clone_with_options(
+            repo.0.to_str().unwrap(),
+            &destination,
+            &CloneOptions {
+                branch: "feature".into(),
+                include_submodules: false,
+                fetch_all: false,
+            },
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(
+            git::run(&destination, &["branch", "--show-current"]).unwrap(),
+            b"feature\n"
+        );
+        assert!(git::run(&destination, &["tag", "--list"])
+            .unwrap()
+            .is_empty());
+        let refs = git::run(
+            &destination,
+            &["for-each-ref", "--format=%(refname)", "refs/remotes/origin"],
+        )
+        .unwrap();
+        assert!(!String::from_utf8(refs).unwrap().contains("origin/main"));
+        assert!(parse_clone_branches("bad\trefs/heads/main").is_err());
     }
 
     #[test]

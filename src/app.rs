@@ -279,7 +279,10 @@ impl SannyGitApp {
         match action {
             MenuAction::NewWindow => self.run_repository_job(RepositoryJob::NewWindow),
             MenuAction::AddGroup => self.manager.dialog = Some(RepositoryDialog::Group),
-            MenuAction::Clone => self.manager.dialog = Some(RepositoryDialog::Clone),
+            MenuAction::Clone => {
+                self.manager.clone_step = 0;
+                self.manager.dialog = Some(RepositoryDialog::Clone);
+            }
             MenuAction::SearchRepositories => self.manager.dialog = Some(RepositoryDialog::Search),
             MenuAction::CloseRepository => self.close_repository(false),
             MenuAction::AddWorktree | MenuAction::RemoveWorktree => {
@@ -1243,7 +1246,7 @@ mod tests {
                     output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
                     output.textures_delta.clear();
                 }
-                for text in ["Open", "Settings", "Add or Create Repository"] {
+                for text in ["OK", "Settings", "Add existing or create new repository"] {
                     assert!(
                         visible_text(&output.shapes, text),
                         "{text} clipped at {size:?} in {theme:?}"
@@ -1371,7 +1374,7 @@ mod tests {
                 app.manager.confirm_remove = true;
                 for (dialog, button) in [
                     (RepositoryDialog::Group, "Add Group"),
-                    (RepositoryDialog::Clone, "Clone"),
+                    (RepositoryDialog::Clone, "Continue"),
                     (RepositoryDialog::Search, "Add Selected"),
                     (RepositoryDialog::Worktrees, "Remove Worktree"),
                     (RepositoryDialog::Prune, "Prune Obsolete Metadata"),
@@ -1391,6 +1394,21 @@ mod tests {
                         app.worker.is_none(),
                         "Rendering repository dialogs must not execute Git operations"
                     );
+                }
+                app.manager.dialog = Some(RepositoryDialog::Clone);
+                app.manager.clone_branches = vec!["main".into(), "feature".into()];
+                app.manager.clone_options.branch = "main".into();
+                for (step, label) in [(1, "Check Out Branch:"), (2, "Finish")] {
+                    app.manager.clone_step = step;
+                    for _ in 0..3 {
+                        output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
+                        output.textures_delta.clear();
+                    }
+                    assert!(
+                        visible_text(&output.shapes, label),
+                        "Clone step {step} clipped at {size:?} in {theme:?}"
+                    );
+                    assert!(app.worker.is_none());
                 }
             }
         }
