@@ -5,6 +5,7 @@ mod branches;
 mod diff;
 mod git;
 mod history;
+mod menu;
 #[cfg(test)]
 mod mock_data;
 mod models;

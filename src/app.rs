@@ -49,6 +49,7 @@ pub struct SannyGitApp {
     #[cfg(target_os = "macos")]
     native_menu: Option<crate::native_menu::NativeMenu>,
     pub theme: ThemeChoice,
+    pub about_dialog: bool,
     applied_theme: ThemeChoice,
     pub repositories: Vec<Repository>,
     pub refs: Vec<crate::models::BranchRef>,
@@ -136,6 +137,7 @@ impl SannyGitApp {
             #[cfg(target_os = "macos")]
             native_menu: None,
             theme,
+            about_dialog: false,
             applied_theme: theme,
             repositories: Vec::new(),
             refs: Vec::new(),
@@ -217,6 +219,53 @@ impl SannyGitApp {
         self.state_current = false;
         self.status = "Loading repository…".into();
         self.start_worker(move || WorkerResult::Repository(git::load(&PathBuf::from(path))));
+    }
+
+    pub fn menu_action_enabled(&self, action: crate::menu::MenuAction) -> bool {
+        use crate::menu::MenuAction;
+        match action {
+            MenuAction::Open
+            | MenuAction::LightTheme
+            | MenuAction::DarkTheme
+            | MenuAction::Close
+            | MenuAction::About => true,
+            MenuAction::Refresh | MenuAction::ReloadHistory => {
+                !self.busy() && self.repositories.get(self.selected_repository).is_some()
+            }
+            MenuAction::Stage => self.staging_allowed(self.selected_change, true),
+            MenuAction::Unstage => self.staging_allowed(self.selected_change, false),
+            MenuAction::Commit => self.commit_blocker().is_none(),
+            MenuAction::CreateBranch => {
+                !self.busy() && self.state_current && self.refs_current && self.branch_head_exists
+            }
+            MenuAction::SwitchBranch => self.switch_branch_blocker().is_none(),
+        }
+    }
+
+    pub fn handle_menu_action(
+        &mut self,
+        action: crate::menu::MenuAction,
+        context: &eframe::egui::Context,
+    ) {
+        if !self.menu_action_enabled(action) {
+            return;
+        }
+        use crate::menu::MenuAction;
+        match action {
+            MenuAction::Open => self.open_dialog = true,
+            MenuAction::Refresh => self.refresh(),
+            MenuAction::Stage => self.set_staged(self.selected_change, true),
+            MenuAction::Unstage => self.set_staged(self.selected_change, false),
+            MenuAction::Commit => self.create_commit(),
+            MenuAction::CreateBranch => self.branch_dialog_open = true,
+            MenuAction::SwitchBranch => self.switch_branch(),
+            MenuAction::ReloadHistory => self.reload_history(),
+            MenuAction::LightTheme => self.theme = ThemeChoice::Light,
+            MenuAction::DarkTheme => self.theme = ThemeChoice::Dark,
+            MenuAction::Close => context.send_viewport_cmd(eframe::egui::ViewportCommand::Close),
+            MenuAction::About => self.about_dialog = true,
+        }
+        context.request_repaint();
     }
 
     pub fn refresh(&mut self) {
@@ -805,10 +854,7 @@ impl eframe::App for SannyGitApp {
                 .map(|menu| menu.take_actions())
                 .unwrap_or_default();
             for action in actions {
-                match action {
-                    crate::native_menu::MenuAction::Open => self.open_dialog = true,
-                    crate::native_menu::MenuAction::Refresh => self.refresh(),
-                }
+                self.handle_menu_action(action, ui.ctx());
             }
         }
         ui::show(ui, self);
@@ -818,9 +864,7 @@ impl eframe::App for SannyGitApp {
         self.load_commit_preview();
         #[cfg(target_os = "macos")]
         if let Some(menu) = &self.native_menu {
-            menu.set_refresh_enabled(
-                !self.busy() && self.repositories.get(self.selected_repository).is_some(),
-            );
+            menu.update_enabled(|action| self.menu_action_enabled(action));
         }
         if self.busy() {
             ui.ctx()

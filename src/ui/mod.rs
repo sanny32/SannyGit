@@ -71,6 +71,15 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let context = ui.ctx().clone();
     let palette = app.theme.palette();
     toolbar::show(ui, app);
+    eframe::egui::Window::new("About SannyGit")
+        .open(&mut app.about_dialog)
+        .resizable(false)
+        .show(ui.ctx(), |ui| {
+            ui.heading("SannyGit");
+            ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+            ui.label("A desktop Git client built with Rust and egui.");
+            ui.label("MIT License");
+        });
     if let Some(error) = app.error.clone() {
         Panel::top("repository.error")
             .frame(

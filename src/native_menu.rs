@@ -1,23 +1,16 @@
 //! macOS menu bar. AppKit callbacks enqueue actions instead of borrowing the egui app.
 use eframe::egui;
-use objc2::{
-    define_class, msg_send,
-    rc::Retained,
-    runtime::{AnyObject, Sel},
-    sel, DefinedClass, MainThreadOnly,
-};
+use objc2::{define_class, msg_send, rc::Retained, sel, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
 use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSString};
 use std::sync::mpsc::{self, Receiver, Sender};
 
-pub enum MenuAction {
-    Open,
-    Refresh,
-}
+use crate::menu::{MenuAction, MENUS};
 
 struct HandlerState {
     sender: Sender<MenuAction>,
     context: egui::Context,
+    actions: Vec<MenuAction>,
 }
 
 define_class!(
@@ -31,12 +24,13 @@ define_class!(
     unsafe impl NSObjectProtocol for MenuHandler {}
 
     impl MenuHandler {
-        // SAFETY: These selectors use the standard target/action signature.
-        #[unsafe(method(openRepository:))]
-        fn open_repository(&self, _sender: &AnyObject) { self.enqueue(MenuAction::Open); }
-
-        #[unsafe(method(refreshRepository:))]
-        fn refresh_repository(&self, _sender: &AnyObject) { self.enqueue(MenuAction::Refresh); }
+        // SAFETY: AppKit passes the NSMenuItem that invokes this action.
+        #[unsafe(method(performMenuAction:))]
+        fn perform_menu_action(&self, sender: &NSMenuItem) {
+            if let Ok(index) = usize::try_from(sender.tag()) {
+                if let Some(action) = self.ivars().actions.get(index).copied() { self.enqueue(action); }
+            }
+        }
     }
 );
 
@@ -55,8 +49,7 @@ impl MenuHandler {
 
 pub struct NativeMenu {
     _handler: Retained<MenuHandler>,
-    open: Retained<NSMenuItem>,
-    refresh: Retained<NSMenuItem>,
+    items: Vec<(MenuAction, Retained<NSMenuItem>)>,
     receiver: Receiver<MenuAction>,
 }
 
@@ -72,33 +65,68 @@ impl NativeMenu {
             HandlerState {
                 sender,
                 context: context.clone(),
+                actions: MENUS
+                    .iter()
+                    .flat_map(|menu| menu.items.iter().filter_map(|item| item.action))
+                    .collect(),
             },
         );
-        let repository = submenu(marker, &root, "Repository");
-        let view = submenu(marker, &root, "View");
-        let open = action(marker, "Open…", "o", sel!(openRepository:), &handler);
-        let refresh = action(
-            marker,
-            "Refresh",
-            "\u{f708}",
-            sel!(refreshRepository:),
-            &handler,
-        ); // F5
-           // Function keys should not require the default Command modifier.
-        refresh.setKeyEquivalentModifierMask(objc2_app_kit::NSEventModifierFlags::empty());
-        refresh.setEnabled(false);
-        repository.addItem(&open);
-        view.addItem(&refresh);
+        let mut items = Vec::new();
+        for definition in MENUS {
+            let menu = submenu(marker, &root, definition.title);
+            for definition in definition.items {
+                // SAFETY: The selector has the standard NSMenuItem target/action ABI.
+                let item = unsafe {
+                    NSMenuItem::initWithTitle_action_keyEquivalent(
+                        NSMenuItem::alloc(marker),
+                        &NSString::from_str(definition.label),
+                        definition.action.map(|_| sel!(performMenuAction:)),
+                        &NSString::from_str(match definition.action {
+                            Some(MenuAction::Open) => "o",
+                            Some(MenuAction::Refresh) => "\u{f708}",
+                            Some(MenuAction::Close) => "w",
+                            _ => "",
+                        }),
+                    )
+                };
+                if let Some(action) = definition.action {
+                    item.setTag(items.len() as isize);
+                    if action == MenuAction::Refresh {
+                        item.setKeyEquivalentModifierMask(
+                            objc2_app_kit::NSEventModifierFlags::empty(),
+                        );
+                    }
+                    // SAFETY: NativeMenu retains the handler until all targets are detached.
+                    unsafe {
+                        item.setTarget(Some(&handler));
+                    }
+                    item.setEnabled(matches!(
+                        action,
+                        MenuAction::Open
+                            | MenuAction::LightTheme
+                            | MenuAction::DarkTheme
+                            | MenuAction::Close
+                            | MenuAction::About
+                    ));
+                    items.push((action, item.clone()));
+                } else {
+                    item.setEnabled(false);
+                    item.setToolTip(Some(&NSString::from_str("Not implemented yet")));
+                }
+                menu.addItem(&item);
+            }
+        }
         Some(Self {
             _handler: handler,
-            open,
-            refresh,
+            items,
             receiver,
         })
     }
 
-    pub fn set_refresh_enabled(&self, enabled: bool) {
-        self.refresh.setEnabled(enabled);
+    pub fn update_enabled(&self, enabled: impl Fn(MenuAction) -> bool) {
+        for (action, item) in &self.items {
+            item.setEnabled(enabled(*action));
+        }
     }
     pub fn take_actions(&self) -> Vec<MenuAction> {
         self.receiver.try_iter().collect()
@@ -108,7 +136,7 @@ impl NativeMenu {
 impl Drop for NativeMenu {
     fn drop(&mut self) {
         // Detach the weak target before releasing the retained handler.
-        for item in [&self.open, &self.refresh] {
+        for (_, item) in &self.items {
             item.setEnabled(false);
             // SAFETY: nil removes the callback target and selector.
             unsafe {
@@ -128,25 +156,4 @@ fn submenu(marker: MainThreadMarker, root: &NSMenu, title: &str) -> Retained<NSM
     item.setSubmenu(Some(&menu));
     root.addItem(&item);
     menu
-}
-
-fn action(
-    marker: MainThreadMarker,
-    title: &str,
-    key: &str,
-    selector: Sel,
-    handler: &MenuHandler,
-) -> Retained<NSMenuItem> {
-    // SAFETY: Selectors are implemented above with the target/action ABI. The
-    // NativeMenu retains the handler for as long as these items can be invoked.
-    unsafe {
-        let item = NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(marker),
-            &NSString::from_str(title),
-            Some(selector),
-            &NSString::from_str(key),
-        );
-        item.setTarget(Some(handler));
-        item
-    }
 }

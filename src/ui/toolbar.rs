@@ -59,40 +59,24 @@ fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
         )
         .show(ui, |ui| {
             eframe::egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("Repository", |ui| {
-                    if ui
-                        .add(Button::image_and_text(
-                            icons::image(Icon::Folder, palette.accent, 16.0),
-                            "Open…",
-                        ))
-                        .clicked()
-                    {
-                        app.open_dialog = true;
-                        ui.close();
-                    }
-                });
-                ui.menu_button("View", |ui| {
-                    let enabled =
-                        !app.busy() && app.repositories.get(app.selected_repository).is_some();
-                    if ui
-                        .add_enabled(
-                            enabled,
-                            Button::image_and_text(
-                                icons::image(Icon::Fetch, palette.accent, 16.0),
-                                "Refresh",
-                            ),
-                        )
-                        .on_disabled_hover_text(if app.busy() {
-                            "Wait for the current operation to finish"
-                        } else {
-                            "Open a repository first"
-                        })
-                        .clicked()
-                    {
-                        app.refresh();
-                        ui.close();
-                    }
-                });
+                for menu in crate::menu::MENUS {
+                    ui.menu_button(menu.title, |ui| {
+                        for item in menu.items {
+                            let enabled = item
+                                .action
+                                .is_some_and(|action| app.menu_action_enabled(action));
+                            let response = ui.add_enabled(enabled, Button::new(item.label));
+                            if let Some(action) = item.action {
+                                if response.clicked() {
+                                    app.handle_menu_action(action, ui.ctx());
+                                    ui.close();
+                                }
+                            } else {
+                                response.on_disabled_hover_text("Not implemented yet");
+                            }
+                        }
+                    });
+                }
             });
         });
 }
