@@ -1,4 +1,4 @@
-use crate::models::{ChangeFile, ChangeKind, Commit, Repository};
+use crate::models::{BranchRef, ChangeFile, ChangeKind, Commit, RefKind, Repository};
 
 pub fn repositories() -> Vec<Repository> {
     vec![
@@ -21,28 +21,48 @@ pub fn repositories() -> Vec<Repository> {
     ]
 }
 
-pub fn local_branches() -> Vec<&'static str> {
-    vec![
-        "main",
-        "develop",
-        "feature/ui-redesign",
-        "feature/diff-view",
-        "fix/windows-build",
+pub fn refs() -> Vec<BranchRef> {
+    [
+        (
+            RefKind::Local,
+            "refs/heads/",
+            vec![
+                "main",
+                "develop",
+                "feature/ui-redesign",
+                "feature/diff-view",
+                "fix/windows-build",
+            ],
+        ),
+        (
+            RefKind::Remote,
+            "refs/remotes/",
+            vec![
+                "origin/main",
+                "origin/develop",
+                "origin/feature/ui-redesign",
+                "origin/feature/diff-view",
+                "origin/release/1.0",
+            ],
+        ),
+        (RefKind::Tag, "refs/tags/", vec!["v1.0.0", "v0.9.0"]),
     ]
-}
-
-pub fn remote_branches() -> Vec<&'static str> {
-    vec![
-        "origin/main",
-        "origin/develop",
-        "origin/feature/ui-redesign",
-        "origin/feature/diff-view",
-        "origin/release/1.0",
-    ]
-}
-
-pub fn tags() -> Vec<&'static str> {
-    vec!["v1.0.0", "v0.9.0"]
+    .into_iter()
+    .flat_map(|(kind, prefix, names)| {
+        names.into_iter().map(move |name| BranchRef {
+            name: name.into(),
+            full_name: format!("{prefix}{name}"),
+            hash: "a".repeat(40),
+            upstream: if kind == RefKind::Local {
+                Some(format!("origin/{name}"))
+            } else {
+                None
+            },
+            current: kind == RefKind::Local && name == "main",
+            kind,
+        })
+    })
+    .collect()
 }
 
 pub fn changes() -> Vec<ChangeFile> {

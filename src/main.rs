@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod branches;
 mod diff;
 mod git;
 mod history;

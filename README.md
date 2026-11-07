@@ -4,7 +4,7 @@ SannyGit is a simple, fast, modern, open-source Git GUI client built with Rust a
 
 ## Current status
 
-Stages 1–3 connect the Working Tree interface to the installed Git executable:
+Stages 1–4 connect the Working Tree interface to the installed Git executable:
 
 - Use **Open** (or **+** in Repositories) and enter a local working-tree directory. A subdirectory, an unborn repository, and a linked worktree are supported; bare repositories are not.
 - Select a saved repository to open it again. Repository paths and the selected theme are persisted locally.
@@ -16,16 +16,20 @@ Stages 1–3 connect the Working Tree interface to the installed Git executable:
 - **Journal** loads the newest 500 commits in topological order from the current branch/HEAD or all branches. Its graph follows actual parent links. Search matches the loaded messages, author names/emails and hashes; connections are hidden while filtering.
 - Click a Journal row to open **Commit details** with the full message, author, date, hash, parents and a read-only diff. Merge commits are compared with their first parent. Root commits (and shallow boundaries) show the available root patch. Copy hash copies the full object ID.
 - History reloads after repository refresh and index/commit operations; **Reload** refreshes Journal alone. A failed history read retains previous rows with an error and does not block repository writes. Large commit diffs report the display limit and can be retried separately.
+- **Branches** loads local branches, remote-tracking branches and tags, marks the checked-out local branch and shows upstream/object information in tooltips. Symbolic aliases such as `origin/HEAD` are hidden. Filter matches names and upstreams; the reload icon refreshes repository state and refs together.
+- Select a local branch and click **Switch**. This stage requires a clean index and working tree, including untracked files. Git refuses overwriting ignored files and branches occupied by other worktrees; force, auto-stash, remote guessing and submodule recursion are not used.
+- **+** opens **Create branch**, starting from current HEAD. Choose whether to switch to the new branch. Creation without switching also works with local changes; creation with switching requires a clean tree. Create the first commit before creating additional branches. Duplicate/invalid names are reported without replacing existing branches.
+- Remote branches and tags are currently read-only. Branch creation/switch attempts refresh status, refs and history; unsuccessful attempts retain the branch-name draft and show an error.
 - Errors appear above the work area. If refresh fails, the previous view remains visible and write actions are disabled until a successful refresh.
 
-The application starts with an empty repository list and uses real Git data after opening a repository. Mock data is used only by tests. Branch management, amend, conflict resolution, partial-hunk staging and remote operations are not implemented yet; their actions remain disabled or hidden. Repository writes happen only after an explicit Stage, Unstage or Commit action.
+The application starts with an empty repository list and uses real Git data after opening a repository. Mock data is used only by tests. Branch deletion/renaming, remote tracking setup, tag operations, amend, conflict resolution, partial-hunk staging and remote operations are not implemented yet; their actions remain disabled or hidden. Repository writes happen only after an explicit Stage, Unstage, Commit, Create or Switch action.
 
-Display limits: 500 loaded commits; 5,000 changed files; 2 MiB per Git command or file preview; 10,000 diff lines; 16 KiB per diff line. Git commands time out after 15 seconds. Non-UTF-8 paths and text are reported as unsupported. There is no automatic filesystem watcher yet: use Refresh to update the view.
+Display limits: 5,000 refs; 500 loaded commits; 5,000 changed files; 2 MiB per Git command or file preview; 10,000 diff lines; 16 KiB per diff line. Git commands time out after 15 seconds. Non-UTF-8 paths and text are reported as unsupported. There is no automatic filesystem watcher yet: use Refresh to update the view.
 
 ## Requirements
 
 - Rust 1.95 or newer
-- Git 2.23 or newer installed and available on `PATH` (for `restore --staged`)
+- Git 2.23 or newer installed and available on `PATH` (for `restore --staged` and `switch`)
 - A supported desktop platform: Windows, Linux, or macOS
 
 The UI uses eframe/egui 0.37 with font hinting enabled for sharper small text.

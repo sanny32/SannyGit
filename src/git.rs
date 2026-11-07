@@ -109,6 +109,10 @@ fn command_error(operation: &str) -> String {
     // Do not parse localized diagnostics or echo private URLs and hook output.
     let reason = if operation == "commit" {
         "Check your Git identity, signing configuration and commit hooks. Refresh before retrying."
+    } else if operation == "switch" {
+        "Check for a branch used by another worktree, an in-progress Git operation, file conflicts or repository permissions. Refresh before retrying."
+    } else if operation == "branch" {
+        "Check the branch name, existing refs, ref locks and repository permissions. Refresh before retrying."
     } else if matches!(operation, "add" | "restore" | "update-index") {
         "Check whether the index is locked by another Git operation and verify repository permissions. Refresh before retrying."
     } else {
@@ -198,19 +202,18 @@ pub fn load(path: &Path) -> Result<Snapshot, String> {
     // Git appends exactly one line ending; preserve whitespace in directory names.
     let root = root.strip_suffix('\n').unwrap_or(&root);
     let path = PathBuf::from(root);
-    let branch = run(&path, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .and_then(text)
-        .map(|value| value.trim().to_owned())
-        .or_else(|_| {
-            text(run(&path, &["symbolic-ref", "--short", "HEAD"])?).map(|s| s.trim().to_owned())
-        })?;
-    let branch = if branch == "HEAD" {
-        format!(
+    let branch = match run(&path, &["symbolic-ref", "--quiet", "HEAD"]) {
+        Ok(output) => {
+            let name = text(output)?;
+            name.trim_end_matches('\n')
+                .strip_prefix("refs/heads/")
+                .ok_or("Unexpected HEAD reference")?
+                .to_owned()
+        }
+        Err(_) => format!(
             "Detached at {}",
             text(run(&path, &["rev-parse", "--short", "HEAD"])?)?.trim()
-        )
-    } else {
-        branch
+        ),
     };
     let changes = parse_status(&run(
         &path,

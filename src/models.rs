@@ -46,6 +46,27 @@ pub struct ChangeFile {
     pub diff: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefKind {
+    Local,
+    Remote,
+    Tag,
+}
+
+pub struct BranchRef {
+    pub name: String,
+    pub full_name: String,
+    pub hash: String,
+    pub upstream: Option<String>,
+    pub current: bool,
+    pub kind: RefKind,
+}
+
+pub struct RefSnapshot {
+    pub refs: Vec<BranchRef>,
+    pub has_head: bool,
+}
+
 pub struct Commit {
     pub message: String,
     pub author: String,

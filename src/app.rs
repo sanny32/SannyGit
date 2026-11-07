@@ -4,6 +4,10 @@ use std::{
 };
 
 enum WorkerResult {
+    Refs {
+        path: String,
+        result: Result<crate::models::RefSnapshot, String>,
+    },
     History {
         path: String,
         all: bool,
@@ -16,6 +20,7 @@ enum WorkerResult {
     Repository(Result<crate::git::Snapshot, String>),
     Operation {
         committed: bool,
+        success: &'static str,
         outcome: Result<(), String>,
         snapshot: Result<crate::git::Snapshot, String>,
     },
@@ -44,9 +49,15 @@ pub struct SannyGitApp {
     pub theme: ThemeChoice,
     applied_theme: ThemeChoice,
     pub repositories: Vec<Repository>,
-    pub local_branches: Vec<&'static str>,
-    pub remote_branches: Vec<&'static str>,
-    pub tags: Vec<&'static str>,
+    pub refs: Vec<crate::models::BranchRef>,
+    pub refs_current: bool,
+    pub refs_loading: bool,
+    pub refs_error: Option<String>,
+    refs_pending: bool,
+    pub branch_head_exists: bool,
+    pub branch_dialog_open: bool,
+    pub new_branch_name: String,
+    pub switch_to_new_branch: bool,
     pub changes: Vec<ChangeFile>,
     pub commits: Vec<Commit>,
     pub selected_repository: usize,
@@ -119,9 +130,15 @@ impl SannyGitApp {
             theme,
             applied_theme: theme,
             repositories: Vec::new(),
-            local_branches: Vec::new(),
-            remote_branches: Vec::new(),
-            tags: Vec::new(),
+            refs: Vec::new(),
+            refs_current: false,
+            refs_loading: false,
+            refs_error: None,
+            refs_pending: false,
+            branch_head_exists: false,
+            branch_dialog_open: false,
+            new_branch_name: String::new(),
+            switch_to_new_branch: true,
             changes: Vec::new(),
             commits: Vec::new(),
             selected_repository: usize::MAX,
@@ -228,17 +245,22 @@ impl SannyGitApp {
         self.loaded_diff = None;
         self.diff_preview = None;
         self.open_dialog = false;
-        self.local_branches.clear();
-        self.remote_branches.clear();
-        self.tags.clear();
+        self.refs_current = false;
+        self.refs_pending = true;
+        self.refs_loading = true;
+        self.refs_error = None;
         self.history_pending = true;
         self.history_loading = true;
         self.history_error = None;
         self.commit_preview = None;
         self.commit_preview_error = None;
         self.loaded_commit = None;
-        self.selected_branch.clear();
         if !same_repository {
+            self.selected_branch.clear();
+            self.refs.clear();
+            self.branch_head_exists = false;
+            self.branch_dialog_open = false;
+            self.new_branch_name.clear();
             self.commits.clear();
             self.history_edges.clear();
             self.history_max_lane = 0;
@@ -256,6 +278,134 @@ impl SannyGitApp {
             "Ready"
         }
         .into();
+    }
+
+    fn load_refs(&mut self) {
+        if self.busy() || !self.refs_pending {
+            return;
+        }
+        let Some(repository) = self.repositories.get(self.selected_repository) else {
+            return;
+        };
+        let path = repository.path.clone();
+        self.refs_pending = false;
+        if !self.start_worker(move || WorkerResult::Refs {
+            result: crate::branches::load(&PathBuf::from(&path)),
+            path,
+        }) {
+            self.refs_loading = false;
+            self.refs_error = self.error.clone();
+        }
+    }
+
+    fn branch_base_blocker(&self) -> Option<&'static str> {
+        if self.busy() {
+            Some("Wait for the current operation to finish")
+        } else if self.repositories.get(self.selected_repository).is_none() {
+            Some("Open a repository first")
+        } else if !self.state_current || !self.refs_current {
+            Some("Refresh the repository and branches before continuing")
+        } else {
+            None
+        }
+    }
+
+    pub fn switch_branch_blocker(&self) -> Option<&'static str> {
+        if let Some(reason) = self.branch_base_blocker() {
+            return Some(reason);
+        }
+        let Some(target) = self
+            .refs
+            .iter()
+            .find(|r| r.full_name == self.selected_branch)
+        else {
+            return Some("Select a local branch");
+        };
+        if target.kind != crate::models::RefKind::Local {
+            return Some("Remote branches and tags are read-only in this stage");
+        }
+        if target.current {
+            return Some("This branch is already checked out");
+        }
+        if let Some(reason) = crate::branches::name_hint(&target.name) {
+            return Some(reason);
+        }
+        if !self.changes.is_empty() {
+            return Some("Commit or move aside local changes before switching branches");
+        }
+        None
+    }
+
+    pub fn create_branch_blocker(&self) -> Option<&'static str> {
+        if let Some(reason) = self.branch_base_blocker() {
+            return Some(reason);
+        }
+        if !self.branch_head_exists {
+            return Some("Create the first commit before creating another branch");
+        }
+        if let Some(reason) = crate::branches::name_hint(&self.new_branch_name) {
+            return Some(reason);
+        }
+        if self
+            .refs
+            .iter()
+            .any(|r| r.full_name == format!("refs/heads/{}", self.new_branch_name))
+        {
+            return Some("A local branch with this name already exists");
+        }
+        if self.switch_to_new_branch && !self.changes.is_empty() {
+            return Some("Commit or move aside changes, or disable switching to the new branch");
+        }
+        None
+    }
+
+    pub fn switch_branch(&mut self) {
+        if self.switch_branch_blocker().is_some() {
+            return;
+        }
+        let root = PathBuf::from(&self.repositories[self.selected_repository].path);
+        let target = self.selected_branch.clone();
+        self.state_current = false;
+        self.refs_current = false;
+        self.error = None;
+        self.status = "Switching branch…".into();
+        self.start_worker(move || {
+            let outcome = crate::branches::switch(&root, &target);
+            let snapshot = git::load(&root);
+            WorkerResult::Operation {
+                committed: false,
+                success: "Branch switched",
+                outcome,
+                snapshot,
+            }
+        });
+    }
+
+    pub fn create_branch(&mut self) {
+        if self.create_branch_blocker().is_some() {
+            return;
+        }
+        let root = PathBuf::from(&self.repositories[self.selected_repository].path);
+        let name = self.new_branch_name.clone();
+        let switch_to = self.switch_to_new_branch;
+        self.state_current = false;
+        self.refs_current = false;
+        self.error = None;
+        self.status = "Creating branch…".into();
+        self.start_worker(move || {
+            let outcome = crate::branches::create(&root, &name, switch_to);
+            let snapshot = git::load(&root);
+            WorkerResult::Operation {
+                committed: false,
+                success: if switch_to {
+                    "Branch created and switched"
+                } else {
+                    "Branch created"
+                },
+                outcome,
+                snapshot,
+            }
+        });
     }
 
     pub fn reload_history(&mut self) {
@@ -366,6 +516,7 @@ impl SannyGitApp {
             let snapshot = git::load(&root);
             WorkerResult::Operation {
                 committed: false,
+                success: "Index updated",
                 outcome,
                 snapshot,
             }
@@ -411,6 +562,7 @@ impl SannyGitApp {
             let snapshot = git::load(&root);
             WorkerResult::Operation {
                 committed,
+                success: "Commit created",
                 outcome,
                 snapshot,
             }
@@ -427,6 +579,11 @@ impl SannyGitApp {
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.worker = None;
                 self.error = Some("Background worker stopped unexpectedly".into());
+                if self.refs_loading && !self.refs_pending {
+                    self.refs_loading = false;
+                    self.refs_current = false;
+                    self.refs_error = self.error.clone();
+                }
                 if self.history_loading && !self.history_pending {
                     self.history_loading = false;
                     self.history_error = self.error.clone();
@@ -443,6 +600,39 @@ impl SannyGitApp {
         };
         self.worker = None;
         match result {
+            WorkerResult::Refs { path, result } => {
+                if self
+                    .repositories
+                    .get(self.selected_repository)
+                    .is_some_and(|r| r.path == path)
+                {
+                    self.refs_loading = false;
+                    match result {
+                        Ok(snapshot) => {
+                            self.refs = snapshot.refs;
+                            self.branch_head_exists = snapshot.has_head;
+                            self.refs_current = true;
+                            self.refs_error = None;
+                            if !self
+                                .refs
+                                .iter()
+                                .any(|r| r.full_name == self.selected_branch)
+                            {
+                                self.selected_branch = self
+                                    .refs
+                                    .iter()
+                                    .find(|r| r.current)
+                                    .map(|r| r.full_name.clone())
+                                    .unwrap_or_default();
+                            }
+                        }
+                        Err(error) => {
+                            self.refs_current = false;
+                            self.refs_error = Some(error);
+                        }
+                    }
+                }
+            }
             WorkerResult::History { path, all, result } => {
                 if self
                     .repositories
@@ -493,11 +683,16 @@ impl SannyGitApp {
             }
             WorkerResult::Operation {
                 committed,
+                success,
                 outcome,
                 snapshot,
             } => {
                 if committed {
                     self.commit_message.clear();
+                }
+                if outcome.is_ok() && success.starts_with("Branch created") {
+                    self.branch_dialog_open = false;
+                    self.new_branch_name.clear();
                 }
                 let refreshed = snapshot.is_ok();
                 match snapshot {
@@ -512,12 +707,7 @@ impl SannyGitApp {
                 match outcome {
                     Ok(()) => {
                         if refreshed {
-                            self.status = if committed {
-                                "Commit created"
-                            } else {
-                                "Index updated"
-                            }
-                            .into();
+                            self.status = success.into();
                         }
                     }
                     Err(error) => {
@@ -571,7 +761,14 @@ impl SannyGitApp {
         }
         self.loaded_diff = Some(index);
         if self.error.is_none()
-            && !matches!(self.status.as_str(), "Commit created" | "Index updated")
+            && !matches!(
+                self.status.as_str(),
+                "Commit created"
+                    | "Index updated"
+                    | "Branch switched"
+                    | "Branch created"
+                    | "Branch created and switched"
+            )
         {
             self.status = "Loading diff…".into();
         }
@@ -594,6 +791,7 @@ impl eframe::App for SannyGitApp {
         self.poll_worker();
         ui::show(ui, self);
         self.load_selected_diff();
+        self.load_refs();
         self.load_history();
         self.load_commit_preview();
         if self.busy() {
@@ -709,6 +907,7 @@ mod tests {
             &mut app,
             WorkerResult::Operation {
                 committed: false,
+                success: "Index updated",
                 outcome: Err("Hook rejected commit".into()),
                 snapshot: Err("Refresh failed".into()),
             },
@@ -720,6 +919,7 @@ mod tests {
             &mut app,
             WorkerResult::Operation {
                 committed: true,
+                success: "Commit created",
                 outcome: Ok(()),
                 snapshot: Err("Refresh failed".into()),
             },
@@ -780,6 +980,75 @@ mod tests {
             },
         );
         assert_eq!(app.commit_preview.as_ref().unwrap().added, 1);
+    }
+
+    #[test]
+    fn branch_actions_require_fresh_refs_and_clean_switches() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories = crate::mock_data::repositories();
+        app.selected_repository = 0;
+        app.refs = crate::mock_data::refs();
+        app.selected_branch = "refs/heads/develop".into();
+        app.state_current = true;
+        app.branch_head_exists = true;
+        app.new_branch_name = "feature/new".into();
+        assert!(app.switch_branch_blocker().is_some());
+        app.refs_current = true;
+        assert!(app.switch_branch_blocker().is_none());
+        assert!(app.create_branch_blocker().is_none());
+        app.changes = crate::mock_data::changes();
+        assert!(app.switch_branch_blocker().is_some());
+        assert!(app.create_branch_blocker().is_some());
+        app.switch_branch();
+        app.create_branch();
+        assert!(!app.busy());
+        app.switch_to_new_branch = false;
+        assert!(app.create_branch_blocker().is_none());
+        app.branch_head_exists = false;
+        assert!(app
+            .create_branch_blocker()
+            .unwrap()
+            .contains("first commit"));
+        app.changes.clear();
+        app.selected_branch = "refs/tags/v1.0.0".into();
+        assert!(app.switch_branch_blocker().unwrap().contains("read-only"));
+    }
+
+    #[test]
+    fn branch_load_errors_keep_rows_but_disable_branch_actions() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories = crate::mock_data::repositories();
+        app.selected_repository = 0;
+        app.refs = crate::mock_data::refs();
+        app.state_current = true;
+        app.refs_current = true;
+        let count = app.refs.len();
+        deliver(
+            &mut app,
+            WorkerResult::Refs {
+                path: "other repo".into(),
+                result: Ok(crate::models::RefSnapshot {
+                    refs: Vec::new(),
+                    has_head: false,
+                }),
+            },
+        );
+        assert_eq!(app.refs.len(), count);
+        assert!(app.refs_current);
+        let path = app.repositories[0].path.clone();
+        deliver(
+            &mut app,
+            WorkerResult::Refs {
+                path,
+                result: Err("Cannot read refs".into()),
+            },
+        );
+        assert_eq!(app.refs.len(), count);
+        assert!(app.state_current);
+        assert!(!app.refs_current);
+        assert!(app.refs_error.is_some());
+        assert!(app.switch_branch_blocker().is_some());
+        assert!(app.create_branch_blocker().is_some());
     }
 
     fn visible_text_count(shapes: &[ClippedShape], expected: &str) -> usize {
@@ -861,9 +1130,9 @@ mod tests {
                 app.commits = history.commits;
                 app.history_edges = history.edges;
                 app.history_max_lane = history.max_lane;
-                app.local_branches = crate::mock_data::local_branches();
-                app.remote_branches = crate::mock_data::remote_branches();
-                app.tags = crate::mock_data::tags();
+                app.refs = crate::mock_data::refs();
+                app.refs_current = true;
+                app.branch_head_exists = true;
                 app.selected_repository = 0;
                 app.state_current = true;
                 app.commit_message = "Layout check".into();
@@ -918,6 +1187,29 @@ mod tests {
                 assert!(
                     app.worker.is_none(),
                     "Rendering history must not run Git commands"
+                );
+                app.commit_details_open = false;
+                app.current_branch = "main".into();
+                app.branch_dialog_open = true;
+                app.new_branch_name = "feature/new-ui".into();
+                for _ in 0..3 {
+                    output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
+                    output.textures_delta.clear();
+                }
+                for text in [
+                    "Switch",
+                    "Create branch",
+                    "Switch to the new branch",
+                    "Create",
+                ] {
+                    assert!(
+                        visible_text(&output.shapes, text),
+                        "Branch control {text} clipped at {size:?} in {theme:?}"
+                    );
+                }
+                assert!(
+                    app.worker.is_none(),
+                    "Rendering branch controls must not run Git commands"
                 );
             }
         }
