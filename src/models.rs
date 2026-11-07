@@ -47,12 +47,39 @@ pub struct ChangeFile {
 }
 
 pub struct Commit {
-    pub message: &'static str,
-    pub author: &'static str,
-    pub date: &'static str,
-    pub hash: &'static str,
-    pub parents: &'static [&'static str],
+    pub message: String,
+    pub author: String,
+    pub email: String,
+    pub date: String,
+    pub hash: String,
+    pub parents: Vec<String>,
     pub lane: usize,
+}
+
+impl Commit {
+    pub fn subject(&self) -> &str {
+        self.message.lines().next().unwrap_or("(no message)")
+    }
+    pub fn matches(&self, query: &str) -> bool {
+        query.is_empty()
+            || [&self.message, &self.author, &self.email, &self.hash]
+                .iter()
+                .any(|value| value.to_lowercase().contains(query))
+    }
+}
+
+pub struct HistoryEdge {
+    pub child: usize,
+    pub parent: usize,
+    pub child_lane: usize,
+    pub parent_lane: usize,
+}
+
+pub struct History {
+    pub commits: Vec<Commit>,
+    pub edges: Vec<HistoryEdge>,
+    pub max_lane: usize,
+    pub truncated: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

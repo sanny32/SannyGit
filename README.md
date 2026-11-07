@@ -4,7 +4,7 @@ SannyGit is a simple, fast, modern, open-source Git GUI client built with Rust a
 
 ## Current status
 
-Stages 1–2 connect the Working Tree interface to the installed Git executable:
+Stages 1–3 connect the Working Tree interface to the installed Git executable:
 
 - Use **Open** (or **+** in Repositories) and enter a local working-tree directory. A subdirectory, an unborn repository, and a linked worktree are supported; bare repositories are not.
 - Select a saved repository to open it again. Repository paths and the selected theme are persisted locally.
@@ -13,11 +13,14 @@ Stages 1–2 connect the Working Tree interface to the installed Git executable:
 - Use **Stage / Unstage** for the selected file, or toggle its **Index** checkbox. Unstage preserves working-tree contents, including before the first commit. A dash indicates both staged and working-tree changes: clicking it unstages the file; Stage includes its remaining changes.
 - Enter a message and click **Commit** to commit all staged changes. The header shows the staged-file count. Unstaged changes are left out. Empty messages and unresolved conflicts block committing.
 - Git operations run on background threads. The index and diff refresh after each write attempt. A failed commit retains its message; a successful commit clears it. Git identity, hooks and signing configuration remain in effect.
+- **Journal** loads the newest 500 commits in topological order from the current branch/HEAD or all branches. Its graph follows actual parent links. Search matches the loaded messages, author names/emails and hashes; connections are hidden while filtering.
+- Click a Journal row to open **Commit details** with the full message, author, date, hash, parents and a read-only diff. Merge commits are compared with their first parent. Root commits (and shallow boundaries) show the available root patch. Copy hash copies the full object ID.
+- History reloads after repository refresh and index/commit operations; **Reload** refreshes Journal alone. A failed history read retains previous rows with an error and does not block repository writes. Large commit diffs report the display limit and can be retried separately.
 - Errors appear above the work area. If refresh fails, the previous view remains visible and write actions are disabled until a successful refresh.
 
-The application starts with an empty repository list and uses real Git data after opening a repository. Mock data is used only by tests. Branch management, history, amend, conflict resolution, partial-hunk staging and remote operations are not implemented yet; their actions remain disabled or hidden. Repository writes happen only after an explicit Stage, Unstage or Commit action.
+The application starts with an empty repository list and uses real Git data after opening a repository. Mock data is used only by tests. Branch management, amend, conflict resolution, partial-hunk staging and remote operations are not implemented yet; their actions remain disabled or hidden. Repository writes happen only after an explicit Stage, Unstage or Commit action.
 
-Display limits: 5,000 changed files; 2 MiB per Git command or file preview; 10,000 diff lines; 16 KiB per diff line. Git commands time out after 15 seconds. Non-UTF-8 paths and text are reported as unsupported. There is no automatic filesystem watcher yet: use Refresh to update the view.
+Display limits: 500 loaded commits; 5,000 changed files; 2 MiB per Git command or file preview; 10,000 diff lines; 16 KiB per diff line. Git commands time out after 15 seconds. Non-UTF-8 paths and text are reported as unsupported. There is no automatic filesystem watcher yet: use Refresh to update the view.
 
 ## Requirements
 

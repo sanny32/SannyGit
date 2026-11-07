@@ -3,6 +3,7 @@
 mod app;
 mod diff;
 mod git;
+mod history;
 #[cfg(test)]
 mod mock_data;
 mod models;

@@ -91,6 +91,15 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             });
         });
     });
+    render_preview(ui, preview, palette, &change.path);
+}
+
+pub fn render_preview(
+    ui: &mut Ui,
+    preview: &crate::models::DiffPreview,
+    palette: crate::theme::Palette,
+    id: &str,
+) {
     let code_theme = CodeTheme::from_style(ui.style());
     ui.spacing_mut().item_spacing.y = 0.0;
     ui.spacing_mut().interact_size.y = 18.0;
@@ -100,7 +109,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .available_width()
         .max(preview.max_columns as f32 * glyph_width + 72.0);
     ScrollArea::both()
-        .id_salt(("diff_lines", &change.path))
+        .id_salt(("diff_lines", id))
         .auto_shrink([false, false])
         .show_rows(ui, 18.0, preview.lines.len(), |ui, rows| {
             ui.style_mut().wrap_mode = Some(TextWrapMode::Extend);

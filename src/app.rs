@@ -4,6 +4,15 @@ use std::{
 };
 
 enum WorkerResult {
+    History {
+        path: String,
+        all: bool,
+        result: Result<crate::models::History, String>,
+    },
+    CommitPatch {
+        hash: String,
+        result: Result<crate::models::DiffPreview, String>,
+    },
     Repository(Result<crate::git::Snapshot, String>),
     Operation {
         committed: bool,
@@ -57,6 +66,18 @@ pub struct SannyGitApp {
     loaded_diff: Option<usize>,
     pub diff_preview: Option<crate::models::DiffPreview>,
     pub state_current: bool,
+    pub history_all_branches: bool,
+    pub history_edges: Vec<crate::models::HistoryEdge>,
+    pub history_max_lane: usize,
+    pub history_truncated: bool,
+    pub history_loading: bool,
+    pub history_error: Option<String>,
+    history_pending: bool,
+    pub selected_commit: Option<String>,
+    pub commit_details_open: bool,
+    pub commit_preview: Option<crate::models::DiffPreview>,
+    pub commit_preview_error: Option<String>,
+    loaded_commit: Option<String>,
 }
 
 impl SannyGitApp {
@@ -120,6 +141,18 @@ impl SannyGitApp {
             loaded_diff: None,
             diff_preview: None,
             state_current: false,
+            history_all_branches: false,
+            history_edges: Vec::new(),
+            history_max_lane: 0,
+            history_truncated: false,
+            history_loading: false,
+            history_error: None,
+            history_pending: false,
+            selected_commit: None,
+            commit_details_open: false,
+            commit_preview: None,
+            commit_preview_error: None,
+            loaded_commit: None,
         }
     }
     pub fn selected_diff(&self) -> Option<&crate::models::DiffPreview> {
@@ -132,7 +165,7 @@ impl SannyGitApp {
         self.worker.is_some()
     }
 
-    fn start_worker(&mut self, job: impl FnOnce() -> WorkerResult + Send + 'static) {
+    fn start_worker(&mut self, job: impl FnOnce() -> WorkerResult + Send + 'static) -> bool {
         let (sender, receiver) = mpsc::channel();
         match std::thread::Builder::new()
             .name("sannygit-reader".into())
@@ -141,10 +174,12 @@ impl SannyGitApp {
             }) {
             Ok(_) => {
                 self.worker = Some(receiver);
+                true
             }
             Err(e) => {
                 self.error = Some(format!("Cannot start background worker: {e}"));
                 self.status = "Operation failed".into();
+                false
             }
         }
     }
@@ -196,9 +231,21 @@ impl SannyGitApp {
         self.local_branches.clear();
         self.remote_branches.clear();
         self.tags.clear();
-        self.commits.clear();
+        self.history_pending = true;
+        self.history_loading = true;
+        self.history_error = None;
+        self.commit_preview = None;
+        self.commit_preview_error = None;
+        self.loaded_commit = None;
         self.selected_branch.clear();
         if !same_repository {
+            self.commits.clear();
+            self.history_edges.clear();
+            self.history_max_lane = 0;
+            self.history_truncated = false;
+            self.selected_commit = None;
+            self.commit_details_open = false;
+            self.commit_preview_error = None;
             self.commit_message.clear();
             self.branch_filter.clear();
             self.journal_filter.clear();
@@ -209,6 +256,85 @@ impl SannyGitApp {
             "Ready"
         }
         .into();
+    }
+
+    pub fn reload_history(&mut self) {
+        if self.busy() || self.repositories.get(self.selected_repository).is_none() {
+            return;
+        }
+        self.history_pending = true;
+        self.history_loading = true;
+        self.history_error = None;
+    }
+
+    pub fn select_commit(&mut self, hash: String) {
+        if !self.commits.iter().any(|c| c.hash == hash) {
+            return;
+        }
+        if self.selected_commit.as_ref() != Some(&hash) {
+            self.commit_preview = None;
+            self.commit_preview_error = None;
+            self.loaded_commit = None;
+        }
+        self.selected_commit = Some(hash);
+        self.commit_details_open = true;
+    }
+
+    pub fn retry_commit_preview(&mut self) {
+        if self.busy() {
+            return;
+        }
+        self.loaded_commit = None;
+        self.commit_preview_error = None;
+    }
+
+    fn load_history(&mut self) {
+        if self.busy() || !self.history_pending {
+            return;
+        }
+        let Some(repository) = self.repositories.get(self.selected_repository) else {
+            return;
+        };
+        let path = repository.path.clone();
+        let all = self.history_all_branches;
+        self.history_pending = false;
+        if !self.start_worker(move || WorkerResult::History {
+            result: crate::history::load(&PathBuf::from(&path), all),
+            path,
+            all,
+        }) {
+            self.history_loading = false;
+            self.history_error = self.error.clone();
+        }
+    }
+
+    fn load_commit_preview(&mut self) {
+        if self.busy() || !self.commit_details_open {
+            return;
+        }
+        let Some(hash) = self.selected_commit.clone() else {
+            return;
+        };
+        if self.loaded_commit.as_ref() == Some(&hash) {
+            return;
+        }
+        let Some(commit) = self.commits.iter().find(|c| c.hash == hash) else {
+            return;
+        };
+        let parent = commit.parents.first().cloned();
+        let Some(repository) = self.repositories.get(self.selected_repository) else {
+            return;
+        };
+        let root = PathBuf::from(&repository.path);
+        self.commit_preview = None;
+        self.loaded_commit = Some(hash.clone());
+        if !self.start_worker(move || WorkerResult::CommitPatch {
+            result: crate::history::patch(&root, &hash, parent.as_deref())
+                .map(|patch| crate::models::DiffPreview::new(&patch)),
+            hash,
+        }) {
+            self.commit_preview_error = self.error.clone();
+        }
     }
 
     pub fn staging_allowed(&self, index: usize, staged: bool) -> bool {
@@ -301,12 +427,63 @@ impl SannyGitApp {
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.worker = None;
                 self.error = Some("Background worker stopped unexpectedly".into());
+                if self.history_loading && !self.history_pending {
+                    self.history_loading = false;
+                    self.history_error = self.error.clone();
+                }
+                if self.commit_details_open
+                    && self.loaded_commit.is_some()
+                    && self.commit_preview.is_none()
+                {
+                    self.commit_preview_error = self.error.clone();
+                }
                 self.status = "Operation failed".into();
                 return;
             }
         };
         self.worker = None;
         match result {
+            WorkerResult::History { path, all, result } => {
+                if self
+                    .repositories
+                    .get(self.selected_repository)
+                    .is_some_and(|r| r.path == path)
+                    && self.history_all_branches == all
+                {
+                    self.history_loading = false;
+                    match result {
+                        Ok(history) => {
+                            self.commits = history.commits;
+                            self.history_edges = history.edges;
+                            self.history_max_lane = history.max_lane;
+                            self.history_truncated = history.truncated;
+                            self.history_error = None;
+                            if !self
+                                .commits
+                                .iter()
+                                .any(|c| Some(&c.hash) == self.selected_commit.as_ref())
+                            {
+                                self.selected_commit = None;
+                                self.commit_details_open = false;
+                                self.commit_preview = None;
+                                self.loaded_commit = None;
+                            }
+                        }
+                        Err(error) => self.history_error = Some(error),
+                    }
+                }
+            }
+            WorkerResult::CommitPatch { hash, result } => {
+                if self.selected_commit.as_ref() == Some(&hash) {
+                    match result {
+                        Ok(preview) => {
+                            self.commit_preview = Some(preview);
+                            self.commit_preview_error = None;
+                        }
+                        Err(error) => self.commit_preview_error = Some(error),
+                    }
+                }
+            }
             WorkerResult::Repository(Ok(snapshot)) => {
                 self.apply_snapshot(snapshot);
             }
@@ -417,6 +594,8 @@ impl eframe::App for SannyGitApp {
         self.poll_worker();
         ui::show(ui, self);
         self.load_selected_diff();
+        self.load_history();
+        self.load_commit_preview();
         if self.busy() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(50));
@@ -551,6 +730,58 @@ mod tests {
         assert!(app.commit_blocker().is_some());
     }
 
+    #[test]
+    fn history_errors_retain_rows_and_late_commit_previews_are_discarded() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories = crate::mock_data::repositories();
+        app.selected_repository = 0;
+        app.commits = crate::mock_data::commits();
+        app.state_current = true;
+        let selected = app.commits[0].hash.clone();
+        app.select_commit(selected.clone());
+        let path = app.repositories[0].path.clone();
+        let count = app.commits.len();
+        deliver(
+            &mut app,
+            WorkerResult::History {
+                path: "other-repository".into(),
+                all: false,
+                result: Ok(crate::history::prepare(Vec::new(), false)),
+            },
+        );
+        assert_eq!(app.commits.len(), count);
+        deliver(
+            &mut app,
+            WorkerResult::History {
+                path,
+                all: false,
+                result: Err("Cannot read history".into()),
+            },
+        );
+        assert_eq!(app.commits.len(), count);
+        assert!(app.history_error.is_some());
+        assert!(app.state_current);
+        deliver(
+            &mut app,
+            WorkerResult::CommitPatch {
+                hash: "old selection".into(),
+                result: Err("Stale preview".into()),
+            },
+        );
+        assert!(app.commit_preview_error.is_none());
+        assert!(app.commit_preview.is_none());
+        deliver(
+            &mut app,
+            WorkerResult::CommitPatch {
+                hash: selected,
+                result: Ok(crate::models::DiffPreview::new(
+                    "@@ -0,0 +1 @@\n+commit preview",
+                )),
+            },
+        );
+        assert_eq!(app.commit_preview.as_ref().unwrap().added, 1);
+    }
+
     fn visible_text_count(shapes: &[ClippedShape], expected: &str) -> usize {
         shapes
             .iter()
@@ -626,7 +857,10 @@ mod tests {
                 let mut app = SannyGitApp::with_theme(theme);
                 app.repositories = crate::mock_data::repositories();
                 app.changes = crate::mock_data::changes();
-                app.commits = crate::mock_data::commits();
+                let history = crate::history::prepare(crate::mock_data::commits(), false);
+                app.commits = history.commits;
+                app.history_edges = history.edges;
+                app.history_max_lane = history.max_lane;
                 app.local_branches = crate::mock_data::local_branches();
                 app.remote_branches = crate::mock_data::remote_branches();
                 app.tags = crate::mock_data::tags();
@@ -661,6 +895,29 @@ mod tests {
                 assert!(
                     visible_text(&output.shapes, "Initial commit"),
                     "History is clipped at {size:?}"
+                );
+                app.select_commit(app.commits.last().unwrap().hash.clone());
+                app.commit_preview = Some(crate::models::DiffPreview::new(
+                    "@@ -0,0 +1 @@\n+Read-only commit preview",
+                ));
+                for _ in 0..3 {
+                    output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
+                    output.textures_delta.clear();
+                }
+                for text in [
+                    "Commit details",
+                    "Copy hash",
+                    "Commit changes",
+                    "Read-only commit preview",
+                ] {
+                    assert!(
+                        visible_text(&output.shapes, text),
+                        "Commit details {text} clipped at {size:?} in {theme:?}"
+                    );
+                }
+                assert!(
+                    app.worker.is_none(),
+                    "Rendering history must not run Git commands"
                 );
             }
         }

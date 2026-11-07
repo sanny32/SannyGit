@@ -34,7 +34,7 @@ fn capture(mut reader: impl Read) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+pub(crate) fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     run_with_input(path, args, None)
 }
 
@@ -189,7 +189,7 @@ pub fn commit(root: &Path, message: &str) -> Result<(), String> {
     .map(|_| ())
 }
 
-fn text(bytes: Vec<u8>) -> Result<String, String> {
+pub(crate) fn text(bytes: Vec<u8>) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "Non-UTF-8 Git output is not supported yet".into())
 }
 
@@ -386,7 +386,7 @@ pub fn diff(
     limit_diff(result)
 }
 
-fn limit_diff(patch: String) -> Result<String, String> {
+pub(crate) fn limit_diff(patch: String) -> Result<String, String> {
     if patch.len() > OUTPUT_LIMIT
         || patch.lines().count() > 10_000
         || patch.lines().any(|line| line.len() > 16_384)
@@ -398,14 +398,14 @@ fn limit_diff(patch: String) -> Result<String, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
-    struct TempRepo(PathBuf);
+    pub(crate) struct TempRepo(pub(crate) PathBuf);
     impl TempRepo {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
                 "sannygit-test-{}-{}",
                 std::process::id(),
@@ -426,7 +426,7 @@ mod tests {
             }
             repo
         }
-        fn git(&self, args: &[&str]) -> String {
+        pub(crate) fn git(&self, args: &[&str]) -> String {
             let output = Command::new("git")
                 .current_dir(&self.0)
                 .args([
@@ -449,7 +449,7 @@ mod tests {
             );
             String::from_utf8(output.stdout).unwrap()
         }
-        fn write(&self, path: &str, content: &str) {
+        pub(crate) fn write(&self, path: &str, content: &str) {
             std::fs::write(self.0.join(path), content).unwrap();
         }
     }

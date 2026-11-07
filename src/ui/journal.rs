@@ -1,130 +1,269 @@
-use super::icons::{self, Icon};
-use crate::{app::SannyGitApp, models::Commit, theme::Palette};
-use eframe::egui::{Align, Button, Color32, Layout, RichText, Sense, TextEdit, Ui, Vec2};
+use crate::{app::SannyGitApp, models::HistoryEdge, theme::Palette};
+use eframe::egui::{
+    Align, Button, ComboBox, Label, Layout, RichText, ScrollArea, Sense, Ui, Vec2, Window,
+};
 use egui_extras::{Column, TableBuilder};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
+    details(ui, app);
     let palette = app.theme.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     let wide = ui.available_width() >= 580.0;
     super::header(ui, 28.0, palette, |ui| {
         ui.heading("Journal");
-        let reserved = if wide { 168.0 } else { 40.0 };
-        let search_width = (ui.available_width() - reserved).max(80.0);
+        let search_width =
+            (ui.available_width() - if wide { 300.0 } else { 200.0 }).clamp(60.0, 240.0);
         ui.add_enabled(
             !app.commits.is_empty(),
-            TextEdit::singleline(&mut app.journal_filter)
-                .hint_text(RichText::new("Search commits...").color(palette.muted))
+            eframe::egui::TextEdit::singleline(&mut app.journal_filter)
+                .hint_text("Search loaded commits…")
                 .desired_width(search_width)
                 .margin(Vec2::new(5.0, 2.0)),
         );
-        if wide {
-            ui.add_enabled(
-                false,
-                Button::image_and_text(
-                    icons::image(Icon::Chevron, palette.text, 14.0),
-                    "All branches",
-                ),
-            )
-            .on_disabled_hover_text("Branch history filtering is not implemented yet");
+        let mut all = app.history_all_branches;
+        ui.add_enabled_ui(!app.busy(), |ui| {
+            ComboBox::from_id_salt("journal.scope")
+                .width(100.0)
+                .selected_text(if all {
+                    "All branches"
+                } else {
+                    "Current branch"
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut all, false, "Current branch");
+                    ui.selectable_value(&mut all, true, "All branches");
+                });
+        });
+        if all != app.history_all_branches {
+            app.history_all_branches = all;
+            app.reload_history();
         }
-        icons::unavailable(
-            ui,
-            Icon::List,
-            "Additional history views are not implemented yet",
-        );
+        if ui
+            .add_enabled(
+                !app.busy() && app.repositories.get(app.selected_repository).is_some(),
+                Button::new("Reload"),
+            )
+            .clicked()
+        {
+            app.reload_history();
+        }
+        if wide {
+            ui.label(
+                RichText::new(if app.history_loading {
+                    "Loading…".into()
+                } else if app.history_truncated {
+                    format!("{} (limit)", app.commits.len())
+                } else {
+                    format!("{} commits", app.commits.len())
+                })
+                .small()
+                .color(palette.muted),
+            )
+            .on_hover_text("Up to 500 commits; search applies to loaded history only");
+        }
     });
+    if let Some(error) = &app.history_error {
+        ui.label(RichText::new(format!("History unavailable: {error} Reload to retry; any rows below are from the previous load.")).small().color(palette.removed_text));
+    }
     if app.commits.is_empty() {
-        ui.label(RichText::new("Repository history is not implemented yet").color(palette.muted));
+        ui.label(
+            RichText::new(if app.history_loading {
+                "Loading history…"
+            } else if app.history_error.is_some() {
+                "History could not be loaded. Reload to retry."
+            } else if app.repositories.get(app.selected_repository).is_none() {
+                "Open a repository to view its history"
+            } else {
+                "No commits in this history scope"
+            })
+            .color(palette.muted),
+        );
         return;
     }
-    let filter = app.journal_filter.to_lowercase();
-    let visible = app
+    let filter = app.journal_filter.trim().to_lowercase();
+    let visible: Vec<_> = app
         .commits
         .iter()
-        .filter(|c| {
-            filter.is_empty()
-                || c.message.to_lowercase().contains(&filter)
-                || c.author.to_lowercase().contains(&filter)
-                || c.hash.to_lowercase().contains(&filter)
-        })
-        .collect::<Vec<_>>();
-    let row_height = 20.0;
+        .enumerate()
+        .filter(|(_, c)| c.matches(&filter))
+        .collect();
+    if visible.is_empty() {
+        ui.label(RichText::new("No matching commits in loaded history").color(palette.muted));
+        return;
+    }
+    let mut selected = None;
     TableBuilder::new(ui)
         .striped(true)
+        .sense(Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::exact(if wide { 70.0 } else { 52.0 }))
+        .column(Column::exact(if wide { 70.0 } else { 46.0 }))
         .column(Column::remainder().at_least(80.0))
-        .column(Column::exact(if wide { 82.0 } else { 62.0 }))
-        .column(Column::exact(if wide { 116.0 } else { 88.0 }))
-        .column(Column::exact(if wide { 100.0 } else { 72.0 }))
+        .column(Column::exact(if wide { 100.0 } else { 70.0 }))
+        .column(Column::exact(if wide { 116.0 } else { 86.0 }))
+        .column(Column::exact(72.0))
         .min_scrolled_height(0.0)
         .header(24.0, |mut header| {
             for title in ["Graph", "Message", "Author", "Date", "Hash"] {
                 header.col(|ui| {
-                    if title == "Graph" {
-                        ui.add_space(14.0);
-                    }
                     ui.label(RichText::new(title).size(12.0));
                 });
             }
         })
         .body(|body| {
-            body.rows(row_height, visible.len(), |mut row| {
-                let index = row.index();
-                let commit = visible[index];
-                row.col(|ui| graph(ui, &visible, index, row_height, palette));
+            body.rows(20.0, visible.len(), |mut row| {
+                let (original, commit) = visible[row.index()];
+                row.set_selected(app.selected_commit.as_ref() == Some(&commit.hash));
+                row.col(|ui| graph(ui, app, original, filter.is_empty(), palette));
                 row.col(|ui| {
-                    ui.label(commit.message).on_hover_text(commit.message);
+                    ui.label(commit.subject()).on_hover_text(&commit.message);
                 });
                 row.col(|ui| {
-                    ui.label(RichText::new(commit.author).color(palette.muted));
+                    ui.label(RichText::new(&commit.author).color(palette.muted))
+                        .on_hover_text(&commit.email);
                 });
                 row.col(|ui| {
-                    ui.label(RichText::new(commit.date).color(palette.muted));
+                    let date = commit.date.replace('T', " ");
+                    ui.label(RichText::new(date.get(..16).unwrap_or(&date)).color(palette.muted))
+                        .on_hover_text(&commit.date);
                 });
                 row.col(|ui| {
-                    ui.label(RichText::new(commit.hash).monospace().color(palette.muted));
+                    ui.label(
+                        RichText::new(commit.hash.get(..8).unwrap_or(&commit.hash))
+                            .monospace()
+                            .color(palette.muted),
+                    )
+                    .on_hover_text(&commit.hash);
                 });
+                if row.response().clicked() {
+                    selected = Some(commit.hash.clone());
+                }
             });
         });
+    if let Some(hash) = selected {
+        app.select_commit(hash);
+    }
 }
 
-fn graph(ui: &mut Ui, commits: &[&Commit], index: usize, height: f32, palette: Palette) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+fn graph(ui: &mut Ui, app: &SannyGitApp, index: usize, connected: bool, palette: Palette) {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 20.0), Sense::hover());
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let step = ((rect.width() - 16.0) / (app.history_max_lane + 1) as f32).min(20.0);
     let position = |row: usize, lane: usize| {
         eframe::egui::pos2(
-            rect.left() + 22.0 + lane as f32 * 22.0,
-            rect.center().y + (row as f32 - index as f32) * height,
+            rect.left() + 8.0 + lane as f32 * step,
+            rect.center().y + (row as f32 - index as f32) * 20.0,
         )
     };
-    for (child_index, commit) in commits.iter().enumerate() {
-        for parent in commit.parents {
-            if let Some(parent_index) = commits.iter().position(|c| c.hash == *parent) {
-                let parent_commit = commits[parent_index];
-                let color = if commit.lane == 1 || parent_commit.lane == 1 {
-                    palette.graph_branch
-                } else {
+    if connected {
+        for HistoryEdge {
+            child,
+            parent,
+            child_lane,
+            parent_lane,
+        } in &app.history_edges
+        {
+            if *child <= index && *parent >= index {
+                let color = if *child_lane == 0 {
                     palette.graph_main
+                } else {
+                    palette.graph_branch
                 };
-                painter.line_segment(
-                    [
-                        position(child_index, commit.lane),
-                        position(parent_index, parent_commit.lane),
-                    ],
-                    (1.25, color),
-                );
+                let bend = position(child + 1, *parent_lane);
+                painter.line_segment([position(*child, *child_lane), bend], (1.25, color));
+                painter.line_segment([bend, position(*parent, *parent_lane)], (1.25, color));
             }
         }
-    }
-    let commit = commits[index];
-    let color: Color32 = if commit.parents.is_empty() {
-        palette.graph_root
-    } else if commit.lane == 1 {
-        palette.graph_branch
     } else {
-        palette.graph_main
+        response.on_hover_text("Graph connections are hidden while filtering");
+    }
+    let commit = &app.commits[index];
+    painter.circle_filled(
+        position(index, commit.lane),
+        3.5,
+        if commit.parents.is_empty() {
+            palette.graph_root
+        } else if commit.lane == 0 {
+            palette.graph_main
+        } else {
+            palette.graph_branch
+        },
+    );
+}
+
+fn details(ui: &mut Ui, app: &mut SannyGitApp) {
+    if !app.commit_details_open {
+        return;
+    }
+    let Some(commit) = app
+        .commits
+        .iter()
+        .find(|c| Some(&c.hash) == app.selected_commit.as_ref())
+    else {
+        return;
     };
-    painter.circle_filled(position(index, commit.lane), 4.0, color);
+    let palette = app.theme.palette();
+    let mut open = true;
+    let mut retry = false;
+    Window::new("Commit details")
+        .id(eframe::egui::Id::unique("journal.details"))
+        .open(&mut open)
+        .default_size([850.0, 570.0])
+        .min_size([480.0, 320.0])
+        .max_size(ui.ctx().content_rect().size() - Vec2::splat(40.0))
+        .show(ui.ctx(), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.monospace(&commit.hash);
+                if ui.small_button("Copy hash").clicked() {
+                    ui.ctx().copy_text(commit.hash.clone());
+                }
+            });
+            let metadata_height = (ui.available_height() * 0.35).clamp(48.0, 190.0);
+            ScrollArea::vertical()
+                .id_salt(("commit.metadata", &commit.hash))
+                .min_scrolled_height(24.0)
+                .max_height(metadata_height)
+                .show(ui, |ui| {
+                    ui.add(
+                        Label::new(format!("Author: {} <{}>", commit.author, commit.email))
+                            .wrap()
+                            .selectable(true),
+                    );
+                    ui.add(
+                        Label::new(format!("Date: {}", commit.date))
+                            .wrap()
+                            .selectable(true),
+                    );
+                    ui.add(
+                        Label::new(if commit.parents.is_empty() {
+                            "Parents: none in available history (root or shallow boundary)".into()
+                        } else {
+                            format!("Parents: {}", commit.parents.join(", "))
+                        })
+                        .wrap()
+                        .selectable(true),
+                    );
+                    ui.add(Label::new(&commit.message).wrap().selectable(true));
+                });
+            ui.separator();
+            ui.label(if commit.parents.len() > 1 {
+                "Merge changes against first parent"
+            } else {
+                "Commit changes"
+            });
+            if let Some(error) = &app.commit_preview_error {
+                ui.label(RichText::new(error).color(palette.removed_text));
+                retry = ui
+                    .add_enabled(!app.busy(), Button::new("Retry diff"))
+                    .clicked();
+            } else if let Some(preview) = &app.commit_preview {
+                super::diff_view::render_preview(ui, preview, palette, &commit.hash);
+            } else {
+                ui.label(RichText::new("Loading commit diff…").color(palette.muted));
+            }
+        });
+    app.commit_details_open = open;
+    if retry {
+        app.retry_commit_preview();
+    }
 }
