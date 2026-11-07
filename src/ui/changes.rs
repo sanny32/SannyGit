@@ -36,6 +36,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             });
         }
     });
+    let operations_enabled =
+        !app.busy() && app.state_current && app.repositories.get(app.selected_repository).is_some();
+    let mut staging_request = None;
     let visible = app
         .changes
         .iter()
@@ -49,14 +52,14 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .striped(true)
         .sense(Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::exact(30.0))
+        .column(Column::exact(38.0))
         .column(Column::remainder())
         .column(Column::exact(58.0))
         .min_scrolled_height(0.0)
         .header(24.0, |mut header| {
             header.col(|ui| {
                 ui.add_space(6.0);
-                checkmark(ui, false, palette);
+                ui.label("Index");
             });
             header.col(|ui| {
                 ui.label("File");
@@ -71,7 +74,21 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 row.set_selected(app.selected_change == index);
                 row.col(|ui| {
                     ui.add_space(6.0);
-                    checkmark(ui, change.staged, palette);
+                    let mut checked = change.staged;
+                    let tooltip = if change.kind == ChangeKind::Conflicted {
+                        "Resolve this conflict outside SannyGit before staging"
+                    } else if !operations_enabled {
+                        "Wait for the current operation or refresh the repository"
+                    } else if change.staged && change.unstaged {
+                        "Some changes are staged. Click to unstage; use Stage to include the remaining changes"
+                    } else if change.staged { "Unstage this file (preserve working-tree contents)" }
+                    else { "Stage all changes in this file" };
+                    if ui.add_enabled(operations_enabled && change.kind != ChangeKind::Conflicted,
+                        eframe::egui::Checkbox::without_text(&mut checked)
+                            .indeterminate(change.staged && change.unstaged))
+                        .on_hover_text(tooltip).on_disabled_hover_text(tooltip).changed() {
+                        staging_request = Some((index, !change.staged));
+                    }
                 });
                 row.col(|ui| {
                     let icon = if change.path.ends_with(".png") {
@@ -116,6 +133,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 }
             });
         });
+    if let Some((index, staged)) = staging_request {
+        app.set_staged(index, staged);
+    }
 }
 
 fn ui_line(response: &eframe::egui::Response, clip: Rect, palette: Palette) {
@@ -203,44 +223,6 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             app.change_filter = filter;
         }
     }
-}
-
-fn checkmark(ui: &mut Ui, checked: bool, palette: Palette) {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-    ui.painter().rect_filled(
-        rect,
-        3.0,
-        if checked {
-            palette.accent
-        } else {
-            palette.panel
-        },
-    );
-    ui.painter().rect_stroke(
-        rect,
-        3.0,
-        (
-            1.0,
-            if checked {
-                palette.accent
-            } else {
-                palette.muted
-            },
-        ),
-        eframe::egui::StrokeKind::Inside,
-    );
-    if checked {
-        let points = [
-            rect.min + Vec2::new(2.0, 6.0),
-            rect.min + Vec2::new(6.0, 10.0),
-            rect.min + Vec2::new(12.0, 3.0),
-        ];
-        ui.painter()
-            .line_segment([points[0], points[1]], (1.8, Color32::WHITE));
-        ui.painter()
-            .line_segment([points[1], points[2]], (1.8, Color32::WHITE));
-    }
-    response.on_hover_text("Staging is not implemented yet");
 }
 
 fn filter_matches(filter: ChangeFilter, kind: ChangeKind) -> bool {

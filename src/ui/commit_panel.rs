@@ -19,6 +19,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             [rect.left_bottom(), rect.right_bottom()],
             (3.0, palette.accent),
         );
+        let staged = app.changes.iter().filter(|c| c.staged).count();
+        ui.label(
+            RichText::new(format!("{staged} staged"))
+                .small()
+                .color(palette.muted),
+        );
     });
     Frame::new()
         .inner_margin(Margin {
@@ -30,15 +36,18 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .show(ui, |ui| {
             let width = ui.available_width();
             let editor_height = (ui.available_height() - 38.0).max(32.0);
-            ui.add_sized(
-                [width, editor_height],
-                TextEdit::multiline(&mut app.commit_message)
-                    .hint_text(RichText::new("Write a commit message...").color(palette.muted))
-                    .desired_rows(1)
-                    .desired_width(f32::INFINITY)
-                    .margin(Vec2::new(6.0, 4.0))
-                    .background_color(palette.editor),
-            );
+            let busy = app.busy();
+            ui.add_enabled_ui(!busy, |ui| {
+                ui.add_sized(
+                    [width, editor_height],
+                    TextEdit::multiline(&mut app.commit_message)
+                        .hint_text(RichText::new("Write a commit message...").color(palette.muted))
+                        .desired_rows(1)
+                        .desired_width(f32::INFINITY)
+                        .margin(Vec2::new(6.0, 4.0))
+                        .background_color(palette.editor),
+                );
+            });
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.add_enabled(
@@ -47,8 +56,18 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 )
                 .on_disabled_hover_text("Amending commits is not implemented yet");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.add_enabled(false, Button::new("Commit").min_size(Vec2::new(72.0, 24.0)))
-                        .on_disabled_hover_text("Repository integration is not implemented yet");
+                    let blocker = app.commit_blocker();
+                    if ui
+                        .add_enabled(
+                            blocker.is_none(),
+                            Button::new("Commit").min_size(Vec2::new(72.0, 24.0)),
+                        )
+                        .on_hover_text("Create a commit from all staged changes")
+                        .on_disabled_hover_text(blocker.unwrap_or(""))
+                        .clicked()
+                    {
+                        app.create_commit();
+                    }
                 });
             });
         });

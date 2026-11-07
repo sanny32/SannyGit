@@ -42,6 +42,7 @@ pub struct ChangeFile {
     pub original_path: Option<String>,
     pub kind: ChangeKind,
     pub staged: bool,
+    pub unstaged: bool,
     pub diff: String,
 }
 

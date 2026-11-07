@@ -5,6 +5,11 @@ use std::{
 
 enum WorkerResult {
     Repository(Result<crate::git::Snapshot, String>),
+    Operation {
+        committed: bool,
+        outcome: Result<(), String>,
+        snapshot: Result<crate::git::Snapshot, String>,
+    },
     Diff {
         index: usize,
         result: Result<(String, crate::models::DiffPreview), String>,
@@ -51,6 +56,7 @@ pub struct SannyGitApp {
     worker: Option<Receiver<WorkerResult>>,
     loaded_diff: Option<usize>,
     pub diff_preview: Option<crate::models::DiffPreview>,
+    pub state_current: bool,
 }
 
 impl SannyGitApp {
@@ -113,6 +119,7 @@ impl SannyGitApp {
             worker: None,
             loaded_diff: None,
             diff_preview: None,
+            state_current: false,
         }
     }
     pub fn selected_diff(&self) -> Option<&crate::models::DiffPreview> {
@@ -134,7 +141,6 @@ impl SannyGitApp {
             }) {
             Ok(_) => {
                 self.worker = Some(receiver);
-                self.error = None;
             }
             Err(e) => {
                 self.error = Some(format!("Cannot start background worker: {e}"));
@@ -147,6 +153,8 @@ impl SannyGitApp {
         if self.busy() {
             return;
         }
+        self.error = None;
+        self.state_current = false;
         self.status = "Loading repository…".into();
         self.start_worker(move || WorkerResult::Repository(git::load(&PathBuf::from(path))));
     }
@@ -155,6 +163,132 @@ impl SannyGitApp {
         if let Some(repository) = self.repositories.get(self.selected_repository) {
             self.open_repository(repository.path.clone());
         }
+    }
+
+    fn apply_snapshot(&mut self, snapshot: git::Snapshot) {
+        self.state_current = true;
+        let selected = self
+            .changes
+            .get(self.selected_change)
+            .map(|c| c.path.clone());
+        let index = self
+            .repositories
+            .iter()
+            .position(|r| r.path == snapshot.repository.path)
+            .unwrap_or_else(|| {
+                self.repositories.push(snapshot.repository);
+                self.repositories.len() - 1
+            });
+        let same_repository = self.selected_repository == index;
+        self.selected_repository = index;
+        self.current_branch = snapshot.branch;
+        self.changes = snapshot.changes;
+        self.selected_change = if same_repository {
+            selected.and_then(|path| self.changes.iter().position(|c| c.path == path))
+        } else {
+            None
+        }
+        .or_else(|| (!self.changes.is_empty()).then_some(0))
+        .unwrap_or(usize::MAX);
+        self.loaded_diff = None;
+        self.diff_preview = None;
+        self.open_dialog = false;
+        self.local_branches.clear();
+        self.remote_branches.clear();
+        self.tags.clear();
+        self.commits.clear();
+        self.selected_branch.clear();
+        if !same_repository {
+            self.commit_message.clear();
+            self.branch_filter.clear();
+            self.journal_filter.clear();
+        }
+        self.status = if self.changes.is_empty() {
+            "Working tree clean"
+        } else {
+            "Ready"
+        }
+        .into();
+    }
+
+    pub fn staging_allowed(&self, index: usize, staged: bool) -> bool {
+        !self.busy()
+            && self.state_current
+            && self.repositories.get(self.selected_repository).is_some()
+            && self.changes.get(index).is_some_and(|c| {
+                c.kind != crate::models::ChangeKind::Conflicted
+                    && if staged { c.unstaged } else { c.staged }
+            })
+    }
+
+    pub fn set_staged(&mut self, index: usize, staged: bool) {
+        if !self.staging_allowed(index, staged) {
+            return;
+        }
+        let root = PathBuf::from(&self.repositories[self.selected_repository].path);
+        let path = self.changes[index].path.clone();
+        self.state_current = false;
+        self.error = None;
+        self.status = if staged {
+            "Staging file…"
+        } else {
+            "Unstaging file…"
+        }
+        .into();
+        self.start_worker(move || {
+            let outcome = git::set_staged(&root, &path, staged);
+            let snapshot = git::load(&root);
+            WorkerResult::Operation {
+                committed: false,
+                outcome,
+                snapshot,
+            }
+        });
+    }
+
+    pub fn commit_blocker(&self) -> Option<&'static str> {
+        if self.busy() {
+            Some("Wait for the current operation to finish")
+        } else if self.repositories.get(self.selected_repository).is_none() {
+            Some("Open a repository first")
+        } else if !self.state_current {
+            Some("Refresh the repository before committing")
+        } else if self
+            .changes
+            .iter()
+            .any(|c| c.kind == crate::models::ChangeKind::Conflicted)
+        {
+            Some("Resolve all conflicts before committing")
+        } else if !self.changes.iter().any(|c| c.staged) {
+            Some("Stage at least one change")
+        } else if self.commit_message.trim().is_empty() {
+            Some("Enter a commit message")
+        } else if self.commit_message.contains('\0') || self.commit_message.len() > 65_536 {
+            Some("Use a message without NUL characters and no larger than 64 KiB")
+        } else {
+            None
+        }
+    }
+
+    pub fn create_commit(&mut self) {
+        if self.commit_blocker().is_some() {
+            return;
+        }
+        let root = PathBuf::from(&self.repositories[self.selected_repository].path);
+        let message = self.commit_message.clone();
+        self.state_current = false;
+        self.error = None;
+        self.status = "Creating commit…".into();
+        self.start_worker(move || {
+            let outcome = git::commit(&root, &message);
+            let committed = outcome.is_ok();
+            let snapshot = git::load(&root);
+            WorkerResult::Operation {
+                committed,
+                outcome,
+                snapshot,
+            }
+        });
     }
 
     fn poll_worker(&mut self) {
@@ -174,52 +308,47 @@ impl SannyGitApp {
         self.worker = None;
         match result {
             WorkerResult::Repository(Ok(snapshot)) => {
-                let selected = self
-                    .changes
-                    .get(self.selected_change)
-                    .map(|c| c.path.clone());
-                let index = self
-                    .repositories
-                    .iter()
-                    .position(|r| r.path == snapshot.repository.path)
-                    .unwrap_or_else(|| {
-                        self.repositories.push(snapshot.repository);
-                        self.repositories.len() - 1
-                    });
-                let same_repository = self.selected_repository == index;
-                self.selected_repository = index;
-                self.current_branch = snapshot.branch;
-                self.changes = snapshot.changes;
-                self.selected_change = if same_repository {
-                    selected.and_then(|path| self.changes.iter().position(|c| c.path == path))
-                } else {
-                    None
-                }
-                .or_else(|| (!self.changes.is_empty()).then_some(0))
-                .unwrap_or(usize::MAX);
-                self.loaded_diff = None;
-                self.diff_preview = None;
-                self.open_dialog = false;
-                self.local_branches.clear();
-                self.remote_branches.clear();
-                self.tags.clear();
-                self.commits.clear();
-                self.selected_branch.clear();
-                if !same_repository {
-                    self.commit_message.clear();
-                    self.branch_filter.clear();
-                    self.journal_filter.clear();
-                }
-                self.status = if self.changes.is_empty() {
-                    "Working tree clean"
-                } else {
-                    "Ready"
-                }
-                .into();
+                self.apply_snapshot(snapshot);
             }
             WorkerResult::Repository(Err(error)) => {
                 self.error = Some(error);
                 self.status = "Could not load repository; previous view retained".into();
+            }
+            WorkerResult::Operation {
+                committed,
+                outcome,
+                snapshot,
+            } => {
+                if committed {
+                    self.commit_message.clear();
+                }
+                let refreshed = snapshot.is_ok();
+                match snapshot {
+                    Ok(snapshot) => self.apply_snapshot(snapshot),
+                    Err(error) => {
+                        self.state_current = false;
+                        self.error =
+                            Some(format!("Could not refresh after the operation: {error}"));
+                        self.status = "Refresh required before further operations".into();
+                    }
+                }
+                match outcome {
+                    Ok(()) => {
+                        if refreshed {
+                            self.status = if committed {
+                                "Commit created"
+                            } else {
+                                "Index updated"
+                            }
+                            .into();
+                        }
+                    }
+                    Err(error) => {
+                        self.error = Some(error);
+                        self.status =
+                            "Operation failed; check the refreshed repository state".into();
+                    }
+                }
             }
             WorkerResult::Diff { index, result } => {
                 if self.selected_change == index {
@@ -230,7 +359,9 @@ impl SannyGitApp {
                             if let Some(change) = self.changes.get_mut(index) {
                                 change.diff = diff;
                             }
-                            self.status = "Ready".into();
+                            if self.status == "Loading diff…" {
+                                self.status = "Ready".into();
+                            }
                         }
                         Err(error) => {
                             self.error = Some(error);
@@ -262,7 +393,11 @@ impl SannyGitApp {
             previous.diff = String::new();
         }
         self.loaded_diff = Some(index);
-        self.status = "Loading diff…".into();
+        if self.error.is_none()
+            && !matches!(self.status.as_str(), "Commit created" | "Index updated")
+        {
+            self.status = "Loading diff…".into();
+        }
         self.start_worker(move || WorkerResult::Diff {
             index,
             result: git::diff(&root, &path, kind, original_path.as_deref()).map(|patch| {
@@ -358,6 +493,64 @@ mod tests {
         assert!(app.selected_diff().is_none());
     }
 
+    #[test]
+    fn commit_requires_fresh_state_message_staged_files_and_no_conflicts() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        assert!(app.commit_blocker().is_some());
+        app.repositories = crate::mock_data::repositories();
+        app.selected_repository = 0;
+        app.changes = crate::mock_data::changes();
+        app.commit_message = "Message".into();
+        assert!(app.commit_blocker().unwrap().contains("Refresh"));
+        app.state_current = true;
+        for change in &mut app.changes {
+            change.staged = false;
+        }
+        assert!(app.commit_blocker().unwrap().contains("Stage"));
+        app.changes[0].staged = true;
+        app.commit_message = " \n\t".into();
+        assert!(app.commit_blocker().unwrap().contains("message"));
+        app.create_commit();
+        assert!(!app.busy());
+        app.commit_message = "Valid message".into();
+        assert!(app.commit_blocker().is_none());
+        assert!(app.staging_allowed(0, false));
+        app.changes[0].kind = crate::models::ChangeKind::Conflicted;
+        assert!(app.commit_blocker().unwrap().contains("conflicts"));
+        assert!(!app.staging_allowed(0, true));
+        assert!(!app.staging_allowed(0, false));
+    }
+
+    #[test]
+    fn operation_errors_keep_draft_and_success_clears_it_even_if_refresh_fails() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.commit_message = "Keep draft".into();
+        app.state_current = false;
+        deliver(
+            &mut app,
+            WorkerResult::Operation {
+                committed: false,
+                outcome: Err("Hook rejected commit".into()),
+                snapshot: Err("Refresh failed".into()),
+            },
+        );
+        assert_eq!(app.commit_message, "Keep draft");
+        assert!(app.error.as_deref().unwrap().contains("Hook"));
+        assert!(!app.state_current);
+        deliver(
+            &mut app,
+            WorkerResult::Operation {
+                committed: true,
+                outcome: Ok(()),
+                snapshot: Err("Refresh failed".into()),
+            },
+        );
+        assert!(app.commit_message.is_empty());
+        assert!(app.error.as_deref().unwrap().contains("refresh"));
+        assert!(!app.state_current);
+        assert!(app.commit_blocker().is_some());
+    }
+
     fn visible_text_count(shapes: &[ClippedShape], expected: &str) -> usize {
         shapes
             .iter()
@@ -438,6 +631,8 @@ mod tests {
                 app.remote_branches = crate::mock_data::remote_branches();
                 app.tags = crate::mock_data::tags();
                 app.selected_repository = 0;
+                app.state_current = true;
+                app.commit_message = "Layout check".into();
                 app.selected_change = 2;
                 app.loaded_diff = Some(2);
                 app.diff_preview = Some(crate::models::DiffPreview::new(&app.changes[2].diff));

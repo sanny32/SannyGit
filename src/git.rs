@@ -1,8 +1,8 @@
-//! Read-only Git access. Called only by the application's background workers.
+//! Git command execution and parsing. Called only by the application's background workers.
 use crate::models::{ChangeFile, ChangeKind, Repository};
 use std::{
     fmt::Write,
-    io::Read,
+    io::{Read, Write as IoWrite},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -35,6 +35,10 @@ fn capture(mut reader: impl Read) -> Result<Vec<u8>, String> {
 }
 
 fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    run_with_input(path, args, None)
+}
+
+fn run_with_input(path: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
     let mut command = Command::new("git");
     command
         .current_dir(path)
@@ -42,7 +46,11 @@ fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_LITERAL_PATHSPECS", "1")
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
@@ -55,7 +63,15 @@ fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("Cannot start Git: {e}"))?;
     let stdout = child.stdout.take().ok_or("Cannot read Git output")?;
     let stderr = child.stderr.take().ok_or("Cannot read Git errors")?;
+    let stdin = child.stdin.take();
     let result = thread::scope(|scope| {
+        let writer = scope.spawn(move || -> Result<(), String> {
+            if let (Some(mut pipe), Some(bytes)) = (stdin, input) {
+                pipe.write_all(bytes)
+                    .map_err(|e| format!("Cannot send commit message to Git: {e}"))?;
+            }
+            Ok(())
+        });
         let out = scope.spawn(|| capture(stdout));
         let err = scope.spawn(|| capture(stderr));
         let start = Instant::now();
@@ -75,10 +91,11 @@ fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         };
         let output = out.join().map_err(|_| "Git output reader failed")??;
         let errors = err.join().map_err(|_| "Git error reader failed")??;
+        let written = writer.join().map_err(|_| "Git input writer failed")?;
         if !status?.success() {
-            // Do not include stderr: repository configuration can contain private URLs.
-            return Err("Git command failed. Check the repository path, permissions and Git ownership settings.".into());
+            return Err(command_error(args.first().copied().unwrap_or("command")));
         }
+        written?;
         if output.len() > OUTPUT_LIMIT {
             return Err("Git output exceeds the 2 MiB display limit".into());
         }
@@ -86,6 +103,90 @@ fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         Ok(output)
     });
     result
+}
+
+fn command_error(operation: &str) -> String {
+    // Do not parse localized diagnostics or echo private URLs and hook output.
+    let reason = if operation == "commit" {
+        "Check your Git identity, signing configuration and commit hooks. Refresh before retrying."
+    } else if matches!(operation, "add" | "restore" | "update-index") {
+        "Check whether the index is locked by another Git operation and verify repository permissions. Refresh before retrying."
+    } else {
+        "Check the repository path, permissions and ownership settings. Refresh before retrying."
+    };
+    format!("Git {operation} failed. {reason}")
+}
+
+/// Stages or unstages the complete selected file; never changes working-tree bytes.
+pub fn set_staged(root: &Path, path: &str, staged: bool) -> Result<(), String> {
+    let snapshot = load(root)?;
+    let change = snapshot
+        .changes
+        .iter()
+        .find(|c| c.path == path)
+        .ok_or("The file has changed since the last refresh. Refresh and select it again.")?;
+    if change.kind == ChangeKind::Conflicted {
+        return Err("Resolve conflicts outside SannyGit before staging this file.".into());
+    }
+    if (staged && !change.unstaged) || (!staged && !change.staged) {
+        return Err("The file's staging state has changed. Refresh before retrying.".into());
+    }
+    // --revs-only succeeds with empty output for an unborn HEAD; other command
+    // failures must propagate rather than being mistaken for a new repository.
+    let has_head = !staged && !run(root, &["rev-parse", "--revs-only", "HEAD"])?.is_empty();
+    let mut args = if staged {
+        vec!["add", "--all", "--", path]
+    } else if has_head {
+        vec!["restore", "--source=HEAD", "--staged", "--", path]
+    } else {
+        // Before the first commit there is no HEAD to restore. Remove only index entries.
+        vec!["update-index", "--force-remove", "--", path]
+    };
+    if let Some(source) = &change.original_path {
+        // A copy must not stage or unstage its source; porcelain R is the only
+        // status currently displayed as Renamed.
+        if !staged && change.kind == ChangeKind::Renamed {
+            args.push(source);
+        }
+    }
+    run(root, &args).map(|_| ())
+}
+
+pub fn validate_message(message: &str) -> Result<(), String> {
+    if message.trim().is_empty() {
+        return Err("Enter a commit message.".into());
+    }
+    if message.contains('\0') {
+        return Err("Commit messages cannot contain NUL characters.".into());
+    }
+    if message.len() > 65_536 {
+        return Err("Commit message exceeds the 64 KiB limit.".into());
+    }
+    Ok(())
+}
+
+/// Commits only the existing index, after an explicit Commit action in the UI.
+pub fn commit(root: &Path, message: &str) -> Result<(), String> {
+    validate_message(message)?;
+    let snapshot = load(root)?;
+    if snapshot
+        .changes
+        .iter()
+        .any(|c| c.kind == ChangeKind::Conflicted)
+    {
+        return Err("Resolve all conflicts before committing.".into());
+    }
+    if !snapshot.changes.iter().any(|c| c.staged) {
+        return Err("Stage at least one change before committing.".into());
+    }
+    // stdin preserves multiline messages without a shell or a message file.
+    // Git's configured identity, hooks and signing remain in effect.
+    run_with_input(
+        root,
+        &["commit", "--file=-", "--cleanup=whitespace"],
+        Some(message.as_bytes()),
+    )
+    .map(|_| ())
 }
 
 fn text(bytes: Vec<u8>) -> Result<String, String> {
@@ -190,6 +291,7 @@ pub fn parse_status(bytes: &[u8]) -> Result<Vec<ChangeFile>, String> {
             original_path,
             kind,
             staged: kind != ChangeKind::Conflicted && x != b' ' && x != b'?',
+            unstaged: y != b' ',
             diff: String::new(),
         });
         if changes.len() > FILE_LIMIT {
@@ -312,6 +414,16 @@ mod tests {
             std::fs::create_dir_all(&path).unwrap();
             let repo = Self(path);
             repo.git(&["init", "--initial-branch=main"]);
+            // Isolate backend write tests from the developer's identity, hooks and signing.
+            for (key, value) in [
+                ("user.name", "SannyGit Test"),
+                ("user.email", "test@example.invalid"),
+                ("commit.gpgsign", "false"),
+                ("core.hooksPath", "disabled-test-hooks"),
+                ("core.autocrlf", "false"),
+            ] {
+                repo.git(&["config", "--local", key, value]);
+            }
             repo
         }
         fn git(&self, args: &[&str]) -> String {
@@ -501,10 +613,166 @@ mod tests {
             load(&repo.0).unwrap().changes[0].kind,
             ChangeKind::Conflicted
         );
+        let index_before = std::fs::read(repo.0.join(".git/index")).unwrap();
+        assert!(set_staged(&repo.0, "file", true).is_err());
+        assert!(commit(&repo.0, "Must not commit conflict").is_err());
+        assert_eq!(
+            std::fs::read(repo.0.join(".git/index")).unwrap(),
+            index_before
+        );
         let patch = diff(&repo.0, "file", ChangeKind::Conflicted, None).unwrap();
         assert!(patch.contains("Conflict: working tree compared with ours"));
         assert!(patch.contains("+<<<<<<<"));
         assert!(!patch.contains("@@@"));
+    }
+
+    #[test]
+    fn stage_and_unstage_preserve_worktree_before_and_after_first_commit() {
+        let repo = TempRepo::new();
+        let path = "[x] é.txt";
+        repo.write(path, "new\n");
+        repo.write("x é.txt", "unrelated\n");
+        set_staged(&repo.0, path, true).unwrap();
+        let snapshot = load(&repo.0).unwrap();
+        assert!(
+            snapshot
+                .changes
+                .iter()
+                .find(|c| c.path == path)
+                .unwrap()
+                .staged
+        );
+        assert!(
+            !snapshot
+                .changes
+                .iter()
+                .find(|c| c.path == "x é.txt")
+                .unwrap()
+                .staged
+        );
+        repo.write(path, "new and unstaged\n");
+        set_staged(&repo.0, path, false).unwrap();
+        assert!(load(&repo.0).unwrap().changes.iter().all(|c| !c.staged));
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join(path)).unwrap(),
+            "new and unstaged\n"
+        );
+        set_staged(&repo.0, path, true).unwrap();
+        commit(&repo.0, "First commit").unwrap();
+        repo.write(path, "index version\n");
+        set_staged(&repo.0, path, true).unwrap();
+        repo.write(path, "working version\n");
+        let snapshot = load(&repo.0).unwrap();
+        let mixed = snapshot.changes.iter().find(|c| c.path == path).unwrap();
+        assert!(mixed.staged && mixed.unstaged);
+        set_staged(&repo.0, path, false).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join(path)).unwrap(),
+            "working version\n"
+        );
+        assert!(
+            !load(&repo.0)
+                .unwrap()
+                .changes
+                .iter()
+                .find(|c| c.path == path)
+                .unwrap()
+                .staged
+        );
+    }
+
+    #[test]
+    fn commit_uses_only_index_and_preserves_multiline_message() {
+        let repo = TempRepo::new();
+        repo.write("file", "staged\n");
+        repo.write("other", "not staged\n");
+        set_staged(&repo.0, "file", true).unwrap();
+        repo.write("file", "working tree\n");
+        let message = "Subject é\n\nBody with `text` and $(touch SHOULD_NOT_EXIST)\n# preserved";
+        commit(&repo.0, message).unwrap();
+        assert_eq!(repo.git(&["show", "HEAD:file"]), "staged\n");
+        assert_eq!(repo.git(&["log", "-1", "--format=%B"]).trim_end(), message);
+        assert_eq!(repo.git(&["ls-tree", "--name-only", "HEAD"]), "file\n");
+        assert!(!repo.0.join("SHOULD_NOT_EXIST").exists());
+        let changes = load(&repo.0).unwrap().changes;
+        assert_eq!(changes.len(), 2);
+        assert!(changes.iter().all(|c| !c.staged));
+    }
+
+    #[test]
+    fn stages_deletion_and_unstages_both_sides_of_rename() {
+        let repo = TempRepo::new();
+        repo.write(
+            "old",
+            "unchanged content line one\nunchanged content line two\n",
+        );
+        set_staged(&repo.0, "old", true).unwrap();
+        commit(&repo.0, "initial").unwrap();
+        repo.git(&["mv", "old", "new"]);
+        repo.write(
+            "new",
+            "unchanged content line one\nunchanged content line two\nupdated\n",
+        );
+        set_staged(&repo.0, "new", true).unwrap();
+        set_staged(&repo.0, "new", false).unwrap();
+        assert!(load(&repo.0).unwrap().changes.iter().all(|c| !c.staged));
+        assert!(!repo.0.join("old").exists());
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("new")).unwrap(),
+            "unchanged content line one\nunchanged content line two\nupdated\n"
+        );
+        set_staged(&repo.0, "old", true).unwrap();
+        assert!(load(&repo.0)
+            .unwrap()
+            .changes
+            .iter()
+            .any(|c| c.kind == ChangeKind::Deleted && c.staged));
+        set_staged(&repo.0, "old", false).unwrap();
+        assert!(!repo.0.join("old").exists());
+    }
+
+    #[test]
+    fn refuses_empty_commit_and_reports_index_lock_without_touching_worktree() {
+        let repo = TempRepo::new();
+        for message in ["", " \n\t", "bad\0message"] {
+            assert!(validate_message(message).is_err());
+        }
+        assert!(validate_message(&"a".repeat(65_537)).is_err());
+        repo.write("file", "content\n");
+        assert!(commit(&repo.0, "Nothing staged")
+            .unwrap_err()
+            .contains("Stage at least one"));
+        std::fs::write(repo.0.join(".git/index.lock"), "locked").unwrap();
+        assert!(set_staged(&repo.0, "file", true)
+            .unwrap_err()
+            .contains("locked"));
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file")).unwrap(),
+            "content\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn commit_respects_rejecting_hook_and_keeps_index() {
+        use std::os::unix::fs::PermissionsExt;
+        let repo = TempRepo::new();
+        repo.write("file", "content\n");
+        set_staged(&repo.0, "file", true).unwrap();
+        let hooks = repo.0.join("test-hooks");
+        std::fs::create_dir(&hooks).unwrap();
+        let hook = hooks.join("pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        repo.git(&[
+            "config",
+            "--local",
+            "core.hooksPath",
+            hooks.to_str().unwrap(),
+        ]);
+        assert!(commit(&repo.0, "Rejected").unwrap_err().contains("hooks"));
+        assert!(load(&repo.0).unwrap().changes[0].staged);
+        assert!(run(&repo.0, &["rev-parse", "--verify", "HEAD"]).is_err());
     }
 
     #[test]
