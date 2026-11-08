@@ -49,12 +49,14 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let table_clip = ui.clip_rect().intersect(ui.available_rect_before_wrap());
     ui.spacing_mut().item_spacing.x = 4.0;
     TableBuilder::new(ui)
+        .id_salt("files.columns.v2")
+        .resizable(true)
         .striped(true)
         .sense(Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::exact(38.0))
-        .column(Column::remainder())
-        .column(Column::exact(58.0))
+        .column(Column::initial(52.0).range(44.0..=80.0).clip(true))
+        .column(Column::remainder().at_least(120.0).clip(true))
+        .column(Column::initial(72.0).range(64.0..=120.0).clip(true))
         .min_scrolled_height(0.0)
         .header(24.0, |mut header| {
             header.col(|ui| {
@@ -100,7 +102,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     };
                     icons::paint(ui, icon, status_color(change.kind, palette), 16.0);
                     ui.add_space(4.0);
-                    ui.label(RichText::new(&change.path).color(palette.text))
+                    ui.add(eframe::egui::Label::new(RichText::new(&change.path).color(palette.text)).truncate())
                         .on_hover_text(if let Some(source) = &change.original_path {
                             format!("{source} → {}", change.path)
                         } else {
@@ -238,5 +240,85 @@ fn status_color(kind: ChangeKind, palette: Palette) -> Color32 {
         ChangeKind::Added | ChangeKind::Untracked => palette.added_text,
         ChangeKind::Deleted | ChangeKind::Conflicted => palette.removed_text,
         ChangeKind::Modified | ChangeKind::Renamed => palette.modified,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{install_fonts, ThemeChoice};
+    use eframe::egui::{Context, Pos2, RawInput};
+
+    #[test]
+    fn file_column_positions_do_not_change_with_rows_or_long_names() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for width in [350.0, 900.0] {
+                let ctx = Context::default();
+                install_fonts(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                let render = |app: &mut SannyGitApp| {
+                    let mut positions = Vec::new();
+                    for _ in 0..3 {
+                        let mut output = ctx.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(
+                                    Pos2::ZERO,
+                                    Vec2::new(width, 300.0),
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| show(ui, app),
+                        );
+                        positions = ["Index", "File", "Status"]
+                            .into_iter()
+                            .map(|label| {
+                                output
+                                    .shapes
+                                    .iter()
+                                    .find_map(|shape| {
+                                        if let eframe::egui::Shape::Text(text) = &shape.shape {
+                                            if text.galley.job.text == label {
+                                                return Some(text.pos);
+                                            }
+                                        }
+                                        None
+                                    })
+                                    .unwrap_or_else(|| {
+                                        panic!("Missing column {label} at width {width}")
+                                    })
+                            })
+                            .collect::<Vec<_>>();
+                        output.textures_delta.clear();
+                    }
+                    positions
+                };
+                let empty = render(&mut app);
+                for path in [
+                    "file.rs".to_owned(),
+                    format!("{}/file.rs", "very-long-directory-name/".repeat(25)),
+                ] {
+                    app.changes = (0..80)
+                        .map(|i| crate::models::ChangeFile {
+                            path: format!("{i}-{path}"),
+                            original_path: None,
+                            kind: ChangeKind::Modified,
+                            staged: false,
+                            unstaged: true,
+                            diff: String::new(),
+                        })
+                        .collect();
+                    let populated = render(&mut app);
+                    for (before, after) in empty.iter().zip(populated) {
+                        assert!(
+                            (*before - after).length() < 1.0,
+                            "Columns moved in {theme:?} at width {width}: {before:?} -> {after:?}"
+                        );
+                    }
+                    app.changes.clear();
+                    assert_eq!(render(&mut app), empty);
+                }
+            }
+        }
     }
 }
