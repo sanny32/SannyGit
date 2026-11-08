@@ -2,8 +2,13 @@ use super::icons::{self, Icon};
 use super::tooltips::TooltipResponse;
 use crate::{app::SannyGitApp, theme::Palette};
 use eframe::egui::{
-    Align, Align2, Button, FontId, Frame, Layout, Margin, Panel, Rect, Response, RichText, Ui, Vec2,
+    Align, Align2, Button, FontId, Frame, Layout, Margin, Panel, Rect, Response, Ui, Vec2,
 };
+
+const TOOLBAR_BUTTON_HEIGHT: f32 = 40.0;
+const TOOLBAR_ICON_SIZE: f32 = 22.0;
+const HOVER_ANIMATION_TIME: f32 = 0.12;
+const PRESS_ANIMATION_TIME: f32 = 0.07;
 
 fn action_button(
     ui: &mut Ui,
@@ -17,25 +22,50 @@ fn action_button(
         enabled,
         Button::new("")
             .frame(false)
-            .min_size(Vec2::new(width, 40.0)),
+            .min_size(Vec2::new(width, TOOLBAR_BUTTON_HEIGHT)),
     );
     response.widget_info(|| {
         eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, enabled, label)
     });
+
+    let hover_progress = ui.ctx().animate_bool_with_time_and_easing(
+        response.id.with("hover"),
+        enabled && response.hovered(),
+        HOVER_ANIMATION_TIME,
+        eframe::egui::emath::easing::quadratic_out,
+    );
+    let press_progress = ui.ctx().animate_bool_with_time_and_easing(
+        response.id.with("press"),
+        enabled && response.is_pointer_button_down_on(),
+        PRESS_ANIMATION_TIME,
+        eframe::egui::emath::easing::quadratic_out,
+    );
+
+    if enabled && (hover_progress > 0.0 || press_progress > 0.0) {
+        let fill = palette
+            .header
+            .lerp_to_gamma(palette.hover, hover_progress)
+            .lerp_to_gamma(palette.selection, press_progress);
+        ui.painter()
+            .rect_filled(response.rect.shrink(1.0), 3.0, fill);
+    }
+
     let color = if enabled {
         palette.accent
     } else {
         palette.muted
     };
-    icons::image(icon, color, 22.0).paint_at(
+    let press_offset = Vec2::new(0.0, press_progress);
+    let icon_size = TOOLBAR_ICON_SIZE * (1.0 + 0.05 * hover_progress - 0.07 * press_progress);
+    icons::image(icon, color, icon_size).paint_at(
         ui,
         Rect::from_center_size(
-            response.rect.center_top() + Vec2::new(0.0, 11.0),
-            Vec2::splat(22.0),
+            response.rect.center_top() + Vec2::new(0.0, 11.0) + press_offset,
+            Vec2::splat(icon_size),
         ),
     );
     ui.painter().text(
-        response.rect.center_top() + Vec2::new(0.0, 24.0),
+        response.rect.center_top() + Vec2::new(0.0, 24.0) + press_offset,
         Align2::CENTER_TOP,
         label,
         FontId::proportional(12.0),
@@ -126,11 +156,18 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         |ui| {
                             ui.set_min_width(action_width);
                             if matches!(label, "Sync" | "Pull" | "Push") {
-                                let operation = match label { "Sync" => crate::remotes::Operation::Fetch, "Pull" => crate::remotes::Operation::Pull, _ => crate::remotes::Operation::Push };
+                                let operation = match label {
+                                    "Sync" => crate::remotes::Operation::Fetch,
+                                    "Pull" => crate::remotes::Operation::Pull,
+                                    _ => crate::remotes::Operation::Push,
+                                };
                                 if action_button(ui, icon, label, app.remote_allowed(), palette, action_width)
                                     .help_text(remote_help(operation, app.tracking.status.as_ref().and_then(|status| status.remote.as_deref())))
                                     .disabled_help_text("Open and refresh a repository; wait for the current operation")
-                                    .clicked() { app.open_remote(operation); }
+                                    .clicked()
+                                {
+                                    app.open_remote(operation);
+                                }
                             } else if label == "Stage" || label == "Unstage" {
                                 let staged = label == "Stage";
                                 let enabled = app.staging_allowed(app.selected_change, staged);
@@ -142,22 +179,22 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                     app.set_staged(app.selected_change, staged);
                                 }
                             } else {
-                            ui.add_enabled_ui(false, |ui| {
-                                ui.with_layout(Layout::top_down(Align::Center), |ui| {
-                                    icons::paint(ui, icon, palette.accent, 22.0);
-                                    ui.label(RichText::new(label).size(12.0));
-                                });
-                            })
-                            .response
-                            .disabled_help_text(
-                                "This operation is not implemented yet",
-                            );
+                                action_button(ui, icon, label, false, palette, action_width)
+                                    .disabled_help_text("This operation is not implemented yet");
                             }
                         },
                     );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let response = action_button(ui, Icon::Settings, "Settings", true, palette, action_width).help_text("Settings");
+                    let response = action_button(
+                        ui,
+                        Icon::Settings,
+                        "Settings",
+                        true,
+                        palette,
+                        action_width,
+                    )
+                    .help_text("Settings");
                     if response.clicked() {
                         app.open_settings();
                     }
