@@ -1,4 +1,4 @@
-//! Ref listing and explicit local-branch operations, called on background workers.
+//! Ref listing and explicit branch/tag operations, called on background workers.
 use crate::{
     git,
     models::{BranchRef, RefKind, RefSnapshot},
@@ -119,15 +119,45 @@ fn require_clean(root: &Path) -> Result<(), String> {
 
 pub fn switch(root: &Path, full_name: &str) -> Result<(), String> {
     let refs = load(root)?;
-    let target = refs.refs.iter().find(|r| r.full_name == full_name && r.kind == RefKind::Local)
-        .ok_or("Select an existing local branch; remote branches and tags are read-only in this stage.")?;
+    let target = refs
+        .refs
+        .iter()
+        .find(|r| r.full_name == full_name)
+        .ok_or("Select an existing branch or tag.")?;
     if target.current {
         return Err("This branch is already checked out.".into());
     }
-    if let Some(reason) = name_hint(&target.name) {
-        return Err(reason.into());
+    if target.kind == RefKind::Local {
+        if let Some(reason) = name_hint(&target.name) {
+            return Err(reason.into());
+        }
     }
     require_clean(root)?;
+    if target.kind != RefKind::Local {
+        // Resolve the exact ref to a commit, including annotated tags. Never guess
+        // a local branch or create tracking branches as a side effect.
+        let commit = git::text(git::run(
+            root,
+            &[
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                &format!("{}^{{commit}}", target.full_name),
+            ],
+        )?)?;
+        return git::run(
+            root,
+            &[
+                "switch",
+                "--detach",
+                "--no-recurse-submodules",
+                "--no-overwrite-ignore",
+                "--",
+                commit.trim(),
+            ],
+        )
+        .map(|_| ());
+    }
     // No force, auto-stash, remote guessing, submodule recursion or overwriting ignored files.
     git::run(
         root,
@@ -325,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_branch_in_another_worktree_and_remote_or_tag_targets() {
+    fn refuses_branch_in_another_worktree_and_missing_local_targets() {
         let repo = committed_repo();
         create(&repo.0, "occupied", false).unwrap();
         repo.git(&[
@@ -339,9 +369,48 @@ mod tests {
         assert!(switch(&repo.0, "refs/heads/occupied").is_err());
         repo.git(&["tag", "main"]);
         repo.git(&["update-ref", "refs/remotes/origin/remote-only", "HEAD"]);
-        assert!(switch(&repo.0, "refs/tags/main").is_err());
-        assert!(switch(&repo.0, "refs/remotes/origin/remote-only").is_err());
         assert!(switch(&repo.0, "refs/heads/remote-only").is_err());
+        assert_eq!(git::load(&repo.0).unwrap().branch, "main");
+    }
+
+    #[test]
+    fn switches_tags_and_remote_refs_to_detached_commits_without_creating_branches() {
+        let repo = committed_repo();
+        let original = git::run(&repo.0, &["rev-parse", "HEAD"]).unwrap();
+        repo.git(&["tag", "lightweight"]);
+        repo.git(&["tag", "-a", "release", "-m", "Release"]);
+        repo.git(&["update-ref", "refs/remotes/origin/remote-only", "HEAD"]);
+        repo.write("file", "next\n");
+        repo.git(&["commit", "-am", "next"]);
+        for target in [
+            "refs/tags/lightweight",
+            "refs/tags/release",
+            "refs/remotes/origin/remote-only",
+        ] {
+            switch(&repo.0, target).unwrap();
+            assert_eq!(git::run(&repo.0, &["rev-parse", "HEAD"]).unwrap(), original);
+            assert!(git::run(&repo.0, &["symbolic-ref", "-q", "HEAD"]).is_err());
+            assert_eq!(
+                std::fs::read_to_string(repo.0.join("file")).unwrap(),
+                "base\n"
+            );
+            switch(&repo.0, "refs/heads/main").unwrap();
+        }
+        assert_eq!(
+            load(&repo.0)
+                .unwrap()
+                .refs
+                .iter()
+                .filter(|r| r.kind == RefKind::Local)
+                .count(),
+            1
+        );
+        repo.write("file", "local edits\n");
+        assert!(switch(&repo.0, "refs/tags/release").is_err());
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file")).unwrap(),
+            "local edits\n"
+        );
         assert_eq!(git::load(&repo.0).unwrap().branch, "main");
     }
 

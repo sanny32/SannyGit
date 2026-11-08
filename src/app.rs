@@ -441,16 +441,15 @@ impl SannyGitApp {
             .iter()
             .find(|r| r.full_name == self.selected_branch)
         else {
-            return Some("Select a local branch");
+            return Some("Select a branch or tag");
         };
-        if target.kind != crate::models::RefKind::Local {
-            return Some("Remote branches and tags are read-only in this stage");
-        }
         if target.current {
             return Some("This branch is already checked out");
         }
-        if let Some(reason) = crate::branches::name_hint(&target.name) {
-            return Some(reason);
+        if target.kind == crate::models::RefKind::Local {
+            if let Some(reason) = crate::branches::name_hint(&target.name) {
+                return Some(reason);
+            }
         }
         if !self.changes.is_empty() {
             return Some("Commit or move aside local changes before switching branches");
@@ -490,13 +489,13 @@ impl SannyGitApp {
         self.state_current = false;
         self.refs_current = false;
         self.error = None;
-        self.status = "Switching branch…".into();
+        self.status = "Switching branch or tag…".into();
         self.start_worker(move || {
             let outcome = crate::branches::switch(&root, &target);
             let snapshot = git::load(&root);
             WorkerResult::Operation {
                 committed: false,
-                success: "Branch switched",
+                success: "Branch or tag switched",
                 outcome,
                 snapshot,
             }
@@ -1164,7 +1163,7 @@ mod tests {
             .contains("first commit"));
         app.changes.clear();
         app.selected_branch = "refs/tags/v1.0.0".into();
-        assert!(app.switch_branch_blocker().unwrap().contains("read-only"));
+        assert!(app.switch_branch_blocker().is_none());
     }
 
     #[test]
