@@ -173,6 +173,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             }
                         }
                         ui.separator();
+                        ui.checkbox(&mut app.skip_push_confirmation, "Skip confirmation when pushing to upstream");
                         let mut auto_fetch = app.tracking.auto_fetch;
                         if ui.checkbox(&mut auto_fetch, "Auto-fetch upstream every 60 seconds").changed() { app.tracking.set_auto_fetch(auto_fetch); }
                     });

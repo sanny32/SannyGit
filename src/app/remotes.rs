@@ -11,6 +11,20 @@ pub struct RemoteDialog {
     pub remote: String,
     pub branch: String,
     pub set_upstream: bool,
+    pub dont_show_again: bool,
+}
+
+impl RemoteDialog {
+    pub fn can_skip_confirmation(&self) -> bool {
+        self.operation == Operation::Push
+            && self.state.as_ref().is_some_and(|state| {
+                state.branch.is_some()
+                    && state.remotes.contains(&self.remote)
+                    && state.upstream_remote.as_deref() == Some(self.remote.as_str())
+                    && state.upstream_ref.as_deref() == Some(self.branch.as_str())
+                    && crate::branches::name_hint(&self.branch).is_none()
+            })
+    }
 }
 
 impl SannyGitApp {
@@ -31,6 +45,7 @@ impl SannyGitApp {
             remote: String::new(),
             branch: String::new(),
             set_upstream: false,
+            dont_show_again: false,
         });
         self.error = None;
         self.status = "Loading remotes…".into();
@@ -75,6 +90,9 @@ impl SannyGitApp {
                     dialog.set_upstream =
                         operation == Operation::Push && state.upstream_remote.is_none();
                     dialog.state = Some(state);
+                    if self.skip_push_confirmation && dialog.can_skip_confirmation() {
+                        self.run_remote();
+                    }
                 }
             }
             Err(error) => self.error = Some(error),
@@ -91,6 +109,7 @@ impl SannyGitApp {
         let Some(state) = &dialog.state else {
             return;
         };
+        let skip_confirmation = dialog.dont_show_again && dialog.can_skip_confirmation();
         let operation = dialog.operation;
         let remote = dialog.remote.clone();
         let target = dialog.branch.clone();
@@ -98,6 +117,9 @@ impl SannyGitApp {
         let set_upstream = operation == Operation::Push && dialog.set_upstream;
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
         let cancel = Arc::new(AtomicBool::new(false));
+        if skip_confirmation {
+            self.skip_push_confirmation = true;
+        }
         self.manager.cancel = Some(cancel.clone());
         self.error = None;
         self.status = format!("{} in progress…", operation.label());
@@ -145,6 +167,37 @@ mod tests {
     use crate::theme::ThemeChoice;
 
     #[test]
+    fn skip_confirmation_requires_the_current_branch_upstream() {
+        let mut dialog = RemoteDialog {
+            operation: Operation::Push,
+            state: Some(State {
+                remotes: vec!["origin".into()],
+                branch: Some("main".into()),
+                upstream_remote: Some("origin".into()),
+                upstream_ref: Some("published".into()),
+            }),
+            remote: "origin".into(),
+            branch: "published".into(),
+            set_upstream: false,
+            dont_show_again: false,
+        };
+        assert!(dialog.can_skip_confirmation());
+        dialog.branch = "other".into();
+        assert!(!dialog.can_skip_confirmation());
+        dialog.branch = "published".into();
+        dialog.remote = "other".into();
+        assert!(!dialog.can_skip_confirmation());
+        dialog.remote = "origin".into();
+        dialog.state.as_mut().unwrap().upstream_remote = None;
+        assert!(!dialog.can_skip_confirmation());
+        dialog.state.as_mut().unwrap().upstream_remote = Some("origin".into());
+        dialog.state.as_mut().unwrap().branch = None;
+        assert!(!dialog.can_skip_confirmation());
+        dialog.state = None;
+        assert!(!dialog.can_skip_confirmation());
+    }
+
+    #[test]
     fn remote_dialog_defaults_to_upstream_and_ignores_results_after_cancel() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.network_dialog = Some(RemoteDialog {
@@ -153,6 +206,7 @@ mod tests {
             remote: String::new(),
             branch: String::new(),
             set_upstream: false,
+            dont_show_again: false,
         });
         app.apply_remote_info(
             Operation::Push,

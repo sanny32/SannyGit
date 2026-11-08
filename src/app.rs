@@ -1,4 +1,5 @@
 mod remotes;
+pub use remotes::RemoteDialog;
 mod repositories;
 mod tracking;
 pub use repositories::{Dialog as RepositoryDialog, Job as RepositoryJob, RepositoryManager};
@@ -80,6 +81,7 @@ pub struct SannyGitApp {
     pub branch_dialog_open: bool,
     pub remote_checkout: Option<RemoteCheckoutDialog>,
     pub network_dialog: Option<remotes::RemoteDialog>,
+    pub skip_push_confirmation: bool,
     pub new_branch_name: String,
     pub switch_to_new_branch: bool,
     pub changes: Vec<ChangeFile>,
@@ -130,6 +132,10 @@ impl SannyGitApp {
         theme.apply(&creation_context.egui_ctx);
 
         let mut app = Self::with_theme(theme);
+        app.skip_push_confirmation = creation_context
+            .storage
+            .and_then(|storage| eframe::get_value(storage, "sannygit.skip_push_confirmation"))
+            .unwrap_or(false);
         app.tracking.auto_fetch = creation_context
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.auto_fetch"))
@@ -199,6 +205,7 @@ impl SannyGitApp {
             branch_dialog_open: false,
             remote_checkout: None,
             network_dialog: None,
+            skip_push_confirmation: false,
             new_branch_name: String::new(),
             switch_to_new_branch: true,
             changes: Vec::new(),
@@ -1120,6 +1127,11 @@ impl eframe::App for SannyGitApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(
+            storage,
+            "sannygit.skip_push_confirmation",
+            &self.skip_push_confirmation,
+        );
         eframe::set_value(storage, "sannygit.auto_fetch", &self.tracking.auto_fetch);
         eframe::set_value(storage, THEME_STORAGE_KEY, &self.theme);
         let paths: Vec<_> = self.repositories.iter().map(|r| &r.path).collect();
@@ -1611,18 +1623,24 @@ mod tests {
                         remote: "origin".into(),
                         branch: "main".into(),
                         set_upstream: false,
+                        dont_show_again: false,
                     });
                     for _ in 0..3 {
                         output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
                         output.textures_delta.clear();
                     }
-                    for label in ["Remote:", "Cancel"] {
+                    let destination_label = if operation == crate::remotes::Operation::Push {
+                        "Options"
+                    } else {
+                        "Remote:"
+                    };
+                    for label in [destination_label, "Cancel"] {
                         assert!(
                             visible_text(&output.shapes, label),
                             "Remote operation {label} clipped at {size:?} in {theme:?}"
                         );
                     }
-                    if operation != crate::remotes::Operation::Fetch {
+                    if operation == crate::remotes::Operation::Pull {
                         assert!(visible_text(&output.shapes, "Remote branch:"));
                     }
                     assert!(app.worker.is_none());
