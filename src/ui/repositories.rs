@@ -3,30 +3,38 @@ use crate::{
     app::{RepositoryJob, SannyGitApp},
     theme::semibold_family,
 };
-use eframe::egui::{Align, Button, CollapsingHeader, Layout, RichText, ScrollArea, TextEdit, Ui};
+use eframe::egui::{Align, CollapsingHeader, Layout, RichText, ScrollArea, TextEdit, Ui};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.theme.palette();
     if app.open_dialog {
-        eframe::egui::Modal::new(eframe::egui::Id::unique("repository.add")).show(ui.ctx(), |ui| {
-            ui.set_width(540.0);
-            ui.heading("Add existing or create new repository");
-            ui.label("Specify the local Git repository to open. To create a new repository, specify an empty directory.");
-            ui.add_space(18.0);
-            ui.add_enabled_ui(!app.busy(), |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Repository:");
-                    ui.add(TextEdit::singleline(&mut app.repository_path).desired_width(390.0));
-                    super::clone_dialog::choose_folder(ui, &mut app.repository_path);
+        let ctx = ui.ctx().clone();
+        let busy = app.busy();
+        super::dialog_style::modal(&ctx, palette, "repository.add").show(&ctx, |ui| {
+            ui.set_width(560.0);
+            super::dialog_style::setup(ui);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            super::dialog_style::header(ui, palette, "Add existing or create new repository",
+                "Specify the local Git repository to open. To create a new repository, specify an empty directory.");
+            super::dialog_style::section(ui, palette.header, eframe::egui::Margin::same(18), |ui| {
+                ui.add_enabled_ui(!busy, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Repository:");
+                        let width = (ui.available_width() - 36.0).max(100.0);
+                        ui.add_sized([width, 28.0], TextEdit::singleline(&mut app.repository_path));
+                        super::clone_dialog::choose_folder(ui, &mut app.repository_path);
+                    });
                 });
+                if let Some(error) = &app.error { ui.add(eframe::egui::Label::new(RichText::new(error).color(palette.removed_text)).wrap()); }
+                if busy { ui.horizontal(|ui| { ui.spinner(); ui.label(&app.status); }); }
             });
-            if let Some(error) = &app.error { ui.colored_label(palette.removed_text, error); }
-            ui.add_space(18.0);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add_enabled(!app.busy() && !app.repository_path.trim().is_empty(), Button::new("OK")).clicked() {
-                    app.run_repository_job(RepositoryJob::AddOrCreate(app.repository_path.clone()));
-                }
-                if ui.add_enabled(!app.busy(), Button::new("Cancel")).clicked() { app.open_dialog = false; }
+            super::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.add_enabled(!busy && !app.repository_path.trim().is_empty(), super::dialog_style::primary("OK", palette)).clicked() {
+                        app.run_repository_job(RepositoryJob::AddOrCreate(app.repository_path.clone()));
+                    }
+                    if ui.add_enabled(!busy, super::dialog_style::button("Cancel")).clicked() { app.open_dialog = false; }
+                });
             });
         });
     }

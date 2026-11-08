@@ -2,6 +2,7 @@ mod branches;
 mod changes;
 mod clone_dialog;
 mod commit_panel;
+mod dialog_style;
 mod diff_view;
 mod icons;
 mod journal;

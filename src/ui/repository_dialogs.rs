@@ -64,8 +64,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let mut open = true;
     let mut job = None;
     Window::new(title).id(egui::Id::unique(title)).open(&mut open).default_width(540.0)
+        .collapsible(false)
+        .frame(super::dialog_style::frame(ui.ctx(), app.theme.palette()).inner_margin(18))
         .max_size(ui.ctx().content_rect().size() - egui::vec2(40.0,40.0))
         .show(ui.ctx(), |ui| {
+            super::dialog_style::setup(ui);
             let busy = app.busy();
             ui.add_enabled_ui(!busy, |ui| match dialog {
                 Dialog::Group => {

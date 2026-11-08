@@ -211,7 +211,10 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
         .open(&mut open)
         .resizable(false)
         .default_width(400.0)
+        .collapsible(false)
+        .frame(super::dialog_style::frame(ui.ctx(), app.theme.palette()).inner_margin(18))
         .show(ui.ctx(), |ui| {
+            super::dialog_style::setup(ui);
             ui.label(format!("Create from HEAD ({})", app.current_branch));
             ui.add_enabled_ui(!app.busy(), |ui| {
                 ui.add(
