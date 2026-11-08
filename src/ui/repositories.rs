@@ -90,6 +90,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 index,
                                 repository,
                                 app.selected_repository,
+                                &mut app.manager.highlighted_repository,
                                 palette,
                                 &group_names,
                                 &mut requested,
@@ -114,6 +115,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     index,
                     repository,
                     app.selected_repository,
+                    &mut app.manager.highlighted_repository,
                     palette,
                     &group_names,
                     &mut requested,
@@ -136,6 +138,7 @@ fn repository_row(
     index: usize,
     repository: &crate::models::Repository,
     selected: usize,
+    highlighted: &mut Option<String>,
     palette: crate::theme::Palette,
     groups: &[String],
     requested: &mut Option<String>,
@@ -143,7 +146,10 @@ fn repository_row(
     height: f32,
 ) {
     let active = selected == index;
-    let response = super::selectable_row(ui, active, height, |ui| {
+    let selected_row = highlighted
+        .as_deref()
+        .map_or(active, |path| path == repository.path);
+    let response = super::selectable_row(ui, selected_row, height, |ui| {
         icons::paint(
             ui,
             Icon::Repository,
@@ -180,6 +186,78 @@ fn repository_row(
         }
     });
     if response.clicked() {
+        *highlighted = Some(repository.path.clone());
+    }
+    if response.double_clicked() {
         *requested = Some(repository.path.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Vec2};
+
+    #[test]
+    fn single_click_selects_and_double_click_requests_activation() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            let ctx = Context::default();
+            crate::theme::install_fonts(&ctx);
+            theme.apply(&ctx);
+            let repository = crate::models::Repository {
+                name: "Repository".into(),
+                path: "/test/repository".into(),
+            };
+            let mut highlighted = None;
+            let mut requested = None;
+            let mut move_to = None;
+            let mut pointer = Pos2::ZERO;
+            for (frame, pressed) in [None, None, Some(true), Some(false), Some(true), Some(false)]
+                .into_iter()
+                .enumerate()
+            {
+                let mut events = vec![Event::PointerMoved(pointer)];
+                if let Some(pressed) = pressed {
+                    events.push(Event::PointerButton {
+                        pos: pointer,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    });
+                }
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+                        time: Some(frame as f64 * 0.05),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        pointer = ui.next_widget_position() + Vec2::new(70.0, 12.0);
+                        repository_row(
+                            ui,
+                            0,
+                            &repository,
+                            usize::MAX,
+                            &mut highlighted,
+                            theme.palette(),
+                            &[],
+                            &mut requested,
+                            &mut move_to,
+                            24.0,
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                if frame == 3 {
+                    assert_eq!(highlighted.as_deref(), Some(repository.path.as_str()));
+                    assert!(requested.is_none());
+                }
+            }
+            assert_eq!(requested.as_deref(), Some(repository.path.as_str()));
+        }
     }
 }

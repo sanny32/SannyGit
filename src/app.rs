@@ -348,6 +348,9 @@ impl SannyGitApp {
             });
         let same_repository = self.selected_repository == index;
         self.selected_repository = index;
+        if !same_repository {
+            self.manager.highlighted_repository = Some(self.repositories[index].path.clone());
+        }
         if new_repository {
             let path = self.repositories[index].path.clone();
             self.assign_group(&path, self.manager.preferences.selected_group.clone());

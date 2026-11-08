@@ -7,6 +7,7 @@ SannyGit is a simple, fast, modern, open-source Git GUI client built with Rust a
 Stages 1–5 connect the Working Tree interface to the installed Git executable:
 
 - Use **Repository → Add or Create…** (or **+** in Repositories) and enter a local working-tree directory. A subdirectory, an unborn repository, and a linked worktree are supported; bare repositories are not.
+- In the Repositories panel, a single click selects a row; double-click opens that repository. The active repository keeps its bold name while inactive entries remain grey.
 - The menu order follows SmartGit: Repository, Edit, View, Remote, Local, Branch, Query, Tools, Review, Window, Help. Available actions share the same guards as their toolbar/panel controls; future actions are disabled.
 - On macOS, these are native menus in the system menu bar (Add or Create: ⌘O; Refresh: F5). Windows and Linux show these menus above the toolbar.
 - **New Window** (⌘N on macOS) starts an independent empty application window. Secondary windows use isolated temporary session storage, so they do not overwrite the primary window's saved repositories/groups.

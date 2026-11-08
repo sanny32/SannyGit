@@ -25,6 +25,7 @@ pub enum Dialog {
 pub struct RepositoryManager {
     pub preferences: Preferences,
     pub dialog: Option<Dialog>,
+    pub highlighted_repository: Option<String>,
     pub clone_step: usize,
     pub clone_options: repository::CloneOptions,
     pub clone_branches: Vec<String>,
@@ -51,6 +52,7 @@ impl Default for RepositoryManager {
         Self {
             preferences: Preferences::default(),
             dialog: None,
+            highlighted_repository: None,
             clone_step: 0,
             clone_options: repository::CloneOptions::default(),
             clone_branches: Vec::new(),
