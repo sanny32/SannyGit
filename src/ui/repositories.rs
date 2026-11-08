@@ -142,12 +142,23 @@ fn repository_row(
     move_to: &mut Option<(String, Option<String>)>,
     height: f32,
 ) {
-    let response = super::selectable_row(ui, selected == index, height, |ui| {
-        icons::paint(ui, Icon::Repository, palette.text, 16.0);
+    let active = selected == index;
+    let response = super::selectable_row(ui, active, height, |ui| {
+        icons::paint(
+            ui,
+            Icon::Repository,
+            if active { palette.text } else { palette.muted },
+            16.0,
+        );
+        let name = RichText::new(&repository.name);
         ui.add(
-            eframe::egui::Label::new(RichText::new(&repository.name).family(semibold_family()))
-                .selectable(false)
-                .sense(eframe::egui::Sense::hover()),
+            eframe::egui::Label::new(if active {
+                name.family(semibold_family())
+            } else {
+                name
+            })
+            .selectable(false)
+            .sense(eframe::egui::Sense::hover()),
         );
     })
     .on_hover_text(&repository.path);
