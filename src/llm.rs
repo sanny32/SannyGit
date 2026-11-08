@@ -8,6 +8,8 @@ pub const DEFAULT_MODEL: &str = "gpt-4.1-mini";
 const MAX_DIFF_BYTES: usize = 256 * 1024;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const KEYRING_SERVICE: &str = "SannyGit";
+#[cfg(target_os = "macos")]
+const PROTECTED_KEYRING_SERVICE: &str = "SannyGit LLM API keys";
 const LEGACY_KEYRING_USER: &str = "llm-api-key";
 
 pub struct ProviderPreset {
@@ -91,17 +93,111 @@ fn credential_entry(user: &str) -> Result<keyring::Entry, String> {
         .map_err(|error| format!("Cannot access the OS credential manager: {error}"))
 }
 
+#[cfg(target_os = "macos")]
+mod macos_credentials {
+    use security_framework::passwords::{
+        delete_generic_password_options, generic_password, set_generic_password_options,
+        AccessControlOptions, PasswordOptions,
+    };
+
+    use super::PROTECTED_KEYRING_SERVICE;
+
+    const ITEM_NOT_FOUND: i32 = -25_300;
+    const MISSING_ENTITLEMENT: i32 = -34_018;
+
+    fn options(user: &str) -> PasswordOptions {
+        let mut options = PasswordOptions::new_generic_password(PROTECTED_KEYRING_SERVICE, user);
+        options.use_protected_keychain();
+        options
+    }
+
+    pub fn load(user: &str) -> Result<Option<String>, String> {
+        match generic_password(options(user)) {
+            Ok(secret) => String::from_utf8(secret)
+                .map(Some)
+                .map_err(|_| "The saved LLM API key is not valid UTF-8".into()),
+            Err(error) if matches!(error.code(), ITEM_NOT_FOUND | MISSING_ENTITLEMENT) => Ok(None),
+            Err(error) => Err(format!(
+                "Cannot unlock the LLM API key with Touch ID: {error}"
+            )),
+        }
+    }
+
+    pub fn save(user: &str, secret: &str) -> Result<bool, String> {
+        // Require a currently enrolled fingerprint. USER_PRESENCE is not used
+        // here because macOS may satisfy it with the keychain password instead.
+        let mut options = options(user);
+        options.set_access_control_options(AccessControlOptions::BIOMETRY_CURRENT_SET);
+        options.set_label("SannyGit LLM API key");
+        match set_generic_password_options(secret.as_bytes(), options) {
+            Ok(()) => Ok(true),
+            // Development binaries launched by `cargo run` do not have the
+            // application identifier entitlement required by this keychain.
+            Err(error) if error.code() == MISSING_ENTITLEMENT => Ok(false),
+            Err(error) => Err(format!(
+                "Cannot protect the LLM API key with Touch ID: {error}"
+            )),
+        }
+    }
+
+    pub fn delete(user: &str) -> Result<(), String> {
+        match delete_generic_password_options(options(user)) {
+            Ok(()) => Ok(()),
+            Err(error) if matches!(error.code(), ITEM_NOT_FOUND | MISSING_ENTITLEMENT) => Ok(()),
+            Err(error) => Err(format!("Cannot remove the saved LLM API key: {error}")),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn migrate_macos_api_key(
+    user: &str,
+    entry: &keyring::Entry,
+    secret: String,
+) -> Result<String, String> {
+    if macos_credentials::save(user, &secret)? {
+        entry.delete_credential().map_err(|error| {
+            format!("Cannot remove the unprotected LLM API key after migration: {error}")
+        })?;
+    }
+    Ok(secret)
+}
+
 pub fn load_api_key(config: &Config) -> Result<Option<String>, String> {
     if !config.store_api_key {
         return Ok(None);
     }
     let endpoint = chat_completions_endpoint(&config.endpoint);
-    let entry = credential_entry(&credential_user(&endpoint))?;
+    let user = credential_user(&endpoint);
+    #[cfg(target_os = "macos")]
+    if let Some(secret) = macos_credentials::load(&user)? {
+        return Ok(Some(secret));
+    }
+    let entry = credential_entry(&user)?;
     match entry.get_password() {
-        Ok(secret) => Ok(Some(secret)),
+        Ok(secret) => {
+            #[cfg(target_os = "macos")]
+            {
+                migrate_macos_api_key(&user, &entry, secret).map(Some)
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Ok(Some(secret))
+            }
+        }
         Err(keyring::Error::NoEntry) if endpoint == DEFAULT_ENDPOINT => {
-            match credential_entry(LEGACY_KEYRING_USER)?.get_password() {
-                Ok(secret) => Ok(Some(secret)),
+            let legacy = credential_entry(LEGACY_KEYRING_USER)?;
+            match legacy.get_password() {
+                Ok(secret) => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        migrate_macos_api_key(&user, &legacy, secret).map(Some)
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        Ok(Some(secret))
+                    }
+                }
                 Err(keyring::Error::NoEntry) => Ok(None),
                 Err(error) => Err(format!(
                     "Cannot read the LLM API key from the OS credential manager: {error}"
@@ -126,12 +222,22 @@ pub fn load_api_key_if_needed(config: &mut Config) -> Result<(), String> {
 
 pub fn save_api_key(config: &Config) -> Result<(), String> {
     let endpoint = chat_completions_endpoint(&config.endpoint);
-    let entry = credential_entry(&credential_user(&endpoint))?;
+    let user = credential_user(&endpoint);
+    let entry = credential_entry(&user)?;
     if config.store_api_key && !config.api_key.is_empty() {
+        #[cfg(target_os = "macos")]
+        if !macos_credentials::save(&user, &config.api_key)? {
+            entry
+                .set_password(&config.api_key)
+                .map_err(|error| format!("Cannot save the LLM API key securely: {error}"))?;
+        }
+        #[cfg(not(target_os = "macos"))]
         entry
             .set_password(&config.api_key)
             .map_err(|error| format!("Cannot save the LLM API key securely: {error}"))?;
     } else {
+        #[cfg(target_os = "macos")]
+        macos_credentials::delete(&user)?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(error) => {
@@ -151,7 +257,7 @@ pub fn save_api_key(config: &Config) -> Result<(), String> {
 
 pub fn credential_store_label() -> &'static str {
     #[cfg(target_os = "macos")]
-    return "macOS Keychain";
+    return "macOS Keychain with Touch ID";
     #[cfg(target_os = "windows")]
     return "Windows Credential Manager";
     #[cfg(target_os = "linux")]
