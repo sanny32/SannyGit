@@ -129,6 +129,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .size_range(190.0..=350.0)
         .frame(Frame::new().fill(palette.background).inner_margin(4))
         .show(ui, |ui| {
+            ui.take_available_space();
             sidebar_contents(ui, app);
         });
 
@@ -145,7 +146,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 .default_size(180.0)
                 .size_range(150.0..=300.0)
                 .frame(panel_frame(palette))
-                .show(ui, |ui| journal::show(ui, app));
+                .show(ui, |ui| {
+                    ui.take_available_space();
+                    journal::show(ui, app);
+                });
             Panel::top("working_tree.v3.files")
                 .resizable(true)
                 .default_size((context.content_rect().height() * 0.38).max(300.0))
@@ -155,6 +159,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     ..Margin::ZERO
                 }))
                 .show(ui, |ui| {
+                    ui.take_available_space();
                     Panel::right("working_tree.v3.commit")
                         .resizable(true)
                         .default_size(ui.available_width() * 0.29)
@@ -163,7 +168,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             left: 4,
                             ..Margin::ZERO
                         }))
-                        .show(ui, |ui| commit_panel::show(ui, app));
+                        .show(ui, |ui| {
+                            ui.take_available_space();
+                            commit_panel::show(ui, app);
+                        });
                     CentralPanel::default()
                         .frame(panel_frame(palette))
                         .show(ui, |ui| changes::show(ui, app));
@@ -182,6 +190,112 @@ mod tests {
     use super::*;
     use crate::theme::ThemeChoice;
     use eframe::egui::{pos2, vec2, Context, Event, Modifiers, PointerButton, RawInput, Rect};
+
+    #[test]
+    fn repository_switch_keeps_panel_rectangles() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [vec2(1100.0, 700.0), vec2(1536.0, 1024.0)] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.repositories = crate::mock_data::repositories();
+                app.selected_repository = 0;
+                app.changes = crate::mock_data::changes();
+                app.commits = crate::mock_data::commits();
+                app.refs = crate::mock_data::refs();
+                app.current_branch = "main".into();
+                let render = |app: &mut SannyGitApp, events: Vec<Event>| {
+                    let mut output = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| show(ui, app),
+                    );
+                    output.textures_delta.clear();
+                    let mut rects = ctx.data(|data| {
+                        data.iter_temp_by_type::<eframe::egui::PanelState>()
+                            .map(|state| state.outer_rect)
+                            .collect::<Vec<_>>()
+                    });
+                    rects.sort_by(|a, b| {
+                        a.min
+                            .x
+                            .total_cmp(&b.min.x)
+                            .then(a.min.y.total_cmp(&b.min.y))
+                            .then(a.max.x.total_cmp(&b.max.x))
+                    });
+                    rects
+                };
+                for _ in 0..3 {
+                    render(&mut app, vec![]);
+                }
+                let initial = render(&mut app, vec![]);
+                let journal = initial
+                    .iter()
+                    .find(|r| {
+                        r.min.x > 100.0
+                            && r.height() > 100.0
+                            && r.height() <= 300.0
+                            && r.max.x > size.x - 10.0
+                            && r.max.y > size.y - 40.0
+                    })
+                    .unwrap();
+                let pointer = pos2(journal.center().x, journal.top());
+                render(&mut app, vec![Event::PointerMoved(pointer)]);
+                render(
+                    &mut app,
+                    vec![Event::PointerButton {
+                        pos: pointer,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    }],
+                );
+                let moved = pointer - vec2(0.0, 35.0);
+                for _ in 0..3 {
+                    render(&mut app, vec![Event::PointerMoved(moved)]);
+                }
+                render(
+                    &mut app,
+                    vec![Event::PointerButton {
+                        pos: moved,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    }],
+                );
+                let before = render(&mut app, vec![]);
+                assert!(
+                    before
+                        .iter()
+                        .any(|r| r.max == journal.max && r.height() > journal.height() + 20.0),
+                    "Journal did not retain custom height"
+                );
+                assert!(before.len() >= 5);
+                // Simulate the loading/empty view of another repository.
+                app.selected_repository = 1;
+                app.changes.clear();
+                app.commits.clear();
+                app.refs.clear();
+                app.current_branch.clear();
+                app.refs_loading = true;
+                app.history_loading = true;
+                for _ in 0..10 {
+                    let after = render(&mut app, vec![]);
+                    assert_eq!(before.len(), after.len());
+                    for (a, b) in before.iter().zip(&after) {
+                        assert!(
+                            (a.min - b.min).length() < 1.0 && (a.max - b.max).length() < 1.0,
+                            "Panel moved on repository switch {theme:?} {size:?}: {a:?} -> {b:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn branch_panel_can_be_resized_by_dragging_divider() {
