@@ -110,7 +110,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 let action_width = 58.0;
                 for (icon, label) in [
                     (Icon::Pull, "Pull"),
-                    (Icon::Fetch, "Fetch"),
+                    (Icon::Fetch, "Sync"),
                     (Icon::Push, "Push"),
                     (Icon::Check, "Stage"),
                     (Icon::File, "Unstage"),
@@ -128,8 +128,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         Layout::top_down(Align::Center),
                         |ui| {
                             ui.set_min_width(action_width);
-                            if matches!(label, "Fetch" | "Pull" | "Push") {
-                                let operation = match label { "Fetch" => crate::remotes::Operation::Fetch, "Pull" => crate::remotes::Operation::Pull, _ => crate::remotes::Operation::Push };
+                            if matches!(label, "Sync" | "Pull" | "Push") {
+                                let operation = match label { "Sync" => crate::remotes::Operation::Fetch, "Pull" => crate::remotes::Operation::Pull, _ => crate::remotes::Operation::Push };
                                 if action_button(ui, icon, label, app.remote_allowed(), palette, action_width)
                                     .on_hover_text(format!("{}…\n{}", operation.label(), app.tracking.description()))
                                     .on_disabled_hover_text("Open and refresh a repository; wait for the current operation")
