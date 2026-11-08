@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SannyGit
+Comment=Desktop Git client
+Exec=sannygit
+Icon=sannygit
+Terminal=false
+Categories=Development;RevisionControl;
+StartupWMClass=SannyGit

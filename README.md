@@ -10,6 +10,12 @@ Requires Rust 1.95+ and Git 2.36+ on `PATH`.
 cargo run
 ```
 
+To build an app bundle/package with its icon:
+
+```sh
+python3 scripts/package.py
+```
+
 ## Check
 
 ```sh

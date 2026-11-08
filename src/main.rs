@@ -19,9 +19,13 @@ use app::SannyGitApp;
 use eframe::egui;
 
 fn main() -> eframe::Result<()> {
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/app/sannygit.png"))
+        .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     let window_size = egui::vec2(1536.0, 1024.0);
     let viewport = egui::ViewportBuilder::default()
         .with_title("SannyGit")
+        .with_app_id("SannyGit")
+        .with_icon(std::sync::Arc::new(icon))
         .with_decorations(true)
         .with_inner_size(window_size)
         .with_min_inner_size([1100.0, 700.0])
