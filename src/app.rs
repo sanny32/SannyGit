@@ -165,7 +165,9 @@ impl SannyGitApp {
         {
             app.manager.preferences = preferences;
         }
-        if let Some(storage) = creation_context.storage {
+        if let Some(path) = std::env::var_os("SANNYGIT_OPEN_REPOSITORY") {
+            app.open_repository(PathBuf::from(path).to_string_lossy().into_owned());
+        } else if let Some(storage) = creation_context.storage {
             app.restore_active_repository(storage);
         }
         app

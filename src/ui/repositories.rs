@@ -1,6 +1,7 @@
 use super::icons::{self, Icon};
 use crate::{
     app::{RepositoryJob, SannyGitApp},
+    menu::MenuAction,
     theme::semibold_family,
 };
 use eframe::egui::{Align, CollapsingHeader, Layout, RichText, ScrollArea, TextEdit, Ui};
@@ -65,6 +66,20 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let height = 24.0;
     let mut requested = None;
     let mut move_to = None;
+    let mut context_action = None;
+    let enabled_actions: Vec<_> = [
+        MenuAction::NewWindow,
+        MenuAction::CloseRepository,
+        MenuAction::ReloadHistory,
+        MenuAction::Pull,
+        MenuAction::Push,
+        MenuAction::Fetch,
+        MenuAction::Refresh,
+        MenuAction::RepositorySettings,
+    ]
+    .into_iter()
+    .filter(|action| app.menu_action_enabled(*action))
+    .collect();
     ScrollArea::vertical()
         .id_salt("repositories")
         .auto_shrink([false, false])
@@ -88,7 +103,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             .enumerate()
                             .filter(|(_, r)| group.paths.contains(&r.path))
                         {
-                            repository_row(
+                            if let Some(action) = repository_row(
                                 ui,
                                 index,
                                 repository,
@@ -100,7 +115,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 &mut requested,
                                 &mut move_to,
                                 height,
-                            );
+                                &enabled_actions,
+                            ) {
+                                context_action = Some((repository.path.clone(), action));
+                            }
                         }
                     });
                 if response.header_response.clicked() {
@@ -114,7 +132,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     .iter()
                     .any(|g| g.paths.contains(&r.path))
             }) {
-                repository_row(
+                if let Some(action) = repository_row(
                     ui,
                     index,
                     repository,
@@ -126,15 +144,50 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     &mut requested,
                     &mut move_to,
                     height,
-                );
+                    &enabled_actions,
+                ) {
+                    context_action = Some((repository.path.clone(), action));
+                }
             }
         });
+    if let Some((path, action)) = context_action {
+        match action {
+            RepositoryAction::Open => app.open_repository(path),
+            RepositoryAction::NewWindow => {
+                app.run_repository_job(RepositoryJob::NewRepositoryWindow(path))
+            }
+            RepositoryAction::Reveal => app.run_repository_job(RepositoryJob::Reveal(path)),
+            RepositoryAction::CopyPath => ui.ctx().copy_text(path),
+            RepositoryAction::Commit => ui.ctx().memory_mut(|memory| {
+                memory.request_focus(eframe::egui::Id::unique("commit.message"))
+            }),
+            RepositoryAction::Menu(action) => {
+                if app
+                    .repositories
+                    .get(app.selected_repository)
+                    .is_some_and(|repository| repository.path == path)
+                {
+                    app.handle_menu_action(action, ui.ctx());
+                }
+            }
+        }
+    }
     if let Some((path, group)) = move_to {
         app.assign_group(&path, group);
     }
     if let Some(path) = requested {
         app.open_repository(path);
     }
+}
+
+#[derive(Clone, Copy)]
+enum RepositoryAction {
+    Open,
+    NewWindow,
+    Reveal,
+    CopyPath,
+    Commit,
+    Menu(MenuAction),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -150,7 +203,8 @@ fn repository_row(
     requested: &mut Option<String>,
     move_to: &mut Option<(String, Option<String>)>,
     height: f32,
-) {
+    enabled: &[MenuAction],
+) -> Option<RepositoryAction> {
     let active = selected == index;
     let selected_row = highlighted
         .as_deref()
@@ -224,31 +278,234 @@ fn repository_row(
     } else {
         repository.path.clone()
     });
+    let mut action = None;
     response.context_menu(|ui| {
-        ui.label("Move to group");
-        if ui.button("Ungrouped").clicked() {
-            *move_to = Some((repository.path.clone(), None));
-            ui.close();
-        }
-        for group in groups {
-            if ui.button(group).clicked() {
-                *move_to = Some((repository.path.clone(), Some(group.clone())));
+        ui.set_min_width(240.0);
+        let idle = enabled.contains(&MenuAction::NewWindow);
+        let mut item = |ui: &mut Ui, label: &str, available: bool, selected_action| {
+            if ui
+                .add_enabled(available, eframe::egui::Button::new(label))
+                .clicked()
+            {
+                action = Some(selected_action);
                 ui.close();
             }
+        };
+        item(
+            ui,
+            "Open Repository",
+            idle && !active,
+            RepositoryAction::Open,
+        );
+        item(
+            ui,
+            "Open Repository in New Window",
+            idle,
+            RepositoryAction::NewWindow,
+        );
+        ui.menu_button("Open", |ui| {
+            let label = if cfg!(target_os = "macos") {
+                "Reveal in Finder"
+            } else if cfg!(target_os = "windows") {
+                "Show in Explorer"
+            } else {
+                "Show in File Manager"
+            };
+            item(ui, label, idle, RepositoryAction::Reveal);
+            ui.add_enabled(false, eframe::egui::Button::new("Open in Terminal"))
+                .on_disabled_hover_text("Opening an external terminal is not implemented yet");
+        });
+        item(
+            ui,
+            "Close Repository",
+            active && enabled.contains(&MenuAction::CloseRepository),
+            RepositoryAction::Menu(MenuAction::CloseRepository),
+        );
+        ui.separator();
+        item(ui, "Commit…", active && idle, RepositoryAction::Commit);
+        for (label, command) in [
+            ("Log", MenuAction::ReloadHistory),
+            ("Pull…", MenuAction::Pull),
+            ("Push", MenuAction::Push),
+            ("Synchronize…", MenuAction::Fetch),
+        ] {
+            item(
+                ui,
+                label,
+                active && enabled.contains(&command),
+                RepositoryAction::Menu(command),
+            );
         }
+        ui.separator();
+        item(
+            ui,
+            "Refresh",
+            active && enabled.contains(&MenuAction::Refresh),
+            RepositoryAction::Menu(MenuAction::Refresh),
+        );
+        ui.separator();
+        ui.menu_button("Move To", |ui| {
+            if ui.button("Ungrouped").clicked() {
+                *move_to = Some((repository.path.clone(), None));
+                ui.close();
+            }
+            for group in groups {
+                if ui.button(group).clicked() {
+                    *move_to = Some((repository.path.clone(), Some(group.clone())));
+                    ui.close();
+                }
+            }
+        });
+        for label in ["Mark as Favorite", "Rename…", "Remove…"] {
+            ui.add_enabled(false, eframe::egui::Button::new(label))
+                .on_disabled_hover_text("Not implemented yet");
+        }
+        ui.separator();
+        item(ui, "Copy Path", true, RepositoryAction::CopyPath);
+        ui.separator();
+        item(
+            ui,
+            "Settings…",
+            active && enabled.contains(&MenuAction::RepositorySettings),
+            RepositoryAction::Menu(MenuAction::RepositorySettings),
+        );
     });
+    if response.secondary_clicked() {
+        *highlighted = Some(repository.path.clone());
+    }
     if response.clicked() {
         *highlighted = Some(repository.path.clone());
     }
     if response.double_clicked() {
         *requested = Some(repository.path.clone());
     }
+    action
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use eframe::egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Vec2};
+
+    #[test]
+    fn context_menu_targets_the_clicked_repository_without_activating_it() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            for active in [false, true] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                theme.apply(&ctx);
+                let repository = crate::models::Repository {
+                    name: "Repository".into(),
+                    path: "/clicked/repository".into(),
+                };
+                let mut highlighted = None;
+                let mut requested = None;
+                let mut move_to = None;
+                let mut render = |events| {
+                    let mut action = None;
+                    let mut output = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(
+                                Pos2::ZERO,
+                                Vec2::new(1100.0, 700.0),
+                            )),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            ui.set_width(260.0);
+                            action = repository_row(
+                                ui,
+                                0,
+                                &repository,
+                                if active { 0 } else { usize::MAX },
+                                None,
+                                &mut highlighted,
+                                theme.palette(),
+                                &[],
+                                &mut requested,
+                                &mut move_to,
+                                24.0,
+                                &[MenuAction::NewWindow, MenuAction::Push],
+                            );
+                        },
+                    );
+                    output.textures_delta.clear();
+                    let labels = output
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            eframe::egui::Shape::Text(text) => {
+                                Some((text.galley.job.text.clone(), text.pos + Vec2::splat(3.0)))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    (action, labels)
+                };
+                for _ in 0..3 {
+                    render(vec![]);
+                }
+                let pointer = Pos2::new(70.0, 12.0);
+                for pressed in [true, false] {
+                    render(vec![
+                        Event::PointerMoved(pointer),
+                        Event::PointerButton {
+                            pos: pointer,
+                            button: PointerButton::Secondary,
+                            pressed,
+                            modifiers: Modifiers::NONE,
+                        },
+                    ]);
+                }
+                let (_, mut labels) = render(vec![]);
+                for _ in 0..3 {
+                    labels = render(vec![]).1;
+                }
+                for expected in [
+                    "Open Repository",
+                    "Close Repository",
+                    "Commit…",
+                    "Pull…",
+                    "Push",
+                    "Synchronize…",
+                    "Refresh",
+                    "Copy Path",
+                    "Settings…",
+                ] {
+                    assert!(
+                        labels.iter().any(|(label, _)| label == expected),
+                        "Missing {expected}"
+                    );
+                }
+                let label = "Push";
+                let pointer = labels.iter().find(|(text, _)| text == label).unwrap().1;
+                render(vec![Event::PointerMoved(pointer)]);
+                render(vec![Event::PointerButton {
+                    pos: pointer,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                }]);
+                let (action, _) = render(vec![Event::PointerButton {
+                    pos: pointer,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                }]);
+                assert!(if active {
+                    matches!(action, Some(RepositoryAction::Menu(MenuAction::Push)))
+                } else {
+                    action.is_none()
+                });
+                assert_eq!(highlighted.as_deref(), Some(repository.path.as_str()));
+                assert!(requested.is_none());
+            }
+        }
+    }
 
     #[test]
     fn name_stays_next_to_icon_with_tracking_counts() {
@@ -291,6 +548,7 @@ mod tests {
                                 &mut requested,
                                 &mut move_to,
                                 24.0,
+                                &[],
                             );
                         },
                     );
@@ -373,6 +631,7 @@ mod tests {
                             &mut requested,
                             &mut move_to,
                             24.0,
+                            &[],
                         );
                     },
                 );

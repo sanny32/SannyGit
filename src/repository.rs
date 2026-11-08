@@ -620,8 +620,54 @@ pub fn edit_config(path: &Path) -> Result<(), String> {
     });
     Ok(())
 }
+pub fn reveal(path: &Path) -> Result<(), String> {
+    let path = path
+        .canonicalize()
+        .map_err(|error| format!("Cannot open repository folder: {error}"))?;
+    if !path.is_dir() {
+        return Err("Repository folder does not exist".into());
+    }
+    #[cfg(target_os = "macos")]
+    let mut command = Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut command = Command::new("explorer.exe");
+    #[cfg(target_os = "linux")]
+    let mut command = Command::new("xdg-open");
+    let status = command
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| format!("Cannot open file manager: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("File manager could not open repository folder".into())
+    }
+}
+
+pub fn new_repository_window(path: &Path) -> Result<(), String> {
+    let path = path
+        .canonicalize()
+        .map_err(|error| format!("Cannot open repository: {error}"))?;
+    if !path.is_dir() {
+        return Err("Repository folder does not exist".into());
+    }
+    spawn_window(Some(&path))
+}
+
 pub fn new_window() -> Result<(), String> {
-    let mut child = Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+    spawn_window(None)
+}
+
+fn spawn_window(path: Option<&Path>) -> Result<(), String> {
+    let mut command = Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
+    command.env_remove("SANNYGIT_OPEN_REPOSITORY");
+    if let Some(path) = path {
+        command.env("SANNYGIT_OPEN_REPOSITORY", path);
+    }
+    let mut child = command
         .env("SANNYGIT_SECONDARY_WINDOW", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -638,6 +684,22 @@ pub fn new_window() -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::git::tests::TempRepo;
+
+    #[test]
+    fn folder_launchers_report_missing_paths_without_launching() {
+        let repo = TempRepo::new();
+        let missing = repo.0.join("missing folder");
+        assert!(reveal(&missing)
+            .unwrap_err()
+            .contains("Cannot open repository folder"));
+        assert!(new_repository_window(&missing)
+            .unwrap_err()
+            .contains("Cannot open repository"));
+        let file = repo.0.join("regular-file");
+        fs::write(&file, "text").unwrap();
+        assert!(reveal(&file).is_err());
+        assert!(new_repository_window(&file).is_err());
+    }
 
     #[test]
     fn init_creates_new_or_existing_directory_without_reinitializing_repositories() {

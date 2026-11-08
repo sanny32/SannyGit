@@ -41,6 +41,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.add_sized(
                     [width, editor_height],
                     TextEdit::multiline(&mut app.commit_message)
+                        .id(eframe::egui::Id::unique("commit.message"))
                         .desired_rows(1)
                         .desired_width(f32::INFINITY)
                         .margin(Vec2::new(6.0, 4.0))

@@ -79,6 +79,8 @@ impl Default for RepositoryManager {
 
 pub enum Job {
     NewWindow,
+    NewRepositoryWindow(String),
+    Reveal(String),
     AddOrCreate(String),
     InspectClone(String),
     Clone {
@@ -150,7 +152,8 @@ impl SannyGitApp {
         }
         self.error = None;
         self.status = match &job {
-            Job::NewWindow => "Opening new window…",
+            Job::NewWindow | Job::NewRepositoryWindow(_) => "Opening new window…",
+            Job::Reveal(_) => "Opening repository folder…",
             Job::AddOrCreate(_) => "Opening repository…",
             Job::InspectClone(_) => "Inspecting repository…",
             Job::Clone { .. } => "Cloning repository…",
@@ -174,6 +177,12 @@ impl SannyGitApp {
         if !self.start_worker(move || {
             let result = match job {
                 Job::NewWindow => ResultMessage::Window(repository::new_window()),
+                Job::NewRepositoryWindow(path) => {
+                    ResultMessage::Window(repository::new_repository_window(&PathBuf::from(path)))
+                }
+                Job::Reveal(path) => {
+                    ResultMessage::Editor(repository::reveal(&PathBuf::from(path)))
+                }
                 Job::AddOrCreate(path) => ResultMessage::Open(repository::add_or_create(&path)),
                 Job::InspectClone(source) => {
                     let result = repository::clone_branches(&source, &cancel);
