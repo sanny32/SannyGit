@@ -163,48 +163,136 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
     let mut job = None;
     let mut close = false;
     super::dialog_style::modal(ctx, palette, "repository.settings").show(ctx, |ui| {
-        ui.set_width(520.0);
+        ui.set_width(660.0_f32.min(ctx.content_rect().width() - 48.0));
         super::dialog_style::setup(ui);
         ui.spacing_mut().item_spacing.y = 0.0;
         super::dialog_style::header(
             ui,
             palette,
-            "Repository Settings",
-            "Configure the Git identity used for commits in this repository.",
+            "Edit the repository settings",
+            "Here you can edit the Git settings for the repository. The default settings can be found in the Preferences.",
         );
-        super::dialog_style::section(ui, palette.header, egui::Margin::same(18), |ui| {
-            ui.spacing_mut().item_spacing.y = 8.0;
-            if let Some(settings) = &mut app.manager.settings {
-                ui.add_enabled_ui(!busy, |ui| {
-                    ui.label(RichText::new("Name").strong());
-                    ui.add_sized(
-                        [ui.available_width(), 30.0],
-                        TextEdit::singleline(&mut settings.name).hint_text("Your name"),
-                    );
-                    ui.add_space(8.0);
-                    ui.label(RichText::new("Email").strong());
-                    ui.add_sized(
-                        [ui.available_width(), 30.0],
-                        TextEdit::singleline(&mut settings.email).hint_text("you@example.com"),
-                    );
+        super::dialog_style::section(ui, palette.header, egui::Margin::same(12), |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            let tab_id = egui::Id::unique("repository.settings.tab");
+            let mut tab = ctx.data_mut(|data| data.get_temp::<usize>(tab_id).unwrap_or(0));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for (index, label) in [
+                    "User", "Fetch and Pull", "Push", "Signing", "Encoding",
+                ].iter().enumerate() {
+                    if ui.selectable_label(tab == index, *label).clicked() {
+                        tab = index;
+                    }
+                }
+            });
+            ctx.data_mut(|data| data.insert_temp(tab_id, tab));
+            egui::Frame::new()
+                .fill(palette.panel)
+                .stroke((1.0, palette.border))
+                .inner_margin(10)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ScrollArea::vertical()
+                        .id_salt("repository.settings.content")
+                        .auto_shrink([false, false])
+                        .max_height(210.0)
+                        .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.spacing_mut().interact_size.y = 22.0;
+                    if tab == 0 {
+                        if let Some(settings) = &mut app.manager.settings {
+                            ui.add_enabled_ui(!busy, |ui| {
+                                egui::Grid::new("repository.settings.identity")
+                                    .num_columns(2)
+                                    .spacing([8.0, 4.0])
+                                    .show(ui, |ui| {
+                                        ui.label("Full Name:");
+                                        ui.add(TextEdit::singleline(&mut settings.name)
+                                            .desired_width(ui.available_width()));
+                                        ui.end_row();
+                                        ui.label("Git Email:");
+                                        ui.add(TextEdit::singleline(&mut settings.email)
+                                            .desired_width(ui.available_width()));
+                                        ui.end_row();
+                                    });
+                            });
+                            ui.label(RichText::new(
+                                "Leave a field empty to use the inherited Git setting."
+                            ).small().color(palette.muted));
+                        } else if app.error.is_none() {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label("Loading repository settings…");
+                            });
+                        }
+                    } else {
+                        ui.add_enabled_ui(false, |ui| {
+                            match tab {
+                                1 => {
+                                    let _ = ui.radio(true, "Merge fetched remote changes");
+                                    let _ = ui.radio(false, "Rebase local branch onto fetched changes");
+                                    ui.add_space(4.0);
+                                    ui.checkbox(&mut true, "Prune obsolete remote tracked branches");
+                                    ui.add_space(4.0);
+                                    ui.checkbox(&mut false, "Always fetch new commits, tags and branches from submodule");
+                                    ui.checkbox(&mut true, "Update registered submodules");
+                                    ui.checkbox(&mut true, "Initialize new submodules");
+                                }
+                                2 => {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Submodule handling*:");
+                                        ComboBox::from_id_salt("repository.settings.push")
+                                            .selected_text("abort if any needs to be pushed")
+                                            .show_ui(ui, |ui| {
+                                                for label in ["ignore submodules", "abort if any needs to be pushed", "push submodules first"] {
+                                                    ui.label(label);
+                                                }
+                                            });
+                                    });
+                                    ui.label("* if repository commit references non-pushed submodule commit");
+                                }
+                                3 => {
+                                    let mut program = String::new();
+                                    let mut key = String::new();
+                                    egui::Grid::new("repository.settings.signing")
+                                        .num_columns(2)
+                                        .spacing([8.0, 4.0])
+                                        .show(ui, |ui| {
+                                            ui.label("GPG Program:");
+                                            ui.horizontal(|ui| {
+                                                let width = (ui.available_width() - 30.0).max(80.0);
+                                                ui.add(TextEdit::singleline(&mut program).desired_width(width));
+                                                super::icons::button(
+                                                    ui, super::icons::Icon::Folder,
+                                                    "Choose GPG program",
+                                                    egui::vec2(22.0, 22.0),
+                                                );
+                                            });
+                                            ui.end_row();
+                                            ui.label("Signing Key:");
+                                            ui.add(TextEdit::singleline(&mut key)
+                                                .desired_width(ui.available_width()));
+                                            ui.end_row();
+                                            ui.label("");
+                                            ui.checkbox(&mut false, "Sign all commits");
+                                            ui.end_row();
+                                        });
+                                }
+                                4 => {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Text File Encoding:");
+                                        ComboBox::from_id_salt("repository.settings.encoding")
+                                            .selected_text("System Default (UTF-8)")
+                                            .show_ui(ui, |_| {});
+                                    });
+                                }
+                                _ => {}
+                            }
+                        });
+                    }
+                        });
                 });
-                ui.add_space(4.0);
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(
-                            "Leave a field empty to use the inherited Git setting (user.name or user.email).",
-                        )
-                        .small()
-                        .color(palette.muted),
-                    )
-                    .wrap(),
-                );
-            } else if app.error.is_none() {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Loading repository settings…");
-                });
-            }
             if let Some(error) = &app.error {
                 ui.add(egui::Label::new(RichText::new(error).color(palette.removed_text)).wrap());
             }
@@ -212,7 +300,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
         super::dialog_style::section(
             ui,
             palette.header,
-            egui::Margin::symmetric(18, 12),
+            egui::Margin::symmetric(12, 8),
             |ui| {
                 ui.with_layout(
                     egui::Layout::right_to_left(egui::Align::Center),
@@ -221,7 +309,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                         if ui
                             .add_enabled(
                                 !busy && settings.is_some(),
-                                super::dialog_style::primary("Save Settings", palette),
+                                super::dialog_style::primary("OK", palette),
                             )
                             .clicked()
                         {
