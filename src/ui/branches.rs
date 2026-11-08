@@ -132,7 +132,6 @@ fn branch_group(
                             } else {
                                 RichText::new(&branch.name)
                             })
-                            .selectable(false)
                             .sense(eframe::egui::Sense::hover()),
                         );
                         if branch.current {

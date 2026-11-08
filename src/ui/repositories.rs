@@ -257,7 +257,6 @@ fn repository_row(
                     })
                     .halign(Align::Min)
                     .truncate()
-                    .selectable(false)
                     .sense(eframe::egui::Sense::hover()),
                 );
             },
@@ -265,7 +264,6 @@ fn repository_row(
         if !suffix.is_empty() {
             ui.add(
                 eframe::egui::Label::new(super::sync_badge(&suffix, palette, 12.0))
-                    .selectable(false)
                     .sense(eframe::egui::Sense::hover()),
             );
         }

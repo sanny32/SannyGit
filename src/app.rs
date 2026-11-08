@@ -56,6 +56,33 @@ pub enum ChangeFilter {
     Deleted,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsPage {
+    General,
+    Appearance,
+    Remote,
+}
+
+pub struct SettingsWindow {
+    pub open: bool,
+    pub page: SettingsPage,
+    pub theme: ThemeChoice,
+    pub auto_fetch: bool,
+    pub skip_push_confirmation: bool,
+}
+
+impl SettingsWindow {
+    fn new(theme: ThemeChoice) -> Self {
+        Self {
+            open: false,
+            page: SettingsPage::Appearance,
+            theme,
+            auto_fetch: true,
+            skip_push_confirmation: false,
+        }
+    }
+}
+
 pub struct RemoteCheckoutDialog {
     pub remote: String,
     pub mode: u8,
@@ -69,6 +96,7 @@ pub struct SannyGitApp {
     #[cfg(target_os = "macos")]
     native_menu: Option<crate::native_menu::NativeMenu>,
     pub theme: ThemeChoice,
+    pub settings_window: SettingsWindow,
     pub about_dialog: bool,
     applied_theme: ThemeChoice,
     pub repositories: Vec<Repository>,
@@ -195,6 +223,7 @@ impl SannyGitApp {
             #[cfg(target_os = "macos")]
             native_menu: None,
             theme,
+            settings_window: SettingsWindow::new(theme),
             about_dialog: false,
             applied_theme: theme,
             repositories: Vec::new(),
@@ -299,6 +328,7 @@ impl SannyGitApp {
                 !self.busy() && self.repositories.get(self.selected_repository).is_some()
             }
             MenuAction::Open
+            | MenuAction::Preferences
             | MenuAction::LightTheme
             | MenuAction::DarkTheme
             | MenuAction::Close
@@ -367,12 +397,20 @@ impl SannyGitApp {
             MenuAction::Pull => self.open_remote(crate::remotes::Operation::Pull),
             MenuAction::Push => self.open_remote(crate::remotes::Operation::Push),
             MenuAction::ReloadHistory => self.reload_history(),
+            MenuAction::Preferences => self.open_settings(),
             MenuAction::LightTheme => self.theme = ThemeChoice::Light,
             MenuAction::DarkTheme => self.theme = ThemeChoice::Dark,
             MenuAction::Close => context.send_viewport_cmd(eframe::egui::ViewportCommand::Close),
             MenuAction::About => self.about_dialog = true,
         }
         context.request_repaint();
+    }
+
+    pub fn open_settings(&mut self) {
+        self.settings_window.theme = self.theme;
+        self.settings_window.auto_fetch = self.tracking.auto_fetch;
+        self.settings_window.skip_push_confirmation = self.skip_push_confirmation;
+        self.settings_window.open = true;
     }
 
     pub fn refresh(&mut self) {

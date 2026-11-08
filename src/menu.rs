@@ -23,6 +23,7 @@ pub enum MenuAction {
     CreateBranch,
     SwitchBranch,
     ReloadHistory,
+    Preferences,
     LightTheme,
     DarkTheme,
     Close,
@@ -173,6 +174,8 @@ pub const MENUS: &[Menu] = &[
     Menu {
         title: "Tools",
         items: &[
+            action("Preferences…", MenuAction::Preferences),
+            separator(),
             action("Light Theme", MenuAction::LightTheme),
             action("Dark Theme", MenuAction::DarkTheme),
         ],

@@ -9,6 +9,7 @@ mod journal;
 mod remote_dialog;
 mod repositories;
 mod repository_dialogs;
+mod settings;
 mod status_bar;
 mod toolbar;
 mod tooltips;
@@ -75,6 +76,8 @@ fn selectable_row(
             .max_rect(rect.shrink2(Vec2::new(6.0, 1.0)))
             .layout(Layout::left_to_right(Align::Center)),
     );
+    // Labels inside a clickable row must leave pointer input to the row.
+    child.style_mut().interaction.selectable_labels = false;
     contents(&mut child);
     response
 }
@@ -134,6 +137,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let context = ui.ctx().clone();
     let palette = app.theme.palette();
     toolbar::show(ui, app);
+    settings::show(ui.ctx(), app);
     repository_dialogs::show(ui, app);
     eframe::egui::Window::new("About SannyGit")
         .open(&mut app.about_dialog)

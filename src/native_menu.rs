@@ -175,6 +175,7 @@ fn append_items(
                     | MenuAction::Clone
                     | MenuAction::SearchRepositories
                     | MenuAction::EditUserConfig
+                    | MenuAction::Preferences
                     | MenuAction::LightTheme
                     | MenuAction::DarkTheme
                     | MenuAction::Close

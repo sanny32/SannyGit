@@ -1,12 +1,8 @@
 use super::icons::{self, Icon};
 use super::tooltips::TooltipResponse;
-use crate::{
-    app::SannyGitApp,
-    theme::{semibold_family, Palette, ThemeChoice},
-};
+use crate::{app::SannyGitApp, theme::Palette};
 use eframe::egui::{
-    Align, Align2, Button, FontId, Frame, Layout, Margin, Panel, Popup, Rect, Response, RichText,
-    Ui, Vec2,
+    Align, Align2, Button, FontId, Frame, Layout, Margin, Panel, Rect, Response, RichText, Ui, Vec2,
 };
 
 fn action_button(
@@ -162,22 +158,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let response = action_button(ui, Icon::Settings, "Settings", true, palette, action_width).help_text("Settings");
-                    Popup::menu(&response).show(|ui| {
-                        ui.label(RichText::new("Appearance").family(semibold_family()));
-                        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
-                            if ui
-                                .selectable_label(app.theme == theme, theme.label())
-                                .clicked()
-                            {
-                                app.theme = theme;
-                                ui.close();
-                            }
-                        }
-                        ui.separator();
-                        ui.checkbox(&mut app.skip_push_confirmation, "Skip confirmation when pushing to upstream");
-                        let mut auto_fetch = app.tracking.auto_fetch;
-                        if ui.checkbox(&mut auto_fetch, "Auto-fetch upstream every 60 seconds").changed() { app.tracking.set_auto_fetch(auto_fetch); }
-                    });
+                    if response.clicked() {
+                        app.open_settings();
+                    }
                 });
             });
         });

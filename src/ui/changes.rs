@@ -77,7 +77,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.label("Status");
             });
         })
-        .body(|body| {
+        .body(|mut body| {
+            body.ui_mut().style_mut().interaction.selectable_labels = false;
             body.rows(row_height, visible.len(), |mut row| {
                 let (index, change) = visible[row.index()];
                 row.set_selected(app.selected_change == index);
@@ -109,7 +110,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     };
                     icons::paint(ui, icon, status_color(change.kind, palette), 16.0);
                     ui.add_space(4.0);
-                    ui.add(eframe::egui::Label::new(RichText::new(&change.path).color(palette.text)).selectable(false).truncate())
+                    ui.add(eframe::egui::Label::new(RichText::new(&change.path).color(palette.text)).truncate())
                         .help_text(if let Some(source) = &change.original_path {
                             format!("{source} → {}", change.path)
                         } else {

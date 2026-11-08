@@ -100,7 +100,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
             }
         })
-        .body(|body| {
+        .body(|mut body| {
+            // The table row handles selection, including clicks on cell text.
+            body.ui_mut().style_mut().interaction.selectable_labels = false;
             body.rows(20.0, visible.len(), |mut row| {
                 let (original, commit) = visible[row.index()];
                 row.set_selected(app.selected_commit.as_ref() == Some(&commit.hash));
@@ -256,5 +258,76 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
     app.commit_details_open = open;
     if retry {
         app.retry_commit_preview();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{install_fonts, ThemeChoice};
+    use eframe::egui::{self, Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect};
+
+    #[test]
+    fn clicking_commit_text_in_each_column_selects_the_commit() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for label in [
+                "Improve diff view highlighting",
+                "SaNNy",
+                "2 hours ago",
+                "a1b2c3d",
+            ] {
+                let context = Context::default();
+                install_fonts(&context);
+                theme.apply(&context);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.commits = crate::mock_data::commits();
+                let render = |app: &mut SannyGitApp, events| {
+                    context.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(
+                                Pos2::ZERO,
+                                Vec2::new(900.0, 300.0),
+                            )),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| show(ui, app),
+                    )
+                };
+                let mut output = render(&mut app, Vec::new());
+                let position = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.job.text == label => {
+                            Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                        }
+                        _ => None,
+                    })
+                    .expect("Commit cell is missing");
+                output.textures_delta.clear();
+                for pressed in [true, false] {
+                    let mut output = render(
+                        &mut app,
+                        vec![
+                            Event::PointerMoved(position),
+                            Event::PointerButton {
+                                pos: position,
+                                button: PointerButton::Primary,
+                                pressed,
+                                modifiers: Modifiers::NONE,
+                            },
+                        ],
+                    );
+                    output.textures_delta.clear();
+                }
+                assert_eq!(
+                    app.selected_commit.as_deref(),
+                    Some("a1b2c3d"),
+                    "Click on {label} in {theme:?}"
+                );
+                assert!(app.commit_details_open);
+            }
+        }
     }
 }
