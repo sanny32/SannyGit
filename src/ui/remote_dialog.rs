@@ -13,7 +13,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         ui.set_width(580.0);
         super::dialog_style::setup(ui);
         ui.spacing_mut().item_spacing.y = 0.0;
-        if dialog.operation == Operation::Push && dialog.state.is_some() {
+        if dialog.operation == Operation::Push {
             push_confirmation(ui, app, &mut dialog, busy, &mut submit, &mut keep);
             return;
         }
@@ -72,9 +72,8 @@ fn push_confirmation(
     keep: &mut bool,
 ) {
     let palette = app.theme.palette();
-    let Some(state) = dialog.state.clone() else {
-        return;
-    };
+    let loaded = dialog.state.is_some();
+    let state = dialog.state.clone().unwrap_or_default();
     super::dialog_style::section(ui, palette.header, egui::Margin::same(20), |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(20.0, 8.0);
         ui.horizontal_top(|ui| {
@@ -86,14 +85,27 @@ fn push_confirmation(
             ui.vertical(|ui| {
                 ui.set_width(ui.available_width());
                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-                let branch = state.branch.as_deref().unwrap_or("—");
+                let branch = state.branch.as_deref().unwrap_or_else(|| {
+                    if !loaded && !app.current_branch.is_empty() {
+                        &app.current_branch
+                    } else {
+                        "—"
+                    }
+                });
                 ui.label(
                     RichText::new(format!("Do you want to push branch '{branch}'?"))
                         .size(16.0)
                         .family(crate::theme::semibold_family()),
                 );
                 ui.add_space(6.0);
-                if dialog.remote.is_empty() {
+                if !loaded {
+                    if app.error.is_none() {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Loading remotes…");
+                        });
+                    }
+                } else if dialog.remote.is_empty() {
                     ui.label("No configured remotes.");
                 } else {
                     ui.label(format!("1 branch will be pushed to '{}'.", dialog.remote));
@@ -101,7 +113,7 @@ fn push_confirmation(
                         ui.label(format!("Remote branch: {}", dialog.branch));
                     }
                 }
-                ui.add_enabled_ui(!busy, |ui| {
+                ui.add_enabled_ui(!busy && loaded, |ui| {
                     egui::CollapsingHeader::new("Options").show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 8.0;
                         egui::Grid::new("push.options")
@@ -141,7 +153,7 @@ fn push_confirmation(
                         );
                     });
                 });
-                if busy {
+                if busy && loaded {
                     ui.horizontal(|ui| {
                         ui.spinner();
                         ui.label(&app.status);
@@ -200,6 +212,88 @@ mod tests {
         remotes::State,
         theme::{install_fonts, ThemeChoice},
     };
+
+    #[test]
+    fn push_uses_the_same_confirmation_while_loading_and_on_error() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let ctx = egui::Context::default();
+            install_fonts(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            theme.apply(&ctx);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.current_branch = "main".into();
+            app.network_dialog = Some(RemoteDialog {
+                operation: Operation::Push,
+                state: None,
+                remote: String::new(),
+                branch: String::new(),
+                set_upstream: false,
+                dont_show_again: false,
+            });
+            let mut title_positions = Vec::new();
+            for stage in 0..3 {
+                if stage == 1 {
+                    let dialog = app.network_dialog.as_mut().unwrap();
+                    dialog.remote = "origin".into();
+                    dialog.branch = "main".into();
+                    dialog.state = Some(State {
+                        remotes: vec!["origin".into()],
+                        branch: Some("main".into()),
+                        upstream_remote: Some("origin".into()),
+                        upstream_ref: Some("main".into()),
+                    });
+                } else if stage == 2 {
+                    app.network_dialog.as_mut().unwrap().state = None;
+                    app.error = Some("Cannot read remotes".into());
+                }
+                for frame in 0..3 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(1100.0, 700.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| show(ui.ctx(), &mut app),
+                    );
+                    output.textures_delta.clear();
+                    if frame < 2 {
+                        continue;
+                    }
+                    let texts = output
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) => Some(text),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    let title = texts
+                        .iter()
+                        .find(|text| text.galley.job.text == "Do you want to push branch 'main'?")
+                        .expect("Push confirmation missing");
+                    title_positions.push(title.pos.x);
+                    let expected = match stage {
+                        0 => "Loading remotes…",
+                        1 => "1 branch will be pushed to 'origin'.",
+                        _ => "Cannot read remotes",
+                    };
+                    assert!(texts.iter().any(|text| text.galley.job.text == expected));
+                    assert!(texts.iter().any(|text| text.galley.job.text == "Cancel"));
+                    assert!(!texts.iter().any(|text| text
+                        .galley
+                        .job
+                        .text
+                        .contains("Force pushes")));
+                }
+            }
+            assert!(title_positions
+                .windows(2)
+                .all(|x| (x[0] - x[1]).abs() < 1.0));
+            assert!(!app.busy());
+        }
+    }
 
     #[test]
     fn push_confirmation_is_compact_in_both_themes_and_window_sizes() {
