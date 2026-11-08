@@ -173,6 +173,77 @@ pub fn switch(root: &Path, full_name: &str) -> Result<(), String> {
     .map(|_| ())
 }
 
+#[derive(Clone)]
+pub enum RemoteChoice {
+    Local(String),
+    Create(String),
+    Detached,
+}
+
+/// Prefer an unambiguous tracking branch, then an untracked same-name branch.
+pub fn local_for_remote<'a>(refs: &'a [BranchRef], remote: &BranchRef) -> Option<&'a BranchRef> {
+    let mut tracking = refs.iter().filter(|r| {
+        r.kind == RefKind::Local && r.upstream.as_deref() == Some(remote.name.as_str())
+    });
+    if let Some(first) = tracking.next() {
+        return tracking.next().is_none().then_some(first);
+    }
+    let (_, name) = remote.name.split_once('/')?;
+    refs.iter()
+        .find(|r| r.kind == RefKind::Local && r.name == name && r.upstream.is_none())
+}
+
+pub fn checkout_remote(root: &Path, remote: &str, choice: &RemoteChoice) -> Result<(), String> {
+    let refs = load(root)?;
+    let target = refs
+        .refs
+        .iter()
+        .find(|r| r.full_name == remote && r.kind == RefKind::Remote)
+        .ok_or("The selected remote branch no longer exists. Refresh the repository.")?;
+    match choice {
+        RemoteChoice::Local(local) => {
+            if !refs
+                .refs
+                .iter()
+                .any(|r| r.kind == RefKind::Local && r.full_name == *local)
+            {
+                return Err("Select an existing local branch.".into());
+            }
+            switch(root, local)
+        }
+        RemoteChoice::Detached => switch(root, remote),
+        RemoteChoice::Create(name) => {
+            if let Some(reason) = name_hint(name) {
+                return Err(reason.into());
+            }
+            git::run(root, &["check-ref-format", "--branch", name])?;
+            if refs
+                .refs
+                .iter()
+                .any(|r| r.full_name == format!("refs/heads/{name}"))
+            {
+                return Err("A local branch with this name already exists.".into());
+            }
+            require_clean(root)?;
+            git::run(
+                root,
+                &[
+                    "switch",
+                    "--no-guess",
+                    "--no-recurse-submodules",
+                    "--no-overwrite-ignore",
+                    "--track=direct",
+                    "-c",
+                    name,
+                    &target.full_name,
+                    "--",
+                ],
+            )
+            .map(|_| ())
+        }
+    }
+}
+
 pub fn create(root: &Path, name: &str, switch_to: bool) -> Result<(), String> {
     if let Some(reason) = name_hint(name) {
         return Err(reason.into());
@@ -412,6 +483,80 @@ mod tests {
             "local edits\n"
         );
         assert_eq!(git::load(&repo.0).unwrap().branch, "main");
+    }
+
+    #[test]
+    fn remote_checkout_creates_tracking_branch_at_remote_commit_and_preserves_existing() {
+        let repo = committed_repo();
+        repo.git(&[
+            "config",
+            "remote.origin.url",
+            "https://example.invalid/repo",
+        ]);
+        repo.git(&[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ]);
+        repo.git(&["update-ref", "refs/remotes/origin/topic", "HEAD"]);
+        let remote = "refs/remotes/origin/topic";
+        let original = git::run(&repo.0, &["rev-parse", "HEAD"]).unwrap();
+        repo.write("file", "next\n");
+        repo.git(&["commit", "-am", "next"]);
+        checkout_remote(&repo.0, remote, &RemoteChoice::Create("topic".into())).unwrap();
+        assert_eq!(git::run(&repo.0, &["rev-parse", "HEAD"]).unwrap(), original);
+        let refs = load(&repo.0).unwrap().refs;
+        let target = refs.iter().find(|r| r.full_name == remote).unwrap();
+        let local = local_for_remote(&refs, target).unwrap();
+        assert_eq!(local.name, "topic");
+        assert_eq!(local.upstream.as_deref(), Some("origin/topic"));
+        checkout_remote(
+            &repo.0,
+            remote,
+            &RemoteChoice::Local("refs/heads/main".into()),
+        )
+        .unwrap();
+        assert_eq!(git::load(&repo.0).unwrap().branch, "main");
+        assert!(checkout_remote(&repo.0, remote, &RemoteChoice::Create("main".into())).is_err());
+        checkout_remote(&repo.0, remote, &RemoteChoice::Detached).unwrap();
+        assert!(git::run(&repo.0, &["symbolic-ref", "-q", "HEAD"]).is_err());
+        repo.write("file", "local\n");
+        assert!(checkout_remote(&repo.0, remote, &RemoteChoice::Create("safe".into())).is_err());
+        assert!(!load(&repo.0).unwrap().refs.iter().any(|r| r.name == "safe"));
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file")).unwrap(),
+            "local\n"
+        );
+    }
+
+    #[test]
+    fn remote_local_matching_avoids_other_remotes_and_ambiguous_tracking() {
+        let repo = committed_repo();
+        repo.git(&["branch", "topic"]);
+        repo.git(&[
+            "config",
+            "remote.origin.url",
+            "https://example.invalid/repo",
+        ]);
+        repo.git(&[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ]);
+        repo.git(&["update-ref", "refs/remotes/origin/topic", "HEAD"]);
+        let mut refs = load(&repo.0).unwrap().refs;
+        let remote_index = refs.iter().position(|r| r.kind == RefKind::Remote).unwrap();
+        assert_eq!(
+            local_for_remote(&refs, &refs[remote_index]).unwrap().name,
+            "topic"
+        );
+        let topic = refs.iter_mut().find(|r| r.name == "topic").unwrap();
+        topic.upstream = Some("other/topic".into());
+        assert!(local_for_remote(&refs, &refs[remote_index]).is_none());
+        for local in refs.iter_mut().filter(|r| r.kind == RefKind::Local) {
+            local.upstream = Some("origin/topic".into());
+        }
+        assert!(local_for_remote(&refs, &refs[remote_index]).is_none());
     }
 
     #[test]

@@ -49,6 +49,13 @@ pub enum ChangeFilter {
     Deleted,
 }
 
+pub struct RemoteCheckoutDialog {
+    pub remote: String,
+    pub mode: u8,
+    pub local: String,
+    pub new_name: String,
+}
+
 pub struct SannyGitApp {
     pub manager: RepositoryManager,
     #[cfg(target_os = "macos")]
@@ -64,6 +71,7 @@ pub struct SannyGitApp {
     refs_pending: bool,
     pub branch_head_exists: bool,
     pub branch_dialog_open: bool,
+    pub remote_checkout: Option<RemoteCheckoutDialog>,
     pub new_branch_name: String,
     pub switch_to_new_branch: bool,
     pub changes: Vec<ChangeFile>,
@@ -158,6 +166,7 @@ impl SannyGitApp {
             refs_pending: false,
             branch_head_exists: false,
             branch_dialog_open: false,
+            remote_checkout: None,
             new_branch_name: String::new(),
             switch_to_new_branch: true,
             changes: Vec::new(),
@@ -383,6 +392,7 @@ impl SannyGitApp {
             self.refs.clear();
             self.branch_head_exists = false;
             self.branch_dialog_open = false;
+            self.remote_checkout = None;
             self.new_branch_name.clear();
             self.commits.clear();
             self.history_edges.clear();
@@ -484,6 +494,37 @@ impl SannyGitApp {
         if self.switch_branch_blocker().is_some() {
             return;
         }
+        if let Some(remote) = self.refs.iter().find(|r| {
+            r.full_name == self.selected_branch && r.kind == crate::models::RefKind::Remote
+        }) {
+            if let Some(local) = crate::branches::local_for_remote(&self.refs, remote) {
+                let current = local.current;
+                self.selected_branch = local.full_name.clone();
+                if current {
+                    self.status = "Local branch already checked out".into();
+                    return;
+                }
+            } else {
+                self.remote_checkout = Some(RemoteCheckoutDialog {
+                    remote: remote.full_name.clone(),
+                    mode: 1,
+                    local: self
+                        .refs
+                        .iter()
+                        .find(|r| r.kind == crate::models::RefKind::Local)
+                        .map(|r| r.full_name.clone())
+                        .unwrap_or_default(),
+                    new_name: remote
+                        .name
+                        .split_once('/')
+                        .map(|(_, name)| name)
+                        .unwrap_or(&remote.name)
+                        .into(),
+                });
+                self.error = None;
+                return;
+            }
+        }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
         let target = self.selected_branch.clone();
         self.state_current = false;
@@ -500,6 +541,35 @@ impl SannyGitApp {
                 snapshot,
             }
         });
+    }
+
+    pub fn checkout_remote(
+        &mut self,
+        remote: String,
+        choice: crate::branches::RemoteChoice,
+    ) -> bool {
+        if let Some(reason) = self.branch_base_blocker() {
+            self.error = Some(reason.into());
+            return false;
+        }
+        if !self.changes.is_empty() {
+            self.error = Some("Commit or move aside local changes before checking out.".into());
+            return false;
+        }
+        let root = PathBuf::from(&self.repositories[self.selected_repository].path);
+        self.state_current = false;
+        self.refs_current = false;
+        self.error = None;
+        self.status = "Checking out remote branch…".into();
+        self.start_worker(move || {
+            let outcome = crate::branches::checkout_remote(&root, &remote, &choice);
+            WorkerResult::Operation {
+                committed: false,
+                success: "Checkout complete",
+                outcome,
+                snapshot: git::load(&root),
+            }
+        })
     }
 
     pub fn create_branch(&mut self) {
@@ -816,6 +886,9 @@ impl SannyGitApp {
                 if outcome.is_ok() && success.starts_with("Branch created") {
                     self.branch_dialog_open = false;
                     self.new_branch_name.clear();
+                }
+                if outcome.is_ok() && success == "Checkout complete" {
+                    self.remote_checkout = None;
                 }
                 let refreshed = snapshot.is_ok();
                 match snapshot {
@@ -1167,6 +1240,48 @@ mod tests {
     }
 
     #[test]
+    fn remote_checkout_uses_current_tracking_branch_or_shows_choices() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories = crate::mock_data::repositories();
+        app.selected_repository = 0;
+        app.refs = crate::mock_data::refs();
+        app.state_current = true;
+        app.refs_current = true;
+        let remote = app
+            .refs
+            .iter()
+            .find(|r| r.kind == crate::models::RefKind::Remote)
+            .unwrap();
+        let remote_name = remote.name.clone();
+        app.selected_branch = remote.full_name.clone();
+        let local = app
+            .refs
+            .iter_mut()
+            .find(|r| r.kind == crate::models::RefKind::Local)
+            .unwrap();
+        local.upstream = Some(remote_name);
+        local.current = true;
+        let local_ref = local.full_name.clone();
+        app.switch_branch();
+        assert_eq!(app.selected_branch, local_ref);
+        assert!(app.remote_checkout.is_none() && !app.busy());
+        app.selected_branch = "refs/remotes/origin/new-topic".into();
+        app.refs.push(crate::models::BranchRef {
+            full_name: app.selected_branch.clone(),
+            name: "origin/new-topic".into(),
+            hash: "a".repeat(40),
+            upstream: None,
+            kind: crate::models::RefKind::Remote,
+            current: false,
+        });
+        app.switch_branch();
+        let dialog = app.remote_checkout.as_ref().unwrap();
+        assert_eq!(dialog.new_name, "new-topic");
+        assert_eq!(dialog.mode, 1);
+        assert!(!app.busy());
+    }
+
+    #[test]
     fn branch_load_errors_keep_rows_but_disable_branch_actions() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.repositories = crate::mock_data::repositories();
@@ -1353,6 +1468,29 @@ mod tests {
                     "Rendering branch controls must not run Git commands"
                 );
                 app.branch_dialog_open = false;
+                app.remote_checkout = Some(RemoteCheckoutDialog {
+                    remote: "refs/remotes/origin/topic".into(),
+                    mode: 1,
+                    local: "refs/heads/main".into(),
+                    new_name: "topic".into(),
+                });
+                for _ in 0..3 {
+                    output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
+                    output.textures_delta.clear();
+                }
+                for label in [
+                    "Check out commit",
+                    "Checkout local branch:",
+                    "Create local branch:",
+                    "Checkout",
+                    "Cancel",
+                ] {
+                    assert!(
+                        visible_text(&output.shapes, label),
+                        "Remote checkout {label} clipped at {size:?} in {theme:?}"
+                    );
+                }
+                app.remote_checkout = None;
                 app.manager.settings = Some(crate::repository::Settings::default());
                 app.manager.prune_preview = Some("Preview of obsolete metadata".into());
                 app.manager.found = vec![("Found repo".into(), "/tmp/found-repo".into(), true)];

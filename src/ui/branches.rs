@@ -10,6 +10,7 @@ use eframe::egui::{
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     create_dialog(ui, app);
+    remote_dialog(ui, app);
     let palette = app.theme.palette();
     ui.horizontal(|ui| {
         ui.set_min_height(26.0);
@@ -146,20 +147,21 @@ fn branch_group(
                         }
                     })
                     .on_hover_text(format!(
-                        "{}\nObject: {}{}{}",
-                        branch.full_name,
-                        branch.hash,
-                        branch
-                            .upstream
-                            .as_ref()
-                            .map(|s| format!("\nUpstream: {s}"))
-                            .unwrap_or_default(),
-                        if kind == RefKind::Local {
-                            "\nDouble-click to switch"
-                        } else {
-                            "\nDouble-click to check out a detached HEAD"
-                        }
-                    ));
+                    "{}\nObject: {}{}{}",
+                    branch.full_name,
+                    branch.hash,
+                    branch
+                        .upstream
+                        .as_ref()
+                        .map(|s| format!("\nUpstream: {s}"))
+                        .unwrap_or_default(),
+                    match kind {
+                        RefKind::Local => "\nDouble-click to switch",
+                        RefKind::Remote =>
+                            "\nDouble-click to switch to a local branch or choose checkout options",
+                        RefKind::Tag => "\nDouble-click to check out a detached HEAD",
+                    }
+                ));
                 if response.clicked() {
                     *selected = branch.full_name.clone();
                 }
@@ -168,6 +170,58 @@ fn branch_group(
                 }
             }
         });
+}
+
+fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
+    let Some(mut dialog) = app.remote_checkout.take() else {
+        return;
+    };
+    let ctx = ui.ctx().clone();
+    let palette = app.theme.palette();
+    let mut keep = true;
+    super::dialog_style::modal(&ctx, palette, "branch.remote.checkout").show(&ctx, |ui| {
+        ui.set_width(600.0);
+        super::dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        super::dialog_style::header(ui, palette, "Check out commit", "Switch to a local branch, create a tracking branch, or check out without creating a branch.");
+        super::dialog_style::section(ui, palette.header, eframe::egui::Margin::same(18), |ui| {
+            ui.spacing_mut().item_spacing.y = 10.0;
+            ui.label(dialog.remote.strip_prefix("refs/remotes/").unwrap_or(&dialog.remote));
+            ui.add_enabled_ui(!app.busy(), |ui| {
+                eframe::egui::Grid::new("remote.checkout.options").min_col_width(155.0).spacing([12.0, 10.0]).show(ui, |ui| {
+                    ui.radio_value(&mut dialog.mode, 0, "Checkout local branch:");
+                    ui.add_enabled_ui(dialog.mode == 0, |ui| {
+                        eframe::egui::ComboBox::from_id_salt("remote.local").width(280.0)
+                            .selected_text(dialog.local.strip_prefix("refs/heads/").unwrap_or(&dialog.local))
+                            .show_ui(ui, |ui| { for branch in app.refs.iter().filter(|r| r.kind == RefKind::Local) { ui.selectable_value(&mut dialog.local, branch.full_name.clone(), &branch.name); } });
+                    });
+                    ui.end_row();
+                    ui.radio_value(&mut dialog.mode, 1, "Create local branch:");
+                    ui.add_enabled(dialog.mode == 1, TextEdit::singleline(&mut dialog.new_name).desired_width(280.0));
+                    ui.end_row();
+                });
+                ui.radio_value(&mut dialog.mode, 2, "Don't create local branch (detached HEAD)");
+            });
+            if let Some(error) = &app.error { ui.add(eframe::egui::Label::new(RichText::new(error).color(palette.removed_text)).wrap()); }
+        });
+        super::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let valid = match dialog.mode {
+                    0 => app.refs.iter().any(|r| r.kind == RefKind::Local && r.full_name == dialog.local),
+                    1 => crate::branches::name_hint(&dialog.new_name).is_none() && !app.refs.iter().any(|r| r.full_name == format!("refs/heads/{}", dialog.new_name)),
+                    _ => true,
+                };
+                if ui.add_enabled(valid && !app.busy(), super::dialog_style::primary("Checkout", palette)).clicked() {
+                    let choice = match dialog.mode { 0 => crate::branches::RemoteChoice::Local(dialog.local.clone()), 1 => crate::branches::RemoteChoice::Create(dialog.new_name.clone()), _ => crate::branches::RemoteChoice::Detached };
+                    app.checkout_remote(dialog.remote.clone(), choice);
+                }
+                if ui.add_enabled(!app.busy(), super::dialog_style::button("Cancel")).clicked() { keep = false; }
+            });
+        });
+    });
+    if keep {
+        app.remote_checkout = Some(dialog);
+    }
 }
 
 fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {

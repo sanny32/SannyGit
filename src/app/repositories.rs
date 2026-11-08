@@ -433,6 +433,7 @@ impl SannyGitApp {
         self.refs_error = None;
         self.branch_head_exists = false;
         self.branch_dialog_open = false;
+        self.remote_checkout = None;
         self.selected_branch.clear();
         self.loaded_diff = None;
         self.diff_preview = None;
