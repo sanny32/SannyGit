@@ -24,11 +24,11 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         };
         super::dialog_style::header(ui, palette, dialog.operation.label(), description);
         super::dialog_style::section(ui, palette.header, egui::Margin::same(18), |ui| {
-            ui.spacing_mut().item_spacing.y = 10.0;
+            ui.spacing_mut().item_spacing.y = 6.0;
             if let Some(state) = &dialog.state {
                 if state.remotes.is_empty() { ui.label("No configured remotes. Add one through Repository → Edit Git Config, then reopen this dialog."); }
                 ui.add_enabled_ui(!busy, |ui| {
-                    egui::Grid::new("remote.fields").min_col_width(110.0).spacing([12.0,12.0]).show(ui, |ui| {
+                    egui::Grid::new("remote.fields").min_col_width(110.0).spacing([12.0,6.0]).show(ui, |ui| {
                         ui.label("Remote:");
                         ComboBox::from_id_salt("remote.name").width(310.0).selected_text(&dialog.remote).show_ui(ui, |ui| {
                             for remote in &state.remotes { ui.selectable_value(&mut dialog.remote, remote.clone(), remote); }
