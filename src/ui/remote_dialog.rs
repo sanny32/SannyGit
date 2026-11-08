@@ -76,7 +76,7 @@ fn push_confirmation(
         return;
     };
     super::dialog_style::section(ui, palette.header, egui::Margin::same(20), |ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(24.0, 14.0);
+        ui.spacing_mut().item_spacing = egui::vec2(20.0, 8.0);
         ui.horizontal_top(|ui| {
             ui.add(super::icons::image(
                 super::icons::Icon::Push,
@@ -85,6 +85,7 @@ fn push_confirmation(
             ));
             ui.vertical(|ui| {
                 ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
                 let branch = state.branch.as_deref().unwrap_or("—");
                 ui.label(
                     RichText::new(format!("Do you want to push branch '{branch}'?"))
@@ -102,11 +103,18 @@ fn push_confirmation(
                 }
                 ui.add_enabled_ui(!busy, |ui| {
                     egui::CollapsingHeader::new("Options").show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 8.0;
                         egui::Grid::new("push.options")
+                            .num_columns(2)
+                            .min_col_width(100.0)
                             .spacing([12.0, 6.0])
                             .show(ui, |ui| {
-                                ui.label("Remote:");
+                                ui.add(
+                                    egui::Label::new("Remote:")
+                                        .wrap_mode(egui::TextWrapMode::Extend),
+                                );
                                 ComboBox::from_id_salt("push.remote")
+                                    .width(220.0)
                                     .selected_text(&dialog.remote)
                                     .show_ui(ui, |ui| {
                                         for remote in &state.remotes {
@@ -118,7 +126,10 @@ fn push_confirmation(
                                         }
                                     });
                                 ui.end_row();
-                                ui.label("Remote branch:");
+                                ui.add(
+                                    egui::Label::new("Remote branch:")
+                                        .wrap_mode(egui::TextWrapMode::Extend),
+                                );
                                 ui.add(
                                     TextEdit::singleline(&mut dialog.branch).desired_width(220.0),
                                 );
@@ -212,16 +223,31 @@ mod tests {
                     set_upstream: false,
                     dont_show_again: false,
                 });
-                for frame in 0..3 {
+                let mut options_pos = egui::Pos2::ZERO;
+                for frame in 0..8 {
+                    let events = match frame {
+                        3 | 4 => vec![
+                            egui::Event::PointerMoved(options_pos),
+                            egui::Event::PointerButton {
+                                pos: options_pos,
+                                button: egui::PointerButton::Primary,
+                                pressed: frame == 3,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                        _ => vec![],
+                    };
                     let mut output = ctx.run_ui(
                         egui::RawInput {
                             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                            time: Some(frame as f64 * 0.3),
+                            events,
                             ..Default::default()
                         },
                         |ui| show(ui.ctx(), &mut app),
                     );
                     output.textures_delta.clear();
-                    if frame < 2 {
+                    if frame != 2 && frame != 7 {
                         continue;
                     }
                     let labels = output
@@ -245,7 +271,33 @@ mod tests {
                         .iter()
                         .any(|(text, _)| *text == "1 branch will be pushed to 'origin'."));
                     assert!(labels.iter().any(|(text, _)| *text == "Don't show again"));
-                    assert!(push.y > title.y && push.y - title.y < 150.0);
+                    options_pos = labels
+                        .iter()
+                        .find(|(text, _)| *text == "Options")
+                        .unwrap()
+                        .1
+                        + egui::vec2(4.0, 4.0);
+                    let max_height = if frame == 7 { 240.0 } else { 150.0 };
+                    assert!(push.y > title.y && push.y - title.y < max_height);
+                    if frame == 7 {
+                        for label in ["Remote:", "Remote branch:"] {
+                            let text = output
+                                .shapes
+                                .iter()
+                                .find_map(|shape| match &shape.shape {
+                                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                                        Some(text)
+                                    }
+                                    _ => None,
+                                })
+                                .expect("Expanded options label missing");
+                            assert_eq!(text.galley.rows.len(), 1, "Wrapped label: {label}");
+                        }
+                        let remote = labels.iter().find(|(text, _)| *text == "origin").unwrap().1;
+                        let branch = labels.iter().find(|(text, _)| *text == "main").unwrap().1;
+                        assert!((remote.x - branch.x).abs() < 6.0, "Fields must align");
+                        assert!(branch.y - remote.y < 40.0, "Excess row spacing");
+                    }
                     assert!(push.x < size.x && push.y < size.y);
                     output.textures_delta.clear();
                 }
