@@ -130,6 +130,7 @@ pub struct SannyGitApp {
     pub journal_filter: String,
     pub current_branch: String,
     pub commit_message: String,
+    pub generating_commit_message: bool,
     pub amend: bool,
     pub repository_path: String,
     pub open_dialog: bool,
@@ -273,6 +274,7 @@ impl SannyGitApp {
             journal_filter: String::new(),
             current_branch: String::new(),
             commit_message: String::new(),
+            generating_commit_message: false,
             amend: false,
             repository_path: String::new(),
             open_dialog: false,
@@ -906,7 +908,7 @@ impl SannyGitApp {
         let config = self.llm_config.clone();
         self.error = None;
         self.status = "Generating commit message…".into();
-        self.start_worker(move || {
+        self.generating_commit_message = self.start_worker(move || {
             WorkerResult::CommitMessage(
                 git::commit_patch(&root).and_then(|patch| crate::llm::generate(&config, &patch)),
             )
@@ -922,6 +924,7 @@ impl SannyGitApp {
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.worker = None;
+                self.generating_commit_message = false;
                 self.manager.cancel = None;
                 self.error = Some("Background worker stopped unexpectedly".into());
                 if self.refs_loading && !self.refs_pending {
@@ -1023,16 +1026,19 @@ impl SannyGitApp {
                     }
                 }
             }
-            WorkerResult::CommitMessage(result) => match result {
-                Ok(message) => {
-                    self.commit_message = message;
-                    self.status = "Commit message generated".into();
+            WorkerResult::CommitMessage(result) => {
+                self.generating_commit_message = false;
+                match result {
+                    Ok(message) => {
+                        self.commit_message = message;
+                        self.status = "Commit message generated".into();
+                    }
+                    Err(error) => {
+                        self.error = Some(error);
+                        self.status = "Could not generate commit message".into();
+                    }
                 }
-                Err(error) => {
-                    self.error = Some(error);
-                    self.status = "Could not generate commit message".into();
-                }
-            },
+            }
             WorkerResult::Repository(Ok(snapshot)) => {
                 self.apply_snapshot(snapshot);
             }
@@ -1334,19 +1340,23 @@ mod tests {
     fn generated_commit_message_updates_draft_and_errors_preserve_it() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.commit_message = "Existing draft".into();
+        app.generating_commit_message = true;
         deliver(
             &mut app,
             WorkerResult::CommitMessage(Ok("Generated message".into())),
         );
         assert_eq!(app.commit_message, "Generated message");
         assert_eq!(app.status, "Commit message generated");
+        assert!(!app.generating_commit_message);
 
+        app.generating_commit_message = true;
         deliver(
             &mut app,
             WorkerResult::CommitMessage(Err("Provider unavailable".into())),
         );
         assert_eq!(app.commit_message, "Generated message");
         assert_eq!(app.error.as_deref(), Some("Provider unavailable"));
+        assert!(!app.generating_commit_message);
     }
 
     #[test]

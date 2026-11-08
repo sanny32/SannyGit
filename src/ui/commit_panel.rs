@@ -1,8 +1,12 @@
 use super::tooltips::TooltipResponse;
 use super::EditableText;
-use crate::{app::SannyGitApp, theme::semibold_family};
+use crate::{
+    app::SannyGitApp,
+    theme::{semibold_family, Palette},
+};
 use eframe::egui::{
-    Align, Align2, Button, FontId, Frame, Layout, Margin, RichText, Sense, TextEdit, Ui, Vec2,
+    Align, Align2, Button, FontId, Frame, Layout, Margin, Rect, RichText, Sense, Shape, Stroke,
+    TextEdit, Ui, Vec2,
 };
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -89,7 +93,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             let editor_height = (ui.available_height() - 38.0).max(32.0);
             let busy = app.busy();
             ui.add_enabled_ui(!busy, |ui| {
-                ui.add_sized(
+                let editor = ui.add_sized(
                     [width, editor_height],
                     TextEdit::multiline(&mut app.commit_message)
                         .editable()
@@ -98,6 +102,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         .desired_width(f32::INFINITY)
                         .margin(Vec2::new(6.0, 4.0)),
                 );
+                if app.generating_commit_message {
+                    let time = ui.input(|input| input.time);
+                    draw_generation_sparkles(ui, editor.rect, time, palette);
+                }
             });
             ui.add_space(10.0);
             ui.horizontal(|ui| {
@@ -122,4 +130,34 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
             });
         });
+}
+
+fn draw_generation_sparkles(ui: &Ui, rect: Rect, time: f64, palette: Palette) {
+    let painter = ui.painter().with_clip_rect(rect);
+    let colors = [palette.accent, palette.incoming, palette.outgoing];
+    for index in 0..12 {
+        let progress = (time * 0.16 + index as f64 / 12.0).fract() as f32;
+        let x = rect.left() + progress * rect.width();
+        let lane = ((index * 37) % 100) as f32 / 100.0;
+        let wave = (time as f32 * 1.8 + index as f32 * 0.9).sin() * 4.0;
+        let y = rect.top() + 6.0 + lane * (rect.height() - 12.0).max(0.0) + wave;
+        let pulse = (time as f32 * 3.0 + index as f32 * 0.7).sin();
+        let radius = 2.0 + (pulse + 1.0) * 1.1;
+        let edge_fade = (progress * 8.0).min(1.0) * ((1.0 - progress) * 8.0).min(1.0);
+        let opacity = edge_fade * (0.35 + (pulse + 1.0) * 0.225);
+        let color = colors[index % colors.len()].gamma_multiply(opacity);
+        let rotation = time as f32 * 0.35 + index as f32;
+        let points = (0..8)
+            .map(|point| {
+                let radius = if point % 2 == 0 {
+                    radius
+                } else {
+                    radius * 0.32
+                };
+                let angle = rotation + point as f32 * std::f32::consts::TAU / 8.0;
+                eframe::egui::pos2(x, y) + Vec2::angled(angle) * radius
+            })
+            .collect();
+        painter.add(Shape::convex_polygon(points, color, Stroke::NONE));
+    }
 }
