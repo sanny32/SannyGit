@@ -41,6 +41,12 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         ui.horizontal_top(|ui| {
             egui::Frame::new()
                 .fill(palette.panel)
+                .corner_radius(egui::CornerRadius {
+                    nw: 7,
+                    ne: 0,
+                    sw: 7,
+                    se: 0,
+                })
                 .inner_margin(18)
                 .show(ui, |ui| {
                     ui.set_width(114.0);
