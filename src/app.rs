@@ -71,7 +71,6 @@ pub struct SannyGitApp {
     pub selected_repository: usize,
     pub selected_change: usize,
     pub selected_branch: String,
-    pub branch_filter: String,
     pub change_filter: ChangeFilter,
     pub journal_filter: String,
     pub current_branch: String,
@@ -166,7 +165,6 @@ impl SannyGitApp {
             selected_repository: usize::MAX,
             selected_change: usize::MAX,
             selected_branch: String::new(),
-            branch_filter: String::new(),
             change_filter: ChangeFilter::All,
             journal_filter: String::new(),
             current_branch: String::new(),
@@ -394,7 +392,6 @@ impl SannyGitApp {
             self.commit_details_open = false;
             self.commit_preview_error = None;
             self.commit_message.clear();
-            self.branch_filter.clear();
             self.journal_filter.clear();
         }
         self.status = if self.changes.is_empty() {
@@ -1346,12 +1343,7 @@ mod tests {
                     output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
                     output.textures_delta.clear();
                 }
-                for text in [
-                    "Switch",
-                    "Create branch",
-                    "Switch to the new branch",
-                    "Create",
-                ] {
+                for text in ["Create branch", "Switch to the new branch", "Create"] {
                     assert!(
                         visible_text(&output.shapes, text),
                         "Branch control {text} clipped at {size:?} in {theme:?}"

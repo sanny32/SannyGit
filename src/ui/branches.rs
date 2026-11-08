@@ -40,28 +40,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     }
                 },
             );
-            if icons::button(
-                ui,
-                Icon::Search,
-                "Filter branches and tags",
-                Vec2::splat(20.0),
-            )
-            .clicked()
-            {
-                ui.memory_mut(|m| m.request_focus(Id::unique("branch_filter")));
-            }
         });
     });
-    if !app.current_branch.is_empty() {
-        ui.label(RichText::new(&app.current_branch).family(semibold_family()));
-    }
-    ui.add(
-        TextEdit::singleline(&mut app.branch_filter)
-            .id(Id::unique("branch_filter"))
-            .hint_text("Filter branches and tags…")
-            .margin(Vec2::new(5.0, 3.0))
-            .desired_width(f32::INFINITY),
-    );
     if app.refs_loading {
         ui.label(
             RichText::new("Loading branches…")
@@ -77,8 +57,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         )
         .on_hover_text(error);
     }
-    let filter = app.branch_filter.trim().to_lowercase();
-    let height = (ui.available_height() - 30.0).max(0.0);
+    let height = ui.available_height();
     ScrollArea::vertical()
         .id_salt("branches")
         .max_height(height)
@@ -97,33 +76,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     &mut app.selected_branch,
                     kind,
                     title,
-                    &filter,
                     palette,
                 );
             }
         });
-    ui.horizontal(|ui| {
-        let blocker = app.switch_branch_blocker();
-        if ui
-            .add_enabled(blocker.is_none(), Button::new("Switch"))
-            .on_hover_text("Switch to the selected local branch")
-            .on_disabled_hover_text(blocker.unwrap_or(""))
-            .clicked()
-        {
-            app.switch_branch();
-        }
-        if let Some(branch) = app.refs.iter().find(|r| r.full_name == app.selected_branch) {
-            ui.label(RichText::new(&branch.name).small().color(palette.muted));
-        }
-    });
-}
-
-fn matches(branch: &BranchRef, filter: &str) -> bool {
-    branch.name.to_lowercase().contains(filter)
-        || branch
-            .upstream
-            .as_ref()
-            .is_some_and(|u| u.to_lowercase().contains(filter))
 }
 
 fn branch_group(
@@ -132,20 +88,15 @@ fn branch_group(
     selected: &mut String,
     kind: RefKind,
     title: &str,
-    filter: &str,
     palette: Palette,
 ) {
-    let matching: Vec<_> = refs
-        .iter()
-        .filter(|r| r.kind == kind && matches(r, filter))
-        .collect();
+    let matching: Vec<_> = refs.iter().filter(|r| r.kind == kind).collect();
     if matching.is_empty() {
         return;
     }
     CollapsingHeader::new(format!("{title} ({})", matching.len()))
         .id_salt(title)
-        .default_open(kind == RefKind::Local || !filter.is_empty())
-        .open(if filter.is_empty() { None } else { Some(true) })
+        .default_open(kind == RefKind::Local)
         .show_unindented(ui, |ui| {
             for branch in matching {
                 // Avoid text layout for rows outside the viewport in large ref lists.
