@@ -80,7 +80,11 @@ fn sidebar_contents(ui: &mut Ui, app: &mut SannyGitApp) -> eframe::egui::Rect {
             top: 4,
             ..Margin::ZERO
         }))
-        .show(ui, |ui| branches::show(ui, app));
+        .show(ui, |ui| {
+            // Persist the allocated height, not the smaller content height.
+            ui.take_available_space();
+            branches::show(ui, app);
+        });
     CentralPanel::default()
         .frame(panel_frame(palette).inner_margin(8))
         .show(ui, |ui| repositories::show(ui, app));
@@ -210,6 +214,13 @@ mod tests {
                     frame(vec![]);
                 }
                 let before = frame(vec![]);
+                for _ in 0..20 {
+                    let idle = frame(vec![]);
+                    assert!(
+                        (idle.height() - before.height()).abs() < 1.0,
+                        "Branch panel shrank without input: {before:?} -> {idle:?}"
+                    );
+                }
                 let pointer = pos2(before.center().x, before.top());
                 frame(vec![Event::PointerMoved(pointer)]);
                 frame(vec![Event::PointerButton {
@@ -229,6 +240,13 @@ mod tests {
                     modifiers: Modifiers::NONE,
                 }]);
                 let after = frame(vec![]);
+                for _ in 0..20 {
+                    let idle = frame(vec![]);
+                    assert!(
+                        (idle.height() - after.height()).abs() < 1.0,
+                        "Branch panel lost dragged height: {after:?} -> {idle:?}"
+                    );
+                }
                 assert!(
                     after.height() > before.height() + 50.0,
                     "Divider failed to grow {theme:?} {size:?}: {before:?} -> {after:?}"
