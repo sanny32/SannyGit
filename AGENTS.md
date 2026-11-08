@@ -82,6 +82,14 @@ or mix Git logic with panel rendering.
   panels below, and a status bar along the bottom edge.
 - Favor compact controls, high information density, resizable panels, and clear
   selection states. Avoid oversized cards and unnecessary decoration.
+- Content must not jump during background loading, refreshes, progress updates,
+  or errors. Preserve existing rows, scroll position, and control placement;
+  show transient status without inserting or removing layout rows. Geometry
+  should change only for an explicit user layout action or actual content changes.
+- Dialog sizes may change only when collapsed sections are expanded. Loading,
+  progress, errors, and action button clicks must not resize dialogs; reserve
+  compact, stable space and keep overflowing text accessible (for example, in
+  a tooltip). Do not stabilize dialog sizes by adding large empty areas.
 - Support both themes. Define colors through the palette in `src/theme.rs`
   rather than arbitrary constants inside components.
 - Use the existing SVG icons and `src/ui/icons.rs`.

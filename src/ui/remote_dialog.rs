@@ -83,7 +83,7 @@ fn push_confirmation(
                 56.0,
             ));
             ui.vertical(|ui| {
-                ui.set_width(ui.available_width());
+                ui.set_width(464.0);
                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
                 let branch = state.branch.as_deref().unwrap_or_else(|| {
                     if !loaded && !app.current_branch.is_empty() {
@@ -92,27 +92,42 @@ fn push_confirmation(
                         "—"
                     }
                 });
-                ui.label(
-                    RichText::new(format!("Do you want to push branch '{branch}'?"))
-                        .size(16.0)
-                        .family(crate::theme::semibold_family()),
-                );
+                let title = format!("Do you want to push branch '{branch}'?");
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&title)
+                            .size(16.0)
+                            .family(crate::theme::semibold_family()),
+                    )
+                    .truncate(),
+                )
+                .on_hover_text(title);
                 ui.add_space(6.0);
-                if !loaded {
-                    if app.error.is_none() {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label("Loading remotes…");
-                        });
-                    }
+                // Reuse one compact line for all operation states. Neither a spinner
+                // nor a long error may add rows or move the options and buttons.
+                let (message, color, spinning) = if let Some(error) = &app.error {
+                    (error.clone(), palette.removed_text, false)
+                } else if !loaded {
+                    ("Loading remotes…".into(), palette.text, true)
+                } else if busy {
+                    (app.status.clone(), palette.text, true)
                 } else if dialog.remote.is_empty() {
-                    ui.label("No configured remotes.");
+                    ("No configured remotes.".into(), palette.text, false)
                 } else {
-                    ui.label(format!("1 branch will be pushed to '{}'.", dialog.remote));
+                    let mut message = format!("1 branch will be pushed to '{}'.", dialog.remote);
                     if dialog.branch != branch {
-                        ui.label(format!("Remote branch: {}", dialog.branch));
+                        message.push_str(&format!(" Remote branch: {}", dialog.branch));
                     }
-                }
+                    (message, palette.text, false)
+                };
+                ui.horizontal(|ui| {
+                    ui.set_height(26.0);
+                    if spinning {
+                        ui.add(egui::Spinner::new().size(18.0));
+                    }
+                    ui.add(egui::Label::new(RichText::new(&message).color(color)).truncate())
+                        .on_hover_text(message);
+                });
                 ui.add_enabled_ui(!busy && loaded, |ui| {
                     egui::CollapsingHeader::new("Options").show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 8.0;
@@ -153,17 +168,6 @@ fn push_confirmation(
                         );
                     });
                 });
-                if busy && loaded {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(&app.status);
-                    });
-                }
-                if let Some(error) = &app.error {
-                    ui.add(
-                        egui::Label::new(RichText::new(error).color(palette.removed_text)).wrap(),
-                    );
-                }
                 ui.add_space(8.0);
                 let can_skip = dialog.can_skip_confirmation();
                 if !can_skip {
@@ -212,6 +216,90 @@ mod tests {
         remotes::State,
         theme::{install_fonts, ThemeChoice},
     };
+
+    #[test]
+    fn push_size_is_stable_from_loading_through_progress_and_errors() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1400.0, 900.0)] {
+                let ctx = egui::Context::default();
+                install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.current_branch = "main".into();
+                let mut dialog = RemoteDialog {
+                    operation: Operation::Push,
+                    state: None,
+                    remote: String::new(),
+                    branch: String::new(),
+                    set_upstream: false,
+                    dont_show_again: false,
+                };
+                let mut sizes = Vec::new();
+                for stage in 0..4 {
+                    if stage == 1 {
+                        dialog.state = Some(State {
+                            remotes: vec!["origin".into()],
+                            branch: Some("main".into()),
+                            ..Default::default()
+                        });
+                        dialog.remote = "origin".into();
+                        dialog.branch = "different-remote-branch".into();
+                    }
+                    if stage == 2 {
+                        app.status = "Pushing branch to origin…".into();
+                    }
+                    if stage == 3 {
+                        app.error = Some("Remote rejected the push. ".repeat(100));
+                    }
+                    for _ in 0..3 {
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    size,
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                let response = super::super::dialog_style::modal(
+                                    ui.ctx(),
+                                    theme.palette(),
+                                    "push.size.test",
+                                )
+                                .show(ui.ctx(), |ui| {
+                                    ui.set_width(580.0);
+                                    super::super::dialog_style::setup(ui);
+                                    ui.spacing_mut().item_spacing.y = 0.0;
+                                    push_confirmation(
+                                        ui,
+                                        &mut app,
+                                        &mut dialog,
+                                        stage == 2,
+                                        &mut false,
+                                        &mut true,
+                                    );
+                                });
+                                let size = response.response.rect.size();
+                                assert!(
+                                    size.y <= 200.0,
+                                    "Push dialog has excess blank space: {size:?}"
+                                );
+                                sizes.push(size);
+                            },
+                        );
+                        output.textures_delta.clear();
+                    }
+                }
+                assert!(
+                    sizes
+                        .windows(2)
+                        .all(|pair| (pair[0] - pair[1]).length() < 1.0),
+                    "Push dialog changed size: {sizes:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn push_uses_the_same_confirmation_while_loading_and_on_error() {
@@ -372,7 +460,10 @@ mod tests {
                         .1
                         + egui::vec2(4.0, 4.0);
                     let max_height = if frame == 7 { 240.0 } else { 150.0 };
-                    assert!(push.y > title.y && push.y - title.y < max_height);
+                    assert!(
+                        push.y > title.y && push.y - title.y < max_height,
+                        "frame {frame}: title {title:?}, push {push:?}"
+                    );
                     if frame == 7 {
                         for label in ["Remote:", "Remote branch:"] {
                             let text = output

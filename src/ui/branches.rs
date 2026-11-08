@@ -14,7 +14,16 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.theme.palette();
     ui.horizontal(|ui| {
         ui.set_min_height(26.0);
-        ui.heading("Branches");
+        let heading = ui.heading(
+            RichText::new("Branches").color(if app.refs_error.is_some() {
+                palette.removed_text
+            } else {
+                palette.text
+            }),
+        );
+        if let Some(error) = &app.refs_error {
+            heading.on_hover_text(format!("Branches unavailable; reload to retry\n{error}"));
+        }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.add_enabled_ui(
                 !app.busy() && app.repositories.get(app.selected_repository).is_some(),
@@ -43,21 +52,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             );
         });
     });
-    if app.refs_loading {
-        ui.label(
-            RichText::new("Loading branches…")
-                .small()
-                .color(palette.muted),
-        );
-    }
-    if let Some(error) = &app.refs_error {
-        ui.label(
-            RichText::new("Branches unavailable; reload to retry")
-                .small()
-                .color(palette.removed_text),
-        )
-        .on_hover_text(error);
-    }
     let mut requested = None;
     let height = ui.available_height();
     ScrollArea::vertical()
@@ -270,6 +264,71 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
 mod tests {
     use super::*;
     use eframe::egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect};
+
+    #[test]
+    fn background_ref_updates_do_not_move_branch_rows() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            for size in [Vec2::new(1100.0, 700.0), Vec2::new(1400.0, 900.0)] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.refs = vec![BranchRef {
+                    name: "feature".into(),
+                    full_name: "refs/heads/feature".into(),
+                    hash: "a".repeat(40),
+                    upstream: None,
+                    current: false,
+                    kind: RefKind::Local,
+                }];
+                let mut positions = Vec::new();
+                for stage in 0..3 {
+                    app.refs_loading = stage == 1;
+                    app.refs_error = (stage == 2).then(|| "Cannot load refs".into());
+                    for frame in 0..3 {
+                        let mut output = ctx.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                ui.set_width(260.0);
+                                show(ui, &mut app);
+                            },
+                        );
+                        if frame == 2 {
+                            let position = output
+                                .shapes
+                                .iter()
+                                .find_map(|shape| match &shape.shape {
+                                    eframe::egui::Shape::Text(text)
+                                        if text.galley.job.text == "feature" =>
+                                    {
+                                        Some(text.pos)
+                                    }
+                                    _ => None,
+                                })
+                                .expect("Branch row missing");
+                            positions.push(position);
+                            assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
+                                eframe::egui::Shape::Text(text) if text.galley.job.text == "Loading branches…")));
+                        }
+                        output.textures_delta.clear();
+                    }
+                }
+                assert!(
+                    positions
+                        .windows(2)
+                        .all(|pair| pair[0].distance(pair[1]) < 0.5),
+                    "Branch rows moved during a background update: {positions:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn branch_name_requires_double_click_to_switch() {
