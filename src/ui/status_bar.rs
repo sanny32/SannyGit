@@ -1,4 +1,5 @@
 use super::icons::{self, Icon};
+use super::tooltips::TooltipResponse;
 use crate::app::SannyGitApp;
 use eframe::egui::{Align, Frame, Layout, Margin, Panel, RichText, Ui};
 
@@ -27,7 +28,7 @@ pub fn show(ui: &mut Ui, app: &SannyGitApp) {
                         eframe::egui::Label::new(super::sync_badge(&badge, palette, 13.0))
                             .selectable(false),
                     )
-                    .on_hover_text(app.tracking.description());
+                    .help_text(app.tracking.description());
                 }
                 ui.separator();
                 ui.label(format!("{} changes", app.changes.len()));

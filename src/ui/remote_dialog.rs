@@ -1,3 +1,4 @@
+use super::tooltips::TooltipResponse;
 use crate::{app::SannyGitApp, remotes::Operation};
 use eframe::egui::{self, Align, ComboBox, Layout, RichText, TextEdit};
 
@@ -101,7 +102,7 @@ fn push_confirmation(
                     )
                     .truncate(),
                 )
-                .on_hover_text(title);
+                .help_text(title);
                 ui.add_space(6.0);
                 // Reuse one compact line for all operation states. Neither a spinner
                 // nor a long error may add rows or move the options and buttons.
@@ -126,7 +127,7 @@ fn push_confirmation(
                         ui.add(egui::Spinner::new().size(18.0));
                     }
                     ui.add(egui::Label::new(RichText::new(&message).color(color)).truncate())
-                        .on_hover_text(message);
+                        .help_text(message);
                 });
                 ui.add_enabled_ui(!busy && loaded, |ui| {
                     egui::CollapsingHeader::new("Options").show(ui, |ui| {
@@ -178,7 +179,7 @@ fn push_confirmation(
                         !busy && can_skip,
                         egui::Checkbox::new(&mut dialog.dont_show_again, "Don't show again"),
                     )
-                    .on_disabled_hover_text(
+                    .disabled_help_text(
                         "Available when pushing to the branch's configured upstream.",
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

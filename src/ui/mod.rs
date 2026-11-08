@@ -11,6 +11,7 @@ mod repositories;
 mod repository_dialogs;
 mod status_bar;
 mod toolbar;
+mod tooltips;
 
 use crate::{app::SannyGitApp, theme::Palette};
 use eframe::egui::{
@@ -128,6 +129,8 @@ fn sidebar_contents(ui: &mut Ui, app: &mut SannyGitApp) -> eframe::egui::Rect {
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
+    // Keep dense panel rows compact without truncating floating tooltips.
+    ui.style_mut().wrap_mode = Some(eframe::egui::TextWrapMode::Truncate);
     let context = ui.ctx().clone();
     let palette = app.theme.palette();
     toolbar::show(ui, app);

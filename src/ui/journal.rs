@@ -1,3 +1,4 @@
+use super::tooltips::TooltipResponse;
 use crate::{app::SannyGitApp, models::HistoryEdge, theme::Palette};
 use eframe::egui::{
     Align, Button, ComboBox, Label, Layout, RichText, ScrollArea, Sense, Ui, Vec2, Window,
@@ -59,7 +60,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 .small()
                 .color(palette.muted),
             )
-            .on_hover_text("Up to 500 commits; search applies to loaded history only");
+            .help_text("Up to 500 commits; search applies to loaded history only");
         }
     });
     if let Some(error) = &app.history_error {
@@ -105,16 +106,16 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 row.set_selected(app.selected_commit.as_ref() == Some(&commit.hash));
                 row.col(|ui| graph(ui, app, original, filter.is_empty(), palette));
                 row.col(|ui| {
-                    ui.label(commit.subject()).on_hover_text(&commit.message);
+                    ui.label(commit.subject()).help_text(&commit.message);
                 });
                 row.col(|ui| {
                     ui.label(RichText::new(&commit.author).color(palette.muted))
-                        .on_hover_text(&commit.email);
+                        .help_text(&commit.email);
                 });
                 row.col(|ui| {
                     let date = commit.date.replace('T', " ");
                     ui.label(RichText::new(date.get(..16).unwrap_or(&date)).color(palette.muted))
-                        .on_hover_text(&commit.date);
+                        .help_text(&commit.date);
                 });
                 row.col(|ui| {
                     ui.label(
@@ -122,7 +123,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             .monospace()
                             .color(palette.muted),
                     )
-                    .on_hover_text(&commit.hash);
+                    .help_text(&commit.hash);
                 });
                 if row.response().clicked() {
                     selected = Some(commit.hash.clone());
@@ -165,7 +166,7 @@ fn graph(ui: &mut Ui, app: &SannyGitApp, index: usize, connected: bool, palette:
             }
         }
     } else {
-        response.on_hover_text("Graph connections are hidden while filtering");
+        response.help_text("Graph connections are hidden while filtering");
     }
     let commit = &app.commits[index];
     painter.circle_filled(

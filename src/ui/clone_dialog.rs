@@ -1,4 +1,5 @@
 use super::icons::{self, Icon};
+use super::tooltips::TooltipResponse;
 use crate::{
     app::{RepositoryJob, SannyGitApp},
     repository,
@@ -13,7 +14,7 @@ pub(super) fn choose_folder(ui: &mut Ui, value: &mut String) {
                 Button::image(icons::image(Icon::Folder, ui.visuals().text_color(), 16.0))
                     .min_size(egui::vec2(28.0, 28.0)),
             )
-            .on_hover_text("Open directory chooser")
+            .help_text("Open directory chooser")
         })
         .inner;
     if response.clicked() {
@@ -191,7 +192,7 @@ fn source_page(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.add_sized([152.0, 26.0], Button::selectable(true, "URL or Path"));
             for provider in ["GitHub", "GitHub Enterprise", "Bitbucket", "Bitbucket Server", "GitLab", "GitLab (Self Hosted)", "Azure DevOps", "Azure DevOps Server"] {
                 ui.add_enabled_ui(false, |ui| { ui.add_sized([152.0, 26.0], Button::new(provider)); })
-                    .response.on_hover_text("Hosting accounts are not supported. Use URL or Path with your existing Git credentials.");
+                    .response.help_text("Hosting accounts are not supported. Use URL or Path with your existing Git credentials.");
             }
         });
         ui.vertical(|ui| {
@@ -236,7 +237,7 @@ fn selection_page(ui: &mut Ui, app: &mut SannyGitApp) {
         false,
         egui::Checkbox::new(&mut false, "Configure SannyGit as credential helper"),
     )
-    .on_hover_text("SannyGit uses your existing Git credential helpers and SSH configuration.");
+    .help_text("SannyGit uses your existing Git credential helpers and SSH configuration.");
 }
 
 fn directory_page(ui: &mut Ui, app: &mut SannyGitApp) {

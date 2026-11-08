@@ -1,4 +1,5 @@
 use super::icons::{self, Icon};
+use super::tooltips::TooltipResponse;
 use crate::{
     app::{RepositoryJob, SannyGitApp},
     menu::MenuAction,
@@ -269,7 +270,7 @@ fn repository_row(
             );
         }
     })
-    .on_hover_text(if active {
+    .help_text(if active {
         format!(
             "{}\n{}",
             repository.path,
@@ -313,7 +314,7 @@ fn repository_row(
             };
             item(ui, label, idle, RepositoryAction::Reveal);
             ui.add_enabled(false, eframe::egui::Button::new("Open in Terminal"))
-                .on_disabled_hover_text("Opening an external terminal is not implemented yet");
+                .disabled_help_text("Opening an external terminal is not implemented yet");
         });
         item(
             ui,
@@ -358,7 +359,7 @@ fn repository_row(
         });
         for label in ["Mark as Favorite", "Rename…", "Remove…"] {
             ui.add_enabled(false, eframe::egui::Button::new(label))
-                .on_disabled_hover_text("Not implemented yet");
+                .disabled_help_text("Not implemented yet");
         }
         ui.separator();
         item(ui, "Copy Path", true, RepositoryAction::CopyPath);

@@ -154,7 +154,8 @@ impl ThemeChoice {
             style.spacing.indent = 14.0;
             style.spacing.scroll.bar_width = 8.0;
             style.spacing.interact_size.y = 20.0;
-            style.wrap_mode = Some(egui::TextWrapMode::Truncate);
+            // Floating tooltips use the global style and must show their full text.
+            style.wrap_mode = Some(egui::TextWrapMode::Wrap);
             style.interaction.resize_grab_radius_side = 5.0;
         });
     }

@@ -1,3 +1,4 @@
+use super::tooltips::TooltipResponse;
 use crate::{app::SannyGitApp, theme::semibold_family};
 use eframe::egui::{
     Align, Align2, Button, FontId, Frame, Layout, Margin, RichText, Sense, TextEdit, Ui, Vec2,
@@ -54,7 +55,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     false,
                     eframe::egui::Checkbox::new(&mut app.amend, "Amend last commit"),
                 )
-                .on_disabled_hover_text("Amending commits is not implemented yet");
+                .disabled_help_text("Amending commits is not implemented yet");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let blocker = app.commit_blocker();
                     if ui
@@ -62,8 +63,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             blocker.is_none(),
                             Button::new("Commit").min_size(Vec2::new(72.0, 24.0)),
                         )
-                        .on_hover_text("Create a commit from all staged changes")
-                        .on_disabled_hover_text(blocker.unwrap_or(""))
+                        .help_text("Create a commit from all staged changes")
+                        .disabled_help_text(blocker.unwrap_or(""))
                         .clicked()
                     {
                         app.create_commit();

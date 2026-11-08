@@ -1,4 +1,5 @@
 use super::icons::{self, Icon};
+use super::tooltips::TooltipResponse;
 use crate::{
     app::{ChangeFilter, SannyGitApp},
     models::ChangeKind,
@@ -94,7 +95,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     if ui.add_enabled(operations_enabled && change.kind != ChangeKind::Conflicted,
                         eframe::egui::Checkbox::without_text(&mut checked)
                             .indeterminate(change.staged && change.unstaged))
-                        .on_hover_text(tooltip).on_disabled_hover_text(tooltip).changed() {
+                        .help_text(tooltip).disabled_help_text(tooltip).changed() {
                         staging_request = Some((index, !change.staged));
                     }
                 });
@@ -109,7 +110,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     icons::paint(ui, icon, status_color(change.kind, palette), 16.0);
                     ui.add_space(4.0);
                     ui.add(eframe::egui::Label::new(RichText::new(&change.path).color(palette.text)).truncate())
-                        .on_hover_text(if let Some(source) = &change.original_path {
+                        .help_text(if let Some(source) = &change.original_path {
                             format!("{source} → {}", change.path)
                         } else {
                             change.path.clone()
@@ -132,7 +133,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         FontId::new(12.0, semibold_family()),
                         color,
                     );
-                    response.on_hover_text(change.kind.label());
+                    response.help_text(change.kind.label());
                 });
                 let response = row.response();
                 ui_line(&response, table_clip, palette);

@@ -1,4 +1,5 @@
 use super::icons::{self, Icon};
+use super::tooltips::TooltipResponse;
 use crate::{
     app::SannyGitApp,
     models::{BranchRef, RefKind},
@@ -22,7 +23,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             }),
         );
         if let Some(error) = &app.refs_error {
-            heading.on_hover_text(format!("Branches unavailable; reload to retry\n{error}"));
+            heading.help_text(format!("Branches unavailable; reload to retry\n{error}"));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.add_enabled_ui(
@@ -140,7 +141,7 @@ fn branch_group(
                             });
                         }
                     })
-                    .on_hover_text(format!(
+                    .help_text(format!(
                     "{}\nObject: {}{}{}",
                     branch.full_name,
                     branch.hash,
@@ -251,7 +252,7 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             }
             if ui
                 .add_enabled(blocker.is_none(), Button::new("Create"))
-                .on_disabled_hover_text(blocker.unwrap_or(""))
+                .disabled_help_text(blocker.unwrap_or(""))
                 .clicked()
             {
                 app.create_branch();

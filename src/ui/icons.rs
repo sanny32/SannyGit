@@ -1,3 +1,4 @@
+use super::tooltips::TooltipResponse;
 use eframe::egui::{Button, Color32, Image, Response, Ui, Vec2};
 
 #[derive(Clone, Copy)]
@@ -78,7 +79,7 @@ pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str, size: Vec2) -> Response {
             .frame(false)
             .min_size(size),
     )
-    .on_hover_text(tooltip)
+    .help_text(tooltip)
 }
 
 pub fn unavailable(ui: &mut Ui, icon: Icon, tooltip: &str) {
@@ -88,5 +89,5 @@ pub fn unavailable(ui: &mut Ui, icon: Icon, tooltip: &str) {
             .frame(false)
             .min_size(Vec2::splat(20.0)),
     );
-    response.on_disabled_hover_text(tooltip);
+    response.disabled_help_text(tooltip);
 }

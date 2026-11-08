@@ -1,4 +1,5 @@
 use super::icons::{self, Icon};
+use super::tooltips::TooltipResponse;
 use crate::{
     app::SannyGitApp,
     theme::{semibold_family, Palette, ThemeChoice},
@@ -86,7 +87,7 @@ fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem
                     ui.close();
                 }
             } else {
-                response.on_disabled_hover_text("Not implemented yet");
+                response.disabled_help_text("Not implemented yet");
             }
         }
     }
@@ -131,16 +132,16 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             if matches!(label, "Sync" | "Pull" | "Push") {
                                 let operation = match label { "Sync" => crate::remotes::Operation::Fetch, "Pull" => crate::remotes::Operation::Pull, _ => crate::remotes::Operation::Push };
                                 if action_button(ui, icon, label, app.remote_allowed(), palette, action_width)
-                                    .on_hover_text(format!("{}…\n{}", operation.label(), app.tracking.description()))
-                                    .on_disabled_hover_text("Open and refresh a repository; wait for the current operation")
+                                    .help_text(remote_help(operation, app.tracking.status.as_ref().and_then(|status| status.remote.as_deref())))
+                                    .disabled_help_text("Open and refresh a repository; wait for the current operation")
                                     .clicked() { app.open_remote(operation); }
                             } else if label == "Stage" || label == "Unstage" {
                                 let staged = label == "Stage";
                                 let enabled = app.staging_allowed(app.selected_change, staged);
                                 let tooltip = if staged { "Stage all changes in the selected file" } else { "Unstage the selected file; preserve working-tree contents" };
                                 if action_button(ui, icon, label, enabled, palette, action_width)
-                                    .on_hover_text(tooltip)
-                                    .on_disabled_hover_text("Select a suitable file after refreshing; conflicts must be resolved outside SannyGit")
+                                    .help_text(tooltip)
+                                    .disabled_help_text("Select a suitable file after refreshing; conflicts must be resolved outside SannyGit")
                                     .clicked() {
                                     app.set_staged(app.selected_change, staged);
                                 }
@@ -152,7 +153,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 });
                             })
                             .response
-                            .on_disabled_hover_text(
+                            .disabled_help_text(
                                 "This operation is not implemented yet",
                             );
                             }
@@ -160,7 +161,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let response = action_button(ui, Icon::Settings, "Settings", true, palette, action_width).on_hover_text("Settings");
+                    let response = action_button(ui, Icon::Settings, "Settings", true, palette, action_width).help_text("Settings");
                     Popup::menu(&response).show(|ui| {
                         ui.label(RichText::new("Appearance").family(semibold_family()));
                         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
@@ -180,4 +181,20 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
             });
         });
+}
+
+fn remote_help(operation: crate::remotes::Operation, remote: Option<&str>) -> String {
+    let repository = remote.map_or_else(
+        || "remote repository".to_owned(),
+        |name| format!("remote {name} repository"),
+    );
+    match operation {
+        crate::remotes::Operation::Fetch => {
+            format!("Fetch branches and tags from the {repository}.")
+        }
+        crate::remotes::Operation::Pull => {
+            format!("Pull remote commits from the {repository} into the current branch.")
+        }
+        crate::remotes::Operation::Push => format!("Push local commits to the {repository}."),
+    }
 }

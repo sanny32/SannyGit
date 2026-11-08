@@ -1,3 +1,4 @@
+use super::tooltips::TooltipResponse;
 use eframe::egui::{
     epaint::text::ByteRangeExt, Align, Frame, Label, Layout, Margin, RichText, ScrollArea,
     TextWrapMode, Ui, Vec2,
@@ -60,7 +61,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     |ui| {
                         ui.set_min_width(path_width);
                         ui.label(RichText::new(&change.path).size(12.0).color(palette.muted))
-                            .on_hover_text(&change.path);
+                            .help_text(&change.path);
                     },
                 );
                 ui.label(
