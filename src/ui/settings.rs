@@ -1,3 +1,4 @@
+use super::tooltips::TooltipResponse;
 use super::EditableText;
 use crate::{
     app::{SannyGitApp, SettingsPage},
@@ -21,6 +22,8 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let ctx = ctx.clone();
     let viewport_id = ViewportId::from_hash_of("sannygit.preferences");
     ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
+        #[cfg(target_os = "macos")]
+        ui.input_mut(|input| input.events.append(&mut app.pending_native_edit_events));
         let close_requested = ui.ctx().input(|input| input.viewport().close_requested());
         let escape = ui.input(|input| input.key_pressed(Key::Escape));
         if close_requested || escape {
@@ -57,12 +60,26 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     .add(super::dialog_style::primary("OK", palette))
                     .clicked()
                 {
-                    app.theme = app.settings_window.theme;
-                    app.skip_push_confirmation = app.settings_window.skip_push_confirmation;
-                    app.tracking.set_auto_fetch(app.settings_window.auto_fetch);
-                    app.llm_config = app.settings_window.llm.clone();
-                    app.settings_window.open = false;
-                    ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+                    let next_llm = app.settings_window.llm.clone();
+                    let secret_changed = next_llm.store_api_key != app.llm_config.store_api_key
+                        || next_llm.api_key != app.llm_config.api_key;
+                    let saved = if secret_changed {
+                        crate::llm::save_api_key(&next_llm)
+                    } else {
+                        Ok(())
+                    };
+                    match saved {
+                        Ok(()) => {
+                            app.theme = app.settings_window.theme;
+                            app.skip_push_confirmation = app.settings_window.skip_push_confirmation;
+                            app.tracking.set_auto_fetch(app.settings_window.auto_fetch);
+                            app.llm_config = next_llm;
+                            app.settings_window.llm_secret_error = None;
+                            app.settings_window.open = false;
+                            ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+                        }
+                        Err(error) => app.settings_window.llm_secret_error = Some(error),
+                    }
                 }
                 if ui.add(super::dialog_style::button("Cancel")).clicked() {
                     app.settings_window.open = false;
@@ -192,7 +209,8 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                             egui::TextEdit::singleline(&mut app.settings_window.llm.endpoint)
                                 .editable()
                                 .desired_width(f32::INFINITY),
-                        );
+                        )
+                        .help_text("Base URL or full /chat/completions endpoint");
                         ui.end_row();
                         form_label(ui, "Model:");
                         ui.add(
@@ -210,13 +228,32 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         );
                         ui.end_row();
                     });
+                ui.checkbox(
+                    &mut app.settings_window.llm.store_api_key,
+                    format!("Store API key in {}", crate::llm::credential_store_label()),
+                );
                 ui.label(
                     RichText::new(
-                        "The API key is kept only in memory. It may be omitted for local APIs, or provided at startup with SANNYGIT_LLM_API_KEY.",
+                        "The key is never written to SannyGit settings. SANNYGIT_LLM_API_KEY overrides the saved key at startup.",
                     )
                     .small()
                     .color(palette.muted),
                 );
+                let secret_error = app
+                    .settings_window
+                    .llm_secret_error
+                    .as_deref()
+                    .unwrap_or("");
+                ui.add_sized(
+                    [ui.available_width(), 20.0],
+                    egui::Label::new(
+                        RichText::new(secret_error)
+                            .small()
+                            .color(palette.removed_text),
+                    )
+                    .truncate(),
+                )
+                .help_text(secret_error);
                 ui.add_space(6.0);
                 ui.label("Generation instructions:");
                 ui.add_sized(

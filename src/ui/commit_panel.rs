@@ -29,26 +29,32 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            ui.menu_button(
-                super::icons::image(super::icons::Icon::Chevron, palette.muted, 14.0),
-                |ui| {
-                    let blocker = app.generate_commit_message_blocker();
-                    if ui
-                        .add_enabled(blocker.is_none(), Button::new("Generate commit message"))
-                        .disabled_help_text(blocker.unwrap_or(""))
-                        .clicked()
-                    {
-                        app.generate_commit_message();
-                        ui.close();
-                    }
-                    if ui.button("LLM settings…").clicked() {
-                        app.open_settings();
-                        app.settings_window.page = crate::app::SettingsPage::Llm;
-                        ui.close();
-                    }
-                },
+            eframe::egui::containers::menu::MenuButton::from_button(
+                Button::image(super::icons::image(
+                    super::icons::Icon::Chevron,
+                    palette.muted,
+                    14.0,
+                ))
+                .frame(false)
+                .min_size(Vec2::new(20.0, 26.0)),
             )
-            .response
+            .ui(ui, |ui| {
+                let blocker = app.generate_commit_message_blocker();
+                if ui
+                    .add_enabled(blocker.is_none(), Button::new("Generate commit message"))
+                    .disabled_help_text(blocker.unwrap_or(""))
+                    .clicked()
+                {
+                    app.generate_commit_message();
+                    ui.close();
+                }
+                if ui.button("LLM settings…").clicked() {
+                    app.open_settings();
+                    app.settings_window.page = crate::app::SettingsPage::Llm;
+                    ui.close();
+                }
+            })
+            .0
             .help_text("Commit message generation options");
 
             let blocker = app.generate_commit_message_blocker();
@@ -107,7 +113,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             blocker.is_none(),
                             Button::new("Commit").min_size(Vec2::new(72.0, 24.0)),
                         )
-                        .help_text("Create a commit from all staged changes")
+                        .help_text("Commit staged changes and all tracked working-tree changes")
                         .disabled_help_text(blocker.unwrap_or(""))
                         .clicked()
                     {

@@ -72,6 +72,7 @@ pub struct SettingsWindow {
     pub auto_fetch: bool,
     pub skip_push_confirmation: bool,
     pub llm: crate::llm::Config,
+    pub llm_secret_error: Option<String>,
 }
 
 impl SettingsWindow {
@@ -83,6 +84,7 @@ impl SettingsWindow {
             auto_fetch: true,
             skip_push_confirmation: false,
             llm: crate::llm::Config::default(),
+            llm_secret_error: None,
         }
     }
 }
@@ -99,6 +101,8 @@ pub struct SannyGitApp {
     pub tracking: tracking::Monitor,
     #[cfg(target_os = "macos")]
     native_menu: Option<crate::native_menu::NativeMenu>,
+    #[cfg(target_os = "macos")]
+    pub(crate) pending_native_edit_events: Vec<eframe::egui::Event>,
     pub theme: ThemeChoice,
     pub settings_window: SettingsWindow,
     pub llm_config: crate::llm::Config,
@@ -179,6 +183,12 @@ impl SannyGitApp {
             .unwrap_or_default();
         if let Some(api_key) = std::env::var_os("SANNYGIT_LLM_API_KEY") {
             app.llm_config.api_key = api_key.to_string_lossy().into_owned();
+        } else {
+            match crate::llm::load_api_key(&app.llm_config) {
+                Ok(Some(api_key)) => app.llm_config.api_key = api_key,
+                Ok(None) => {}
+                Err(error) => app.error = Some(error),
+            }
         }
         #[cfg(target_os = "macos")]
         {
@@ -234,6 +244,8 @@ impl SannyGitApp {
             tracking: tracking::Monitor::default(),
             #[cfg(target_os = "macos")]
             native_menu: None,
+            #[cfg(target_os = "macos")]
+            pending_native_edit_events: Vec::new(),
             theme,
             settings_window: SettingsWindow::new(theme),
             llm_config: crate::llm::Config::default(),
@@ -424,6 +436,7 @@ impl SannyGitApp {
         self.settings_window.auto_fetch = self.tracking.auto_fetch;
         self.settings_window.skip_push_confirmation = self.skip_push_confirmation;
         self.settings_window.llm = self.llm_config.clone();
+        self.settings_window.llm_secret_error = None;
         self.settings_window.open = true;
     }
 
@@ -831,8 +844,12 @@ impl SannyGitApp {
             .any(|c| c.kind == crate::models::ChangeKind::Conflicted)
         {
             Some("Resolve all conflicts before committing")
-        } else if !self.changes.iter().any(|c| c.staged) {
-            Some("Stage at least one change")
+        } else if !self
+            .changes
+            .iter()
+            .any(|c| c.staged || (c.unstaged && c.kind != crate::models::ChangeKind::Untracked))
+        {
+            Some("Change a tracked file or stage a new file")
         } else if self.commit_message.trim().is_empty() {
             Some("Enter a commit message")
         } else if self.commit_message.contains('\0') || self.commit_message.len() > 65_536 {
@@ -871,8 +888,11 @@ impl SannyGitApp {
             Some("Open a repository first")
         } else if !self.state_current {
             Some("Refresh the repository before generating a message")
-        } else if !self.changes.iter().any(|change| change.staged) {
-            Some("Stage at least one change")
+        } else if !self.changes.iter().any(|change| {
+            change.staged
+                || (change.unstaged && change.kind != crate::models::ChangeKind::Untracked)
+        }) {
+            Some("Change a tracked file or stage a new file")
         } else {
             None
         }
@@ -888,7 +908,7 @@ impl SannyGitApp {
         self.status = "Generating commit message…".into();
         self.start_worker(move || {
             WorkerResult::CommitMessage(
-                git::staged_patch(&root).and_then(|patch| crate::llm::generate(&config, &patch)),
+                git::commit_patch(&root).and_then(|patch| crate::llm::generate(&config, &patch)),
             )
         });
     }
@@ -1185,11 +1205,15 @@ impl eframe::App for SannyGitApp {
             .request_repaint_after(std::time::Duration::from_secs(1));
         #[cfg(target_os = "macos")]
         {
-            let actions = self
-                .native_menu
-                .as_ref()
-                .map(|menu| menu.take_actions())
-                .unwrap_or_default();
+            let (actions, edit_events) = self.native_menu.as_ref().map_or_else(
+                || (Vec::new(), Vec::new()),
+                |menu| (menu.take_actions(), menu.take_edit_events()),
+            );
+            if self.settings_window.open {
+                self.pending_native_edit_events.extend(edit_events);
+            } else {
+                ui.input_mut(|input| input.events.extend(edit_events));
+            }
             for action in actions {
                 self.handle_menu_action(action, ui.ctx());
             }
@@ -1326,7 +1350,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_requires_fresh_state_message_staged_files_and_no_conflicts() {
+    fn commit_accepts_tracked_unstaged_changes_but_not_only_untracked_files() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         assert!(app.commit_blocker().is_some());
         app.repositories = crate::mock_data::repositories();
@@ -1338,14 +1362,20 @@ mod tests {
         for change in &mut app.changes {
             change.staged = false;
         }
-        assert!(app.commit_blocker().unwrap().contains("Stage"));
-        app.changes[0].staged = true;
+        assert!(app.commit_blocker().is_none());
+        assert!(app.generate_commit_message_blocker().is_none());
+        for change in &mut app.changes {
+            change.kind = crate::models::ChangeKind::Untracked;
+        }
+        assert!(app.commit_blocker().unwrap().contains("tracked file"));
+        app.changes[0].kind = crate::models::ChangeKind::Modified;
         app.commit_message = " \n\t".into();
         assert!(app.commit_blocker().unwrap().contains("message"));
         app.create_commit();
         assert!(!app.busy());
         app.commit_message = "Valid message".into();
         assert!(app.commit_blocker().is_none());
+        app.changes[0].staged = true;
         assert!(app.staging_allowed(0, false));
         app.changes[0].kind = crate::models::ChangeKind::Conflicted;
         assert!(app.commit_blocker().unwrap().contains("conflicts"));
