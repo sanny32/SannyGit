@@ -111,10 +111,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 .resizable(true)
                 .default_size(ui.available_height() * 0.36)
                 .size_range(180.0..=450.0)
-                .frame(panel_frame(palette))
+                .frame(panel_frame(palette).inner_margin(8))
                 .show(ui, |ui| branches::show(ui, app));
             CentralPanel::default()
-                .frame(panel_frame(palette))
+                .frame(panel_frame(palette).inner_margin(8))
                 .show(ui, |ui| repositories::show(ui, app));
         });
 
