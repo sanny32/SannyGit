@@ -18,6 +18,41 @@ use eframe::egui::{
     UiBuilder, Vec2,
 };
 
+fn sync_badge(text: &str, palette: Palette, size: f32) -> eframe::egui::text::LayoutJob {
+    use eframe::egui::{text::LayoutJob, FontId, TextFormat};
+    let mut job = LayoutJob::default();
+    for (index, part) in text.split_whitespace().enumerate() {
+        if index > 0 {
+            job.append(
+                " ",
+                0.0,
+                TextFormat {
+                    font_id: FontId::proportional(size),
+                    color: palette.muted,
+                    ..Default::default()
+                },
+            );
+        }
+        let color = if part.starts_with('↑') {
+            palette.outgoing
+        } else if part.starts_with(['↓', '✓']) {
+            palette.incoming
+        } else {
+            palette.muted
+        };
+        job.append(
+            part,
+            0.0,
+            TextFormat {
+                font_id: FontId::proportional(size),
+                color,
+                ..Default::default()
+            },
+        );
+    }
+    job
+}
+
 fn selectable_row(
     ui: &mut Ui,
     selected: bool,

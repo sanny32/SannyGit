@@ -209,15 +209,9 @@ fn repository_row(
         );
         if !suffix.is_empty() {
             ui.add(
-                eframe::egui::Label::new(RichText::new(suffix).size(12.0).color(
-                    if badge.contains(['↑', '↓']) {
-                        palette.text
-                    } else {
-                        palette.muted
-                    },
-                ))
-                .selectable(false)
-                .sense(eframe::egui::Sense::hover()),
+                eframe::egui::Label::new(super::sync_badge(&suffix, palette, 12.0))
+                    .selectable(false)
+                    .sense(eframe::egui::Sense::hover()),
             );
         }
     })
