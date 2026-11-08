@@ -1,5 +1,6 @@
 use super::icons::{self, Icon};
 use super::tooltips::TooltipResponse;
+use super::EditableText;
 use crate::{
     app::SannyGitApp,
     models::{BranchRef, RefKind},
@@ -191,7 +192,7 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                     });
                     ui.end_row();
                     ui.radio_value(&mut dialog.mode, 1, "Create local branch:");
-                    ui.add_enabled(dialog.mode == 1, TextEdit::singleline(&mut dialog.new_name).desired_width(280.0));
+                    ui.add_enabled(dialog.mode == 1, TextEdit::singleline(&mut dialog.new_name).editable().desired_width(280.0));
                     ui.end_row();
                 });
                 ui.radio_value(&mut dialog.mode, 2, "Don't create local branch (detached HEAD)");
@@ -236,6 +237,7 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.add_enabled_ui(!app.busy(), |ui| {
                 ui.add(
                     TextEdit::singleline(&mut app.new_branch_name)
+                        .editable()
                         .hint_text("feature/my-change")
                         .desired_width(f32::INFINITY),
                 );

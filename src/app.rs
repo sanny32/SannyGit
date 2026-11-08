@@ -28,6 +28,7 @@ enum WorkerResult {
         hash: String,
         result: Result<crate::models::DiffPreview, String>,
     },
+    CommitMessage(Result<String, String>),
     Repository(Result<crate::git::Snapshot, String>),
     Operation {
         committed: bool,
@@ -61,6 +62,7 @@ pub enum SettingsPage {
     General,
     Appearance,
     Remote,
+    Llm,
 }
 
 pub struct SettingsWindow {
@@ -69,6 +71,7 @@ pub struct SettingsWindow {
     pub theme: ThemeChoice,
     pub auto_fetch: bool,
     pub skip_push_confirmation: bool,
+    pub llm: crate::llm::Config,
 }
 
 impl SettingsWindow {
@@ -79,6 +82,7 @@ impl SettingsWindow {
             theme,
             auto_fetch: true,
             skip_push_confirmation: false,
+            llm: crate::llm::Config::default(),
         }
     }
 }
@@ -97,6 +101,7 @@ pub struct SannyGitApp {
     native_menu: Option<crate::native_menu::NativeMenu>,
     pub theme: ThemeChoice,
     pub settings_window: SettingsWindow,
+    pub llm_config: crate::llm::Config,
     pub about_dialog: bool,
     applied_theme: ThemeChoice,
     pub repositories: Vec<Repository>,
@@ -168,6 +173,13 @@ impl SannyGitApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.auto_fetch"))
             .unwrap_or(true);
+        app.llm_config = creation_context
+            .storage
+            .and_then(|storage| eframe::get_value(storage, "sannygit.llm"))
+            .unwrap_or_default();
+        if let Some(api_key) = std::env::var_os("SANNYGIT_LLM_API_KEY") {
+            app.llm_config.api_key = api_key.to_string_lossy().into_owned();
+        }
         #[cfg(target_os = "macos")]
         {
             app.native_menu = crate::native_menu::NativeMenu::new(&creation_context.egui_ctx);
@@ -224,6 +236,7 @@ impl SannyGitApp {
             native_menu: None,
             theme,
             settings_window: SettingsWindow::new(theme),
+            llm_config: crate::llm::Config::default(),
             about_dialog: false,
             applied_theme: theme,
             repositories: Vec::new(),
@@ -410,6 +423,7 @@ impl SannyGitApp {
         self.settings_window.theme = self.theme;
         self.settings_window.auto_fetch = self.tracking.auto_fetch;
         self.settings_window.skip_push_confirmation = self.skip_push_confirmation;
+        self.settings_window.llm = self.llm_config.clone();
         self.settings_window.open = true;
     }
 
@@ -850,6 +864,35 @@ impl SannyGitApp {
         });
     }
 
+    pub fn generate_commit_message_blocker(&self) -> Option<&'static str> {
+        if self.busy() {
+            Some("Wait for the current operation to finish")
+        } else if self.repositories.get(self.selected_repository).is_none() {
+            Some("Open a repository first")
+        } else if !self.state_current {
+            Some("Refresh the repository before generating a message")
+        } else if !self.changes.iter().any(|change| change.staged) {
+            Some("Stage at least one change")
+        } else {
+            None
+        }
+    }
+
+    pub fn generate_commit_message(&mut self) {
+        if self.generate_commit_message_blocker().is_some() {
+            return;
+        }
+        let root = PathBuf::from(&self.repositories[self.selected_repository].path);
+        let config = self.llm_config.clone();
+        self.error = None;
+        self.status = "Generating commit message…".into();
+        self.start_worker(move || {
+            WorkerResult::CommitMessage(
+                git::staged_patch(&root).and_then(|patch| crate::llm::generate(&config, &patch)),
+            )
+        });
+    }
+
     fn poll_worker(&mut self) {
         let Some(receiver) = &self.worker else {
             return;
@@ -960,6 +1003,16 @@ impl SannyGitApp {
                     }
                 }
             }
+            WorkerResult::CommitMessage(result) => match result {
+                Ok(message) => {
+                    self.commit_message = message;
+                    self.status = "Commit message generated".into();
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    self.status = "Could not generate commit message".into();
+                }
+            },
             WorkerResult::Repository(Ok(snapshot)) => {
                 self.apply_snapshot(snapshot);
             }
@@ -1173,6 +1226,7 @@ impl eframe::App for SannyGitApp {
             &self.skip_push_confirmation,
         );
         eframe::set_value(storage, "sannygit.auto_fetch", &self.tracking.auto_fetch);
+        eframe::set_value(storage, "sannygit.llm", &self.llm_config);
         eframe::set_value(storage, THEME_STORAGE_KEY, &self.theme);
         let paths: Vec<_> = self.repositories.iter().map(|r| &r.path).collect();
         eframe::set_value(storage, "sannygit.repositories", &paths);
@@ -1250,6 +1304,25 @@ mod tests {
         );
         assert!(app.error.is_none());
         assert!(app.selected_diff().is_none());
+    }
+
+    #[test]
+    fn generated_commit_message_updates_draft_and_errors_preserve_it() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.commit_message = "Existing draft".into();
+        deliver(
+            &mut app,
+            WorkerResult::CommitMessage(Ok("Generated message".into())),
+        );
+        assert_eq!(app.commit_message, "Generated message");
+        assert_eq!(app.status, "Commit message generated");
+
+        deliver(
+            &mut app,
+            WorkerResult::CommitMessage(Err("Provider unavailable".into())),
+        );
+        assert_eq!(app.commit_message, "Generated message");
+        assert_eq!(app.error.as_deref(), Some("Provider unavailable"));
     }
 
     #[test]

@@ -14,6 +14,17 @@ mod status_bar;
 mod toolbar;
 mod tooltips;
 
+pub(super) trait EditableText {
+    fn editable(self) -> Self;
+}
+
+impl EditableText for eframe::egui::TextEdit<'_> {
+    fn editable(self) -> Self {
+        self.background_color(eframe::egui::Color32::WHITE)
+            .text_color(eframe::egui::Color32::from_rgb(24, 24, 24))
+    }
+}
+
 use crate::{app::SannyGitApp, theme::Palette};
 use eframe::egui::{
     Align, CentralPanel, Frame, InnerResponse, Layout, Margin, Panel, Response, Sense, Ui,

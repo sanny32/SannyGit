@@ -241,6 +241,16 @@ pub fn validate_message(message: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Returns exactly the changes currently in the index, which are the changes a
+/// normal commit would include. The patch is loaded only after an explicit UI
+/// action and is never logged by SannyGit.
+pub fn staged_patch(root: &Path) -> Result<String, String> {
+    text(run(
+        root,
+        &["diff", "--cached", "--no-ext-diff", "--no-textconv"],
+    )?)
+}
+
 /// Commits only the existing index, after an explicit Commit action in the UI.
 pub fn commit(root: &Path, message: &str) -> Result<(), String> {
     validate_message(message)?;
@@ -532,6 +542,21 @@ pub(crate) mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn staged_patch_contains_only_index_changes() {
+        let repo = TempRepo::new();
+        repo.write("file.txt", "base\n");
+        repo.git(&["add", "file.txt"]);
+        repo.git(&["commit", "-m", "base"]);
+        repo.write("file.txt", "staged\n");
+        repo.git(&["add", "file.txt"]);
+        repo.write("file.txt", "unstaged\n");
+
+        let patch = staged_patch(&repo.0).unwrap();
+        assert!(patch.contains("+staged"));
+        assert!(!patch.contains("+unstaged"));
     }
 
     #[test]

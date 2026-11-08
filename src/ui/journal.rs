@@ -1,4 +1,5 @@
 use super::tooltips::TooltipResponse;
+use super::EditableText;
 use crate::{app::SannyGitApp, models::HistoryEdge, theme::Palette};
 use eframe::egui::{
     Align, Button, ComboBox, Label, Layout, RichText, ScrollArea, Sense, Ui, Vec2, Window,
@@ -17,6 +18,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         ui.add_enabled(
             !app.commits.is_empty(),
             eframe::egui::TextEdit::singleline(&mut app.journal_filter)
+                .editable()
                 .hint_text("Search loaded commits…")
                 .desired_width(search_width)
                 .margin(Vec2::new(5.0, 2.0)),

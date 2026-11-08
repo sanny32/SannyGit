@@ -1,6 +1,8 @@
 //! macOS menu bar. AppKit callbacks enqueue actions instead of borrowing the egui app.
 use eframe::egui;
-use objc2::{define_class, msg_send, rc::Retained, sel, DefinedClass, MainThreadOnly};
+use objc2::{
+    define_class, msg_send, rc::Retained, runtime::Sel, sel, DefinedClass, MainThreadOnly,
+};
 use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
 use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSString};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -107,7 +109,7 @@ impl Drop for NativeMenu {
 fn submenu(marker: MainThreadMarker, root: &NSMenu, title: &str) -> Retained<NSMenu> {
     let title = NSString::from_str(title);
     let menu = NSMenu::initWithTitle(NSMenu::alloc(marker), &title);
-    menu.setAutoenablesItems(false);
+    menu.setAutoenablesItems(title.to_string() == "Edit");
     let item = NSMenuItem::new(marker);
     item.setTitle(&title);
     item.setSubmenu(Some(&menu));
@@ -127,19 +129,26 @@ fn append_items(
             menu.addItem(&NSMenuItem::separatorItem(marker));
             continue;
         }
-        // SAFETY: The selector below has AppKit's NSMenuItem target/action ABI.
+        let standard_edit = standard_edit_item(definition.label);
+        // SAFETY: The selectors below have AppKit's NSMenuItem target/action ABI.
         let item = unsafe {
             NSMenuItem::initWithTitle_action_keyEquivalent(
                 NSMenuItem::alloc(marker),
                 &NSString::from_str(definition.label),
-                definition.action.map(|_| sel!(performMenuAction:)),
-                &NSString::from_str(match definition.action {
-                    Some(MenuAction::Open | MenuAction::Clone) => "o",
-                    Some(MenuAction::NewWindow) => "n",
-                    Some(MenuAction::Refresh) => "\u{f708}",
-                    Some(MenuAction::Close) => "w",
-                    _ => "",
-                }),
+                definition
+                    .action
+                    .map(|_| sel!(performMenuAction:))
+                    .or_else(|| standard_edit.map(|item| item.selector)),
+                &NSString::from_str(standard_edit.map_or_else(
+                    || match definition.action {
+                        Some(MenuAction::Open | MenuAction::Clone) => "o",
+                        Some(MenuAction::NewWindow) => "n",
+                        Some(MenuAction::Refresh) => "\u{f708}",
+                        Some(MenuAction::Close) => "w",
+                        _ => "",
+                    },
+                    |item| item.key,
+                )),
             )
         };
         if !definition.children.is_empty() {
@@ -182,10 +191,61 @@ fn append_items(
                     | MenuAction::About
             ));
             items.push((action, item.clone()));
+        } else if let Some(edit) = standard_edit {
+            let mut modifiers = objc2_app_kit::NSEventModifierFlags::Command;
+            if edit.shift {
+                modifiers |= objc2_app_kit::NSEventModifierFlags::Shift;
+            }
+            item.setKeyEquivalentModifierMask(modifiers);
         } else {
             item.setEnabled(false);
             item.setToolTip(Some(&NSString::from_str("Not implemented yet")));
         }
         menu.addItem(&item);
+    }
+}
+
+#[derive(Clone, Copy)]
+struct StandardEditItem {
+    selector: Sel,
+    key: &'static str,
+    shift: bool,
+}
+
+fn standard_edit_item(label: &str) -> Option<StandardEditItem> {
+    let (selector, key, shift) = match label {
+        "Undo" => (sel!(undo:), "z", false),
+        "Redo" => (sel!(redo:), "z", true),
+        "Cut" => (sel!(cut:), "x", false),
+        "Copy" => (sel!(copy:), "c", false),
+        "Paste" => (sel!(paste:), "v", false),
+        "Select All" => (sel!(selectAll:), "a", false),
+        _ => return None,
+    };
+    Some(StandardEditItem {
+        selector,
+        key,
+        shift,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standard_edit_items_have_native_shortcuts() {
+        for (label, key, shift) in [
+            ("Undo", "z", false),
+            ("Redo", "z", true),
+            ("Cut", "x", false),
+            ("Copy", "c", false),
+            ("Paste", "v", false),
+            ("Select All", "a", false),
+        ] {
+            let item = standard_edit_item(label).unwrap();
+            assert_eq!((item.key, item.shift), (key, shift));
+        }
+        assert!(standard_edit_item("Preferences").is_none());
     }
 }

@@ -1,3 +1,4 @@
+use super::EditableText;
 use crate::{
     app::{SannyGitApp, SettingsPage},
     theme::{semibold_family, Palette, ThemeChoice},
@@ -59,6 +60,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     app.theme = app.settings_window.theme;
                     app.skip_push_confirmation = app.settings_window.skip_push_confirmation;
                     app.tracking.set_auto_fetch(app.settings_window.auto_fetch);
+                    app.llm_config = app.settings_window.llm.clone();
                     app.settings_window.open = false;
                     ui.ctx().send_viewport_cmd(ViewportCommand::Close);
                 }
@@ -95,6 +97,9 @@ fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         });
                         section(ui, "Git", |ui| {
                             entry(ui, app, SettingsPage::Remote, "Remote")
+                        });
+                        section(ui, "AI", |ui| {
+                            entry(ui, app, SettingsPage::Llm, "Commit messages")
                         });
                     });
                 });
@@ -175,7 +180,62 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 );
             });
         }
+        SettingsPage::Llm => {
+            heading(ui, "LLM commit messages");
+            group(ui, palette, "OpenAI-compatible API", |ui| {
+                egui::Grid::new("preferences.llm.connection")
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        form_label(ui, "Endpoint:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.settings_window.llm.endpoint)
+                                .editable()
+                                .desired_width(f32::INFINITY),
+                        );
+                        ui.end_row();
+                        form_label(ui, "Model:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.settings_window.llm.model)
+                                .editable()
+                                .desired_width(f32::INFINITY),
+                        );
+                        ui.end_row();
+                        form_label(ui, "API key:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.settings_window.llm.api_key)
+                                .editable()
+                                .password(true)
+                                .desired_width(f32::INFINITY),
+                        );
+                        ui.end_row();
+                    });
+                ui.label(
+                    RichText::new(
+                        "The API key is kept only in memory. It may be omitted for local APIs, or provided at startup with SANNYGIT_LLM_API_KEY.",
+                    )
+                    .small()
+                    .color(palette.muted),
+                );
+                ui.add_space(6.0);
+                ui.label("Generation instructions:");
+                ui.add_sized(
+                    [ui.available_width(), 76.0],
+                    egui::TextEdit::multiline(&mut app.settings_window.llm.instructions).editable(),
+                );
+            });
+        }
     }
+}
+
+fn form_label(ui: &mut Ui, text: &str) {
+    ui.allocate_ui_with_layout(
+        Vec2::new(82.0, ui.spacing().interact_size.y),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.add(egui::Label::new(text).wrap_mode(egui::TextWrapMode::Extend));
+        },
+    );
 }
 
 fn heading(ui: &mut Ui, title: &str) {
@@ -273,6 +333,7 @@ mod tests {
                     (SettingsPage::General, "General"),
                     (SettingsPage::Remote, "Remote"),
                     (SettingsPage::Appearance, "Appearance"),
+                    (SettingsPage::Llm, "Commit messages"),
                 ] {
                     let mut output = render(&mut app, Vec::new());
                     let rect = output
@@ -328,6 +389,36 @@ mod tests {
         })
     }
 
+    fn text_rows(shapes: &[ClippedShape], expected: &str) -> Option<usize> {
+        shapes.iter().find_map(|shape| {
+            let egui::Shape::Text(text) = &shape.shape else {
+                return None;
+            };
+            (text.galley.job.text == expected).then_some(text.galley.rows.len())
+        })
+    }
+
+    fn text_left(shapes: &[ClippedShape], expected: &str) -> Option<f32> {
+        shapes.iter().find_map(|shape| {
+            let egui::Shape::Text(text) = &shape.shape else {
+                return None;
+            };
+            (text.galley.job.text == expected).then_some(text.pos.x)
+        })
+    }
+
+    fn white_rect_count(shapes: &[ClippedShape]) -> usize {
+        shapes
+            .iter()
+            .filter(|shape| {
+                matches!(
+                    &shape.shape,
+                    egui::Shape::Rect(rect) if rect.fill == egui::Color32::WHITE
+                )
+            })
+            .count()
+    }
+
     #[test]
     fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
@@ -339,6 +430,7 @@ mod tests {
                 (SettingsPage::General, "Confirmations"),
                 (SettingsPage::Appearance, "Color theme:"),
                 (SettingsPage::Remote, "Automatic fetch"),
+                (SettingsPage::Llm, "Endpoint:"),
             ] {
                 app.settings_window.page = page;
                 let mut output = context.run_ui(
@@ -351,10 +443,20 @@ mod tests {
                     },
                     |ui| window_contents(ui, &mut app),
                 );
+                output.textures_delta.clear();
                 assert!(visible_text(&output.shapes, title));
                 assert!(visible_text(&output.shapes, "Cancel"));
                 assert!(visible_text(&output.shapes, "OK"));
-                output.textures_delta.clear();
+                if page == SettingsPage::Llm {
+                    assert!(white_rect_count(&output.shapes) >= 4);
+                    for label in ["Endpoint:", "Model:", "API key:"] {
+                        assert_eq!(text_rows(&output.shapes, label), Some(1));
+                    }
+                    let left = text_left(&output.shapes, "Endpoint:").unwrap();
+                    for label in ["Model:", "API key:"] {
+                        assert!((text_left(&output.shapes, label).unwrap() - left).abs() < 0.5);
+                    }
+                }
             }
         }
     }
