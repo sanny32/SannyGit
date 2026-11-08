@@ -110,7 +110,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 let action_width = 58.0;
                 for (icon, label) in [
                     (Icon::Pull, "Pull"),
-                    (Icon::Fetch, "Sync"),
+                    (Icon::Fetch, "Fetch"),
                     (Icon::Push, "Push"),
                     (Icon::Check, "Stage"),
                     (Icon::File, "Unstage"),
@@ -128,7 +128,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         Layout::top_down(Align::Center),
                         |ui| {
                             ui.set_min_width(action_width);
-                            if label == "Stage" || label == "Unstage" {
+                            if matches!(label, "Fetch" | "Pull" | "Push") {
+                                let operation = match label { "Fetch" => crate::remotes::Operation::Fetch, "Pull" => crate::remotes::Operation::Pull, _ => crate::remotes::Operation::Push };
+                                if action_button(ui, icon, label, app.remote_allowed(), palette, action_width)
+                                    .on_hover_text(format!("{}…", operation.label()))
+                                    .on_disabled_hover_text("Open and refresh a repository; wait for the current operation")
+                                    .clicked() { app.open_remote(operation); }
+                            } else if label == "Stage" || label == "Unstage" {
                                 let staged = label == "Stage";
                                 let enabled = app.staging_allowed(app.selected_change, staged);
                                 let tooltip = if staged { "Stage all changes in the selected file" } else { "Unstage the selected file; preserve working-tree contents" };

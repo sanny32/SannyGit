@@ -30,6 +30,10 @@ pub(super) fn group_picker(ui: &mut Ui, app: &mut SannyGitApp) {
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
+    if app.network_dialog.is_some() {
+        super::remote_dialog::show(ui.ctx(), app);
+        return;
+    }
     if app.manager.dialog == Some(Dialog::Clone) {
         super::clone_dialog::show(ui.ctx(), app);
         return;

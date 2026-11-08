@@ -11,6 +11,7 @@ mod mock_data;
 mod models;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod remotes;
 mod repository;
 mod theme;
 mod ui;

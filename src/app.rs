@@ -1,3 +1,4 @@
+mod remotes;
 mod repositories;
 pub use repositories::{Dialog as RepositoryDialog, Job as RepositoryJob, RepositoryManager};
 
@@ -7,6 +8,10 @@ use std::{
 };
 
 enum WorkerResult {
+    RemoteInfo {
+        operation: crate::remotes::Operation,
+        result: Result<crate::remotes::State, String>,
+    },
     RepositoryTask(Box<repositories::ResultMessage>),
     Refs {
         path: String,
@@ -72,6 +77,7 @@ pub struct SannyGitApp {
     pub branch_head_exists: bool,
     pub branch_dialog_open: bool,
     pub remote_checkout: Option<RemoteCheckoutDialog>,
+    pub network_dialog: Option<remotes::RemoteDialog>,
     pub new_branch_name: String,
     pub switch_to_new_branch: bool,
     pub changes: Vec<ChangeFile>,
@@ -167,6 +173,7 @@ impl SannyGitApp {
             branch_head_exists: false,
             branch_dialog_open: false,
             remote_checkout: None,
+            network_dialog: None,
             new_branch_name: String::new(),
             switch_to_new_branch: true,
             changes: Vec::new(),
@@ -271,6 +278,7 @@ impl SannyGitApp {
                 !self.busy() && self.state_current && self.refs_current && self.branch_head_exists
             }
             MenuAction::SwitchBranch => self.switch_branch_blocker().is_none(),
+            MenuAction::Fetch | MenuAction::Pull | MenuAction::Push => self.remote_allowed(),
         }
     }
 
@@ -320,6 +328,9 @@ impl SannyGitApp {
             MenuAction::Commit => self.create_commit(),
             MenuAction::CreateBranch => self.branch_dialog_open = true,
             MenuAction::SwitchBranch => self.switch_branch(),
+            MenuAction::Fetch => self.open_remote(crate::remotes::Operation::Fetch),
+            MenuAction::Pull => self.open_remote(crate::remotes::Operation::Pull),
+            MenuAction::Push => self.open_remote(crate::remotes::Operation::Push),
             MenuAction::ReloadHistory => self.reload_history(),
             MenuAction::LightTheme => self.theme = ThemeChoice::Light,
             MenuAction::DarkTheme => self.theme = ThemeChoice::Dark,
@@ -393,6 +404,7 @@ impl SannyGitApp {
             self.branch_head_exists = false;
             self.branch_dialog_open = false;
             self.remote_checkout = None;
+            self.network_dialog = None;
             self.new_branch_name.clear();
             self.commits.clear();
             self.history_edges.clear();
@@ -792,6 +804,9 @@ impl SannyGitApp {
         };
         self.worker = None;
         match result {
+            WorkerResult::RemoteInfo { operation, result } => {
+                self.apply_remote_info(operation, result)
+            }
             WorkerResult::RepositoryTask(result) => self.apply_repository_result(*result),
             WorkerResult::Refs { path, result } => {
                 if self
@@ -880,6 +895,15 @@ impl SannyGitApp {
                 outcome,
                 snapshot,
             } => {
+                if matches!(
+                    success,
+                    "Fetch complete" | "Pull complete" | "Push complete"
+                ) {
+                    self.manager.cancel = None;
+                    if outcome.is_ok() {
+                        self.network_dialog = None;
+                    }
+                }
                 if committed {
                     self.commit_message.clear();
                 }
@@ -1491,6 +1515,37 @@ mod tests {
                     );
                 }
                 app.remote_checkout = None;
+                for operation in [
+                    crate::remotes::Operation::Fetch,
+                    crate::remotes::Operation::Pull,
+                    crate::remotes::Operation::Push,
+                ] {
+                    app.network_dialog = Some(remotes::RemoteDialog {
+                        operation,
+                        state: Some(crate::remotes::State {
+                            remotes: vec!["origin".into()],
+                            branch: Some("main".into()),
+                            ..Default::default()
+                        }),
+                        remote: "origin".into(),
+                        branch: "main".into(),
+                    });
+                    for _ in 0..3 {
+                        output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
+                        output.textures_delta.clear();
+                    }
+                    for label in ["Remote:", "Cancel"] {
+                        assert!(
+                            visible_text(&output.shapes, label),
+                            "Remote operation {label} clipped at {size:?} in {theme:?}"
+                        );
+                    }
+                    if operation != crate::remotes::Operation::Fetch {
+                        assert!(visible_text(&output.shapes, "Remote branch:"));
+                    }
+                    assert!(app.worker.is_none());
+                }
+                app.network_dialog = None;
                 app.manager.settings = Some(crate::repository::Settings::default());
                 app.manager.prune_preview = Some("Preview of obsolete metadata".into());
                 app.manager.found = vec![("Found repo".into(), "/tmp/found-repo".into(), true)];

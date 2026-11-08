@@ -14,6 +14,9 @@ pub enum MenuAction {
     EditUserConfig,
     Open,
     Refresh,
+    Fetch,
+    Pull,
+    Push,
     Stage,
     Unstage,
     Commit,
@@ -133,7 +136,11 @@ pub const MENUS: &[Menu] = &[
     },
     Menu {
         title: "Remote",
-        items: &[pending("Fetch"), pending("Pull"), pending("Push")],
+        items: &[
+            action("Fetch…", MenuAction::Fetch),
+            action("Pull…", MenuAction::Pull),
+            action("Push…", MenuAction::Push),
+        ],
     },
     Menu {
         title: "Local",

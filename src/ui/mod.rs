@@ -6,6 +6,7 @@ mod dialog_style;
 mod diff_view;
 mod icons;
 mod journal;
+mod remote_dialog;
 mod repositories;
 mod repository_dialogs;
 mod status_bar;

@@ -139,7 +139,8 @@ fn execute(
                     break Err(match result {
                         Err(e) => format!("Cannot wait for Git: {e}"),
                         _ if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) => {
-                            "Operation cancelled; inspect the destination before retrying".into()
+                            "Operation cancelled; refresh local and remote state before retrying"
+                                .into()
                         }
                         _ => format!(
                             "Git operation timed out after {} seconds",
@@ -174,6 +175,8 @@ fn command_error(operation: &str) -> String {
         "Check your Git identity, signing configuration and commit hooks. Refresh before retrying."
     } else if operation == "clone" {
         "Check the URL, destination, network access, credential helpers and SSH configuration. A partial destination may remain."
+    } else if matches!(operation, "fetch" | "push") {
+        "Check network access, Git credential helpers, SSH configuration and remote permissions. Push may also be rejected because the remote branch advanced, a hook refused it, or the remote is configured as a mirror. Refresh before retrying."
     } else if operation == "worktree" {
         "Check branch availability, worktree locks, local files and destination permissions. Refresh before retrying."
     } else if operation == "config" {
