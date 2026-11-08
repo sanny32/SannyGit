@@ -61,7 +61,8 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     .clicked()
                 {
                     let next_llm = app.settings_window.llm.clone();
-                    let secret_changed = next_llm.store_api_key != app.llm_config.store_api_key
+                    let secret_changed = next_llm.endpoint != app.llm_config.endpoint
+                        || next_llm.store_api_key != app.llm_config.store_api_key
                         || next_llm.api_key != app.llm_config.api_key;
                     let saved = if secret_changed {
                         crate::llm::save_api_key(&next_llm)
@@ -205,12 +206,39 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     .spacing([8.0, 6.0])
                     .show(ui, |ui| {
                         form_label(ui, "Endpoint:");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut app.settings_window.llm.endpoint)
-                                .editable()
-                                .desired_width(f32::INFINITY),
-                        )
-                        .help_text("Base URL or full /chat/completions endpoint");
+                        let mut endpoint = app.settings_window.llm.endpoint.clone();
+                        egui::ComboBox::from_id_salt("preferences.llm.endpoint")
+                            .selected_text(endpoint.clone())
+                            .width(ui.available_width())
+                            .show_ui(ui, |ui| {
+                                for provider in crate::llm::PROVIDER_PRESETS {
+                                    ui.selectable_value(
+                                        &mut endpoint,
+                                        provider.endpoint.to_owned(),
+                                        format!("{} — {}", provider.name, provider.endpoint),
+                                    );
+                                }
+                            });
+                        if endpoint != app.settings_window.llm.endpoint {
+                            app.settings_window.llm.endpoint = endpoint;
+                            app.settings_window.llm.api_key.clear();
+                            if let Some(provider) =
+                                crate::llm::PROVIDER_PRESETS.iter().find(|provider| {
+                                    provider.endpoint == app.settings_window.llm.endpoint
+                                })
+                            {
+                                app.settings_window.llm.model = provider.model.to_owned();
+                            }
+                            app.settings_window.llm_secret_error =
+                                match crate::llm::load_api_key(&app.settings_window.llm) {
+                                    Ok(Some(api_key)) => {
+                                        app.settings_window.llm.api_key = api_key;
+                                        None
+                                    }
+                                    Ok(None) => None,
+                                    Err(error) => Some(error),
+                                };
+                        }
                         ui.end_row();
                         form_label(ui, "Model:");
                         ui.add(
@@ -485,7 +513,8 @@ mod tests {
                 assert!(visible_text(&output.shapes, "Cancel"));
                 assert!(visible_text(&output.shapes, "OK"));
                 if page == SettingsPage::Llm {
-                    assert!(white_rect_count(&output.shapes) >= 4);
+                    assert!(visible_text(&output.shapes, crate::llm::DEFAULT_ENDPOINT));
+                    assert!(white_rect_count(&output.shapes) >= 3);
                     for label in ["Endpoint:", "Model:", "API key:"] {
                         assert_eq!(text_rows(&output.shapes, label), Some(1));
                     }

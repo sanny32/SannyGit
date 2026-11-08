@@ -8,7 +8,56 @@ pub const DEFAULT_MODEL: &str = "gpt-4.1-mini";
 const MAX_DIFF_BYTES: usize = 256 * 1024;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const KEYRING_SERVICE: &str = "SannyGit";
-const KEYRING_USER: &str = "llm-api-key";
+const LEGACY_KEYRING_USER: &str = "llm-api-key";
+
+pub struct ProviderPreset {
+    pub name: &'static str,
+    pub endpoint: &'static str,
+    pub model: &'static str,
+}
+
+pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
+    ProviderPreset {
+        name: "OpenAI",
+        endpoint: DEFAULT_ENDPOINT,
+        model: DEFAULT_MODEL,
+    },
+    ProviderPreset {
+        name: "Kimi",
+        endpoint: "https://api.kimi.ai/coding/v1/chat/completions",
+        model: "kimi-for-coding",
+    },
+    ProviderPreset {
+        name: "Google Gemini",
+        endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        model: "gemini-2.5-flash",
+    },
+    ProviderPreset {
+        name: "DeepSeek",
+        endpoint: "https://api.deepseek.com/v1/chat/completions",
+        model: "deepseek-chat",
+    },
+    ProviderPreset {
+        name: "OpenRouter",
+        endpoint: "https://openrouter.ai/api/v1/chat/completions",
+        model: "openai/gpt-4.1-mini",
+    },
+    ProviderPreset {
+        name: "xAI",
+        endpoint: "https://api.x.ai/v1/chat/completions",
+        model: "grok-3-mini",
+    },
+    ProviderPreset {
+        name: "Groq",
+        endpoint: "https://api.groq.com/openai/v1/chat/completions",
+        model: "llama-3.3-70b-versatile",
+    },
+    ProviderPreset {
+        name: "Mistral AI",
+        endpoint: "https://api.mistral.ai/v1/chat/completions",
+        model: "mistral-small-latest",
+    },
+];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
@@ -33,14 +82,32 @@ impl Default for Config {
     }
 }
 
+fn credential_user(endpoint: &str) -> String {
+    format!("llm-api-key:{}", chat_completions_endpoint(endpoint))
+}
+
+fn credential_entry(user: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, user)
+        .map_err(|error| format!("Cannot access the OS credential manager: {error}"))
+}
+
 pub fn load_api_key(config: &Config) -> Result<Option<String>, String> {
     if !config.store_api_key {
         return Ok(None);
     }
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
-        .map_err(|error| format!("Cannot access the OS credential manager: {error}"))?;
+    let endpoint = chat_completions_endpoint(&config.endpoint);
+    let entry = credential_entry(&credential_user(&endpoint))?;
     match entry.get_password() {
         Ok(secret) => Ok(Some(secret)),
+        Err(keyring::Error::NoEntry) if endpoint == DEFAULT_ENDPOINT => {
+            match credential_entry(LEGACY_KEYRING_USER)?.get_password() {
+                Ok(secret) => Ok(Some(secret)),
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(error) => Err(format!(
+                    "Cannot read the LLM API key from the OS credential manager: {error}"
+                )),
+            }
+        }
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(error) => Err(format!(
             "Cannot read the LLM API key from the OS credential manager: {error}"
@@ -49,17 +116,27 @@ pub fn load_api_key(config: &Config) -> Result<Option<String>, String> {
 }
 
 pub fn save_api_key(config: &Config) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
-        .map_err(|error| format!("Cannot access the OS credential manager: {error}"))?;
+    let endpoint = chat_completions_endpoint(&config.endpoint);
+    let entry = credential_entry(&credential_user(&endpoint))?;
     if config.store_api_key && !config.api_key.is_empty() {
         entry
             .set_password(&config.api_key)
-            .map_err(|error| format!("Cannot save the LLM API key securely: {error}"))
+            .map_err(|error| format!("Cannot save the LLM API key securely: {error}"))?;
     } else {
         match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(error) => {
+                return Err(format!("Cannot remove the saved LLM API key: {error}"));
+            }
+        }
+    }
+    if endpoint == DEFAULT_ENDPOINT {
+        match credential_entry(LEGACY_KEYRING_USER)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(format!("Cannot remove the saved LLM API key: {error}")),
         }
+    } else {
+        Ok(())
     }
 }
 
@@ -222,6 +299,31 @@ mod tests {
         ] {
             assert_eq!(chat_completions_endpoint(input), expected);
         }
+    }
+
+    #[test]
+    fn provider_presets_have_unique_endpoints_and_models() {
+        let mut endpoints = std::collections::HashSet::new();
+        for provider in PROVIDER_PRESETS {
+            assert!(!provider.name.is_empty());
+            assert!(!provider.model.is_empty());
+            assert!(provider.endpoint.ends_with("/chat/completions"));
+            assert!(endpoints.insert(provider.endpoint));
+        }
+        assert_eq!(PROVIDER_PRESETS[0].endpoint, DEFAULT_ENDPOINT);
+        assert_eq!(PROVIDER_PRESETS[0].model, DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn api_key_credentials_are_scoped_to_normalized_endpoints() {
+        assert_eq!(
+            credential_user(" https://api.kimi.ai/coding/v1/ "),
+            credential_user("https://api.kimi.ai/coding/v1/chat/completions")
+        );
+        assert_ne!(
+            credential_user(DEFAULT_ENDPOINT),
+            credential_user("https://api.deepseek.com/v1/chat/completions")
+        );
     }
 
     #[test]
