@@ -38,6 +38,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         super::clone_dialog::show(ui.ctx(), app);
         return;
     }
+    if app.manager.dialog == Some(Dialog::Settings) {
+        settings_dialog(ui.ctx(), app);
+        return;
+    }
     if app.busy() && app.manager.cancel.is_some() {
         Window::new("Repository operation")
             .id(egui::Id::unique("repository.progress"))
@@ -134,14 +138,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         if ui.add_enabled(!preview.is_empty(), Button::new("Prune Obsolete Metadata")).clicked() { job = Some(Job::Prune); }
                     }
                 }
-                Dialog::Settings => {
-                    ui.label("Repository-local Git identity (empty fields use inherited Git settings)");
-                    if let Some(settings) = &mut app.manager.settings {
-                        ui.label("user.name"); ui.add(TextEdit::singleline(&mut settings.name).desired_width(f32::INFINITY));
-                        ui.label("user.email"); ui.add(TextEdit::singleline(&mut settings.email).desired_width(f32::INFINITY));
-                        if ui.button("Save Repository Settings").clicked() { job = Some(Job::SaveSettings(settings.clone())); }
-                    }
-                }
+                Dialog::Settings => {}
                 Dialog::CloseRepository => {
                     ui.label("Close this repository and discard its unsaved commit message?");
                     ui.horizontal(|ui| {
@@ -153,6 +150,94 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             if let Some(error) = &app.error { ui.label(RichText::new(error).color(app.theme.palette().removed_text)); }
         });
     if !open {
+        app.manager.dialog = None;
+    }
+    if let Some(job) = job {
+        app.run_repository_job(job);
+    }
+}
+
+fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
+    let palette = app.theme.palette();
+    let busy = app.busy();
+    let mut job = None;
+    let mut close = false;
+    super::dialog_style::modal(ctx, palette, "repository.settings").show(ctx, |ui| {
+        ui.set_width(520.0);
+        super::dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        super::dialog_style::header(
+            ui,
+            palette,
+            "Repository Settings",
+            "Configure the Git identity used for commits in this repository.",
+        );
+        super::dialog_style::section(ui, palette.header, egui::Margin::same(18), |ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            if let Some(settings) = &mut app.manager.settings {
+                ui.add_enabled_ui(!busy, |ui| {
+                    ui.label(RichText::new("Name").strong());
+                    ui.add_sized(
+                        [ui.available_width(), 30.0],
+                        TextEdit::singleline(&mut settings.name).hint_text("Your name"),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Email").strong());
+                    ui.add_sized(
+                        [ui.available_width(), 30.0],
+                        TextEdit::singleline(&mut settings.email).hint_text("you@example.com"),
+                    );
+                });
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(
+                            "Leave a field empty to use the inherited Git setting (user.name or user.email).",
+                        )
+                        .small()
+                        .color(palette.muted),
+                    )
+                    .wrap(),
+                );
+            } else if app.error.is_none() {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Loading repository settings…");
+                });
+            }
+            if let Some(error) = &app.error {
+                ui.add(egui::Label::new(RichText::new(error).color(palette.removed_text)).wrap());
+            }
+        });
+        super::dialog_style::section(
+            ui,
+            palette.header,
+            egui::Margin::symmetric(18, 12),
+            |ui| {
+                ui.with_layout(
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        let settings = app.manager.settings.clone();
+                        if ui
+                            .add_enabled(
+                                !busy && settings.is_some(),
+                                super::dialog_style::primary("Save Settings", palette),
+                            )
+                            .clicked()
+                        {
+                            if let Some(settings) = settings {
+                                job = Some(Job::SaveSettings(settings));
+                            }
+                        }
+                        if ui.add(super::dialog_style::button("Cancel")).clicked() {
+                            close = true;
+                        }
+                    },
+                );
+            },
+        );
+    });
+    if close {
         app.manager.dialog = None;
     }
     if let Some(job) = job {

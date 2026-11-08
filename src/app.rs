@@ -1667,7 +1667,7 @@ mod tests {
                     (RepositoryDialog::Search, "Add Selected"),
                     (RepositoryDialog::Worktrees, "Remove Worktree"),
                     (RepositoryDialog::Prune, "Prune Obsolete Metadata"),
-                    (RepositoryDialog::Settings, "Save Repository Settings"),
+                    (RepositoryDialog::Settings, "Save Settings"),
                     (RepositoryDialog::CloseRepository, "Close Repository"),
                 ] {
                     app.manager.dialog = Some(dialog);
