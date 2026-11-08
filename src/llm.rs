@@ -115,6 +115,15 @@ pub fn load_api_key(config: &Config) -> Result<Option<String>, String> {
     }
 }
 
+pub fn load_api_key_if_needed(config: &mut Config) -> Result<(), String> {
+    if config.api_key.is_empty() {
+        if let Some(api_key) = load_api_key(config)? {
+            config.api_key = api_key;
+        }
+    }
+    Ok(())
+}
+
 pub fn save_api_key(config: &Config) -> Result<(), String> {
     let endpoint = chat_completions_endpoint(&config.endpoint);
     let entry = credential_entry(&credential_user(&endpoint))?;
@@ -324,6 +333,21 @@ mod tests {
             credential_user(DEFAULT_ENDPOINT),
             credential_user("https://api.deepseek.com/v1/chat/completions")
         );
+    }
+
+    #[test]
+    fn explicitly_provided_api_key_is_not_replaced() {
+        let mut config = Config {
+            api_key: "from-environment".into(),
+            ..Config::default()
+        };
+        load_api_key_if_needed(&mut config).unwrap();
+        assert_eq!(config.api_key, "from-environment");
+
+        config.api_key.clear();
+        config.store_api_key = false;
+        load_api_key_if_needed(&mut config).unwrap();
+        assert!(config.api_key.is_empty());
     }
 
     #[test]

@@ -61,9 +61,8 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     .clicked()
                 {
                     let next_llm = app.settings_window.llm.clone();
-                    let secret_changed = next_llm.endpoint != app.llm_config.endpoint
-                        || next_llm.store_api_key != app.llm_config.store_api_key
-                        || next_llm.api_key != app.llm_config.api_key;
+                    let secret_changed = app.settings_window.llm_api_key_dirty
+                        || next_llm.store_api_key != app.llm_config.store_api_key;
                     let saved = if secret_changed {
                         crate::llm::save_api_key(&next_llm)
                     } else {
@@ -199,6 +198,11 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             });
         }
         SettingsPage::Llm => {
+            if !app.settings_window.llm_api_key_loaded {
+                app.settings_window.llm_api_key_loaded = true;
+                app.settings_window.llm_secret_error =
+                    crate::llm::load_api_key_if_needed(&mut app.settings_window.llm).err();
+            }
             heading(ui, "LLM commit messages");
             group(ui, palette, "OpenAI-compatible API", |ui| {
                 egui::Grid::new("preferences.llm.connection")
@@ -222,6 +226,8 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         if endpoint != app.settings_window.llm.endpoint {
                             app.settings_window.llm.endpoint = endpoint;
                             app.settings_window.llm.api_key.clear();
+                            app.settings_window.llm_api_key_dirty = false;
+                            app.settings_window.llm_secret_error = None;
                             if let Some(provider) =
                                 crate::llm::PROVIDER_PRESETS.iter().find(|provider| {
                                     provider.endpoint == app.settings_window.llm.endpoint
@@ -229,15 +235,6 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                             {
                                 app.settings_window.llm.model = provider.model.to_owned();
                             }
-                            app.settings_window.llm_secret_error =
-                                match crate::llm::load_api_key(&app.settings_window.llm) {
-                                    Ok(Some(api_key)) => {
-                                        app.settings_window.llm.api_key = api_key;
-                                        None
-                                    }
-                                    Ok(None) => None,
-                                    Err(error) => Some(error),
-                                };
                         }
                         ui.end_row();
                         form_label(ui, "Model:");
@@ -248,12 +245,15 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         );
                         ui.end_row();
                         form_label(ui, "API key:");
-                        ui.add(
+                        let api_key_response = ui.add(
                             egui::TextEdit::singleline(&mut app.settings_window.llm.api_key)
                                 .editable()
                                 .password(true)
                                 .desired_width(f32::INFINITY),
                         );
+                        if api_key_response.changed() {
+                            app.settings_window.llm_api_key_dirty = true;
+                        }
                         ui.end_row();
                     });
                 ui.checkbox(
@@ -262,7 +262,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 );
                 ui.label(
                     RichText::new(
-                        "The key is never written to SannyGit settings. SANNYGIT_LLM_API_KEY overrides the saved key at startup.",
+                        "Saved keys are loaded when this page is opened or during generation. SANNYGIT_LLM_API_KEY overrides the saved key.",
                     )
                     .small()
                     .color(palette.muted),
@@ -380,6 +380,7 @@ mod tests {
             crate::theme::install_fonts(&context);
             theme.apply(&context);
             let mut app = SannyGitApp::with_theme(theme);
+            app.settings_window.llm_api_key_loaded = true;
             let render = |app: &mut SannyGitApp, events| {
                 context.run_ui(
                     RawInput {
@@ -491,6 +492,7 @@ mod tests {
             crate::theme::install_fonts(&context);
             theme.apply(&context);
             let mut app = SannyGitApp::with_theme(theme);
+            app.settings_window.llm_api_key_loaded = true;
             for (page, title) in [
                 (SettingsPage::General, "Confirmations"),
                 (SettingsPage::Appearance, "Color theme:"),

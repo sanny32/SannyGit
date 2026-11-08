@@ -72,6 +72,8 @@ pub struct SettingsWindow {
     pub auto_fetch: bool,
     pub skip_push_confirmation: bool,
     pub llm: crate::llm::Config,
+    pub llm_api_key_dirty: bool,
+    pub llm_api_key_loaded: bool,
     pub llm_secret_error: Option<String>,
 }
 
@@ -84,6 +86,8 @@ impl SettingsWindow {
             auto_fetch: true,
             skip_push_confirmation: false,
             llm: crate::llm::Config::default(),
+            llm_api_key_dirty: false,
+            llm_api_key_loaded: false,
             llm_secret_error: None,
         }
     }
@@ -184,12 +188,6 @@ impl SannyGitApp {
             .unwrap_or_default();
         if let Some(api_key) = std::env::var_os("SANNYGIT_LLM_API_KEY") {
             app.llm_config.api_key = api_key.to_string_lossy().into_owned();
-        } else {
-            match crate::llm::load_api_key(&app.llm_config) {
-                Ok(Some(api_key)) => app.llm_config.api_key = api_key,
-                Ok(None) => {}
-                Err(error) => app.error = Some(error),
-            }
         }
         #[cfg(target_os = "macos")]
         {
@@ -438,6 +436,8 @@ impl SannyGitApp {
         self.settings_window.auto_fetch = self.tracking.auto_fetch;
         self.settings_window.skip_push_confirmation = self.skip_push_confirmation;
         self.settings_window.llm = self.llm_config.clone();
+        self.settings_window.llm_api_key_dirty = false;
+        self.settings_window.llm_api_key_loaded = false;
         self.settings_window.llm_secret_error = None;
         self.settings_window.open = true;
     }
@@ -905,13 +905,14 @@ impl SannyGitApp {
             return;
         }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
-        let config = self.llm_config.clone();
+        let mut config = self.llm_config.clone();
         self.error = None;
         self.status = "Generating commit message…".into();
         self.generating_commit_message = self.start_worker(move || {
-            WorkerResult::CommitMessage(
-                git::commit_patch(&root).and_then(|patch| crate::llm::generate(&config, &patch)),
-            )
+            WorkerResult::CommitMessage(git::commit_patch(&root).and_then(|patch| {
+                crate::llm::load_api_key_if_needed(&mut config)?;
+                crate::llm::generate(&config, &patch)
+            }))
         });
     }
 
