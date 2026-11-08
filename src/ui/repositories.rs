@@ -136,7 +136,11 @@ fn repository_row(
 ) {
     let response = super::selectable_row(ui, selected == index, height, |ui| {
         icons::paint(ui, Icon::Repository, palette.text, 16.0);
-        ui.label(RichText::new(&repository.name).family(semibold_family()));
+        ui.add(
+            eframe::egui::Label::new(RichText::new(&repository.name).family(semibold_family()))
+                .selectable(false)
+                .sense(eframe::egui::Sense::hover()),
+        );
     })
     .on_hover_text(&repository.path);
     response.context_menu(|ui| {
