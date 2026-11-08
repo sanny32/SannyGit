@@ -61,11 +61,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     });
     let badge = app.tracking.badge();
     let tracking_help = app.tracking.description();
-    let branch_status = Some((
-        app.current_branch.as_str(),
-        badge.as_str(),
-        tracking_help.as_str(),
-    ));
+    let branch_status = Some((badge.as_str(), tracking_help.as_str()));
     let height = 24.0;
     let mut requested = None;
     let mut move_to = None;
@@ -147,7 +143,7 @@ fn repository_row(
     index: usize,
     repository: &crate::models::Repository,
     selected: usize,
-    branch_status: Option<(&str, &str, &str)>,
+    branch_status: Option<(&str, &str)>,
     highlighted: &mut Option<String>,
     palette: crate::theme::Palette,
     groups: &[String],
@@ -163,7 +159,7 @@ fn repository_row(
         icons::paint(
             ui,
             Icon::Repository,
-            if active && branch_status.is_some_and(|(_, badge, _)| badge.contains(['↑', '↓'])) {
+            if active && branch_status.is_some_and(|(badge, _)| badge.contains(['↑', '↓'])) {
                 palette.accent
             } else if active {
                 palette.text
@@ -177,23 +173,12 @@ fn repository_row(
         } else {
             palette.muted
         });
-        let (branch, badge, _) = if active {
-            branch_status.unwrap_or(("", "", ""))
+        let (badge, _) = if active {
+            branch_status.unwrap_or(("", ""))
         } else {
-            ("", "", "")
+            ("", "")
         };
-        let suffix = if branch.is_empty() {
-            String::new()
-        } else {
-            format!(
-                " ({branch}){}",
-                if badge.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {badge}")
-                }
-            )
-        };
+        let suffix = badge.to_owned();
         let suffix_width = ui
             .painter()
             .layout_no_wrap(
@@ -206,7 +191,7 @@ fn repository_row(
         let width = (ui.available_width() - suffix_width - 4.0).max(20.0);
         ui.allocate_ui_with_layout(
             eframe::egui::vec2(width, 20.0),
-            Layout::left_to_right(Align::Center),
+            Layout::left_to_right(Align::Center).with_main_align(Align::Min),
             |ui| {
                 ui.set_min_width(width);
                 ui.add(
@@ -215,6 +200,7 @@ fn repository_row(
                     } else {
                         name
                     })
+                    .halign(Align::Min)
                     .truncate()
                     .selectable(false)
                     .sense(eframe::egui::Sense::hover()),
@@ -239,7 +225,7 @@ fn repository_row(
         format!(
             "{}\n{}",
             repository.path,
-            branch_status.map(|(_, _, help)| help).unwrap_or("")
+            branch_status.map(|(_, help)| help).unwrap_or("")
         )
     } else {
         repository.path.clone()
@@ -269,6 +255,78 @@ fn repository_row(
 mod tests {
     use super::*;
     use eframe::egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Vec2};
+
+    #[test]
+    fn name_stays_next_to_icon_with_tracking_counts() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            for width in [190.0, 260.0, 350.0] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                theme.apply(&ctx);
+                let repository = crate::models::Repository {
+                    name: "SannyGit".into(),
+                    path: "/test/repository".into(),
+                };
+                let mut highlighted = None;
+                let mut requested = None;
+                let mut move_to = None;
+                for _ in 0..3 {
+                    let mut left = 0.0;
+                    let mut output = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(
+                                Pos2::ZERO,
+                                Vec2::new(width, 200.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            left = ui.next_widget_position().x;
+                            repository_row(
+                                ui,
+                                0,
+                                &repository,
+                                0,
+                                Some(("↑1 ↓1", "Upstream: origin/main")),
+                                &mut highlighted,
+                                theme.palette(),
+                                &[],
+                                &mut requested,
+                                &mut move_to,
+                                24.0,
+                            );
+                        },
+                    );
+                    let text = output
+                        .shapes
+                        .iter()
+                        .filter_map(|s| {
+                            if let eframe::egui::Shape::Text(t) = &s.shape {
+                                Some(t)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    let name = text
+                        .iter()
+                        .find(|t| t.galley.job.text == "SannyGit")
+                        .unwrap();
+                    assert!(
+                        name.pos.x < left + 35.0,
+                        "Name detached from icon: {:?} at width {width}",
+                        name.pos
+                    );
+                    assert!(text.iter().any(|t| t.galley.job.text == "↑1 ↓1"));
+                    assert!(!text.iter().any(|t| t.galley.job.text.contains("(main)")));
+                    output.textures_delta.clear();
+                }
+            }
+        }
+    }
 
     #[test]
     fn single_click_selects_and_double_click_requests_activation() {
