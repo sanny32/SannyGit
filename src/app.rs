@@ -143,7 +143,7 @@ impl SannyGitApp {
         app
     }
 
-    fn with_theme(theme: ThemeChoice) -> Self {
+    pub(crate) fn with_theme(theme: ThemeChoice) -> Self {
         Self {
             manager: RepositoryManager::default(),
             #[cfg(target_os = "macos")]

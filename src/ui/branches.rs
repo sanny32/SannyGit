@@ -82,6 +82,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     ScrollArea::vertical()
         .id_salt("branches")
         .max_height(height)
+        .min_scrolled_height(0.0)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;

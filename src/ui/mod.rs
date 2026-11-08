@@ -69,6 +69,23 @@ fn panel_frame(palette: Palette) -> Frame {
         .corner_radius(0)
 }
 
+fn sidebar_contents(ui: &mut Ui, app: &mut SannyGitApp) -> eframe::egui::Rect {
+    let palette = app.theme.palette();
+    let branches = Panel::bottom("working_tree.v3.branches")
+        .resizable(true)
+        .default_size(ui.available_height() * 0.36)
+        .size_range(130.0..=(ui.available_height() - 120.0).max(130.0))
+        .frame(panel_frame(palette).inner_margin(8).outer_margin(Margin {
+            top: 4,
+            ..Margin::ZERO
+        }))
+        .show(ui, |ui| branches::show(ui, app));
+    CentralPanel::default()
+        .frame(panel_frame(palette).inner_margin(8))
+        .show(ui, |ui| repositories::show(ui, app));
+    branches.response.rect
+}
+
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let context = ui.ctx().clone();
     let palette = app.theme.palette();
@@ -107,15 +124,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .size_range(190.0..=350.0)
         .frame(Frame::new().fill(palette.background).inner_margin(4))
         .show(ui, |ui| {
-            Panel::bottom("working_tree.v3.branches")
-                .resizable(true)
-                .default_size(ui.available_height() * 0.36)
-                .size_range(180.0..=450.0)
-                .frame(panel_frame(palette).inner_margin(8))
-                .show(ui, |ui| branches::show(ui, app));
-            CentralPanel::default()
-                .frame(panel_frame(palette).inner_margin(8))
-                .show(ui, |ui| repositories::show(ui, app));
+            sidebar_contents(ui, app);
         });
 
     CentralPanel::default()
@@ -161,4 +170,92 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 }))
                 .show(ui, |ui| diff_view::show(ui, app));
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::ThemeChoice;
+    use eframe::egui::{pos2, vec2, Context, Event, Modifiers, PointerButton, RawInput, Rect};
+
+    #[test]
+    fn branch_panel_can_be_resized_by_dragging_divider() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [vec2(1100.0, 700.0), vec2(1536.0, 1024.0)] {
+                let ctx = Context::default();
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                let mut rect = Rect::NOTHING;
+                let mut frame = |events| {
+                    let mut output = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            Panel::left("test.sidebar")
+                                .exact_size(260.0)
+                                .frame(Frame::new().inner_margin(4))
+                                .show(ui, |ui| {
+                                    rect = sidebar_contents(ui, &mut app);
+                                });
+                        },
+                    );
+                    output.textures_delta.clear();
+                    rect
+                };
+                for _ in 0..3 {
+                    frame(vec![]);
+                }
+                let before = frame(vec![]);
+                let pointer = pos2(before.center().x, before.top());
+                frame(vec![Event::PointerMoved(pointer)]);
+                frame(vec![Event::PointerButton {
+                    pos: pointer,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                }]);
+                let moved = pointer - vec2(0.0, 70.0);
+                for _ in 0..3 {
+                    frame(vec![Event::PointerMoved(moved)]);
+                }
+                frame(vec![Event::PointerButton {
+                    pos: moved,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                }]);
+                let after = frame(vec![]);
+                assert!(
+                    after.height() > before.height() + 50.0,
+                    "Divider failed to grow {theme:?} {size:?}: {before:?} -> {after:?}"
+                );
+                let pointer = pos2(after.center().x, after.top());
+                frame(vec![Event::PointerMoved(pointer)]);
+                frame(vec![Event::PointerButton {
+                    pos: pointer,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                }]);
+                let moved = pos2(pointer.x, after.bottom() - 140.0);
+                for _ in 0..3 {
+                    frame(vec![Event::PointerMoved(moved)]);
+                }
+                frame(vec![Event::PointerButton {
+                    pos: moved,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                }]);
+                let shrunk = frame(vec![]);
+                assert!(
+                    shrunk.height() < 160.0,
+                    "Divider failed to shrink: {shrunk:?}"
+                );
+            }
+        }
+    }
 }
