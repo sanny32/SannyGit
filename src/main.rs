@@ -14,6 +14,7 @@ mod native_menu;
 mod remotes;
 mod repository;
 mod theme;
+mod tracking;
 mod ui;
 
 use app::SannyGitApp;

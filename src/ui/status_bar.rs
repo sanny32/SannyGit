@@ -21,6 +21,11 @@ pub fn show(ui: &mut Ui, app: &SannyGitApp) {
                 } else {
                     &app.current_branch
                 });
+                let badge = app.tracking.badge();
+                if !badge.is_empty() {
+                    ui.label(RichText::new(badge).color(palette.accent))
+                        .on_hover_text(app.tracking.description());
+                }
                 ui.separator();
                 ui.label(format!("{} changes", app.changes.len()));
                 ui.separator();

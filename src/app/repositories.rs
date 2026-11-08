@@ -416,6 +416,7 @@ impl SannyGitApp {
         }
         self.open_dialog = false;
         self.selected_repository = usize::MAX;
+        self.tracking.invalidate();
         self.selected_change = usize::MAX;
         self.current_branch.clear();
         self.changes.clear();

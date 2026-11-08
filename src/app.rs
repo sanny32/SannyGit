@@ -1,5 +1,6 @@
 mod remotes;
 mod repositories;
+mod tracking;
 pub use repositories::{Dialog as RepositoryDialog, Job as RepositoryJob, RepositoryManager};
 
 use std::{
@@ -63,6 +64,7 @@ pub struct RemoteCheckoutDialog {
 
 pub struct SannyGitApp {
     pub manager: RepositoryManager,
+    pub tracking: tracking::Monitor,
     #[cfg(target_os = "macos")]
     native_menu: Option<crate::native_menu::NativeMenu>,
     pub theme: ThemeChoice,
@@ -128,6 +130,10 @@ impl SannyGitApp {
         theme.apply(&creation_context.egui_ctx);
 
         let mut app = Self::with_theme(theme);
+        app.tracking.auto_fetch = creation_context
+            .storage
+            .and_then(|storage| eframe::get_value(storage, "sannygit.auto_fetch"))
+            .unwrap_or(true);
         #[cfg(target_os = "macos")]
         {
             app.native_menu = crate::native_menu::NativeMenu::new(&creation_context.egui_ctx);
@@ -159,6 +165,7 @@ impl SannyGitApp {
     pub(crate) fn with_theme(theme: ThemeChoice) -> Self {
         Self {
             manager: RepositoryManager::default(),
+            tracking: tracking::Monitor::default(),
             #[cfg(target_os = "macos")]
             native_menu: None,
             theme,
@@ -219,6 +226,7 @@ impl SannyGitApp {
     }
 
     fn start_worker(&mut self, job: impl FnOnce() -> WorkerResult + Send + 'static) -> bool {
+        self.tracking.cancel();
         let (sender, receiver) = mpsc::channel();
         match std::thread::Builder::new()
             .name("sannygit-reader".into())
@@ -347,6 +355,11 @@ impl SannyGitApp {
     }
 
     fn apply_snapshot(&mut self, snapshot: git::Snapshot) {
+        if self.current_branch != snapshot.branch {
+            self.tracking.branch_changed();
+        } else {
+            self.tracking.invalidate();
+        }
         self.state_current = true;
         let selected = self
             .changes
@@ -901,6 +914,22 @@ impl SannyGitApp {
                 ) {
                     self.manager.cancel = None;
                     if outcome.is_ok() {
+                        let checked_upstream = self.network_dialog.as_ref().is_some_and(|dialog| {
+                            dialog.set_upstream
+                                || self.tracking.status.as_ref().is_some_and(|status| {
+                                    status.remote.as_deref() == Some(dialog.remote.as_str())
+                                        && (success == "Fetch complete"
+                                            || status.remote_ref.as_deref()
+                                                == Some(
+                                                    format!("refs/heads/{}", dialog.branch)
+                                                        .as_str(),
+                                                ))
+                                })
+                        });
+                        if checked_upstream {
+                            self.tracking.checked = true;
+                            self.tracking.error = None;
+                        }
                         self.network_dialog = None;
                     }
                 }
@@ -1009,6 +1038,33 @@ impl eframe::App for SannyGitApp {
             self.applied_theme = self.theme;
         }
         self.poll_worker();
+        let root = self
+            .repositories
+            .get(self.selected_repository)
+            .map(|r| PathBuf::from(&r.path));
+        let allow_tracking = !self.busy()
+            && !self.refs_pending
+            && !self.refs_loading
+            && !self.history_pending
+            && !self.history_loading
+            && self.state_current
+            && !self.open_dialog
+            && self.manager.dialog.is_none()
+            && self.network_dialog.is_none()
+            && self.remote_checkout.is_none();
+        self.tracking.update(root, allow_tracking, ui.ctx());
+        if self.tracking.refs_changed {
+            self.tracking.refs_changed = false;
+            self.refs_pending = true;
+            self.refs_loading = true;
+            self.refs_current = false;
+            if self.history_all_branches {
+                self.history_pending = true;
+                self.history_loading = true;
+            }
+        }
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(1));
         #[cfg(target_os = "macos")]
         {
             let actions = self
@@ -1036,6 +1092,7 @@ impl eframe::App for SannyGitApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.tracking.cancel();
         if let Some(cancel) = &self.manager.cancel {
             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
             if let Some(receiver) = &self.worker {
@@ -1045,6 +1102,7 @@ impl eframe::App for SannyGitApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, "sannygit.auto_fetch", &self.tracking.auto_fetch);
         eframe::set_value(storage, THEME_STORAGE_KEY, &self.theme);
         let paths: Vec<_> = self.repositories.iter().map(|r| &r.path).collect();
         eframe::set_value(storage, "sannygit.repositories", &paths);
@@ -1529,6 +1587,7 @@ mod tests {
                         }),
                         remote: "origin".into(),
                         branch: "main".into(),
+                        set_upstream: false,
                     });
                     for _ in 0..3 {
                         output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));

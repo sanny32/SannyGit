@@ -59,6 +59,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             }
         });
     });
+    let badge = app.tracking.badge();
+    let tracking_help = app.tracking.description();
+    let branch_status = Some((
+        app.current_branch.as_str(),
+        badge.as_str(),
+        tracking_help.as_str(),
+    ));
     let height = 24.0;
     let mut requested = None;
     let mut move_to = None;
@@ -90,6 +97,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 index,
                                 repository,
                                 app.selected_repository,
+                                branch_status,
                                 &mut app.manager.highlighted_repository,
                                 palette,
                                 &group_names,
@@ -115,6 +123,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     index,
                     repository,
                     app.selected_repository,
+                    branch_status,
                     &mut app.manager.highlighted_repository,
                     palette,
                     &group_names,
@@ -138,6 +147,7 @@ fn repository_row(
     index: usize,
     repository: &crate::models::Repository,
     selected: usize,
+    branch_status: Option<(&str, &str, &str)>,
     highlighted: &mut Option<String>,
     palette: crate::theme::Palette,
     groups: &[String],
@@ -153,7 +163,13 @@ fn repository_row(
         icons::paint(
             ui,
             Icon::Repository,
-            if active { palette.text } else { palette.muted },
+            if active && branch_status.is_some_and(|(_, badge, _)| badge.contains(['↑', '↓'])) {
+                palette.accent
+            } else if active {
+                palette.text
+            } else {
+                palette.muted
+            },
             16.0,
         );
         let name = RichText::new(&repository.name).color(if active {
@@ -161,17 +177,73 @@ fn repository_row(
         } else {
             palette.muted
         });
-        ui.add(
-            eframe::egui::Label::new(if active {
-                name.family(semibold_family())
-            } else {
-                name
-            })
-            .selectable(false)
-            .sense(eframe::egui::Sense::hover()),
+        let (branch, badge, _) = if active {
+            branch_status.unwrap_or(("", "", ""))
+        } else {
+            ("", "", "")
+        };
+        let suffix = if branch.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " ({branch}){}",
+                if badge.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {badge}")
+                }
+            )
+        };
+        let suffix_width = ui
+            .painter()
+            .layout_no_wrap(
+                suffix.clone(),
+                eframe::egui::FontId::proportional(12.0),
+                palette.muted,
+            )
+            .size()
+            .x;
+        let width = (ui.available_width() - suffix_width - 4.0).max(20.0);
+        ui.allocate_ui_with_layout(
+            eframe::egui::vec2(width, 20.0),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.set_min_width(width);
+                ui.add(
+                    eframe::egui::Label::new(if active {
+                        name.family(semibold_family())
+                    } else {
+                        name
+                    })
+                    .truncate()
+                    .selectable(false)
+                    .sense(eframe::egui::Sense::hover()),
+                );
+            },
         );
+        if !suffix.is_empty() {
+            ui.add(
+                eframe::egui::Label::new(RichText::new(suffix).size(12.0).color(
+                    if badge.contains(['↑', '↓']) {
+                        palette.text
+                    } else {
+                        palette.muted
+                    },
+                ))
+                .selectable(false)
+                .sense(eframe::egui::Sense::hover()),
+            );
+        }
     })
-    .on_hover_text(&repository.path);
+    .on_hover_text(if active {
+        format!(
+            "{}\n{}",
+            repository.path,
+            branch_status.map(|(_, _, help)| help).unwrap_or("")
+        )
+    } else {
+        repository.path.clone()
+    });
     response.context_menu(|ui| {
         ui.label("Move to group");
         if ui.button("Ungrouped").clicked() {
@@ -242,6 +314,7 @@ mod tests {
                             0,
                             &repository,
                             usize::MAX,
+                            None,
                             &mut highlighted,
                             theme.palette(),
                             &[],

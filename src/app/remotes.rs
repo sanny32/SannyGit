@@ -10,6 +10,7 @@ pub struct RemoteDialog {
     pub state: Option<State>,
     pub remote: String,
     pub branch: String,
+    pub set_upstream: bool,
 }
 
 impl SannyGitApp {
@@ -29,6 +30,7 @@ impl SannyGitApp {
             state: None,
             remote: String::new(),
             branch: String::new(),
+            set_upstream: false,
         });
         self.error = None;
         self.status = "Loading remotes…".into();
@@ -70,6 +72,8 @@ impl SannyGitApp {
                         .clone()
                         .or_else(|| state.branch.clone())
                         .unwrap_or_default();
+                    dialog.set_upstream =
+                        operation == Operation::Push && state.upstream_remote.is_none();
                     dialog.state = Some(state);
                 }
             }
@@ -91,6 +95,7 @@ impl SannyGitApp {
         let remote = dialog.remote.clone();
         let target = dialog.branch.clone();
         let expected_branch = state.branch.clone();
+        let set_upstream = operation == Operation::Push && dialog.set_upstream;
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
         let cancel = Arc::new(AtomicBool::new(false));
         self.manager.cancel = Some(cancel.clone());
@@ -106,7 +111,22 @@ impl SannyGitApp {
                 &target,
                 expected_branch.as_deref(),
                 &cancel,
-            );
+            )
+            .and_then(|()| {
+                if set_upstream {
+                    remotes::set_upstream(
+                        &root,
+                        expected_branch.as_deref().unwrap_or(""),
+                        &remote,
+                        &target,
+                    )
+                    .map_err(|error| {
+                        format!("Push completed, but upstream could not be set: {error}")
+                    })
+                } else {
+                    Ok(())
+                }
+            });
             WorkerResult::Operation {
                 committed: false,
                 success: operation.success(),
@@ -132,6 +152,7 @@ mod tests {
             state: None,
             remote: String::new(),
             branch: String::new(),
+            set_upstream: false,
         });
         app.apply_remote_info(
             Operation::Push,

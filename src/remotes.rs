@@ -202,6 +202,26 @@ pub fn run(
     Ok(())
 }
 
+pub fn set_upstream(root: &Path, local: &str, remote: &str, target: &str) -> Result<(), String> {
+    let state = load(root)?;
+    if state.branch.as_deref() != Some(local) || !state.remotes.iter().any(|r| r == remote) {
+        return Err("The branch or remote changed. Refresh before setting upstream.".into());
+    }
+    if let Some(reason) = branches::name_hint(target) {
+        return Err(reason.into());
+    }
+    git::run(
+        root,
+        &[
+            "branch",
+            &format!("--set-upstream-to=refs/remotes/{remote}/{target}"),
+            "--",
+            local,
+        ],
+    )
+    .map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

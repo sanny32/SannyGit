@@ -131,7 +131,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             if matches!(label, "Fetch" | "Pull" | "Push") {
                                 let operation = match label { "Fetch" => crate::remotes::Operation::Fetch, "Pull" => crate::remotes::Operation::Pull, _ => crate::remotes::Operation::Push };
                                 if action_button(ui, icon, label, app.remote_allowed(), palette, action_width)
-                                    .on_hover_text(format!("{}…", operation.label()))
+                                    .on_hover_text(format!("{}…\n{}", operation.label(), app.tracking.description()))
                                     .on_disabled_hover_text("Open and refresh a repository; wait for the current operation")
                                     .clicked() { app.open_remote(operation); }
                             } else if label == "Stage" || label == "Unstage" {
@@ -172,6 +172,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 ui.close();
                             }
                         }
+                        ui.separator();
+                        let mut auto_fetch = app.tracking.auto_fetch;
+                        if ui.checkbox(&mut auto_fetch, "Auto-fetch upstream every 60 seconds").changed() { app.tracking.set_auto_fetch(auto_fetch); }
                     });
                 });
             });

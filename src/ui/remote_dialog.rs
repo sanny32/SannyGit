@@ -34,6 +34,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                             ui.label("Remote branch:"); ui.add_sized([310.0,28.0], TextEdit::singleline(&mut dialog.branch)); ui.end_row();
                         }
                     });
+                    if dialog.operation == Operation::Push { ui.checkbox(&mut dialog.set_upstream, "Set as upstream (track this remote branch)"); }
                 });
             } else { ui.spinner(); ui.label("Loading remotes…"); }
             if busy && dialog.state.is_some() { ui.horizontal(|ui| { ui.spinner(); ui.label(&app.status); }); }
