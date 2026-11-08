@@ -476,6 +476,85 @@ mod tests {
         fn flush(&mut self) {}
     }
 
+    fn finish_restore(app: &mut SannyGitApp) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.busy() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            app.poll_worker();
+        }
+        assert!(!app.busy(), "Repository restore did not finish");
+    }
+
+    #[test]
+    fn active_repository_restores_by_path_and_explicit_close_clears_it() {
+        let repo = crate::git::tests::TempRepo::new();
+        let path = repo.0.canonicalize().unwrap().to_str().unwrap().to_owned();
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories = vec![
+            crate::models::Repository {
+                name: "Other".into(),
+                path: "/other".into(),
+            },
+            crate::models::Repository {
+                name: "Selected".into(),
+                path: path.clone(),
+            },
+        ];
+        app.selected_repository = 1;
+        // Highlighting an inactive row must not change the restored repository.
+        app.manager.highlighted_repository = Some("/other".into());
+        let mut storage = Storage::default();
+        eframe::App::save(&mut app, &mut storage);
+        let saved: Option<String> =
+            eframe::get_value(&storage, "sannygit.active_repository").unwrap();
+        assert_eq!(saved.as_deref(), Some(path.as_str()));
+        let mut restored = SannyGitApp::with_theme(ThemeChoice::Light);
+        restored.repositories = app.repositories;
+        restored.repositories.reverse();
+        restored.restore_active_repository(&storage);
+        assert!(restored.busy());
+        finish_restore(&mut restored);
+        assert!(restored.error.is_none());
+        assert_eq!(
+            restored.repositories[restored.selected_repository].path,
+            path
+        );
+        assert_eq!(restored.selected_repository, 0);
+        restored.close_repository(true);
+        eframe::App::save(&mut restored, &mut storage);
+        let saved: Option<String> =
+            eframe::get_value(&storage, "sannygit.active_repository").unwrap();
+        assert_eq!(saved, None);
+        restored.restore_active_repository(&storage);
+        assert!(!restored.busy());
+        assert_eq!(restored.selected_repository, usize::MAX);
+    }
+
+    #[test]
+    fn restore_missing_repository_reports_error_without_removing_bookmark() {
+        let repo = crate::git::tests::TempRepo::new();
+        let path = repo.0.join("missing").to_str().unwrap().to_owned();
+        let mut storage = Storage::default();
+        eframe::set_value(&mut storage, "sannygit.active_repository", &Some(&path));
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
+        app.repositories.push(crate::models::Repository {
+            name: "Missing".into(),
+            path: path.clone(),
+        });
+        app.restore_active_repository(&storage);
+        finish_restore(&mut app);
+        assert!(app.error.is_some());
+        assert_eq!(app.selected_repository, usize::MAX);
+        assert_eq!(app.repositories[0].path, path);
+        eframe::set_value(
+            &mut storage,
+            "sannygit.active_repository",
+            &Some("/not-bookmarked"),
+        );
+        app.restore_active_repository(&storage);
+        assert!(!app.busy());
+    }
+
     #[test]
     fn groups_move_repositories_without_duplicates_and_persist() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);

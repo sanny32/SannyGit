@@ -159,7 +159,25 @@ impl SannyGitApp {
         {
             app.manager.preferences = preferences;
         }
+        if let Some(storage) = creation_context.storage {
+            app.restore_active_repository(storage);
+        }
         app
+    }
+
+    fn restore_active_repository(&mut self, storage: &dyn eframe::Storage) {
+        let Some(Some(path)) =
+            eframe::get_value::<Option<String>>(storage, "sannygit.active_repository")
+        else {
+            return;
+        };
+        if self
+            .repositories
+            .iter()
+            .any(|repository| repository.path == path)
+        {
+            self.open_repository(path);
+        }
     }
 
     pub(crate) fn with_theme(theme: ThemeChoice) -> Self {
@@ -1106,6 +1124,11 @@ impl eframe::App for SannyGitApp {
         eframe::set_value(storage, THEME_STORAGE_KEY, &self.theme);
         let paths: Vec<_> = self.repositories.iter().map(|r| &r.path).collect();
         eframe::set_value(storage, "sannygit.repositories", &paths);
+        let active = self
+            .repositories
+            .get(self.selected_repository)
+            .map(|r| &r.path);
+        eframe::set_value(storage, "sannygit.active_repository", &active);
         eframe::set_value(
             storage,
             "sannygit.repository_preferences",
