@@ -109,7 +109,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     };
                     icons::paint(ui, icon, status_color(change.kind, palette), 16.0);
                     ui.add_space(4.0);
-                    ui.add(eframe::egui::Label::new(RichText::new(&change.path).color(palette.text)).truncate())
+                    ui.add(eframe::egui::Label::new(RichText::new(&change.path).color(palette.text)).selectable(false).truncate())
                         .help_text(if let Some(source) = &change.original_path {
                             format!("{source} → {}", change.path)
                         } else {
