@@ -35,7 +35,7 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport,
-        persist_window: false,
+        persist_window: true,
         persistence_path: std::env::var_os("SANNYGIT_SECONDARY_WINDOW").map(|_| {
             std::env::temp_dir().join(format!(
                 "sannygit-window-{}-{}.ron",
@@ -49,13 +49,7 @@ fn main() -> eframe::Result<()> {
         // The event loop has initialized native DPI handling by this point.
         // Place the window before eframe renders and reveals its first frame.
         window_builder: Some(Box::new(move |viewport| {
-            if let Some((position, monitor_size)) = cursor_monitor_window_geometry(window_size) {
-                viewport
-                    .with_inner_size(window_size.min(monitor_size))
-                    .with_position(position)
-            } else {
-                viewport
-            }
+            initial_window_viewport(viewport, window_size)
         })),
         ..Default::default()
     };
@@ -65,6 +59,23 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|creation_context| Ok(Box::new(SannyGitApp::new(creation_context)))),
     )
+}
+
+fn initial_window_viewport(
+    viewport: egui::ViewportBuilder,
+    window_size: egui::Vec2,
+) -> egui::ViewportBuilder {
+    // eframe inserts the persisted position before applying this hook.
+    if viewport.position.is_some() {
+        return viewport;
+    }
+    if let Some((position, monitor_size)) = cursor_monitor_window_geometry(window_size) {
+        viewport
+            .with_inner_size(window_size.min(monitor_size))
+            .with_position(position)
+    } else {
+        viewport
+    }
 }
 
 fn cursor_monitor_window_geometry(window_size: egui::Vec2) -> Option<(egui::Pos2, egui::Vec2)> {
@@ -138,5 +149,26 @@ fn windows_monitor_scale_factor(display: &display_info::DisplayInfo) -> f32 {
         display.scale_factor
     } else {
         1.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restored_window_geometry_is_not_recentered() {
+        let position = egui::pos2(120.0, 80.0);
+        let size = egui::vec2(1280.0, 800.0);
+        let viewport = egui::ViewportBuilder::default()
+            .with_position(position)
+            .with_inner_size(size)
+            .with_maximized(true);
+
+        let restored = initial_window_viewport(viewport, egui::vec2(1536.0, 1024.0));
+
+        assert_eq!(restored.position, Some(position));
+        assert_eq!(restored.inner_size, Some(size));
+        assert_eq!(restored.maximized, Some(true));
     }
 }
