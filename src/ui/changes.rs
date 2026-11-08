@@ -48,23 +48,29 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let row_height = 23.0;
     let table_clip = ui.clip_rect().intersect(ui.available_rect_before_wrap());
     ui.spacing_mut().item_spacing.x = 4.0;
+    let widths_id = eframe::egui::Id::unique("files.header_column_widths");
+    let [mut index_width, mut status_width] = ui
+        .data_mut(|data| data.get_persisted::<[f32; 2]>(widths_id))
+        .unwrap_or([52.0, 72.0]);
     TableBuilder::new(ui)
-        .id_salt("files.columns.v2")
-        .resizable(true)
+        .id_salt("files.columns.v3")
+        .resizable(false)
         .striped(true)
         .sense(Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::initial(52.0).range(44.0..=80.0).clip(true))
+        .column(Column::exact(index_width))
         .column(Column::remainder().at_least(120.0).clip(true))
-        .column(Column::initial(72.0).range(64.0..=120.0).clip(true))
+        .column(Column::exact(status_width))
         .min_scrolled_height(0.0)
         .header(24.0, |mut header| {
             header.col(|ui| {
                 ui.add_space(6.0);
                 ui.label("Index");
+                column_separator(ui, "index", &mut index_width, 1.0, 44.0..=80.0, palette);
             });
             header.col(|ui| {
                 ui.label("File");
+                column_separator(ui, "file", &mut status_width, -1.0, 64.0..=120.0, palette);
             });
             header.col(|ui| {
                 ui.label("Status");
@@ -135,9 +141,48 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 }
             });
         });
+    ui.data_mut(|data| data.insert_persisted(widths_id, [index_width, status_width]));
     if let Some((index, staged)) = staging_request {
         app.set_staged(index, staged);
     }
+}
+
+fn column_separator(
+    ui: &mut Ui,
+    id: &str,
+    width: &mut f32,
+    direction: f32,
+    range: std::ops::RangeInclusive<f32>,
+    palette: Palette,
+) {
+    let rect = ui.max_rect();
+    let x = rect.right() - 0.5;
+    let hit = Rect::from_min_max(
+        eframe::egui::pos2(x - 5.0, rect.top()),
+        eframe::egui::pos2(x + 5.0, rect.bottom()),
+    );
+    let response = ui
+        .interact(
+            hit,
+            ui.make_persistent_id(("files.header.resize", id)),
+            Sense::drag(),
+        )
+        .on_hover_cursor(eframe::egui::CursorIcon::ResizeColumn);
+    if response.dragged() {
+        *width = (*width + direction * response.drag_delta().x).clamp(*range.start(), *range.end());
+    }
+    let color = if response.hovered() || response.dragged() {
+        palette.accent
+    } else {
+        palette.border
+    };
+    ui.painter().line_segment(
+        [
+            eframe::egui::pos2(x, rect.top() + 3.0),
+            eframe::egui::pos2(x, rect.bottom() - 3.0),
+        ],
+        (1.0, color),
+    );
 }
 
 fn ui_line(response: &eframe::egui::Response, clip: Rect, palette: Palette) {
@@ -250,6 +295,78 @@ mod tests {
     use eframe::egui::{Context, Pos2, RawInput};
 
     #[test]
+    fn header_separator_resizes_columns_and_keeps_the_new_width() {
+        use eframe::egui::{Event, Modifiers, PointerButton};
+        let ctx = Context::default();
+        install_fonts(&ctx);
+        ThemeChoice::Light.apply(&ctx);
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        let mut render = |events| {
+            let mut output = ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 300.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(ui, &mut app),
+            );
+            let line = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    eframe::egui::Shape::LineSegment { points, .. }
+                        if (points[0].x - points[1].x).abs() < 0.1 =>
+                    {
+                        Some((points[0] + points[1].to_vec2()) * 0.5)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            let x = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    eframe::egui::Shape::Text(text) if text.galley.job.text == "File" => {
+                        Some(text.pos.x)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            output.textures_delta.clear();
+            (line, x)
+        };
+        for _ in 0..3 {
+            render(vec![]);
+        }
+        let (pointer, before) = render(vec![]);
+        render(vec![Event::PointerMoved(pointer)]);
+        render(vec![Event::PointerButton {
+            pos: pointer,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        }]);
+        let moved = pointer + Vec2::new(12.0, 0.0);
+        for _ in 0..3 {
+            render(vec![Event::PointerMoved(moved)]);
+        }
+        render(vec![Event::PointerButton {
+            pos: moved,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        }]);
+        let (_, after) = render(vec![]);
+        assert!(
+            after > before + 8.0,
+            "Header drag did not resize column: {before} -> {after}"
+        );
+        for _ in 0..5 {
+            assert_eq!(render(vec![]).1, after);
+        }
+    }
+
+    #[test]
     fn file_column_positions_do_not_change_with_rows_or_long_names() {
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
             for width in [350.0, 900.0] {
@@ -270,6 +387,16 @@ mod tests {
                             },
                             |ui| show(ui, app),
                         );
+                        for shape in &output.shapes {
+                            if let eframe::egui::Shape::LineSegment { points, .. } = &shape.shape {
+                                if (points[0].x - points[1].x).abs() < 0.1 {
+                                    assert!(
+                                        (points[0].y - points[1].y).abs() <= 24.0,
+                                        "Column separator extends into body"
+                                    );
+                                }
+                            }
+                        }
                         positions = ["Index", "File", "Status"]
                             .into_iter()
                             .map(|label| {
