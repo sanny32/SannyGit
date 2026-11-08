@@ -150,7 +150,11 @@ fn repository_row(
             if active { palette.text } else { palette.muted },
             16.0,
         );
-        let name = RichText::new(&repository.name);
+        let name = RichText::new(&repository.name).color(if active {
+            palette.text
+        } else {
+            palette.muted
+        });
         ui.add(
             eframe::egui::Label::new(if active {
                 name.family(semibold_family())
