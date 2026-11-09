@@ -6,11 +6,24 @@ use crate::{
     theme::{semibold_family, Palette},
 };
 use eframe::egui::{
-    Align, Button, CollapsingHeader, Id, Layout, RichText, ScrollArea, TextEdit, Ui, Vec2, Window,
+    Align, Button, CollapsingHeader, Layout, RichText, ScrollArea, TextEdit, Ui, Vec2,
 };
+
+#[derive(Debug, PartialEq, Eq)]
+enum BranchRequest {
+    Switch(String),
+    Rename(String),
+}
+
+#[derive(Default)]
+struct BranchRequests {
+    action: Option<BranchRequest>,
+    rename_allowed: bool,
+}
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     create_dialog(ui, app);
+    rename_dialog(ui, app);
     tag_dialog(ui, app);
     remote_dialog(ui, app);
     let palette = app.palette();
@@ -54,7 +67,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             );
         });
     });
-    let mut requested = None;
+    let mut requested = BranchRequests {
+        rename_allowed: !app.busy() && app.state_current && app.refs_current,
+        ..Default::default()
+    };
     let mut add_tag_requested = false;
     let height = ui.available_height();
     ScrollArea::vertical()
@@ -76,13 +92,21 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 );
             }
         });
-    if let Some(target) = requested {
+    if let Some(request) = requested.action {
         app.selected_ref_group = None;
-        app.selected_branch = target;
-        if let Some(reason) = app.switch_branch_blocker() {
-            app.error = Some(reason.into());
-        } else {
-            app.switch_branch();
+        match request {
+            BranchRequest::Switch(target) => {
+                app.selected_branch = target;
+                if let Some(reason) = app.switch_branch_blocker() {
+                    app.error = Some(reason.into());
+                } else {
+                    app.switch_branch();
+                }
+            }
+            BranchRequest::Rename(target) => {
+                app.selected_branch = target;
+                app.open_rename_branch();
+            }
         }
     }
     if add_tag_requested {
@@ -97,7 +121,7 @@ fn branch_group(
     selected_group: &mut Option<RefKind>,
     kind: RefKind,
     palette: Palette,
-    requested: &mut Option<String>,
+    requested: &mut BranchRequests,
 ) -> bool {
     let title = match kind {
         RefKind::Local => "Local Branches",
@@ -127,75 +151,94 @@ fn branch_group(
         visuals.corner_radius = eframe::egui::CornerRadius::same(0);
     }
     let body_visuals = previous_visuals.clone();
-    let group = CollapsingHeader::new(format!("{title} ({})", matching.len()))
-        .id_salt(title)
-        .default_open(kind == RefKind::Local)
-        .show_unindented(ui, |ui| {
-            *ui.visuals_mut() = body_visuals;
-            for branch in matching {
-                // Avoid text layout for rows outside the viewport in large ref lists.
-                let size = Vec2::new(ui.available_width(), 22.0);
-                let rect = eframe::egui::Rect::from_min_size(ui.next_widget_position(), size);
-                if !ui.is_rect_visible(rect) {
-                    ui.allocate_space(size);
-                    continue;
-                }
-                let response = super::controls::selectable_row(
-                    ui,
-                    selected_group.is_none() && *selected == branch.full_name,
-                    22.0,
-                    |ui| {
-                        ui.add_space(6.0);
-                        icons::paint(
-                            ui,
-                            if kind == RefKind::Tag {
-                                Icon::Tag
-                            } else {
-                                Icon::Branch
-                            },
-                            palette.text,
-                            14.0,
-                        );
-                        ui.add(
-                            eframe::egui::Label::new(if branch.current {
-                                RichText::new(&branch.name).family(semibold_family())
-                            } else {
-                                RichText::new(&branch.name)
-                            })
-                            .sense(eframe::egui::Sense::hover()),
-                        );
-                        if branch.current {
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                icons::paint(ui, Icon::Star, palette.accent, 14.0)
-                            });
-                        }
-                    },
-                )
-                .help_text(format!(
-                    "{}\nObject: {}{}{}",
-                    branch.full_name,
-                    branch.hash,
-                    branch
-                        .upstream
-                        .as_ref()
-                        .map(|s| format!("\nUpstream: {s}"))
-                        .unwrap_or_default(),
-                    match kind {
-                        RefKind::Local => "\nDouble-click to switch",
-                        RefKind::Remote =>
-                            "\nDouble-click to switch to a local branch or choose checkout options",
-                        RefKind::Tag => "\nDouble-click to check out a detached HEAD",
-                    }
-                ));
-                if response.clicked() {
-                    *selected_group = None;
-                    *selected = branch.full_name.clone();
-                }
-                if response.double_clicked() {
-                    *requested = Some(branch.full_name.clone());
-                }
+    let group = CollapsingHeader::new(
+        RichText::new(format!("{title} ({})", matching.len()))
+            .text_style(eframe::egui::TextStyle::Body),
+    )
+    .id_salt(title)
+    .default_open(kind == RefKind::Local)
+    .show_unindented(ui, |ui| {
+        *ui.visuals_mut() = body_visuals;
+        for branch in matching {
+            // Avoid text layout for rows outside the viewport in large ref lists.
+            let size = Vec2::new(ui.available_width(), 22.0);
+            let rect = eframe::egui::Rect::from_min_size(ui.next_widget_position(), size);
+            if !ui.is_rect_visible(rect) {
+                ui.allocate_space(size);
+                continue;
             }
-        });
+            let response = super::controls::selectable_row(
+                ui,
+                selected_group.is_none() && *selected == branch.full_name,
+                22.0,
+                |ui| {
+                    ui.add_space(ui.spacing().indent);
+                    icons::paint(
+                        ui,
+                        if kind == RefKind::Tag {
+                            Icon::Tag
+                        } else {
+                            Icon::Branch
+                        },
+                        palette.text,
+                        14.0,
+                    );
+                    ui.add(
+                        eframe::egui::Label::new(if branch.current {
+                            RichText::new(&branch.name)
+                                .text_style(eframe::egui::TextStyle::Body)
+                                .family(semibold_family())
+                        } else {
+                            RichText::new(&branch.name).text_style(eframe::egui::TextStyle::Body)
+                        })
+                        .sense(eframe::egui::Sense::hover()),
+                    );
+                    if branch.current {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            icons::paint(ui, Icon::Star, palette.accent, 14.0)
+                        });
+                    }
+                },
+            )
+            .help_text(format!(
+                "{}\nObject: {}{}{}",
+                branch.full_name,
+                branch.hash,
+                branch
+                    .upstream
+                    .as_ref()
+                    .map(|s| format!("\nUpstream: {s}"))
+                    .unwrap_or_default(),
+                match kind {
+                    RefKind::Local => "\nDouble-click to switch",
+                    RefKind::Remote =>
+                        "\nDouble-click to switch to a local branch or choose checkout options",
+                    RefKind::Tag => "\nDouble-click to check out a detached HEAD",
+                }
+            ));
+            if kind == RefKind::Local {
+                response.context_menu(|ui| {
+                    if ui
+                        .add_enabled(requested.rename_allowed, Button::new("Rename…"))
+                        .disabled_help_text(
+                            "Refresh the repository and wait for the current operation",
+                        )
+                        .clicked()
+                    {
+                        requested.action = Some(BranchRequest::Rename(branch.full_name.clone()));
+                        ui.close();
+                    }
+                });
+            }
+            if response.clicked() {
+                *selected_group = None;
+                *selected = branch.full_name.clone();
+            }
+            if response.double_clicked() {
+                requested.action = Some(BranchRequest::Switch(branch.full_name.clone()));
+            }
+        }
+    });
     *ui.visuals_mut() = previous_visuals;
     if group.header_response.clicked() || group.header_response.secondary_clicked() {
         *selected_group = Some(kind);
@@ -337,48 +380,304 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
     }
 }
 
+fn rename_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
+    if app.rename_branch_dialog.is_none() {
+        return;
+    }
+    let ctx = ui.ctx().clone();
+    let palette = app.palette();
+    let mut cancel = false;
+    super::controls::dialog_style::modal(&ctx, palette, "branches.rename").show(&ctx, |ui| {
+        ui.set_width(440.0);
+        super::controls::dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        super::controls::dialog_style::header_with_icon(
+            ui,
+            palette,
+            "Rename local branch",
+            "Choose a new local name. The remote branch keeps its name.",
+            Icon::Branch,
+        );
+        let busy = app.busy();
+        super::controls::dialog_style::section(
+            ui,
+            palette.header,
+            eframe::egui::Margin::same(18),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                if let Some(dialog) = &mut app.rename_branch_dialog {
+                    ui.add(
+                        eframe::egui::Label::new(
+                            dialog
+                                .source
+                                .strip_prefix("refs/heads/")
+                                .unwrap_or(&dialog.source),
+                        )
+                        .truncate(),
+                    )
+                    .help_text(&dialog.source);
+                    ui.add_enabled(
+                        !busy,
+                        TextEdit::singleline(&mut dialog.name).desired_width(f32::INFINITY),
+                    );
+                }
+                let blocker = app.rename_branch_blocker();
+                let status = app
+                    .error
+                    .as_deref()
+                    .or(blocker)
+                    .unwrap_or("Ready to rename");
+                ui.add(
+                    eframe::egui::Label::new(RichText::new(status).small().color(palette.muted))
+                        .truncate(),
+                )
+                .help_text(status);
+            },
+        );
+        super::controls::dialog_style::section(
+            ui,
+            palette.header,
+            eframe::egui::Margin::symmetric(18, 12),
+            |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let blocker = app.rename_branch_blocker();
+                    if ui
+                        .add_enabled(
+                            blocker.is_none(),
+                            super::controls::dialog_style::primary("Rename", palette),
+                        )
+                        .disabled_help_text(blocker.unwrap_or(""))
+                        .clicked()
+                    {
+                        app.rename_branch();
+                    }
+                    if ui
+                        .add_enabled(!busy, super::controls::dialog_style::button("Cancel"))
+                        .clicked()
+                    {
+                        cancel = true;
+                    }
+                });
+            },
+        );
+    });
+    if cancel {
+        app.rename_branch_dialog = None;
+    }
+}
+
 fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
     if !app.branch_dialog_open {
         return;
     }
-    let mut open = true;
-    Window::new("Create branch")
-        .id(Id::unique("branches.create"))
-        .open(&mut open)
-        .resizable(false)
-        .default_width(400.0)
-        .collapsible(false)
-        .frame(super::controls::dialog_style::frame(ui.ctx(), app.palette()).inner_margin(18))
-        .show(ui.ctx(), |ui| {
-            super::controls::dialog_style::setup(ui);
-            ui.label(format!("Create from HEAD ({})", app.current_branch));
-            ui.add_enabled_ui(!app.busy(), |ui| {
+    let ctx = ui.ctx().clone();
+    let palette = app.palette();
+    let busy = app.busy();
+    let mut cancel = false;
+    super::controls::dialog_style::modal(&ctx, palette, "branches.create").show(&ctx, |ui| {
+        ui.set_width(440.0);
+        super::controls::dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        super::controls::dialog_style::header_with_icon(
+            ui,
+            palette,
+            "Create branch",
+            "Create a local branch from the current HEAD.",
+            Icon::Branch,
+        );
+        super::controls::dialog_style::section(
+            ui,
+            palette.header,
+            eframe::egui::Margin::same(18),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                let source = format!("Create from HEAD ({})", app.current_branch);
+                ui.add(eframe::egui::Label::new(&source).truncate())
+                    .help_text(&source);
+                ui.add_enabled_ui(!busy, |ui| {
+                    ui.add(
+                        TextEdit::singleline(&mut app.new_branch_name)
+                            .hint_text("feature/my-change")
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.checkbox(&mut app.switch_to_new_branch, "Switch to the new branch");
+                });
+                let blocker = app.create_branch_blocker();
+                let status = app
+                    .error
+                    .as_deref()
+                    .or(blocker)
+                    .unwrap_or("Ready to create");
                 ui.add(
-                    TextEdit::singleline(&mut app.new_branch_name)
-                        .hint_text("feature/my-change")
-                        .desired_width(f32::INFINITY),
-                );
-                ui.checkbox(&mut app.switch_to_new_branch, "Switch to the new branch");
-            });
-            let blocker = app.create_branch_blocker();
-            if let Some(reason) = blocker {
-                ui.label(RichText::new(reason).small().color(app.palette().muted));
-            }
-            if ui
-                .add_enabled(blocker.is_none(), Button::new("Create"))
-                .disabled_help_text(blocker.unwrap_or(""))
-                .clicked()
-            {
-                app.create_branch();
-            }
-        });
-    app.branch_dialog_open = open && app.branch_dialog_open;
+                    eframe::egui::Label::new(RichText::new(status).small().color(palette.muted))
+                        .truncate(),
+                )
+                .help_text(status);
+            },
+        );
+        super::controls::dialog_style::section(
+            ui,
+            palette.header,
+            eframe::egui::Margin::symmetric(18, 12),
+            |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let blocker = app.create_branch_blocker();
+                    if ui
+                        .add_enabled(
+                            blocker.is_none(),
+                            super::controls::dialog_style::primary("Create", palette),
+                        )
+                        .disabled_help_text(blocker.unwrap_or(""))
+                        .clicked()
+                    {
+                        app.create_branch();
+                    }
+                    if ui
+                        .add_enabled(!busy, super::controls::dialog_style::button("Cancel"))
+                        .clicked()
+                    {
+                        cancel = true;
+                    }
+                });
+            },
+        );
+    });
+    if cancel {
+        app.branch_dialog_open = false;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use eframe::egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect};
+
+    #[test]
+    fn create_dialog_stays_centered_with_header_and_stable_status_line() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            for size in [Vec2::new(1100.0, 700.0), Vec2::new(1400.0, 900.0)] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.repositories = crate::mock_data::repositories();
+                app.selected_repository = 0;
+                app.refs = crate::mock_data::refs();
+                app.state_current = true;
+                app.refs_current = true;
+                app.branch_head_exists = true;
+                app.branch_dialog_open = true;
+                let mut geometry = Vec::new();
+                for stage in 0..4 {
+                    app.new_branch_name = if stage == 0 { "" } else { "feature/new" }.into();
+                    app.refs_current = stage != 2;
+                    app.error = (stage == 3).then(|| "Long error message. ".repeat(100));
+                    for frame in 0..3 {
+                        let mut output = ctx.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                                ..Default::default()
+                            },
+                            |ui| create_dialog(ui, &mut app),
+                        );
+                        output.textures_delta.clear();
+                        if frame == 2 {
+                            let rect = ctx
+                                .memory(|memory| {
+                                    memory.area_rect(eframe::egui::Id::unique("branches.create"))
+                                })
+                                .unwrap();
+                            assert!(
+                                (rect.center() - (Pos2::ZERO + size * 0.5)).length() < 1.0,
+                                "Create dialog is off center: {rect:?}"
+                            );
+                            assert!(Rect::from_min_size(Pos2::ZERO, size).contains_rect(rect));
+                            assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, eframe::egui::Shape::Text(text) if text.galley.text() == "Create branch")));
+                            geometry.push(rect);
+                        }
+                    }
+                }
+                for pair in geometry.windows(2) {
+                    assert_eq!(pair[0], pair[1]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rename_dialog_keeps_geometry_with_validation_progress_and_long_errors() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            for size in [Vec2::new(1100.0, 700.0), Vec2::new(1400.0, 900.0)] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.repositories = crate::mock_data::repositories();
+                app.selected_repository = 0;
+                app.state_current = true;
+                app.refs_current = true;
+                app.refs = crate::mock_data::refs();
+                app.selected_branch = "refs/heads/develop".into();
+                app.open_rename_branch();
+                let mut geometry = Vec::new();
+                for stage in 0..4 {
+                    app.rename_branch_dialog.as_mut().unwrap().name =
+                        if stage == 0 { "develop" } else { "new-name" }.into();
+                    app.refs_current = stage != 2;
+                    app.error = (stage == 3).then(|| "A very long Git error. ".repeat(80));
+                    for frame in 0..3 {
+                        let mut output = ctx.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                                ..Default::default()
+                            },
+                            |ui| rename_dialog(ui, &mut app),
+                        );
+                        output.textures_delta.clear();
+                        if frame == 2 {
+                            let rect = ctx
+                                .memory(|memory| {
+                                    memory.area_rect(eframe::egui::Id::unique("branches.rename"))
+                                })
+                                .unwrap();
+                            assert!(
+                                (rect.center() - (Pos2::ZERO + size * 0.5)).length() < 1.0,
+                                "Rename dialog is off center: {rect:?}"
+                            );
+                            let buttons: Vec<_> = output
+                                .shapes
+                                .iter()
+                                .filter_map(|shape| {
+                                    if let eframe::egui::Shape::Text(text) = &shape.shape {
+                                        if matches!(text.galley.text(), "Rename" | "Cancel") {
+                                            return Some((text.pos, text.galley.size()));
+                                        }
+                                    }
+                                    None
+                                })
+                                .collect();
+                            assert_eq!(buttons.len(), 2);
+                            for (pos, extent) in &buttons {
+                                assert!(Rect::from_min_size(Pos2::ZERO, size)
+                                    .contains_rect(Rect::from_min_size(*pos, *extent)));
+                            }
+                            geometry.push(buttons);
+                        }
+                    }
+                }
+                for pair in geometry.windows(2) {
+                    assert_eq!(pair[0], pair[1]);
+                }
+            }
+        }
+    }
 
     #[test]
     fn tag_dialog_content_stays_within_header_width() {
@@ -515,7 +814,7 @@ mod tests {
             }];
             let mut selected = String::new();
             let mut selected_group = Some(RefKind::Remote);
-            let mut requested = None;
+            let mut requested = BranchRequests::default();
             let mut pointer = Pos2::ZERO;
             for (frame, pressed) in [None, None, Some(true), Some(false), Some(true), Some(false)]
                 .into_iter()
@@ -554,10 +853,13 @@ mod tests {
                 if frame == 3 {
                     assert_eq!(selected, "refs/heads/feature");
                     assert_eq!(selected_group, None);
-                    assert!(requested.is_none());
+                    assert!(requested.action.is_none());
                 }
             }
-            assert_eq!(requested.as_deref(), Some("refs/heads/feature"));
+            assert_eq!(
+                requested.action,
+                Some(BranchRequest::Switch("refs/heads/feature".into()))
+            );
         }
     }
 
@@ -576,7 +878,7 @@ mod tests {
             }];
             let mut selected = "refs/heads/feature".to_string();
             let mut selected_group = None;
-            let mut requested = None;
+            let mut requested = BranchRequests::default();
             let mut pointer = Pos2::ZERO;
             for (frame, pressed) in [None, None, Some(true), Some(false)]
                 .into_iter()
@@ -615,7 +917,7 @@ mod tests {
             }
             assert_eq!(selected_group, Some(RefKind::Local));
             assert!(selected.is_empty());
-            assert!(requested.is_none());
+            assert!(requested.action.is_none());
         }
     }
 
@@ -639,7 +941,7 @@ mod tests {
             let render = |selected_header: bool| {
                 let mut selected = String::new();
                 let mut selected_group = selected_header.then_some(RefKind::Local);
-                let mut requested = None;
+                let mut requested = BranchRequests::default();
                 let mut result = None;
                 for frame in 0..3 {
                     let mut output = ctx.run_ui(
@@ -663,19 +965,22 @@ mod tests {
                                     &mut requested,
                                 );
                             } else {
-                                let _ = CollapsingHeader::new("Local Branches (1)")
-                                    .id_salt("Local Branches")
-                                    .default_open(true)
-                                    .show_unindented(ui, |ui| {
-                                        let _ = crate::ui::controls::selectable_row(
-                                            ui,
-                                            false,
-                                            22.0,
-                                            |ui| {
-                                                ui.label("feature");
-                                            },
-                                        );
-                                    });
+                                let _ = CollapsingHeader::new(
+                                    RichText::new("Local Branches (1)")
+                                        .text_style(eframe::egui::TextStyle::Body),
+                                )
+                                .id_salt("Local Branches")
+                                .default_open(true)
+                                .show_unindented(ui, |ui| {
+                                    let _ = crate::ui::controls::selectable_row(
+                                        ui,
+                                        false,
+                                        22.0,
+                                        |ui| {
+                                            ui.label("feature");
+                                        },
+                                    );
+                                });
                             }
                         },
                     );

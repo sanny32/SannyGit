@@ -129,6 +129,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     repository_dialogs::show(ui, app);
     welcome(ui, app);
     eframe::egui::Window::new("About SannyGit")
+        .anchor(
+            eframe::egui::Align2::CENTER_CENTER,
+            eframe::egui::Vec2::ZERO,
+        )
         .open(&mut app.about_dialog)
         .resizable(false)
         .show(ui.ctx(), |ui| {

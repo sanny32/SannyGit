@@ -134,6 +134,11 @@ pub struct RemoteCheckoutDialog {
     pub new_name: String,
 }
 
+pub struct RenameBranchDialog {
+    pub source: String,
+    pub name: String,
+}
+
 pub struct SannyGitApp {
     pub manager: RepositoryManager,
     pub tracking: tracking::Monitor,
@@ -160,6 +165,7 @@ pub struct SannyGitApp {
     refs_pending: bool,
     pub branch_head_exists: bool,
     pub branch_dialog_open: bool,
+    pub rename_branch_dialog: Option<RenameBranchDialog>,
     pub tag_dialog_open: bool,
     pub remote_checkout: Option<RemoteCheckoutDialog>,
     pub network_dialog: Option<remotes::RemoteDialog>,
@@ -335,6 +341,7 @@ impl SannyGitApp {
             refs_pending: false,
             branch_head_exists: false,
             branch_dialog_open: false,
+            rename_branch_dialog: None,
             tag_dialog_open: false,
             remote_checkout: None,
             network_dialog: None,
@@ -452,6 +459,9 @@ impl SannyGitApp {
                 !self.busy() && self.state_current && self.refs_current && self.branch_head_exists
             }
             MenuAction::SwitchBranch => self.switch_branch_blocker().is_none(),
+            MenuAction::RenameBranch => self
+                .rename_branch_target_blocker(&self.selected_branch)
+                .is_none(),
             MenuAction::Fetch | MenuAction::Pull | MenuAction::Push => self.remote_allowed(),
         }
     }
@@ -502,6 +512,7 @@ impl SannyGitApp {
             MenuAction::Commit => self.create_commit(),
             MenuAction::CreateBranch => self.branch_dialog_open = true,
             MenuAction::SwitchBranch => self.switch_branch(),
+            MenuAction::RenameBranch => self.open_rename_branch(),
             MenuAction::Fetch => self.open_remote(crate::remotes::Operation::Fetch),
             MenuAction::Pull => self.open_remote(crate::remotes::Operation::Pull),
             MenuAction::Push => self.open_remote(crate::remotes::Operation::Push),
@@ -642,6 +653,7 @@ impl SannyGitApp {
             self.refs.clear();
             self.branch_head_exists = false;
             self.branch_dialog_open = false;
+            self.rename_branch_dialog = None;
             self.remote_checkout = None;
             self.network_dialog = None;
             self.new_branch_name.clear();
@@ -716,6 +728,71 @@ impl SannyGitApp {
             return Some("Commit or move aside local changes before switching branches");
         }
         None
+    }
+
+    fn rename_branch_target_blocker(&self, source: &str) -> Option<&'static str> {
+        self.branch_base_blocker().or_else(|| {
+            (!self
+                .refs
+                .iter()
+                .any(|r| r.full_name == source && r.kind == crate::models::RefKind::Local))
+            .then_some("Select an existing local branch")
+        })
+    }
+
+    pub fn open_rename_branch(&mut self) {
+        if self
+            .rename_branch_target_blocker(&self.selected_branch)
+            .is_some()
+        {
+            return;
+        }
+        self.rename_branch_dialog = Some(RenameBranchDialog {
+            source: self.selected_branch.clone(),
+            name: self
+                .selected_branch
+                .strip_prefix("refs/heads/")
+                .unwrap_or_default()
+                .into(),
+        });
+        self.error = None;
+    }
+
+    pub fn rename_branch_blocker(&self) -> Option<&'static str> {
+        let dialog = self.rename_branch_dialog.as_ref()?;
+        self.rename_branch_target_blocker(&dialog.source)
+            .or_else(|| crate::branches::name_hint(&dialog.name))
+            .or_else(|| {
+                self.refs
+                    .iter()
+                    .any(|r| r.full_name == format!("refs/heads/{}", dialog.name))
+                    .then_some("A local branch with this name already exists")
+            })
+    }
+
+    pub fn rename_branch(&mut self) {
+        if self.rename_branch_blocker().is_some() {
+            return;
+        }
+        let Some(dialog) = &self.rename_branch_dialog else {
+            return;
+        };
+        let source = dialog.source.clone();
+        let name = dialog.name.clone();
+        let root = PathBuf::from(&self.repositories[self.selected_repository].path);
+        self.state_current = false;
+        self.refs_current = false;
+        self.error = None;
+        self.status = "Renaming branch…".into();
+        self.start_worker(move || {
+            let outcome = crate::branches::rename(&root, &source, &name);
+            WorkerResult::Operation {
+                committed: false,
+                success: "Branch renamed",
+                outcome,
+                snapshot: git::load(&root),
+            }
+        });
     }
 
     pub fn create_branch_blocker(&self) -> Option<&'static str> {
@@ -1225,6 +1302,12 @@ impl SannyGitApp {
                         self.network_dialog = None;
                     }
                 }
+                if outcome.is_ok() && success == "Branch renamed" {
+                    if let Some(dialog) = self.rename_branch_dialog.take() {
+                        self.selected_branch = format!("refs/heads/{}", dialog.name);
+                        self.selected_ref_group = None;
+                    }
+                }
                 if committed {
                     self.commit_message.clear();
                 }
@@ -1311,6 +1394,7 @@ impl SannyGitApp {
                 "Commit created"
                     | "Index updated"
                     | "Branch switched"
+                    | "Branch renamed"
                     | "Branch created"
                     | "Branch created and switched"
             )
@@ -1715,6 +1799,50 @@ mod tests {
             },
         );
         assert_eq!(app.commit_preview.as_ref().unwrap().added, 1);
+    }
+
+    #[test]
+    fn rename_requires_fresh_local_target_and_retains_draft_on_failure() {
+        use crate::menu::MenuAction;
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories = crate::mock_data::repositories();
+        app.selected_repository = 0;
+        app.refs = crate::mock_data::refs();
+        app.selected_branch = "refs/heads/develop".into();
+        app.state_current = true;
+        assert!(!app.menu_action_enabled(MenuAction::RenameBranch));
+        app.refs_current = true;
+        assert!(app.menu_action_enabled(MenuAction::RenameBranch));
+        app.open_rename_branch();
+        assert!(app.rename_branch_blocker().is_some()); // unchanged name
+        app.rename_branch_dialog.as_mut().unwrap().name = "renamed".into();
+        app.changes = crate::mock_data::changes();
+        assert!(app.rename_branch_blocker().is_none()); // dirty files are allowed
+        app.selected_branch = "refs/tags/v1.0.0".into();
+        assert!(!app.menu_action_enabled(MenuAction::RenameBranch));
+        assert!(app.rename_branch_blocker().is_none()); // dialog keeps its source
+        deliver(
+            &mut app,
+            WorkerResult::Operation {
+                committed: false,
+                success: "Branch renamed",
+                outcome: Err("Cannot rename".into()),
+                snapshot: Err("Refresh failed".into()),
+            },
+        );
+        assert_eq!(app.rename_branch_dialog.as_ref().unwrap().name, "renamed");
+        assert!(app.rename_branch_blocker().is_some());
+        deliver(
+            &mut app,
+            WorkerResult::Operation {
+                committed: false,
+                success: "Branch renamed",
+                outcome: Ok(()),
+                snapshot: Err("Refresh failed".into()),
+            },
+        );
+        assert!(app.rename_branch_dialog.is_none());
+        assert_eq!(app.selected_branch, "refs/heads/renamed");
     }
 
     #[test]

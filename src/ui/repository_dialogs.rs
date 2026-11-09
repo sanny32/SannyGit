@@ -44,6 +44,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     }
     if app.busy() && app.manager.cancel.is_some() {
         Window::new("Repository operation")
+            .anchor(
+                eframe::egui::Align2::CENTER_CENTER,
+                eframe::egui::Vec2::ZERO,
+            )
             .id(egui::Id::unique("repository.progress"))
             .collapsible(false)
             .resizable(false)
@@ -71,7 +75,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     };
     let mut open = true;
     let mut job = None;
-    Window::new(title).id(egui::Id::unique(title)).open(&mut open).default_width(540.0)
+    Window::new(title).anchor(eframe::egui::Align2::CENTER_CENTER, eframe::egui::Vec2::ZERO).id(egui::Id::unique(title)).open(&mut open).default_width(540.0)
         .collapsible(false)
         .frame(super::controls::dialog_style::frame(ui.ctx(), app.palette()).inner_margin(18))
         .max_size(ui.ctx().content_rect().size() - egui::vec2(40.0,40.0))

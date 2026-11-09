@@ -22,6 +22,7 @@ pub enum MenuAction {
     Commit,
     CreateBranch,
     SwitchBranch,
+    RenameBranch,
     ReloadHistory,
     Preferences,
     LightTheme,
@@ -158,7 +159,7 @@ pub const MENUS: &[Menu] = &[
         items: &[
             action("Create…", MenuAction::CreateBranch),
             action("Switch", MenuAction::SwitchBranch),
-            pending("Rename…"),
+            action("Rename…", MenuAction::RenameBranch),
             pending("Delete…"),
             pending("Merge…"),
             pending("Rebase…"),

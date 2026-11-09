@@ -37,6 +37,16 @@ pub fn section(ui: &mut Ui, fill: egui::Color32, margin: Margin, contents: impl 
 }
 
 pub fn header(ui: &mut Ui, palette: Palette, title: &str, description: &str) -> egui::Rect {
+    header_with_icon(ui, palette, title, description, Icon::Repository)
+}
+
+pub fn header_with_icon(
+    ui: &mut Ui,
+    palette: Palette,
+    title: &str,
+    description: &str,
+    icon: Icon,
+) -> egui::Rect {
     let width = ui.available_width();
     Frame::new()
         .fill(palette.panel)
@@ -69,7 +79,7 @@ pub fn header(ui: &mut Ui, palette: Palette, title: &str, description: &str) -> 
                 egui::pos2(content_rect.right() - 24.0, content_rect.center().y),
                 egui::Vec2::splat(48.0),
             );
-            icons::image(Icon::Repository, palette.accent, 48.0).paint_at(ui, icon_rect);
+            icons::image(icon, palette.accent, 48.0).paint_at(ui, icon_rect);
         })
         .response
         .rect

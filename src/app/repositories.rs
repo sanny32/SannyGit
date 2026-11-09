@@ -512,6 +512,7 @@ impl SannyGitApp {
         self.refs_error = None;
         self.branch_head_exists = false;
         self.branch_dialog_open = false;
+        self.rename_branch_dialog = None;
         self.tag_dialog_open = false;
         self.new_tag_name.clear();
         self.new_tag_message.clear();

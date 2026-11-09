@@ -213,6 +213,10 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
     let mut open = true;
     let mut retry = false;
     Window::new("Commit details")
+        .anchor(
+            eframe::egui::Align2::CENTER_CENTER,
+            eframe::egui::Vec2::ZERO,
+        )
         .id(eframe::egui::Id::unique("journal.details"))
         .open(&mut open)
         .default_size([850.0, 570.0])

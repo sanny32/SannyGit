@@ -92,7 +92,7 @@ fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
     Ok(refs)
 }
 
-/// Lightweight UI validation; Git performs its complete validation only on Create.
+/// Lightweight UI validation; Git performs its complete validation when an operation is submitted.
 pub fn name_hint(name: &str) -> Option<&'static str> {
     if name.is_empty() {
         Some("Enter a branch name")
@@ -288,6 +288,39 @@ pub fn create(root: &Path, name: &str, switch_to: bool) -> Result<(), String> {
     }
 }
 
+/// Renames one exact local ref without overwriting another branch or touching files.
+pub fn rename(root: &Path, full_name: &str, name: &str) -> Result<(), String> {
+    if let Some(reason) = name_hint(name) {
+        return Err(reason.into());
+    }
+    let checked = git::text(
+        git::run(root, &["check-ref-format", "--branch", name])
+            .map_err(|_| "Invalid branch name. Check Git branch naming rules.")?,
+    )?;
+    if checked.strip_suffix('\n').unwrap_or(&checked) != name {
+        return Err("Branch name must be literal, not a revision expression.".into());
+    }
+    let refs = load(root)?;
+    let target = refs
+        .refs
+        .iter()
+        .find(|r| r.full_name == full_name && r.kind == RefKind::Local)
+        .ok_or("The selected local branch no longer exists. Refresh the repository.")?;
+    if let Some(reason) = name_hint(&target.name) {
+        return Err(reason.into());
+    }
+    if refs
+        .refs
+        .iter()
+        .any(|r| r.full_name == format!("refs/heads/{name}"))
+    {
+        return Err("A local branch with this name already exists.".into());
+    }
+    // Lowercase -m refuses an existing destination; Git retains upstream config
+    // and reflogs, and updates HEAD if the renamed branch is checked out.
+    git::run(root, &["branch", "-m", "--", &target.name, name]).map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +332,88 @@ mod tests {
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "fixture"]);
         repo
+    }
+
+    #[test]
+    fn rename_preserves_dirty_files_index_head_and_tracking_configuration() {
+        let repo = committed_repo();
+        repo.git(&["config", "branch.main.remote", "origin"]);
+        repo.git(&["config", "branch.main.merge", "refs/heads/main"]);
+        let head = repo.git(&["rev-parse", "HEAD"]);
+        repo.write("file", "staged\n");
+        repo.git(&["add", "file"]);
+        repo.write("file", "unstaged\n");
+        repo.write("new", "untracked\n");
+        let index = std::fs::read(repo.0.join(".git/index")).unwrap();
+        rename(&repo.0, "refs/heads/main", "feature/новая").unwrap();
+        assert_eq!(git::load(&repo.0).unwrap().branch, "feature/новая");
+        assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
+        assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file")).unwrap(),
+            "unstaged\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("new")).unwrap(),
+            "untracked\n"
+        );
+        assert_eq!(
+            repo.git(&["config", "branch.feature/новая.remote"]).trim(),
+            "origin"
+        );
+        assert_eq!(
+            repo.git(&["config", "branch.feature/новая.merge"]).trim(),
+            "refs/heads/main"
+        );
+        assert!(!load(&repo.0)
+            .unwrap()
+            .refs
+            .iter()
+            .any(|r| r.full_name == "refs/heads/main"));
+        create(&repo.0, "other", false).unwrap();
+        rename(&repo.0, "refs/heads/other", "renamed-other").unwrap();
+        assert_eq!(git::load(&repo.0).unwrap().branch, "feature/новая");
+        assert_eq!(repo.git(&["rev-parse", "renamed-other"]), head);
+    }
+
+    #[test]
+    fn rename_rejects_invalid_missing_nonlocal_and_existing_targets_without_writes() {
+        let repo = committed_repo();
+        create(&repo.0, "existing", false).unwrap();
+        repo.git(&["tag", "release"]);
+        repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        let before = repo.git(&["show-ref"]);
+        let index = std::fs::read(repo.0.join(".git/index")).unwrap();
+        for name in [
+            "",
+            "HEAD",
+            "-bad",
+            "refs/heads/bad",
+            "@{-1}",
+            "a..b",
+            "a.lock",
+            "space name",
+            "bad\0name",
+            "existing",
+            "main",
+        ] {
+            assert!(
+                rename(&repo.0, "refs/heads/main", name).is_err(),
+                "{name:?}"
+            );
+        }
+        for source in [
+            "main",
+            "refs/heads/missing",
+            "refs/tags/release",
+            "refs/remotes/origin/main",
+            "--all",
+        ] {
+            assert!(rename(&repo.0, source, "new-name").is_err());
+        }
+        assert_eq!(repo.git(&["show-ref"]), before);
+        assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
+        assert_eq!(git::load(&repo.0).unwrap().branch, "main");
     }
 
     #[test]
