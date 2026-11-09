@@ -218,7 +218,7 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.horizontal(|ui| {
                         ui.label("Tag:");
                         let combo_width = ui.available_width();
-                        super::controls::editable_combo_box::show(
+                        super::controls::editable_combobox::show(
                             ui,
                             ui.make_persistent_id("tag.name"),
                             &mut app.new_tag_name,

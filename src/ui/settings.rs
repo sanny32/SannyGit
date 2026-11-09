@@ -67,7 +67,10 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 {
                     let next_llm = app.settings_window.llm.clone();
                     let secret_changed = app.settings_window.llm_api_key_dirty
-                        || next_llm.store_api_key != app.llm_config.store_api_key;
+                        || next_llm.store_api_key != app.llm_config.store_api_key
+                        || (!next_llm.api_key.is_empty()
+                            && (next_llm.endpoint != app.llm_config.endpoint
+                                || next_llm.model != app.llm_config.model));
                     let saved = if secret_changed {
                         crate::llm::save_api_key(&next_llm)
                     } else {
@@ -355,18 +358,27 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     .show(ui, |ui| {
                         form_label(ui, "Endpoint:");
                         let mut endpoint = app.settings_window.llm.endpoint.clone();
-                        egui::ComboBox::from_id_salt("preferences.llm.endpoint")
-                            .selected_text(endpoint.clone())
-                            .width(ui.available_width())
-                            .show_ui(ui, |ui| {
-                                for provider in crate::llm::PROVIDER_PRESETS {
-                                    ui.selectable_value(
-                                        &mut endpoint,
-                                        provider.endpoint.to_owned(),
-                                        format!("{} — {}", provider.name, provider.endpoint),
-                                    );
-                                }
-                            });
+                        let endpoints: Vec<_> = crate::llm::PROVIDER_PRESETS
+                            .iter()
+                            .map(|provider| provider.endpoint.to_owned())
+                            .collect();
+                        let endpoint_response = super::controls::editable_combobox::show(
+                            ui,
+                            ui.make_persistent_id("preferences.llm.endpoint"),
+                            &mut endpoint,
+                            &endpoints,
+                            ui.available_width(),
+                            palette,
+                            "No provider presets",
+                        );
+                        let preset_selected =
+                            endpoint_response.changed() && !endpoint_response.has_focus();
+                        endpoint_response.clone().help_text(
+                            crate::llm::PROVIDER_PRESETS
+                                .iter()
+                                .find(|provider| provider.endpoint == endpoint)
+                                .map_or("Custom endpoint", |provider| provider.name),
+                        );
                         if endpoint != app.settings_window.llm.endpoint {
                             app.settings_window.llm.endpoint = endpoint;
                             app.settings_window.llm.api_key.clear();
@@ -379,6 +391,14 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                             {
                                 app.settings_window.llm.model = provider.model.to_owned();
                             }
+                        }
+                        // Read only after editing finishes, rather than prompting
+                        // Keychain for every character typed into a custom URL.
+                        if preset_selected || endpoint_response.lost_focus() {
+                            app.settings_window.llm_api_key_loaded = true;
+                            app.settings_window.llm_secret_error =
+                                crate::llm::load_api_key_if_needed(&mut app.settings_window.llm)
+                                    .err();
                         }
                         ui.end_row();
                         form_label(ui, "Model:");
@@ -402,11 +422,14 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     });
                 ui.checkbox(
                     &mut app.settings_window.llm.store_api_key,
-                    format!("Store API key in {}", crate::llm::credential_store_label()),
+                    format!(
+                        "Store API key and model in {}",
+                        crate::llm::credential_store_label()
+                    ),
                 );
                 ui.label(
                     RichText::new(
-                        "Saved keys are loaded when this page is opened or during generation. SANNYGIT_LLM_API_KEY overrides the saved key.",
+                        "Saved keys and models are loaded when this page opens, the endpoint changes, or during generation. SANNYGIT_LLM_API_KEY overrides the saved key.",
                     )
                     .small()
                     .color(palette.muted),
@@ -546,6 +569,65 @@ mod tests {
     use eframe::egui::{
         epaint::ClippedShape, pos2, Event, Modifiers, PointerButton, RawInput, Rect,
     };
+
+    #[test]
+    fn endpoint_accepts_typed_text_and_clears_the_previous_providers_key() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let context = egui::Context::default();
+            crate::theme::install_fonts(&context);
+            theme.apply(&context);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.settings_window.page = SettingsPage::Llm;
+            app.settings_window.llm_api_key_loaded = true;
+            app.settings_window.llm.api_key = "previous-key".into();
+            let render = |app: &mut SannyGitApp, events| {
+                context.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            pos2(0.0, 0.0),
+                            Vec2::new(740.0, 420.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| window_contents(ui, app),
+                )
+            };
+            let mut output = render(&mut app, vec![]);
+            let target = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text)
+                        if text.galley.job.text == crate::llm::DEFAULT_ENDPOINT =>
+                    {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            output.textures_delta.clear();
+            for pressed in [true, false] {
+                let mut output = render(
+                    &mut app,
+                    vec![
+                        Event::PointerMoved(target),
+                        Event::PointerButton {
+                            pos: target,
+                            button: PointerButton::Primary,
+                            pressed,
+                            modifiers: Modifiers::NONE,
+                        },
+                    ],
+                );
+                output.textures_delta.clear();
+            }
+            let mut output = render(&mut app, vec![Event::Text("custom".into())]);
+            output.textures_delta.clear();
+            assert!(app.settings_window.llm.endpoint.contains("custom"));
+            assert!(app.settings_window.llm.api_key.is_empty());
+        }
+    }
 
     #[test]
     fn clicking_tree_labels_and_row_backgrounds_selects_the_page() {

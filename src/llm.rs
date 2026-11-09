@@ -84,6 +84,26 @@ impl Default for Config {
     }
 }
 
+// The model belongs to the credential, since provider defaults may not work
+// with a particular API key. Plain secrets from older versions remain readable.
+#[derive(Deserialize, Serialize)]
+struct SavedCredential {
+    model: String,
+    api_key: String,
+}
+
+fn restore_credential(config: &mut Config, secret: String) -> Result<(), String> {
+    if secret.starts_with('{') {
+        let saved: SavedCredential = serde_json::from_str(&secret)
+            .map_err(|_| "The saved LLM credential is invalid".to_owned())?;
+        config.model = saved.model;
+        config.api_key = saved.api_key;
+    } else {
+        config.api_key = secret;
+    }
+    Ok(())
+}
+
 fn credential_user(endpoint: &str) -> String {
     format!("llm-api-key:{}", chat_completions_endpoint(endpoint))
 }
@@ -214,7 +234,7 @@ pub fn load_api_key(config: &Config) -> Result<Option<String>, String> {
 pub fn load_api_key_if_needed(config: &mut Config) -> Result<(), String> {
     if config.api_key.is_empty() {
         if let Some(api_key) = load_api_key(config)? {
-            config.api_key = api_key;
+            restore_credential(config, api_key)?;
         }
     }
     Ok(())
@@ -225,15 +245,20 @@ pub fn save_api_key(config: &Config) -> Result<(), String> {
     let user = credential_user(&endpoint);
     let entry = credential_entry(&user)?;
     if config.store_api_key && !config.api_key.is_empty() {
+        let secret = serde_json::to_string(&SavedCredential {
+            model: config.model.trim().to_owned(),
+            api_key: config.api_key.clone(),
+        })
+        .map_err(|_| "Cannot encode the LLM credential".to_owned())?;
         #[cfg(target_os = "macos")]
-        if !macos_credentials::save(&user, &config.api_key)? {
+        if !macos_credentials::save(&user, &secret)? {
             entry
-                .set_password(&config.api_key)
+                .set_password(&secret)
                 .map_err(|error| format!("Cannot save the LLM API key securely: {error}"))?;
         }
         #[cfg(not(target_os = "macos"))]
         entry
-            .set_password(&config.api_key)
+            .set_password(&secret)
             .map_err(|error| format!("Cannot save the LLM API key securely: {error}"))?;
     } else {
         #[cfg(target_os = "macos")]
@@ -439,6 +464,39 @@ mod tests {
             credential_user(DEFAULT_ENDPOINT),
             credential_user("https://api.deepseek.com/v1/chat/completions")
         );
+    }
+
+    #[test]
+    fn saved_credentials_restore_the_model_and_key_together() {
+        let secret = serde_json::to_string(&SavedCredential {
+            model: "custom-model".into(),
+            api_key: "test-key".into(),
+        })
+        .unwrap();
+        let mut config = Config::default();
+        restore_credential(&mut config, secret).unwrap();
+        assert_eq!(config.model, "custom-model");
+        assert_eq!(config.api_key, "test-key");
+    }
+
+    #[test]
+    fn legacy_keys_keep_the_configured_model() {
+        let mut config = Config {
+            model: "existing-model".into(),
+            ..Config::default()
+        };
+        restore_credential(&mut config, "legacy-key".into()).unwrap();
+        assert_eq!(config.model, "existing-model");
+        assert_eq!(config.api_key, "legacy-key");
+    }
+
+    #[test]
+    fn invalid_saved_credentials_do_not_change_the_configuration_or_expose_secrets() {
+        let mut config = Config::default();
+        let original = config.clone();
+        let error = restore_credential(&mut config, r#"{"api_key":"secret"}"#.into()).unwrap_err();
+        assert_eq!(config, original);
+        assert!(!error.contains("secret"));
     }
 
     #[test]

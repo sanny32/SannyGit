@@ -1,7 +1,7 @@
 //! Shared SannyGit controls. Keep repository state and actions in the calling panels.
 //! Prefer these controls for application styling; use egui directly for standard widgets.
 pub(super) mod dialog_style;
-pub(super) mod editable_combo_box;
+pub(super) mod editable_combobox;
 pub(super) mod icons;
 pub(super) mod tooltips;
 

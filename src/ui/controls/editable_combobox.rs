@@ -80,7 +80,7 @@ pub fn show(
                 }
             }
         });
-    response
+    response.union(editor)
 }
 
 #[cfg(test)]
