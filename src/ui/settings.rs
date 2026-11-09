@@ -1,5 +1,4 @@
 use super::controls::tooltips::TooltipResponse;
-use super::controls::EditableText;
 use crate::{
     app::{SannyGitApp, SettingsPage},
     theme::{semibold_family, InterfaceStyle, Palette, ThemeChoice},
@@ -543,14 +542,12 @@ fn llm_form(
                     form_label(ui, "Model:");
                     ui.add(
                         egui::TextEdit::singleline(&mut draft.config.model)
-                            .editable()
                             .desired_width(f32::INFINITY),
                     );
                     ui.end_row();
                     form_label(ui, "API key:");
                     let api_key_response = ui.add(
                         egui::TextEdit::singleline(&mut draft.config.api_key)
-                            .editable()
                             .password(true)
                             .desired_width(f32::INFINITY),
                     );
@@ -586,9 +583,7 @@ fn llm_form(
                 .show(ui, |ui| {
                     ui.add_sized(
                         [ui.available_width(), editor_height],
-                        egui::TextEdit::multiline(&mut draft.config.instructions)
-                            .desired_rows(1)
-                            .editable(),
+                        egui::TextEdit::multiline(&mut draft.config.instructions).desired_rows(1),
                     );
                 });
         });
@@ -1249,13 +1244,13 @@ mod tests {
         })
     }
 
-    fn white_rect_count(shapes: &[ClippedShape]) -> usize {
+    fn filled_rect_count(shapes: &[ClippedShape], color: egui::Color32) -> usize {
         shapes
             .iter()
             .filter(|shape| {
                 matches!(
                     &shape.shape,
-                    egui::Shape::Rect(rect) if rect.fill == egui::Color32::WHITE
+                    egui::Shape::Rect(rect) if rect.fill == color
                 )
             })
             .count()
@@ -1307,7 +1302,7 @@ mod tests {
                 }
                 if page == SettingsPage::Llm {
                     assert!(visible_text(&output.shapes, crate::llm::DEFAULT_ENDPOINT));
-                    assert!(white_rect_count(&output.shapes) >= 3);
+                    assert!(filled_rect_count(&output.shapes, app.palette().editor) >= 3);
                     for label in ["Endpoint:", "Model:", "API key:"] {
                         assert_eq!(text_rows(&output.shapes, label), Some(1));
                     }

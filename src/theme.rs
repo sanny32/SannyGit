@@ -20,33 +20,17 @@ impl InterfaceStyle {
 
     pub fn palette(self, theme: ThemeChoice) -> Palette {
         let mut palette = theme.palette();
-        if self == Self::Modern {
-            match theme {
-                ThemeChoice::Light => {
-                    palette.background = Color32::from_rgb(241, 244, 249);
-                    palette.panel = Color32::from_rgb(252, 253, 255);
-                    palette.panel_alt = Color32::from_rgb(246, 248, 252);
-                    palette.header = Color32::from_rgb(246, 248, 252);
-                    palette.editor = palette.panel;
-                    palette.border = Color32::from_rgb(218, 225, 237);
-                    palette.text = Color32::from_rgb(20, 28, 45);
-                    palette.muted = Color32::from_rgb(111, 122, 145);
-                    palette.selection = Color32::from_rgb(225, 237, 254);
-                    palette.hover = Color32::from_rgb(235, 242, 253);
-                }
-                ThemeChoice::Dark => {
-                    palette.background = Color32::from_rgb(23, 28, 39);
-                    palette.panel = Color32::from_rgb(30, 37, 50);
-                    palette.panel_alt = Color32::from_rgb(34, 42, 57);
-                    palette.header = palette.panel_alt;
-                    palette.editor = palette.panel;
-                    palette.border = Color32::from_rgb(55, 67, 87);
-                    palette.text = Color32::from_rgb(225, 232, 245);
-                    palette.muted = Color32::from_rgb(145, 159, 183);
-                    palette.selection = Color32::from_rgb(35, 66, 107);
-                    palette.hover = Color32::from_rgb(40, 52, 73);
-                }
-            }
+        if self == Self::Modern && theme == ThemeChoice::Light {
+            palette.background = Color32::from_rgb(241, 244, 249);
+            palette.panel = Color32::from_rgb(252, 253, 255);
+            palette.panel_alt = Color32::from_rgb(246, 248, 252);
+            palette.header = Color32::from_rgb(246, 248, 252);
+            palette.editor = palette.panel;
+            palette.border = Color32::from_rgb(218, 225, 237);
+            palette.text = Color32::from_rgb(20, 28, 45);
+            palette.muted = Color32::from_rgb(111, 122, 145);
+            palette.selection = Color32::from_rgb(225, 237, 254);
+            palette.hover = Color32::from_rgb(235, 242, 253);
         }
         palette.panel_radius = if self == Self::Modern { 7 } else { 0 };
         palette
@@ -178,6 +162,7 @@ impl ThemeChoice {
         visuals.panel_fill = palette.panel;
         visuals.window_fill = palette.panel;
         visuals.extreme_bg_color = palette.background;
+        visuals.text_edit_bg_color = Some(palette.editor);
         visuals.faint_bg_color = palette.panel_alt;
         visuals.hyperlink_color = palette.accent;
         visuals.selection.bg_fill = palette.selection;
@@ -294,20 +279,20 @@ impl Palette {
         Self {
             panel_radius: 0,
             brand: Color32::from_rgb(244, 91, 53),
-            background: Color32::from_rgb(30, 30, 32),
-            panel: Color32::from_rgb(37, 37, 39),
-            panel_alt: Color32::from_rgb(43, 43, 46),
-            header: Color32::from_rgb(45, 45, 48),
-            editor: Color32::from_rgb(43, 43, 46),
-            border: Color32::from_rgb(65, 65, 69),
-            text: Color32::from_rgb(218, 229, 241),
-            muted: Color32::from_rgb(128, 145, 166),
+            background: Color32::from_gray(34),
+            panel: Color32::from_gray(39),
+            panel_alt: Color32::from_gray(43),
+            header: Color32::from_gray(40),
+            editor: Color32::from_gray(34),
+            border: Color32::from_gray(58),
+            text: Color32::from_gray(224),
+            muted: Color32::from_gray(151),
             accent: Color32::from_rgb(28, 131, 242),
             outgoing: Color32::from_rgb(245, 177, 87),
             incoming: Color32::from_rgb(126, 214, 160),
             on_accent: Color32::WHITE,
-            selection: Color32::from_rgb(23, 63, 111),
-            hover: Color32::from_rgb(35, 48, 64),
+            selection: Color32::from_gray(72),
+            hover: Color32::from_gray(53),
             added_background: Color32::from_rgb(23, 55, 34),
             added_text: Color32::from_rgb(151, 234, 139),
             removed_background: Color32::from_rgb(62, 30, 36),
@@ -316,7 +301,7 @@ impl Palette {
             status_removed: Color32::from_rgb(147, 65, 75),
             modified: Color32::from_rgb(236, 190, 82),
             modified_background: Color32::from_rgb(113, 87, 41),
-            hunk_background: Color32::from_rgb(28, 47, 67),
+            hunk_background: Color32::from_gray(45),
             graph_main: Color32::from_rgb(39, 190, 226),
             graph_branch: Color32::from_rgb(248, 82, 76),
             graph_root: Color32::from_rgb(79, 196, 72),
@@ -402,6 +387,11 @@ mod tests {
                     let style = ui.style();
                     assert_eq!(style.visuals.dark_mode, choice == ThemeChoice::Dark);
                     assert_eq!(style.visuals.panel_fill, interface.palette(choice).panel);
+                    assert_eq!(
+                        style.visuals.text_edit_bg_color(),
+                        interface.palette(choice).editor
+                    );
+                    assert_eq!(style.visuals.text_color(), interface.palette(choice).text);
                     assert_eq!(
                         style.visuals.widgets.inactive.corner_radius,
                         egui::CornerRadius::same(if interface == InterfaceStyle::Modern {

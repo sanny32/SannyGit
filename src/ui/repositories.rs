@@ -1,6 +1,5 @@
 use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
-use super::controls::EditableText;
 use crate::{
     app::{RepositoryJob, SannyGitApp},
     menu::MenuAction,
@@ -24,7 +23,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     ui.horizontal(|ui| {
                         ui.label("Repository:");
                         let width = (ui.available_width() - 36.0).max(100.0);
-                        ui.add_sized([width, 28.0], TextEdit::singleline(&mut app.repository_path).editable());
+                        ui.add_sized([width, 28.0], TextEdit::singleline(&mut app.repository_path));
                         super::clone_dialog::choose_folder(ui, &mut app.repository_path);
                     });
                 });

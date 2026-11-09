@@ -7,17 +7,6 @@ pub(super) mod tooltips;
 
 use eframe::egui::{Align, Layout, Response, Sense, Ui, UiBuilder, Vec2};
 
-pub(crate) trait EditableText {
-    fn editable(self) -> Self;
-}
-
-impl EditableText for eframe::egui::TextEdit<'_> {
-    fn editable(self) -> Self {
-        self.background_color(eframe::egui::Color32::WHITE)
-            .text_color(eframe::egui::Color32::from_rgb(24, 24, 24))
-    }
-}
-
 pub fn selectable_row(
     ui: &mut Ui,
     selected: bool,

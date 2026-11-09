@@ -1,4 +1,3 @@
-use super::controls::EditableText;
 use crate::app::{RepositoryDialog as Dialog, RepositoryJob as Job, SannyGitApp};
 use eframe::egui::{self, Button, ComboBox, RichText, ScrollArea, TextEdit, Ui, Window};
 
@@ -81,12 +80,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             let busy = app.busy();
             ui.add_enabled_ui(!busy, |ui| match dialog {
                 Dialog::Group => {
-                    ui.label("Group name"); ui.add(TextEdit::singleline(&mut app.manager.group_name).editable().desired_width(f32::INFINITY));
+                    ui.label("Group name"); ui.add(TextEdit::singleline(&mut app.manager.group_name).desired_width(f32::INFINITY));
                     if ui.add_enabled(!app.manager.group_name.trim().is_empty(), Button::new("Add Group")).clicked() { app.add_group(); }
                 }
                 Dialog::Clone => {},
                 Dialog::Search => {
-                    ui.label("Search directory"); ui.add(TextEdit::singleline(&mut app.manager.search_root).editable().desired_width(f32::INFINITY));
+                    ui.label("Search directory"); ui.add(TextEdit::singleline(&mut app.manager.search_root).desired_width(f32::INFINITY));
                     ui.horizontal(|ui| { ui.label("Maximum depth"); ui.add(egui::DragValue::new(&mut app.manager.search_depth).range(0..=16)); });
                     if ui.add_enabled(!app.manager.search_root.is_empty(), Button::new("Search")).clicked() {
                         app.manager.found.clear(); app.manager.search_summary.clear();
@@ -119,10 +118,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         });
                     }
                     ui.separator(); ui.label("Add worktree: destination (new directory)");
-                    ui.add(TextEdit::singleline(&mut app.manager.destination).editable().desired_width(f32::INFINITY));
+                    ui.add(TextEdit::singleline(&mut app.manager.destination).desired_width(f32::INFINITY));
                     ui.checkbox(&mut app.manager.worktree_new_branch, "Create a new branch from HEAD");
                     if app.manager.worktree_new_branch {
-                        ui.label("New branch name"); ui.add(TextEdit::singleline(&mut app.manager.worktree_branch).editable().desired_width(f32::INFINITY));
+                        ui.label("New branch name"); ui.add(TextEdit::singleline(&mut app.manager.worktree_branch).desired_width(f32::INFINITY));
                     } else {
                         ComboBox::from_id_salt("worktree.branch").selected_text(if app.manager.worktree_branch.is_empty() { "Select a local branch" } else { &app.manager.worktree_branch }).show_ui(ui, |ui| {
                             for branch in app.refs.iter().filter(|r| r.kind == crate::models::RefKind::Local) { ui.selectable_value(&mut app.manager.worktree_branch, branch.name.clone(), &branch.name); }
@@ -209,11 +208,11 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                     .spacing([8.0, 4.0])
                                     .show(ui, |ui| {
                                         ui.label("Full Name:");
-                                        ui.add(TextEdit::singleline(&mut settings.name).editable()
+                                        ui.add(TextEdit::singleline(&mut settings.name)
                                             .desired_width(ui.available_width()));
                                         ui.end_row();
                                         ui.label("Git Email:");
-                                        ui.add(TextEdit::singleline(&mut settings.email).editable()
+                                        ui.add(TextEdit::singleline(&mut settings.email)
                                             .desired_width(ui.available_width()));
                                         ui.end_row();
                                     });

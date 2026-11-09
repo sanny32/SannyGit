@@ -1,5 +1,4 @@
 use super::controls::tooltips::TooltipResponse;
-use super::controls::EditableText;
 use crate::{app::SannyGitApp, remotes::Operation};
 use eframe::egui::{self, Align, ComboBox, Layout, RichText, TextEdit};
 
@@ -40,7 +39,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                         }); ui.end_row();
                         if dialog.operation != Operation::Fetch {
                             ui.label("Local branch:"); ui.label(state.branch.as_deref().unwrap_or("No local branch with commits checked out")); ui.end_row();
-                            ui.label("Remote branch:"); ui.add_sized([310.0,28.0], TextEdit::singleline(&mut dialog.branch).editable()); ui.end_row();
+                            ui.label("Remote branch:"); ui.add_sized([310.0,28.0], TextEdit::singleline(&mut dialog.branch)); ui.end_row();
                         }
                     });
                     if dialog.operation == Operation::Push { ui.checkbox(&mut dialog.set_upstream, "Set as upstream (track this remote branch)"); }
@@ -163,9 +162,7 @@ fn push_confirmation(
                                         .wrap_mode(egui::TextWrapMode::Extend),
                                 );
                                 ui.add(
-                                    TextEdit::singleline(&mut dialog.branch)
-                                        .editable()
-                                        .desired_width(220.0),
+                                    TextEdit::singleline(&mut dialog.branch).desired_width(220.0),
                                 );
                                 ui.end_row();
                             });

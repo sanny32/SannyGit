@@ -1,5 +1,4 @@
 use super::controls::tooltips::TooltipResponse;
-use super::controls::EditableText;
 use crate::{
     app::SannyGitApp,
     theme::{semibold_family, Palette},
@@ -101,7 +100,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 let editor = ui.add_sized(
                     [width, editor_height],
                     TextEdit::multiline(&mut app.commit_message)
-                        .editable()
                         .id(eframe::egui::Id::unique("commit.message"))
                         .desired_rows(1)
                         .desired_width(f32::INFINITY)

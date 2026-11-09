@@ -1,6 +1,5 @@
 use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
-use super::controls::EditableText;
 use crate::{
     app::{RepositoryJob, SannyGitApp},
     repository,
@@ -208,7 +207,7 @@ fn source_page(ui: &mut Ui, app: &mut SannyGitApp) {
             let width = ui.available_width();
             ui.add_sized(
                 [width, 28.0],
-                TextEdit::singleline(&mut app.manager.clone_source).editable(),
+                TextEdit::singleline(&mut app.manager.clone_source),
             );
             ui.label(RichText::new("e.g. https://server/path/to/repository").small().color(app.palette().muted));
         });
@@ -261,7 +260,7 @@ fn directory_page(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.horizontal(|ui| {
                 ui.add_sized(
                     [388.0, 28.0],
-                    TextEdit::singleline(&mut app.manager.clone_parent).editable(),
+                    TextEdit::singleline(&mut app.manager.clone_parent),
                 );
                 choose_folder(ui, &mut app.manager.clone_parent);
             });
@@ -269,7 +268,7 @@ fn directory_page(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.label("Directory Name:");
             ui.add_sized(
                 [388.0, 28.0],
-                TextEdit::singleline(&mut app.manager.clone_name).editable(),
+                TextEdit::singleline(&mut app.manager.clone_name),
             );
             ui.end_row();
             ui.label("Clone Into:");
