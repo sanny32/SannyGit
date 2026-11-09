@@ -2,6 +2,7 @@ mod remotes;
 pub use remotes::RemoteDialog;
 mod repositories;
 mod tracking;
+mod working_tree;
 pub use repositories::{Dialog as RepositoryDialog, Job as RepositoryJob, RepositoryManager};
 
 use std::{
@@ -144,6 +145,7 @@ pub struct SannyGitApp {
     pub error: Option<String>,
     pub status: String,
     worker: Option<Receiver<WorkerResult>>,
+    working_tree: working_tree::Monitor,
     loaded_diff: Option<usize>,
     pub diff_preview: Option<crate::models::DiffPreview>,
     pub state_current: bool,
@@ -285,6 +287,7 @@ impl SannyGitApp {
             error: None,
             status: "Ready".into(),
             worker: None,
+            working_tree: working_tree::Monitor::default(),
             loaded_diff: None,
             diff_preview: None,
             state_current: false,
@@ -313,6 +316,8 @@ impl SannyGitApp {
     }
 
     fn start_worker(&mut self, job: impl FnOnce() -> WorkerResult + Send + 'static) -> bool {
+        // A user operation supersedes any in-flight automatic read.
+        self.working_tree.invalidate();
         self.tracking.cancel();
         let (sender, receiver) = mpsc::channel();
         match std::thread::Builder::new()
@@ -852,12 +857,8 @@ impl SannyGitApp {
             .any(|c| c.kind == crate::models::ChangeKind::Conflicted)
         {
             Some("Resolve all conflicts before committing")
-        } else if !self
-            .changes
-            .iter()
-            .any(|c| c.staged || (c.unstaged && c.kind != crate::models::ChangeKind::Untracked))
-        {
-            Some("Change a tracked file or stage a new file")
+        } else if self.changes.is_empty() {
+            Some("There are no changes to commit")
         } else if self.commit_message.trim().is_empty() {
             Some("Enter a commit message")
         } else if self.commit_message.contains('\0') || self.commit_message.len() > 65_536 {
@@ -896,11 +897,8 @@ impl SannyGitApp {
             Some("Open a repository first")
         } else if !self.state_current {
             Some("Refresh the repository before generating a message")
-        } else if !self.changes.iter().any(|change| {
-            change.staged
-                || (change.unstaged && change.kind != crate::models::ChangeKind::Untracked)
-        }) {
-            Some("Change a tracked file or stage a new file")
+        } else if self.changes.is_empty() {
+            Some("There are no changes to describe")
         } else {
             None
         }
@@ -1189,6 +1187,7 @@ impl eframe::App for SannyGitApp {
             self.applied_theme = self.theme;
         }
         self.poll_worker();
+        self.poll_working_tree();
         let root = self
             .repositories
             .get(self.selected_repository)
@@ -1236,6 +1235,7 @@ impl eframe::App for SannyGitApp {
         self.load_refs();
         self.load_history();
         self.load_commit_preview();
+        self.check_working_tree(ui.ctx());
         #[cfg(target_os = "macos")]
         if let Some(menu) = &self.native_menu {
             menu.update_enabled(|action| self.menu_action_enabled(action));
@@ -1367,7 +1367,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_accepts_tracked_unstaged_changes_but_not_only_untracked_files() {
+    fn commit_and_generation_accept_unstaged_and_untracked_files() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         assert!(app.commit_blocker().is_some());
         app.repositories = crate::mock_data::repositories();
@@ -1384,7 +1384,12 @@ mod tests {
         for change in &mut app.changes {
             change.kind = crate::models::ChangeKind::Untracked;
         }
-        assert!(app.commit_blocker().unwrap().contains("tracked file"));
+        assert!(app.commit_blocker().is_none());
+        assert!(app.generate_commit_message_blocker().is_none());
+        let changes = std::mem::take(&mut app.changes);
+        assert!(app.commit_blocker().is_some());
+        assert!(app.generate_commit_message_blocker().is_some());
+        app.changes = changes;
         app.changes[0].kind = crate::models::ChangeKind::Modified;
         app.commit_message = " \n\t".into();
         assert!(app.commit_blocker().unwrap().contains("message"));

@@ -73,7 +73,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     .frame(false)
                     .min_size(Vec2::new(26.0, 26.0)),
                 )
-                .help_text("Generate a commit message from all staged changes")
+                .help_text("Generate a commit message from all changes, including new files")
                 .disabled_help_text(blocker.unwrap_or(""))
                 .clicked()
             {
@@ -121,7 +121,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             blocker.is_none(),
                             Button::new("Commit").min_size(Vec2::new(72.0, 24.0)),
                         )
-                        .help_text("Commit staged changes and all tracked working-tree changes")
+                        .help_text("Commit all changes, including new files")
                         .disabled_help_text(blocker.unwrap_or(""))
                         .clicked()
                     {

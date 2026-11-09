@@ -289,7 +289,7 @@ pub fn generate(config: &Config, patch: &str) -> Result<String, String> {
     }
     if patch.len() > MAX_DIFF_BYTES {
         return Err(format!(
-            "The staged diff exceeds the {} KiB LLM request limit",
+            "The commit diff exceeds the {} KiB LLM request limit",
             MAX_DIFF_BYTES / 1024
         ));
     }
@@ -341,7 +341,7 @@ fn request_body(config: &Config, patch: &str) -> Value {
         "model": config.model.trim(),
         "messages": [
             { "role": "system", "content": config.instructions.trim() },
-            { "role": "user", "content": format!("Generate a commit message for this staged diff:\n\n{patch}") }
+            { "role": "user", "content": format!("Generate a commit message for these changes:\n\n{patch}") }
         ]
     })
 }

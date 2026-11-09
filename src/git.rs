@@ -241,28 +241,40 @@ pub fn validate_message(message: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Returns the tracked changes that the next commit operation will include.
+/// Returns all changes, including new files, that the next commit will include.
 /// The patch is loaded only after an explicit UI action and is never logged.
 pub fn commit_patch(root: &Path) -> Result<String, String> {
     let has_head = !run(root, &["rev-parse", "--revs-only", "HEAD"])?.is_empty();
-    if has_head {
-        return text(run(
+    let mut patch = if has_head {
+        text(run(
             root,
             &["diff", "HEAD", "--no-ext-diff", "--no-textconv"],
-        )?);
+        )?)?
+    } else {
+        let mut patch = text(run(
+            root,
+            &["diff", "--cached", "--no-ext-diff", "--no-textconv"],
+        )?)?;
+        patch.push_str(&text(run(
+            root,
+            &["diff", "--no-ext-diff", "--no-textconv"],
+        )?)?);
+        patch
+    };
+    // Preview new files without staging them or modifying the real index.
+    for change in load(root)?.changes {
+        if change.kind == ChangeKind::Untracked {
+            writeln!(patch, "\nNew file: {}", change.path).map_err(|e| e.to_string())?;
+            patch.push_str(&diff(root, &change.path, change.kind, None)?);
+            if patch.len() > OUTPUT_LIMIT {
+                return Err("Commit diff exceeds the 2 MiB limit".into());
+            }
+        }
     }
-    let mut patch = text(run(
-        root,
-        &["diff", "--cached", "--no-ext-diff", "--no-textconv"],
-    )?)?;
-    patch.push_str(&text(run(
-        root,
-        &["diff", "--no-ext-diff", "--no-textconv"],
-    )?)?);
     Ok(patch)
 }
 
-/// Commits the index and all tracked working-tree changes after an explicit UI action.
+/// Commits all non-ignored changes after an explicit UI action, including new files.
 pub fn commit(root: &Path, message: &str) -> Result<(), String> {
     validate_message(message)?;
     let snapshot = load(root)?;
@@ -273,18 +285,15 @@ pub fn commit(root: &Path, message: &str) -> Result<(), String> {
     {
         return Err("Resolve all conflicts before committing.".into());
     }
-    if !snapshot
-        .changes
-        .iter()
-        .any(|c| c.staged || (c.unstaged && c.kind != ChangeKind::Untracked))
-    {
-        return Err("There are no tracked changes to commit. Stage new files first.".into());
+    if snapshot.changes.is_empty() {
+        return Err("There are no changes to commit.".into());
     }
+    run(root, &["add", "--all"])?;
     // stdin preserves multiline messages without a shell or a message file.
     // Git's configured identity, hooks and signing remain in effect.
     run_with_input(
         root,
-        &["commit", "--all", "--file=-", "--cleanup=whitespace"],
+        &["commit", "--file=-", "--cleanup=whitespace"],
         Some(message.as_bytes()),
     )
     .map(|_| ())
@@ -560,17 +569,46 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn commit_patch_contains_tracked_worktree_changes_but_not_untracked_files() {
+    fn commit_patch_includes_new_files_without_changing_the_index() {
         let repo = TempRepo::new();
         repo.write("file.txt", "base\n");
         repo.git(&["add", "file.txt"]);
         repo.git(&["commit", "-m", "base"]);
         repo.write("file.txt", "unstaged\n");
-        repo.write("untracked.txt", "private\n");
+        repo.write("untracked.txt", "new contents\n");
+        repo.write(".gitignore", "ignored.txt\n");
+        repo.write("ignored.txt", "ignored contents\n");
+        let before = repo.git(&["status", "--porcelain=v1", "-z"]);
 
         let patch = commit_patch(&repo.0).unwrap();
         assert!(patch.contains("+unstaged"));
-        assert!(!patch.contains("private"));
+        assert!(patch.contains("untracked.txt"));
+        assert!(patch.contains("+new contents"));
+        assert!(!patch.contains("ignored contents"));
+        assert_eq!(repo.git(&["status", "--porcelain=v1", "-z"]), before);
+    }
+
+    #[test]
+    fn new_files_can_generate_a_patch_and_create_the_initial_commit() {
+        let repo = TempRepo::new();
+        repo.write("new file.txt", "initial contents\n");
+        repo.write(".gitignore", "ignored\n");
+        repo.write("ignored", "keep private\n");
+        let patch = commit_patch(&repo.0).unwrap();
+        assert!(patch.contains("new file.txt"));
+        assert!(patch.contains("+initial contents"));
+        assert!(!patch.contains("keep private"));
+        assert!(load(&repo.0).unwrap().changes.iter().all(|c| !c.staged));
+        commit(&repo.0, "Add initial files").unwrap();
+        assert_eq!(
+            repo.git(&["show", "HEAD:new file.txt"]),
+            "initial contents\n"
+        );
+        assert!(!repo
+            .git(&["ls-tree", "--name-only", "HEAD"])
+            .lines()
+            .any(|path| path == "ignored"));
+        assert!(load(&repo.0).unwrap().changes.is_empty());
     }
 
     #[test]
@@ -796,7 +834,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn commit_includes_tracked_unstaged_changes_and_preserves_untracked_files() {
+    fn commit_includes_tracked_unstaged_changes_and_new_files() {
         let repo = TempRepo::new();
         repo.write("file", "base\n");
         repo.git(&["add", "file"]);
@@ -807,16 +845,18 @@ pub(crate) mod tests {
         commit(&repo.0, message).unwrap();
         assert_eq!(repo.git(&["show", "HEAD:file"]), "working tree\n");
         assert_eq!(repo.git(&["log", "-1", "--format=%B"]).trim_end(), message);
-        assert_eq!(repo.git(&["ls-tree", "--name-only", "HEAD"]), "file\n");
+        assert_eq!(
+            repo.git(&["ls-tree", "--name-only", "HEAD"]),
+            "file\nother\n"
+        );
+        assert_eq!(repo.git(&["show", "HEAD:other"]), "untracked\n");
         assert_eq!(
             std::fs::read_to_string(repo.0.join("other")).unwrap(),
             "untracked\n"
         );
         assert!(!repo.0.join("SHOULD_NOT_EXIST").exists());
         let changes = load(&repo.0).unwrap().changes;
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0].kind, ChangeKind::Untracked);
-        assert!(!changes[0].staged);
+        assert!(changes.is_empty());
     }
 
     #[test]
@@ -858,11 +898,14 @@ pub(crate) mod tests {
             assert!(validate_message(message).is_err());
         }
         assert!(validate_message(&"a".repeat(65_537)).is_err());
-        repo.write("file", "content\n");
-        assert!(commit(&repo.0, "Nothing tracked")
+        assert!(commit(&repo.0, "Nothing changed")
             .unwrap_err()
-            .contains("Stage new files"));
+            .contains("no changes"));
+        repo.write("file", "content\n");
         std::fs::write(repo.0.join(".git/index.lock"), "locked").unwrap();
+        assert!(commit(&repo.0, "Add new file")
+            .unwrap_err()
+            .contains("locked"));
         assert!(set_staged(&repo.0, "file", true)
             .unwrap_err()
             .contains("locked"));

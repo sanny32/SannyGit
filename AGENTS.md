@@ -70,6 +70,10 @@ or mix Git logic with panel rendering.
   runtime errors.
 - Keep mock data in `src/mock_data.rs`. Do not present it as real Git results;
   update the status description in README when connecting a real backend.
+- Keep `README.md` concise. Add only important project information, such as
+  setup, build and run instructions, major capabilities, and significant
+  limitations. Do not document minor behavior changes, routine fixes, or
+  implementation details there; README is not a changelog.
 - Do not change `.gitignore` rules or the `Cargo.lock` tracking policy without
   a task-related reason. Do not add `target/` or other build artifacts.
 
