@@ -280,17 +280,6 @@ pub fn save_api_key(config: &Config) -> Result<(), String> {
     }
 }
 
-pub fn credential_store_label() -> &'static str {
-    #[cfg(target_os = "macos")]
-    return "macOS Keychain with Touch ID";
-    #[cfg(target_os = "windows")]
-    return "Windows Credential Manager";
-    #[cfg(target_os = "linux")]
-    return "Secret Service";
-    #[allow(unreachable_code)]
-    "OS credential manager"
-}
-
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
         let endpoint = self.endpoint.trim();

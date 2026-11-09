@@ -44,10 +44,16 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     CentralPanel::default()
         .frame(Frame::new().fill(palette.header).inner_margin(12))
         .show(ui, |ui| {
+            let page_height = ui.available_height();
             ScrollArea::vertical()
                 .id_salt("preferences.page")
                 .auto_shrink([false, false])
-                .show(ui, |ui| page(ui, app, palette));
+                .show(ui, |ui| {
+                    if app.settings_window.page == SettingsPage::Llm {
+                        ui.set_max_height(page_height);
+                    }
+                    page(ui, app, palette);
+                });
         });
 }
 
@@ -422,17 +428,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     });
                 ui.checkbox(
                     &mut app.settings_window.llm.store_api_key,
-                    format!(
-                        "Store API key and model in {}",
-                        crate::llm::credential_store_label()
-                    ),
-                );
-                ui.label(
-                    RichText::new(
-                        "Saved keys and models are loaded when this page opens, the endpoint changes, or during generation. SANNYGIT_LLM_API_KEY overrides the saved key.",
-                    )
-                    .small()
-                    .color(palette.muted),
+                    "Store API key and model securely",
                 );
                 let secret_error = app
                     .settings_window
@@ -452,7 +448,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 ui.add_space(6.0);
                 ui.label("Generation instructions:");
                 ui.add_sized(
-                    [ui.available_width(), 76.0],
+                    [ui.available_width(), ui.available_height().max(76.0)],
                     egui::TextEdit::multiline(&mut app.settings_window.llm.instructions).editable(),
                 );
             });

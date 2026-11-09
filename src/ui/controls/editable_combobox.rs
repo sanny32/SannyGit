@@ -1,4 +1,3 @@
-use super::icons::{self, Icon};
 use crate::theme::Palette;
 use eframe::egui::{
     self, Align2, Frame, Id, Popup, Rect, Response, Sense, StrokeKind, TextEdit, Ui,
@@ -31,11 +30,11 @@ pub fn show(
         ),
         StrokeKind::Inside,
     );
-    let button_rect = Rect::from_min_max(egui::pos2(rect.right() - 24.0, rect.top()), rect.max);
-    ui.painter().vline(
-        button_rect.left(),
-        rect.y_range().shrink(1.0),
-        (1.0, palette.border),
+    let icon_width = ui.spacing().icon_width;
+    let right_padding = ui.spacing().button_padding.x;
+    let button_rect = Rect::from_min_max(
+        egui::pos2(rect.right() - icon_width - 2.0 * right_padding, rect.top()),
+        rect.max,
     );
     // Match the theme's 26-point editor minimum: a shorter inset rect expands
     // downward and shifts the text below the center, especially at Retina scale.
@@ -54,10 +53,25 @@ pub fn show(
             .text_color(palette.text),
     );
     let button = ui.interact(button_rect, id.with("arrow"), Sense::click());
-    icons::image(Icon::Chevron, palette.text, 12.0).paint_at(
-        ui,
-        Rect::from_center_size(button_rect.center(), egui::Vec2::splat(12.0)),
+    // Match egui's standard ComboBox icon geometry and interaction color.
+    let visuals = ui.style().interact(&button);
+    let icon_rect = Rect::from_center_size(
+        egui::pos2(
+            rect.right() - right_padding - icon_width / 2.0,
+            rect.center().y,
+        ),
+        egui::Vec2::splat(icon_width),
+    )
+    .expand(visuals.expansion);
+    let triangle_rect = Rect::from_center_size(
+        icon_rect.center(),
+        egui::vec2(icon_rect.width() * 0.7, icon_rect.height() * 0.45),
     );
+    ui.painter().add(egui::Shape::rotated_triangle(
+        triangle_rect,
+        0.0,
+        visuals.fg_stroke.color,
+    ));
     let mut response = response.union(button);
     if editor.changed() {
         response.mark_changed();
