@@ -1,5 +1,5 @@
-use super::icons::{self, Icon};
-use super::tooltips::TooltipResponse;
+use super::controls::icons::{self, Icon};
+use super::controls::tooltips::TooltipResponse;
 use crate::app::SannyGitApp;
 use eframe::egui::{Align, Frame, Layout, Margin, Panel, RichText, Ui};
 

@@ -1,5 +1,5 @@
-use super::tooltips::TooltipResponse;
-use super::EditableText;
+use super::controls::tooltips::TooltipResponse;
+use super::controls::EditableText;
 use crate::{
     app::SannyGitApp,
     theme::{semibold_family, Palette},
@@ -34,8 +34,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             eframe::egui::containers::menu::MenuButton::from_button(
-                Button::image(super::icons::image(
-                    super::icons::Icon::Chevron,
+                Button::image(super::controls::icons::image(
+                    super::controls::icons::Icon::Chevron,
                     palette.muted,
                     14.0,
                 ))
@@ -65,8 +65,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             if ui
                 .add_enabled(
                     blocker.is_none(),
-                    Button::image(super::icons::image(
-                        super::icons::Icon::Sparkles,
+                    Button::image(super::controls::icons::image(
+                        super::controls::icons::Icon::Sparkles,
                         palette.muted,
                         20.0,
                     ))

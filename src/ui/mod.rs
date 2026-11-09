@@ -2,9 +2,8 @@ mod branches;
 mod changes;
 mod clone_dialog;
 mod commit_panel;
-mod dialog_style;
+mod controls;
 mod diff_view;
-mod icons;
 mod journal;
 mod remote_dialog;
 mod repositories;
@@ -12,23 +11,12 @@ mod repository_dialogs;
 mod settings;
 mod status_bar;
 mod toolbar;
-mod tooltips;
 
-pub(super) trait EditableText {
-    fn editable(self) -> Self;
-}
-
-impl EditableText for eframe::egui::TextEdit<'_> {
-    fn editable(self) -> Self {
-        self.background_color(eframe::egui::Color32::WHITE)
-            .text_color(eframe::egui::Color32::from_rgb(24, 24, 24))
-    }
-}
+use controls::dialog_style;
 
 use crate::{app::SannyGitApp, theme::Palette};
 use eframe::egui::{
-    Align, CentralPanel, Frame, InnerResponse, Layout, Margin, Panel, Response, Sense, Ui,
-    UiBuilder, Vec2,
+    Align, CentralPanel, Frame, InnerResponse, Layout, Margin, Panel, Sense, Ui, UiBuilder, Vec2,
 };
 
 fn sync_badge(text: &str, palette: Palette, size: f32) -> eframe::egui::text::LayoutJob {
@@ -64,33 +52,6 @@ fn sync_badge(text: &str, palette: Palette, size: f32) -> eframe::egui::text::La
         );
     }
     job
-}
-
-fn selectable_row(
-    ui: &mut Ui,
-    selected: bool,
-    height: f32,
-    contents: impl FnOnce(&mut Ui),
-) -> Response {
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
-    let fill = if selected {
-        ui.visuals().selection.bg_fill
-    } else if response.hovered() {
-        ui.visuals().widgets.hovered.weak_bg_fill
-    } else {
-        eframe::egui::Color32::TRANSPARENT
-    };
-    ui.painter().rect_filled(rect, 0.0, fill);
-    let mut child = ui.new_child(
-        UiBuilder::new()
-            .max_rect(rect.shrink2(Vec2::new(6.0, 1.0)))
-            .layout(Layout::left_to_right(Align::Center)),
-    );
-    // Labels inside a clickable row must leave pointer input to the row.
-    child.style_mut().interaction.selectable_labels = false;
-    contents(&mut child);
-    response
 }
 
 fn header<R>(

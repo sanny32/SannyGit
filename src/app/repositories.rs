@@ -443,6 +443,9 @@ impl SannyGitApp {
         self.refs_error = None;
         self.branch_head_exists = false;
         self.branch_dialog_open = false;
+        self.tag_dialog_open = false;
+        self.new_tag_name.clear();
+        self.new_tag_message.clear();
         self.remote_checkout = None;
         self.network_dialog = None;
         self.selected_branch.clear();

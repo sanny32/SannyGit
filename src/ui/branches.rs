@@ -1,6 +1,6 @@
-use super::icons::{self, Icon};
-use super::tooltips::TooltipResponse;
-use super::EditableText;
+use super::controls::icons::{self, Icon};
+use super::controls::tooltips::TooltipResponse;
+use super::controls::EditableText;
 use crate::{
     app::SannyGitApp,
     models::{BranchRef, RefKind},
@@ -12,6 +12,7 @@ use eframe::egui::{
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     create_dialog(ui, app);
+    tag_dialog(ui, app);
     remote_dialog(ui, app);
     let palette = app.theme.palette();
     ui.horizontal(|ui| {
@@ -55,6 +56,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         });
     });
     let mut requested = None;
+    let mut add_tag_requested = false;
     let height = ui.available_height();
     ScrollArea::vertical()
         .id_salt("branches")
@@ -68,7 +70,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 (RefKind::Remote, "Remote Branches"),
                 (RefKind::Tag, "Tags"),
             ] {
-                branch_group(
+                add_tag_requested |= branch_group(
                     ui,
                     &app.refs,
                     &mut app.selected_branch,
@@ -87,6 +89,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             app.switch_branch();
         }
     }
+    if add_tag_requested {
+        app.tag_dialog_open = true;
+    }
 }
 
 fn branch_group(
@@ -97,12 +102,13 @@ fn branch_group(
     title: &str,
     palette: Palette,
     requested: &mut Option<String>,
-) {
+) -> bool {
     let matching: Vec<_> = refs.iter().filter(|r| r.kind == kind).collect();
-    if matching.is_empty() {
-        return;
+    if matching.is_empty() && kind != RefKind::Tag {
+        return false;
     }
-    CollapsingHeader::new(format!("{title} ({})", matching.len()))
+    let mut add_tag_requested = false;
+    let group = CollapsingHeader::new(format!("{title} ({})", matching.len()))
         .id_salt(title)
         .default_open(kind == RefKind::Local)
         .show_unindented(ui, |ui| {
@@ -114,8 +120,11 @@ fn branch_group(
                     ui.allocate_space(size);
                     continue;
                 }
-                let response =
-                    super::selectable_row(ui, *selected == branch.full_name, 22.0, |ui| {
+                let response = super::controls::selectable_row(
+                    ui,
+                    *selected == branch.full_name,
+                    22.0,
+                    |ui| {
                         ui.add_space(6.0);
                         icons::paint(
                             ui,
@@ -140,8 +149,9 @@ fn branch_group(
                                 icons::paint(ui, Icon::Star, palette.accent, 14.0)
                             });
                         }
-                    })
-                    .help_text(format!(
+                    },
+                )
+                .help_text(format!(
                     "{}\nObject: {}{}{}",
                     branch.full_name,
                     branch.hash,
@@ -165,6 +175,88 @@ fn branch_group(
                 }
             }
         });
+    if kind == RefKind::Tag {
+        group.header_response.context_menu(|ui| {
+            if ui.button("Add Tag…").clicked() {
+                add_tag_requested = true;
+                ui.close();
+            }
+        });
+    }
+    add_tag_requested
+}
+
+fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
+    if !app.tag_dialog_open {
+        return;
+    }
+    let ctx = ui.ctx().clone();
+    let palette = app.theme.palette();
+    let tag_names: Vec<_> = app
+        .refs
+        .iter()
+        .filter(|reference| reference.kind == RefKind::Tag)
+        .map(|reference| reference.name.clone())
+        .collect();
+    let mut keep = true;
+    super::controls::dialog_style::modal(&ctx, palette, "branches.add.tag").show(&ctx, |ui| {
+        ui.set_width(500.0);
+        super::controls::dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        super::controls::dialog_style::header(
+            ui,
+            palette,
+            "Add tag to current branch (HEAD)",
+            "Enter the name of the tag to create. If entering a message, an annotated tag is created.",
+        );
+        super::controls::dialog_style::section(
+            ui,
+            palette.header,
+            eframe::egui::Margin::same(18),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                ui.horizontal(|ui| {
+                        ui.label("Tag:");
+                        let combo_width = ui.available_width();
+                        super::controls::editable_combo_box::show(
+                            ui,
+                            ui.make_persistent_id("tag.name"),
+                            &mut app.new_tag_name,
+                            &tag_names,
+                            combo_width,
+                            palette,
+                            "No existing tags",
+                        );
+                    });
+                ui.label("Annotated Tag Message:");
+                ui.add_sized(
+                    [ui.available_width(), 120.0],
+                    TextEdit::multiline(&mut app.new_tag_message).editable(),
+                );
+            },
+        );
+        super::controls::dialog_style::section(
+            ui,
+            palette.header,
+            eframe::egui::Margin::symmetric(18, 12),
+            |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.add_enabled(false, super::controls::dialog_style::button("Add Tag & Push"))
+                        .disabled_help_text("Tag creation and push are not implemented yet");
+                    ui.add_enabled(false, super::controls::dialog_style::button("Add Tag"))
+                        .disabled_help_text("Tag creation is not implemented yet");
+                    if ui.add(super::controls::dialog_style::button("Cancel")).clicked() {
+                        keep = false;
+                    }
+                });
+            },
+        );
+    });
+    app.tag_dialog_open = keep;
+    if !keep {
+        app.new_tag_name.clear();
+        app.new_tag_message.clear();
+    }
 }
 
 fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -174,12 +266,12 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
     let ctx = ui.ctx().clone();
     let palette = app.theme.palette();
     let mut keep = true;
-    super::dialog_style::modal(&ctx, palette, "branch.remote.checkout").show(&ctx, |ui| {
+    super::controls::dialog_style::modal(&ctx, palette, "branch.remote.checkout").show(&ctx, |ui| {
         ui.set_width(600.0);
-        super::dialog_style::setup(ui);
+        super::controls::dialog_style::setup(ui);
         ui.spacing_mut().item_spacing.y = 0.0;
-        super::dialog_style::header(ui, palette, "Check out commit", "Switch to a local branch, create a tracking branch, or check out without creating a branch.");
-        super::dialog_style::section(ui, palette.header, eframe::egui::Margin::same(18), |ui| {
+        super::controls::dialog_style::header(ui, palette, "Check out commit", "Switch to a local branch, create a tracking branch, or check out without creating a branch.");
+        super::controls::dialog_style::section(ui, palette.header, eframe::egui::Margin::same(18), |ui| {
             ui.spacing_mut().item_spacing.y = 10.0;
             ui.label(dialog.remote.strip_prefix("refs/remotes/").unwrap_or(&dialog.remote));
             ui.add_enabled_ui(!app.busy(), |ui| {
@@ -199,18 +291,18 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             });
             if let Some(error) = &app.error { ui.add(eframe::egui::Label::new(RichText::new(error).color(palette.removed_text)).wrap()); }
         });
-        super::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
+        super::controls::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let valid = match dialog.mode {
                     0 => app.refs.iter().any(|r| r.kind == RefKind::Local && r.full_name == dialog.local),
                     1 => crate::branches::name_hint(&dialog.new_name).is_none() && !app.refs.iter().any(|r| r.full_name == format!("refs/heads/{}", dialog.new_name)),
                     _ => true,
                 };
-                if ui.add_enabled(valid && !app.busy(), super::dialog_style::primary("Checkout", palette)).clicked() {
+                if ui.add_enabled(valid && !app.busy(), super::controls::dialog_style::primary("Checkout", palette)).clicked() {
                     let choice = match dialog.mode { 0 => crate::branches::RemoteChoice::Local(dialog.local.clone()), 1 => crate::branches::RemoteChoice::Create(dialog.new_name.clone()), _ => crate::branches::RemoteChoice::Detached };
                     app.checkout_remote(dialog.remote.clone(), choice);
                 }
-                if ui.add_enabled(!app.busy(), super::dialog_style::button("Cancel")).clicked() { keep = false; }
+                if ui.add_enabled(!app.busy(), super::controls::dialog_style::button("Cancel")).clicked() { keep = false; }
             });
         });
     });
@@ -230,9 +322,9 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
         .resizable(false)
         .default_width(400.0)
         .collapsible(false)
-        .frame(super::dialog_style::frame(ui.ctx(), app.theme.palette()).inner_margin(18))
+        .frame(super::controls::dialog_style::frame(ui.ctx(), app.theme.palette()).inner_margin(18))
         .show(ui.ctx(), |ui| {
-            super::dialog_style::setup(ui);
+            super::controls::dialog_style::setup(ui);
             ui.label(format!("Create from HEAD ({})", app.current_branch));
             ui.add_enabled_ui(!app.busy(), |ui| {
                 ui.add(
@@ -266,6 +358,57 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
 mod tests {
     use super::*;
     use eframe::egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect};
+
+    #[test]
+    fn tag_dialog_content_stays_within_header_width() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.tag_dialog_open = true;
+                app.new_tag_name = "v1.0.0-b1".into();
+                for frame in 0..3 {
+                    let mut output = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                            ..Default::default()
+                        },
+                        |ui| tag_dialog(ui, &mut app),
+                    );
+                    output.textures_delta.clear();
+                    if frame == 2 {
+                        let header = output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                eframe::egui::Shape::Rect(rect)
+                                    if (rect.rect.width() - 500.0).abs() < 1.0
+                                        && (60.0..150.0).contains(&rect.rect.height()) =>
+                                {
+                                    Some(rect.rect)
+                                }
+                                _ => None,
+                            })
+                            .expect("Dialog header missing");
+                        for shape in &output.shapes {
+                            if let eframe::egui::Shape::Rect(rect) = &shape.shape {
+                                if rect.rect.width() > 300.0 && rect.rect.width() < size.x {
+                                    assert!(rect.rect.right() <= header.right() + 2.0,
+                                        "Dialog content expanded beyond header: header={header:?}, rect={:?}", rect.rect);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn background_ref_updates_do_not_move_branch_rows() {
@@ -374,7 +517,7 @@ mod tests {
                     },
                     |ui| {
                         pointer = ui.next_widget_position() + Vec2::new(70.0, 34.0);
-                        branch_group(
+                        let _ = branch_group(
                             ui,
                             &refs,
                             &mut selected,

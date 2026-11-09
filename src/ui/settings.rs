@@ -1,5 +1,5 @@
-use super::tooltips::TooltipResponse;
-use super::EditableText;
+use super::controls::tooltips::TooltipResponse;
+use super::controls::EditableText;
 use crate::{
     app::{SannyGitApp, SettingsPage},
     theme::{semibold_family, Palette, ThemeChoice},
@@ -57,7 +57,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         .show(ui, |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui
-                    .add(super::dialog_style::primary("OK", palette))
+                    .add(super::controls::dialog_style::primary("OK", palette))
                     .clicked()
                 {
                     let next_llm = app.settings_window.llm.clone();
@@ -81,7 +81,10 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         Err(error) => app.settings_window.llm_secret_error = Some(error),
                     }
                 }
-                if ui.add(super::dialog_style::button("Cancel")).clicked() {
+                if ui
+                    .add(super::controls::dialog_style::button("Cancel"))
+                    .clicked()
+                {
                     app.settings_window.open = false;
                     ui.ctx().send_viewport_cmd(ViewportCommand::Close);
                 }
@@ -131,7 +134,7 @@ fn section(ui: &mut Ui, title: &str, contents: impl FnOnce(&mut Ui)) {
 
 fn entry(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
     let selected = app.settings_window.page == page;
-    let response = super::selectable_row(ui, selected, 23.0, |ui| {
+    let response = super::controls::selectable_row(ui, selected, 23.0, |ui| {
         ui.add_space(24.0);
         ui.label(label);
     });

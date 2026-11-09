@@ -1,4 +1,4 @@
-use super::tooltips::TooltipResponse;
+use super::controls::tooltips::TooltipResponse;
 use eframe::egui::{
     epaint::text::ByteRangeExt, Align, Frame, Label, Layout, Margin, RichText, ScrollArea,
     TextWrapMode, Ui, Vec2,
@@ -10,7 +10,7 @@ use crate::{
     models::{DiffLine, DiffLineKind},
 };
 
-use super::icons::{self, Icon};
+use super::controls::icons::{self, Icon};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.theme.palette();

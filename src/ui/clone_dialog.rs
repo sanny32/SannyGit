@@ -1,6 +1,6 @@
-use super::icons::{self, Icon};
-use super::tooltips::TooltipResponse;
-use super::EditableText;
+use super::controls::icons::{self, Icon};
+use super::controls::tooltips::TooltipResponse;
+use super::controls::EditableText;
 use crate::{
     app::{RepositoryJob, SannyGitApp},
     repository,
@@ -36,9 +36,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let palette = app.theme.palette();
     let busy = app.busy();
     let mut job = None;
-    super::dialog_style::modal(ctx, palette, "clone.wizard").show(ctx, |ui| {
+    super::controls::dialog_style::modal(ctx, palette, "clone.wizard").show(ctx, |ui| {
         ui.set_width(760.0);
-        super::dialog_style::setup(ui);
+        super::controls::dialog_style::setup(ui);
         ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
         ui.horizontal_top(|ui| {
             egui::Frame::new()
@@ -75,7 +75,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 ui.set_width(610.0);
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let step = app.manager.clone_step;
-                super::dialog_style::header(
+                super::controls::dialog_style::header(
                     ui,
                     palette,
                     ["Repository", "Selection", "Local Directory"][step],
@@ -85,34 +85,42 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                         "Specify the local directory for the new repository.",
                     ][step],
                 );
-                super::dialog_style::section(ui, palette.header, egui::Margin::same(18), |ui| {
-                    ui.set_min_height(270.0);
-                    ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
-                    ui.add_enabled_ui(!busy, |ui| match step {
-                        0 => source_page(ui, app),
-                        1 => selection_page(ui, app),
-                        _ => directory_page(ui, app),
-                    });
-                    if let Some(error) = &app.error {
-                        ui.add(
-                            egui::Label::new(RichText::new(error).color(palette.removed_text))
-                                .wrap(),
-                        );
-                    }
-                    if busy {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label(&app.status);
+                super::controls::dialog_style::section(
+                    ui,
+                    palette.header,
+                    egui::Margin::same(18),
+                    |ui| {
+                        ui.set_min_height(270.0);
+                        ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
+                        ui.add_enabled_ui(!busy, |ui| match step {
+                            0 => source_page(ui, app),
+                            1 => selection_page(ui, app),
+                            _ => directory_page(ui, app),
                         });
-                    }
-                });
-                super::dialog_style::section(
+                        if let Some(error) = &app.error {
+                            ui.add(
+                                egui::Label::new(RichText::new(error).color(palette.removed_text))
+                                    .wrap(),
+                            );
+                        }
+                        if busy {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(&app.status);
+                            });
+                        }
+                    },
+                );
+                super::controls::dialog_style::section(
                     ui,
                     palette.header,
                     egui::Margin::symmetric(18, 12),
                     |ui| {
                         ui.horizontal(|ui| {
-                            if ui.add(super::dialog_style::button("Cancel")).clicked() {
+                            if ui
+                                .add(super::controls::dialog_style::button("Cancel"))
+                                .clicked()
+                            {
                                 if busy {
                                     app.cancel_repository_job();
                                 } else {
@@ -136,7 +144,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                                 if ui
                                     .add_enabled(
                                         enabled,
-                                        super::dialog_style::primary(
+                                        super::controls::dialog_style::primary(
                                             if step == 2 { "Finish" } else { "Continue" },
                                             palette,
                                         ),
@@ -167,7 +175,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                                 if ui
                                     .add_enabled(
                                         !busy && step > 0,
-                                        super::dialog_style::button("Go Back"),
+                                        super::controls::dialog_style::button("Go Back"),
                                     )
                                     .clicked()
                                 {

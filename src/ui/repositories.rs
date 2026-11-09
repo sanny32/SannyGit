@@ -1,6 +1,6 @@
-use super::icons::{self, Icon};
-use super::tooltips::TooltipResponse;
-use super::EditableText;
+use super::controls::icons::{self, Icon};
+use super::controls::tooltips::TooltipResponse;
+use super::controls::EditableText;
 use crate::{
     app::{RepositoryJob, SannyGitApp},
     menu::MenuAction,
@@ -13,13 +13,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if app.open_dialog {
         let ctx = ui.ctx().clone();
         let busy = app.busy();
-        super::dialog_style::modal(&ctx, palette, "repository.add").show(&ctx, |ui| {
+        super::controls::dialog_style::modal(&ctx, palette, "repository.add").show(&ctx, |ui| {
             ui.set_width(560.0);
-            super::dialog_style::setup(ui);
+            super::controls::dialog_style::setup(ui);
             ui.spacing_mut().item_spacing.y = 0.0;
-            super::dialog_style::header(ui, palette, "Add existing or create new repository",
+            super::controls::dialog_style::header(ui, palette, "Add existing or create new repository",
                 "Specify the local Git repository to open. To create a new repository, specify an empty directory.");
-            super::dialog_style::section(ui, palette.header, eframe::egui::Margin::same(18), |ui| {
+            super::controls::dialog_style::section(ui, palette.header, eframe::egui::Margin::same(18), |ui| {
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Repository:");
@@ -31,12 +31,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 if let Some(error) = &app.error { ui.add(eframe::egui::Label::new(RichText::new(error).color(palette.removed_text)).wrap()); }
                 if busy { ui.horizontal(|ui| { ui.spinner(); ui.label(&app.status); }); }
             });
-            super::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
+            super::controls::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add_enabled(!busy && !app.repository_path.trim().is_empty(), super::dialog_style::primary("OK", palette)).clicked() {
+                    if ui.add_enabled(!busy && !app.repository_path.trim().is_empty(), super::controls::dialog_style::primary("OK", palette)).clicked() {
                         app.run_repository_job(RepositoryJob::AddOrCreate(app.repository_path.clone()));
                     }
-                    if ui.add_enabled(!busy, super::dialog_style::button("Cancel")).clicked() { app.open_dialog = false; }
+                    if ui.add_enabled(!busy, super::controls::dialog_style::button("Cancel")).clicked() { app.open_dialog = false; }
                 });
             });
         });
@@ -211,7 +211,7 @@ fn repository_row(
     let selected_row = highlighted
         .as_deref()
         .map_or(active, |path| path == repository.path);
-    let response = super::selectable_row(ui, selected_row, height, |ui| {
+    let response = super::controls::selectable_row(ui, selected_row, height, |ui| {
         icons::paint(
             ui,
             Icon::Repository,

@@ -1,4 +1,4 @@
-use super::EditableText;
+use super::controls::EditableText;
 use crate::app::{RepositoryDialog as Dialog, RepositoryJob as Job, SannyGitApp};
 use eframe::egui::{self, Button, ComboBox, RichText, ScrollArea, TextEdit, Ui, Window};
 
@@ -74,10 +74,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let mut job = None;
     Window::new(title).id(egui::Id::unique(title)).open(&mut open).default_width(540.0)
         .collapsible(false)
-        .frame(super::dialog_style::frame(ui.ctx(), app.theme.palette()).inner_margin(18))
+        .frame(super::controls::dialog_style::frame(ui.ctx(), app.theme.palette()).inner_margin(18))
         .max_size(ui.ctx().content_rect().size() - egui::vec2(40.0,40.0))
         .show(ui.ctx(), |ui| {
-            super::dialog_style::setup(ui);
+            super::controls::dialog_style::setup(ui);
             let busy = app.busy();
             ui.add_enabled_ui(!busy, |ui| match dialog {
                 Dialog::Group => {
@@ -163,17 +163,17 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
     let busy = app.busy();
     let mut job = None;
     let mut close = false;
-    super::dialog_style::modal(ctx, palette, "repository.settings").show(ctx, |ui| {
+    super::controls::dialog_style::modal(ctx, palette, "repository.settings").show(ctx, |ui| {
         ui.set_width(660.0_f32.min(ctx.content_rect().width() - 48.0));
-        super::dialog_style::setup(ui);
+        super::controls::dialog_style::setup(ui);
         ui.spacing_mut().item_spacing.y = 0.0;
-        super::dialog_style::header(
+        super::controls::dialog_style::header(
             ui,
             palette,
             "Edit the repository settings",
             "Here you can edit the Git settings for the repository. The default settings can be found in the Preferences.",
         );
-        super::dialog_style::section(ui, palette.header, egui::Margin::same(12), |ui| {
+        super::controls::dialog_style::section(ui, palette.header, egui::Margin::same(12), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             let tab_id = egui::Id::unique("repository.settings.tab");
             let mut tab = ctx.data_mut(|data| data.get_temp::<usize>(tab_id).unwrap_or(0));
@@ -264,8 +264,8 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                             ui.horizontal(|ui| {
                                                 let width = (ui.available_width() - 30.0).max(80.0);
                                                 ui.add(TextEdit::singleline(&mut program).desired_width(width));
-                                                super::icons::button(
-                                                    ui, super::icons::Icon::Folder,
+                                                super::controls::icons::button(
+                                                    ui, super::controls::icons::Icon::Folder,
                                                     "Choose GPG program",
                                                     egui::vec2(22.0, 22.0),
                                                 );
@@ -298,7 +298,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                 ui.add(egui::Label::new(RichText::new(error).color(palette.removed_text)).wrap());
             }
         });
-        super::dialog_style::section(
+        super::controls::dialog_style::section(
             ui,
             palette.header,
             egui::Margin::symmetric(12, 8),
@@ -310,7 +310,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                         if ui
                             .add_enabled(
                                 !busy && settings.is_some(),
-                                super::dialog_style::primary("OK", palette),
+                                super::controls::dialog_style::primary("OK", palette),
                             )
                             .clicked()
                         {
@@ -318,7 +318,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                 job = Some(Job::SaveSettings(settings));
                             }
                         }
-                        if ui.add(super::dialog_style::button("Cancel")).clicked() {
+                        if ui.add(super::controls::dialog_style::button("Cancel")).clicked() {
                             close = true;
                         }
                     },

@@ -1,5 +1,5 @@
-use super::icons::{self, Icon};
-use super::tooltips::TooltipResponse;
+use super::controls::icons::{self, Icon};
+use super::controls::tooltips::TooltipResponse;
 use crate::{
     app::{ChangeFilter, SannyGitApp},
     models::ChangeKind,

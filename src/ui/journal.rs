@@ -1,5 +1,5 @@
-use super::tooltips::TooltipResponse;
-use super::EditableText;
+use super::controls::tooltips::TooltipResponse;
+use super::controls::EditableText;
 use crate::{app::SannyGitApp, models::HistoryEdge, theme::Palette};
 use eframe::egui::{
     Align, Button, ComboBox, Label, Layout, RichText, ScrollArea, Sense, Ui, Vec2, Window,

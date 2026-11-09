@@ -1,5 +1,5 @@
-use super::tooltips::TooltipResponse;
-use super::EditableText;
+use super::controls::tooltips::TooltipResponse;
+use super::controls::EditableText;
 use crate::{app::SannyGitApp, remotes::Operation};
 use eframe::egui::{self, Align, ComboBox, Layout, RichText, TextEdit};
 
@@ -11,9 +11,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let busy = app.busy();
     let mut submit = false;
     let mut keep = true;
-    super::dialog_style::modal(ctx, palette, "remote.operation").show(ctx, |ui| {
+    super::controls::dialog_style::modal(ctx, palette, "remote.operation").show(ctx, |ui| {
         ui.set_width(580.0);
-        super::dialog_style::setup(ui);
+        super::controls::dialog_style::setup(ui);
         ui.spacing_mut().item_spacing.y = 0.0;
         if dialog.operation == Operation::Push {
             push_confirmation(ui, app, &mut dialog, busy, &mut submit, &mut keep);
@@ -24,8 +24,8 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             Operation::Pull => "Fetch a remote branch and fast-forward the current local branch. Local changes must be committed or moved aside.",
             Operation::Push => "Push the current local branch to the selected remote branch. Force pushes and tag pushes are not used.",
         };
-        super::dialog_style::header(ui, palette, dialog.operation.label(), description);
-        super::dialog_style::section(ui, palette.header, egui::Margin::same(18), |ui| {
+        super::controls::dialog_style::header(ui, palette, dialog.operation.label(), description);
+        super::controls::dialog_style::section(ui, palette.header, egui::Margin::same(18), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             if let Some(state) = &dialog.state {
                 if state.remotes.is_empty() { ui.label("No configured remotes. Add one through Repository → Edit Git Config, then reopen this dialog."); }
@@ -46,12 +46,12 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             if busy && dialog.state.is_some() { ui.horizontal(|ui| { ui.spinner(); ui.label(&app.status); }); }
             if let Some(error) = &app.error { ui.add(egui::Label::new(RichText::new(error).color(palette.removed_text)).wrap()); }
         });
-        super::dialog_style::section(ui, palette.header, egui::Margin::symmetric(18,12), |ui| {
+        super::controls::dialog_style::section(ui, palette.header, egui::Margin::symmetric(18,12), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let valid = dialog.state.as_ref().is_some_and(|state| state.remotes.contains(&dialog.remote)
                     && (dialog.operation == Operation::Fetch || (state.branch.is_some() && crate::branches::name_hint(&dialog.branch).is_none())));
-                if ui.add_enabled(!busy && valid && app.state_current, super::dialog_style::primary(dialog.operation.label(), palette)).clicked() { submit = true; }
-                if ui.add(super::dialog_style::button("Cancel")).clicked() {
+                if ui.add_enabled(!busy && valid && app.state_current, super::controls::dialog_style::primary(dialog.operation.label(), palette)).clicked() { submit = true; }
+                if ui.add(super::controls::dialog_style::button("Cancel")).clicked() {
                     if busy && app.manager.cancel.is_some() { app.cancel_repository_job(); } else { keep = false; }
                 }
             });
@@ -76,11 +76,11 @@ fn push_confirmation(
     let palette = app.theme.palette();
     let loaded = dialog.state.is_some();
     let state = dialog.state.clone().unwrap_or_default();
-    super::dialog_style::section(ui, palette.header, egui::Margin::same(20), |ui| {
+    super::controls::dialog_style::section(ui, palette.header, egui::Margin::same(20), |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(20.0, 8.0);
         ui.horizontal_top(|ui| {
-            ui.add(super::icons::image(
-                super::icons::Icon::Push,
+            ui.add(super::controls::icons::image(
+                super::controls::icons::Icon::Push,
                 palette.accent,
                 56.0,
             ));
@@ -192,13 +192,16 @@ fn push_confirmation(
                         if ui
                             .add_enabled(
                                 !busy && valid && app.state_current,
-                                super::dialog_style::primary("Push", palette),
+                                super::controls::dialog_style::primary("Push", palette),
                             )
                             .clicked()
                         {
                             *submit = true;
                         }
-                        if ui.add(super::dialog_style::button("Cancel")).clicked() {
+                        if ui
+                            .add(super::controls::dialog_style::button("Cancel"))
+                            .clicked()
+                        {
                             if busy && app.manager.cancel.is_some() {
                                 app.cancel_repository_job();
                             } else {
@@ -266,14 +269,14 @@ mod tests {
                                 ..Default::default()
                             },
                             |ui| {
-                                let response = super::super::dialog_style::modal(
+                                let response = super::super::controls::dialog_style::modal(
                                     ui.ctx(),
                                     theme.palette(),
                                     "push.size.test",
                                 )
                                 .show(ui.ctx(), |ui| {
                                     ui.set_width(580.0);
-                                    super::super::dialog_style::setup(ui);
+                                    super::super::controls::dialog_style::setup(ui);
                                     ui.spacing_mut().item_spacing.y = 0.0;
                                     push_confirmation(
                                         ui,
