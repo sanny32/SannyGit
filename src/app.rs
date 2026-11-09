@@ -8,7 +8,11 @@ pub use repositories::{Dialog as RepositoryDialog, Job as RepositoryJob, Reposit
 use std::{
     collections::BTreeMap,
     path::PathBuf,
-    sync::mpsc::{self, Receiver},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
+        Arc,
+    },
 };
 
 enum WorkerResult {
@@ -185,6 +189,7 @@ pub struct SannyGitApp {
     pub current_branch: String,
     pub commit_message: String,
     pub generating_commit_message: bool,
+    generation_cancel: Option<Arc<AtomicBool>>,
     pub amend: bool,
     pub repository_path: String,
     pub open_dialog: bool,
@@ -361,6 +366,7 @@ impl SannyGitApp {
             current_branch: String::new(),
             commit_message: String::new(),
             generating_commit_message: false,
+            generation_cancel: None,
             amend: false,
             repository_path: String::new(),
             open_dialog: false,
@@ -1158,12 +1164,34 @@ impl SannyGitApp {
         let mut config = self.effective_llm_config(&path).clone();
         self.error = None;
         self.status = "Generating commit message…".into();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.generation_cancel = Some(cancel.clone());
         self.generating_commit_message = self.start_worker(move || {
             WorkerResult::CommitMessage(git::commit_patch(&root).and_then(|patch| {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err("Commit message generation cancelled".into());
+                }
                 crate::llm::load_api_key_if_needed(&mut config, repository_scope.as_deref())?;
-                crate::llm::generate(&config, &patch)
+                crate::llm::generate(&config, &patch, &cancel)
             }))
         });
+        if !self.generating_commit_message {
+            self.generation_cancel = None;
+        }
+    }
+
+    pub fn cancel_commit_message_generation(&mut self) {
+        if !self.generating_commit_message {
+            return;
+        }
+        if let Some(cancel) = self.generation_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        // Discard the receiver as well: a completed or late response from this
+        // generation must never overwrite the draft or a subsequent operation.
+        self.worker = None;
+        self.generating_commit_message = false;
+        self.status = "Commit message generation cancelled".into();
     }
 
     fn poll_worker(&mut self) {
@@ -1176,6 +1204,7 @@ impl SannyGitApp {
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.worker = None;
                 self.generating_commit_message = false;
+                self.generation_cancel = None;
                 self.manager.cancel = None;
                 self.error = Some("Background worker stopped unexpectedly".into());
                 if self.refs_loading && !self.refs_pending {
@@ -1289,6 +1318,7 @@ impl SannyGitApp {
             }
             WorkerResult::CommitMessage(result) => {
                 self.generating_commit_message = false;
+                self.generation_cancel = None;
                 match result {
                     Ok(message) => {
                         self.commit_message = message;
@@ -1530,6 +1560,9 @@ impl eframe::App for SannyGitApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(cancel) = &self.generation_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
         self.tracking.cancel();
         if let Some(cancel) = &self.manager.cancel {
             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1631,6 +1664,52 @@ mod tests {
         );
         assert!(app.error.is_none());
         assert!(app.selected_diff().is_none());
+    }
+
+    #[test]
+    fn cancelling_generation_preserves_draft_and_discards_late_results() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.commit_message = "Existing draft".into();
+        let cancel = Arc::new(AtomicBool::new(false));
+        app.generation_cancel = Some(cancel.clone());
+        app.generating_commit_message = true;
+        let (sender, receiver) = mpsc::channel();
+        app.worker = Some(receiver);
+        sender
+            .send(WorkerResult::CommitMessage(Ok(
+                "Already queued response".into()
+            )))
+            .unwrap();
+        app.cancel_commit_message_generation();
+        assert!(cancel.load(Ordering::Relaxed));
+        assert!(!app.busy());
+        assert!(!app.generating_commit_message);
+        assert!(app.generation_cancel.is_none());
+        assert_eq!(app.commit_message, "Existing draft");
+        assert!(app.error.is_none());
+        assert_eq!(app.status, "Commit message generation cancelled");
+        assert!(sender
+            .send(WorkerResult::CommitMessage(Ok("Late response".into())))
+            .is_err());
+
+        // A new generation can finish normally; the old sender is isolated.
+        app.generating_commit_message = true;
+        deliver(
+            &mut app,
+            WorkerResult::CommitMessage(Ok("New response".into())),
+        );
+        assert_eq!(app.commit_message, "New response");
+    }
+
+    #[test]
+    fn cancelling_generation_does_not_cancel_other_workers() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        let (_sender, receiver) = mpsc::channel();
+        app.worker = Some(receiver);
+        app.status = "Loading repository".into();
+        app.cancel_commit_message_generation();
+        assert!(app.busy());
+        assert_eq!(app.status, "Loading repository");
     }
 
     #[test]

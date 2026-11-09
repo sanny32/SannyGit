@@ -42,6 +42,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 .min_size(Vec2::new(20.0, 26.0)),
             )
             .ui(ui, |ui| {
+                if app.generating_commit_message && ui.button("Cancel generation").clicked() {
+                    app.cancel_commit_message_generation();
+                    ui.close();
+                }
                 let blocker = app.generate_commit_message_blocker();
                 if ui
                     .add_enabled(blocker.is_none(), Button::new("Generate commit message"))
@@ -66,22 +70,35 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             .help_text("Commit message generation options");
 
             let blocker = app.generate_commit_message_blocker();
+            let generating = app.generating_commit_message;
             if ui
                 .add_enabled(
-                    blocker.is_none(),
+                    generating || blocker.is_none(),
                     Button::image(super::controls::icons::image(
-                        super::controls::icons::Icon::Sparkles,
+                        if generating {
+                            super::controls::icons::Icon::Stop
+                        } else {
+                            super::controls::icons::Icon::Sparkles
+                        },
                         palette.muted,
-                        20.0,
+                        if generating { 14.0 } else { 20.0 },
                     ))
                     .frame(false)
                     .min_size(Vec2::new(26.0, 26.0)),
                 )
-                .help_text("Generate a commit message from all changes, including new files")
+                .help_text(if generating {
+                    "Cancel commit message generation"
+                } else {
+                    "Generate a commit message from all changes, including new files"
+                })
                 .disabled_help_text(blocker.unwrap_or(""))
                 .clicked()
             {
-                app.generate_commit_message();
+                if generating {
+                    app.cancel_commit_message_generation();
+                } else {
+                    app.generate_commit_message();
+                }
             }
         });
     });

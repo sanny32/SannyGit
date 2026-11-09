@@ -1,7 +1,10 @@
-use reqwest::blocking::Client;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
 pub const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
 pub const DEFAULT_MODEL: &str = "gpt-4.1-mini";
@@ -58,6 +61,16 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         name: "Mistral AI",
         endpoint: "https://api.mistral.ai/v1/chat/completions",
         model: "mistral-small-latest",
+    },
+    ProviderPreset {
+        name: "Ollama (local)",
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "",
+    },
+    ProviderPreset {
+        name: "LM Studio (local)",
+        endpoint: "http://localhost:1234/v1/chat/completions",
+        model: "",
     },
 ];
 
@@ -285,6 +298,19 @@ pub fn save_api_key(config: &Config, repository: Option<&str>) -> Result<(), Str
 }
 
 impl Config {
+    pub fn is_local(&self) -> bool {
+        reqwest::Url::parse(self.endpoint.trim())
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .is_some_and(|host| {
+                host.eq_ignore_ascii_case("localhost")
+                    || host
+                        .trim_matches(['[', ']'])
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|address| address.is_loopback())
+            })
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         let endpoint = self.endpoint.trim();
         if !(endpoint.starts_with("https://") || endpoint.starts_with("http://")) {
@@ -300,7 +326,10 @@ impl Config {
     }
 }
 
-pub fn generate(config: &Config, patch: &str) -> Result<String, String> {
+pub fn generate(config: &Config, patch: &str, cancel: &AtomicBool) -> Result<String, String> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err("Commit message generation cancelled".into());
+    }
     config.validate()?;
     if patch.trim().is_empty() {
         return Err("The staged diff is empty".into());
@@ -312,12 +341,44 @@ pub fn generate(config: &Config, patch: &str) -> Result<String, String> {
         ));
     }
 
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("Cannot initialize the LLM runtime: {error}"))?;
+    runtime.block_on(async {
+        let request = generate_response(config, patch);
+        let mut request = std::pin::pin!(request);
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err("Commit message generation cancelled".into());
+            }
+            // Dropping the future on cancellation closes the HTTP request,
+            // including while waiting for headers or reading the response body.
+            if let Ok(result) = tokio::time::timeout(Duration::from_millis(50), &mut request).await
+            {
+                return result;
+            }
+        }
+    })
+}
+
+async fn generate_response(config: &Config, patch: &str) -> Result<String, String> {
     let request = request_body(config, patch);
+    let local = config.is_local();
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .build()
-        .map_err(|error| format!("Cannot initialize the LLM client: {error}"))?;
+        .timeout(Duration::from_secs(if local { 300 } else { 60 }));
+    // Local diffs must not pass through an environment-configured proxy or
+    // follow a server redirect to a different host.
+    let client = if local {
+        client
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+    } else {
+        client
+    }
+    .build()
+    .map_err(|error| format!("Cannot initialize the LLM client: {error}"))?;
     let request = client
         .post(chat_completions_endpoint(&config.endpoint))
         .json(&request);
@@ -326,16 +387,21 @@ pub fn generate(config: &Config, patch: &str) -> Result<String, String> {
     } else {
         request.bearer_auth(config.api_key.trim())
     };
-    let response = request
+    let mut response = request
         .send()
+        .await
         .map_err(|error| format!("LLM request failed: {error}"))?;
     let status = response.status();
-    let mut response = std::io::Read::take(response, MAX_RESPONSE_BYTES as u64 + 1);
     let mut bytes = Vec::new();
-    std::io::Read::read_to_end(&mut response, &mut bytes)
-        .map_err(|error| format!("Cannot read the LLM response: {error}"))?;
-    if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err("LLM response exceeds the 1 MiB limit".into());
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("Cannot read the LLM response: {error}"))?
+    {
+        if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return Err("LLM response exceeds the 1 MiB limit".into());
+        }
+        bytes.extend_from_slice(&chunk);
     }
     if !status.is_success() {
         return Err(api_error(status.as_u16(), &bytes));
@@ -357,6 +423,7 @@ fn chat_completions_endpoint(endpoint: &str) -> String {
 fn request_body(config: &Config, patch: &str) -> Value {
     json!({
         "model": config.model.trim(),
+        "stream": false,
         "messages": [
             { "role": "system", "content": config.instructions.trim() },
             { "role": "user", "content": format!("Generate a commit message for these changes:\n\n{patch}") }
@@ -407,6 +474,200 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cancellation_closes_requests_waiting_for_headers_or_body() {
+        use std::{
+            io::{BufRead, BufReader, Read, Write},
+            net::TcpListener,
+            sync::{mpsc, Arc},
+        };
+
+        for partial_body in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let (ready_sender, ready_receiver) = mpsc::channel();
+            let server = std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let mut socket = loop {
+                    match listener.accept() {
+                        Ok((socket, _)) => break socket,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(std::time::Instant::now() < deadline);
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("Cannot accept test request: {error}"),
+                    }
+                };
+                socket.set_nonblocking(false).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = BufReader::new(&mut socket);
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    assert!(reader.read_line(&mut line).unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse::<usize>().unwrap();
+                    }
+                }
+                reader.read_exact(&mut vec![0; length]).unwrap();
+                if partial_body {
+                    socket
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{")
+                        .unwrap();
+                    socket.flush().unwrap();
+                }
+                ready_sender.send(()).unwrap();
+                let result = socket.read(&mut [0; 1]);
+                assert!(
+                    matches!(result, Ok(0))
+                        || matches!(result, Err(ref error) if error.kind() == std::io::ErrorKind::ConnectionReset),
+                    "Request was not closed: {result:?}"
+                );
+            });
+            let cancel = Arc::new(AtomicBool::new(false));
+            let worker_cancel = cancel.clone();
+            let (sender, receiver) = mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let config = Config {
+                    endpoint: format!("http://{address}/v1"),
+                    model: "test-model".into(),
+                    ..Config::default()
+                };
+                sender
+                    .send(generate(&config, "test patch", &worker_cancel))
+                    .unwrap();
+            });
+            ready_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+            cancel.store(true, Ordering::Relaxed);
+            let result = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(result.unwrap_err(), "Commit message generation cancelled");
+            worker.join().unwrap();
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn recognizes_only_loopback_servers_as_local() {
+        for endpoint in [
+            "http://localhost:11434/v1",
+            " http://127.0.0.1:1234/v1/ ",
+            "http://127.0.0.2:8080/v1",
+            "http://[::1]:8080/v1",
+        ] {
+            assert!(Config {
+                endpoint: endpoint.into(),
+                ..Config::default()
+            }
+            .is_local());
+        }
+        for endpoint in [
+            DEFAULT_ENDPOINT,
+            "http://localhost.example/v1",
+            "http://192.168.1.2/v1",
+            "invalid",
+        ] {
+            assert!(!Config {
+                endpoint: endpoint.into(),
+                ..Config::default()
+            }
+            .is_local());
+        }
+    }
+
+    #[test]
+    fn local_generation_sends_patch_without_auth_and_handles_server_failures() {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+
+        for (status, body, expected) in [
+            (
+                200,
+                r#"{"choices":[{"message":{"content":"  Update local generation\n"}}]}"#,
+                Ok("Update local generation"),
+            ),
+            (
+                404,
+                r#"{"error":{"message":"model is not installed"}}"#,
+                Err("model is not installed"),
+            ),
+            (
+                200,
+                r#"{"choices":[{"message":{"content":" "}}]}"#,
+                Err("does not contain a commit message"),
+            ),
+            (200, "invalid json", Err("invalid JSON")),
+            (302, "", Err("HTTP 302")),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let server = std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let mut socket = loop {
+                    match listener.accept() {
+                        Ok((socket, _)) => break socket,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(
+                                std::time::Instant::now() < deadline,
+                                "No local LLM request received"
+                            );
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("Cannot accept test request: {error}"),
+                    }
+                };
+                socket.set_nonblocking(false).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = BufReader::new(&mut socket);
+                let mut headers = String::new();
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    assert!(reader.read_line(&mut line).unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse::<usize>().unwrap();
+                    }
+                    headers.push_str(&line);
+                }
+                let mut request = vec![0; length];
+                reader.read_exact(&mut request).unwrap();
+                write!(socket, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                (headers, serde_json::from_slice::<Value>(&request).unwrap())
+            });
+            let config = Config {
+                endpoint: format!("http://{address}/v1"),
+                model: "installed-local-model".into(),
+                store_api_key: false,
+                ..Config::default()
+            };
+            let result = generate(&config, "diff --git a/file b/file", &AtomicBool::new(false));
+            let (headers, request) = server.join().unwrap();
+            assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"));
+            assert!(!headers.to_ascii_lowercase().contains("authorization:"));
+            assert_eq!(request["model"], "installed-local-model");
+            assert_eq!(request["stream"], false);
+            assert!(request["messages"][1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("diff --git a/file b/file"));
+            match expected {
+                Ok(message) => assert_eq!(result.unwrap(), message),
+                Err(detail) => assert!(result.unwrap_err().contains(detail)),
+            }
+        }
+    }
+
+    #[test]
     fn parses_openai_compatible_response() {
         let value = json!({"choices": [{"message": {"content": "  Add LLM commit messages\n"}}]});
         assert_eq!(parse_message(&value).unwrap(), "Add LLM commit messages");
@@ -439,7 +700,7 @@ mod tests {
         let mut endpoints = std::collections::HashSet::new();
         for provider in PROVIDER_PRESETS {
             assert!(!provider.name.is_empty());
-            assert!(!provider.model.is_empty());
+            assert!(!provider.model.is_empty() || provider.name.ends_with("(local)"));
             assert!(provider.endpoint.ends_with("/chat/completions"));
             assert!(endpoints.insert(provider.endpoint));
         }

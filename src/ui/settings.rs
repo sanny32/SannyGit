@@ -533,6 +533,9 @@ fn llm_form(
                         {
                             draft.config.model = provider.model.to_owned();
                         }
+                        if draft.config.is_local() {
+                            draft.config.store_api_key = false;
+                        }
                     }
                     // Read only after editing finishes, rather than prompting
                     // Keychain for every character typed into a custom URL.
@@ -545,12 +548,14 @@ fn llm_form(
                     form_label(ui, "Model:");
                     ui.add(
                         egui::TextEdit::singleline(&mut draft.config.model)
+                            .hint_text("Enter the model name from your server")
                             .desired_width(f32::INFINITY),
                     );
                     ui.end_row();
                     form_label(ui, "API key:");
                     let api_key_response = ui.add(
                         egui::TextEdit::singleline(&mut draft.config.api_key)
+                            .hint_text("Optional for local servers")
                             .password(true)
                             .desired_width(f32::INFINITY),
                     );
