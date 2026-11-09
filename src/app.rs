@@ -147,6 +147,7 @@ pub struct SannyGitApp {
     pub selected_repository: usize,
     pub selected_change: usize,
     pub selected_branch: String,
+    pub selected_ref_group: Option<crate::models::RefKind>,
     pub change_filter: ChangeFilter,
     pub journal_filter: String,
     pub current_branch: String,
@@ -316,6 +317,7 @@ impl SannyGitApp {
             selected_repository: usize::MAX,
             selected_change: usize::MAX,
             selected_branch: String::new(),
+            selected_ref_group: None,
             change_filter: ChangeFilter::All,
             journal_filter: String::new(),
             current_branch: String::new(),
@@ -578,6 +580,7 @@ impl SannyGitApp {
             self.manager.worktrees.clear();
             self.manager.settings = None;
             self.selected_branch.clear();
+            self.selected_ref_group = None;
             self.refs.clear();
             self.branch_head_exists = false;
             self.branch_dialog_open = false;
@@ -1033,10 +1036,17 @@ impl SannyGitApp {
                             self.branch_head_exists = snapshot.has_head;
                             self.refs_current = true;
                             self.refs_error = None;
-                            if !self
-                                .refs
-                                .iter()
-                                .any(|r| r.full_name == self.selected_branch)
+                            if self.selected_ref_group.is_some_and(|kind| {
+                                kind != crate::models::RefKind::Tag
+                                    && !self.refs.iter().any(|r| r.kind == kind)
+                            }) {
+                                self.selected_ref_group = None;
+                            }
+                            if self.selected_ref_group.is_none()
+                                && !self
+                                    .refs
+                                    .iter()
+                                    .any(|r| r.full_name == self.selected_branch)
                             {
                                 self.selected_branch = self
                                     .refs

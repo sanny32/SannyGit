@@ -65,23 +65,20 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            for (kind, title) in [
-                (RefKind::Local, "Local Branches"),
-                (RefKind::Remote, "Remote Branches"),
-                (RefKind::Tag, "Tags"),
-            ] {
+            for kind in [RefKind::Local, RefKind::Remote, RefKind::Tag] {
                 add_tag_requested |= branch_group(
                     ui,
                     &app.refs,
                     &mut app.selected_branch,
+                    &mut app.selected_ref_group,
                     kind,
-                    title,
                     palette,
                     &mut requested,
                 );
             }
         });
     if let Some(target) = requested {
+        app.selected_ref_group = None;
         app.selected_branch = target;
         if let Some(reason) = app.switch_branch_blocker() {
             app.error = Some(reason.into());
@@ -98,20 +95,44 @@ fn branch_group(
     ui: &mut Ui,
     refs: &[BranchRef],
     selected: &mut String,
+    selected_group: &mut Option<RefKind>,
     kind: RefKind,
-    title: &str,
     palette: Palette,
     requested: &mut Option<String>,
 ) -> bool {
+    let title = match kind {
+        RefKind::Local => "Local Branches",
+        RefKind::Remote => "Remote Branches",
+        RefKind::Tag => "Tags",
+    };
     let matching: Vec<_> = refs.iter().filter(|r| r.kind == kind).collect();
     if matching.is_empty() && kind != RefKind::Tag {
         return false;
     }
     let mut add_tag_requested = false;
+    let previous_visuals = ui.visuals().clone();
+    let fill = if *selected_group == Some(kind) {
+        palette.selection
+    } else {
+        eframe::egui::Color32::TRANSPARENT
+    };
+    ui.visuals_mut().collapsing_header_frame = true;
+    let widgets = &mut ui.visuals_mut().widgets;
+    for visuals in [
+        &mut widgets.inactive,
+        &mut widgets.hovered,
+        &mut widgets.active,
+    ] {
+        visuals.weak_bg_fill = fill;
+        visuals.bg_stroke = eframe::egui::Stroke::NONE;
+        visuals.corner_radius = eframe::egui::CornerRadius::same(0);
+    }
+    let body_visuals = previous_visuals.clone();
     let group = CollapsingHeader::new(format!("{title} ({})", matching.len()))
         .id_salt(title)
         .default_open(kind == RefKind::Local)
         .show_unindented(ui, |ui| {
+            *ui.visuals_mut() = body_visuals;
             for branch in matching {
                 // Avoid text layout for rows outside the viewport in large ref lists.
                 let size = Vec2::new(ui.available_width(), 22.0);
@@ -122,7 +143,7 @@ fn branch_group(
                 }
                 let response = super::controls::selectable_row(
                     ui,
-                    *selected == branch.full_name,
+                    selected_group.is_none() && *selected == branch.full_name,
                     22.0,
                     |ui| {
                         ui.add_space(6.0);
@@ -168,6 +189,7 @@ fn branch_group(
                     }
                 ));
                 if response.clicked() {
+                    *selected_group = None;
                     *selected = branch.full_name.clone();
                 }
                 if response.double_clicked() {
@@ -175,6 +197,11 @@ fn branch_group(
                 }
             }
         });
+    *ui.visuals_mut() = previous_visuals;
+    if group.header_response.clicked() || group.header_response.secondary_clicked() {
+        *selected_group = Some(kind);
+        selected.clear();
+    }
     if kind == RefKind::Tag {
         group.header_response.context_menu(|ui| {
             if ui.button("Add Tag…").clicked() {
@@ -489,6 +516,7 @@ mod tests {
                 kind: RefKind::Local,
             }];
             let mut selected = String::new();
+            let mut selected_group = Some(RefKind::Remote);
             let mut requested = None;
             let mut pointer = Pos2::ZERO;
             for (frame, pressed) in [None, None, Some(true), Some(false), Some(true), Some(false)]
@@ -517,8 +545,8 @@ mod tests {
                             ui,
                             &refs,
                             &mut selected,
+                            &mut selected_group,
                             RefKind::Local,
-                            "Local Branches",
                             theme.palette(),
                             &mut requested,
                         );
@@ -527,10 +555,164 @@ mod tests {
                 output.textures_delta.clear();
                 if frame == 3 {
                     assert_eq!(selected, "refs/heads/feature");
+                    assert_eq!(selected_group, None);
                     assert!(requested.is_none());
                 }
             }
             assert_eq!(requested.as_deref(), Some("refs/heads/feature"));
+        }
+    }
+
+    #[test]
+    fn group_mouse_click_selects_group_instead_of_branch() {
+        for button in [PointerButton::Primary, PointerButton::Secondary] {
+            let ctx = Context::default();
+            crate::theme::install_fonts(&ctx);
+            let refs = vec![BranchRef {
+                name: "feature".into(),
+                full_name: "refs/heads/feature".into(),
+                hash: "a".repeat(40),
+                upstream: None,
+                current: false,
+                kind: RefKind::Local,
+            }];
+            let mut selected = "refs/heads/feature".to_string();
+            let mut selected_group = None;
+            let mut requested = None;
+            let mut pointer = Pos2::ZERO;
+            for (frame, pressed) in [None, None, Some(true), Some(false)]
+                .into_iter()
+                .enumerate()
+            {
+                let mut events = vec![Event::PointerMoved(pointer)];
+                if let Some(pressed) = pressed {
+                    events.push(Event::PointerButton {
+                        pos: pointer,
+                        button,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    });
+                }
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+                        time: Some(frame as f64 * 0.05),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        pointer = ui.next_widget_position() + Vec2::new(70.0, 11.0);
+                        let _ = branch_group(
+                            ui,
+                            &refs,
+                            &mut selected,
+                            &mut selected_group,
+                            RefKind::Local,
+                            crate::theme::ThemeChoice::Light.palette(),
+                            &mut requested,
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            assert_eq!(selected_group, Some(RefKind::Local));
+            assert!(selected.is_empty());
+            assert!(requested.is_none());
+        }
+    }
+
+    #[test]
+    fn selected_group_keeps_standard_header_geometry() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            let ctx = Context::default();
+            crate::theme::install_fonts(&ctx);
+            theme.apply(&ctx);
+            let refs = vec![BranchRef {
+                name: "feature".into(),
+                full_name: "refs/heads/feature".into(),
+                hash: "a".repeat(40),
+                upstream: None,
+                current: false,
+                kind: RefKind::Local,
+            }];
+            let render = |selected_header: bool| {
+                let mut selected = String::new();
+                let mut selected_group = selected_header.then_some(RefKind::Local);
+                let mut requested = None;
+                let mut result = None;
+                for frame in 0..3 {
+                    let mut output = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(
+                                Pos2::ZERO,
+                                Vec2::new(400.0, 200.0),
+                            )),
+                            time: Some(frame as f64 * 0.05),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            if selected_header {
+                                let _ = branch_group(
+                                    ui,
+                                    &refs,
+                                    &mut selected,
+                                    &mut selected_group,
+                                    RefKind::Local,
+                                    theme.palette(),
+                                    &mut requested,
+                                );
+                            } else {
+                                let _ = CollapsingHeader::new("Local Branches (1)")
+                                    .id_salt("Local Branches")
+                                    .default_open(true)
+                                    .show_unindented(ui, |ui| {
+                                        let _ = crate::ui::controls::selectable_row(
+                                            ui,
+                                            false,
+                                            22.0,
+                                            |ui| {
+                                                ui.label("feature");
+                                            },
+                                        );
+                                    });
+                            }
+                        },
+                    );
+                    output.textures_delta.clear();
+                    result = Some(output);
+                }
+                result.unwrap()
+            };
+            let geometry = |output: &eframe::egui::FullOutput| {
+                let mut title = None;
+                let mut branch_y = None;
+                let mut arrow = None;
+                for shape in &output.shapes {
+                    match &shape.shape {
+                        eframe::egui::Shape::Text(text)
+                            if text.galley.job.text == "Local Branches (1)" =>
+                        {
+                            title = Some(text.galley.rect.translate(text.pos.to_vec2()));
+                        }
+                        eframe::egui::Shape::Text(text) if text.galley.job.text == "feature" => {
+                            branch_y = Some(text.pos.y);
+                        }
+                        eframe::egui::Shape::Path(path) if path.points.len() == 3 => {
+                            arrow = Some(path.points.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                (
+                    title.expect("Group title missing"),
+                    branch_y.expect("Branch row missing"),
+                    arrow.expect("Group arrow missing"),
+                )
+            };
+            assert_eq!(geometry(&render(false)), geometry(&render(true)));
         }
     }
 }
