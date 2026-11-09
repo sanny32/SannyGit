@@ -14,7 +14,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     create_dialog(ui, app);
     tag_dialog(ui, app);
     remote_dialog(ui, app);
-    let palette = app.theme.palette();
+    let palette = app.palette();
     ui.horizontal(|ui| {
         ui.set_min_height(26.0);
         let heading = ui.heading(
@@ -191,7 +191,7 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
         return;
     }
     let ctx = ui.ctx().clone();
-    let palette = app.theme.palette();
+    let palette = app.palette();
     let tag_names: Vec<_> = app
         .refs
         .iter()
@@ -264,7 +264,7 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
         return;
     };
     let ctx = ui.ctx().clone();
-    let palette = app.theme.palette();
+    let palette = app.palette();
     let mut keep = true;
     super::controls::dialog_style::modal(&ctx, palette, "branch.remote.checkout").show(&ctx, |ui| {
         ui.set_width(600.0);
@@ -322,7 +322,7 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
         .resizable(false)
         .default_width(400.0)
         .collapsible(false)
-        .frame(super::controls::dialog_style::frame(ui.ctx(), app.theme.palette()).inner_margin(18))
+        .frame(super::controls::dialog_style::frame(ui.ctx(), app.palette()).inner_margin(18))
         .show(ui.ctx(), |ui| {
             super::controls::dialog_style::setup(ui);
             ui.label(format!("Create from HEAD ({})", app.current_branch));
@@ -337,11 +337,7 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             });
             let blocker = app.create_branch_blocker();
             if let Some(reason) = blocker {
-                ui.label(
-                    RichText::new(reason)
-                        .small()
-                        .color(app.theme.palette().muted),
-                );
+                ui.label(RichText::new(reason).small().color(app.palette().muted));
             }
             if ui
                 .add_enabled(blocker.is_none(), Button::new("Create"))

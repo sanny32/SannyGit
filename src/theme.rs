@@ -1,6 +1,58 @@
 use eframe::egui::{self, Color32, Context, FontFamily, FontId, Stroke, Style, TextStyle, Visuals};
 use serde::{Deserialize, Serialize};
 
+pub const INTERFACE_STYLE_STORAGE_KEY: &str = "sannygit.interface_style";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InterfaceStyle {
+    #[default]
+    Classic,
+    Modern,
+}
+
+impl InterfaceStyle {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "Classic",
+            Self::Modern => "Modern",
+        }
+    }
+
+    pub fn palette(self, theme: ThemeChoice) -> Palette {
+        let mut palette = theme.palette();
+        if self == Self::Modern {
+            match theme {
+                ThemeChoice::Light => {
+                    palette.background = Color32::from_rgb(241, 244, 249);
+                    palette.panel = Color32::from_rgb(252, 253, 255);
+                    palette.panel_alt = Color32::from_rgb(246, 248, 252);
+                    palette.header = Color32::from_rgb(246, 248, 252);
+                    palette.editor = palette.panel;
+                    palette.border = Color32::from_rgb(218, 225, 237);
+                    palette.text = Color32::from_rgb(20, 28, 45);
+                    palette.muted = Color32::from_rgb(111, 122, 145);
+                    palette.selection = Color32::from_rgb(225, 237, 254);
+                    palette.hover = Color32::from_rgb(235, 242, 253);
+                }
+                ThemeChoice::Dark => {
+                    palette.background = Color32::from_rgb(23, 28, 39);
+                    palette.panel = Color32::from_rgb(30, 37, 50);
+                    palette.panel_alt = Color32::from_rgb(34, 42, 57);
+                    palette.header = palette.panel_alt;
+                    palette.editor = palette.panel;
+                    palette.border = Color32::from_rgb(55, 67, 87);
+                    palette.text = Color32::from_rgb(225, 232, 245);
+                    palette.muted = Color32::from_rgb(145, 159, 183);
+                    palette.selection = Color32::from_rgb(35, 66, 107);
+                    palette.hover = Color32::from_rgb(40, 52, 73);
+                }
+            }
+        }
+        palette.panel_radius = if self == Self::Modern { 7 } else { 0 };
+        palette
+    }
+}
+
 pub const THEME_STORAGE_KEY: &str = "sannygit.theme";
 
 pub fn semibold_family() -> FontFamily {
@@ -98,13 +150,18 @@ impl ThemeChoice {
         }
     }
 
+    #[cfg(test)]
     pub fn apply(self, context: &Context) {
+        self.apply_style(context, InterfaceStyle::Classic);
+    }
+
+    pub fn apply_style(self, context: &Context, interface: InterfaceStyle) {
         let theme = match self {
             Self::Light => egui::Theme::Light,
             Self::Dark => egui::Theme::Dark,
         };
         context.set_theme(theme);
-        let palette = self.palette();
+        let palette = interface.palette(self);
         let mut visuals = match self {
             Self::Light => Visuals::light(),
             Self::Dark => Visuals::dark(),
@@ -151,6 +208,17 @@ impl ThemeChoice {
             style.spacing.text_edit_width = 180.0;
             style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(2);
             style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(2);
+            if interface == InterfaceStyle::Modern {
+                for widget in [
+                    &mut style.visuals.widgets.inactive,
+                    &mut style.visuals.widgets.hovered,
+                    &mut style.visuals.widgets.active,
+                    &mut style.visuals.widgets.noninteractive,
+                    &mut style.visuals.widgets.open,
+                ] {
+                    widget.corner_radius = egui::CornerRadius::same(5);
+                }
+            }
             style.spacing.indent = 14.0;
             style.spacing.scroll.bar_width = 8.0;
             style.spacing.interact_size.y = 20.0;
@@ -183,6 +251,8 @@ fn text_styles() -> std::collections::BTreeMap<TextStyle, FontId> {
 
 #[derive(Clone, Copy)]
 pub struct Palette {
+    pub panel_radius: u8,
+    pub brand: Color32,
     pub background: Color32,
     pub panel: Color32,
     pub panel_alt: Color32,
@@ -214,6 +284,8 @@ pub struct Palette {
 impl Palette {
     fn dark() -> Self {
         Self {
+            panel_radius: 0,
+            brand: Color32::from_rgb(244, 91, 53),
             background: Color32::from_rgb(30, 30, 32),
             panel: Color32::from_rgb(37, 37, 39),
             panel_alt: Color32::from_rgb(43, 43, 46),
@@ -245,6 +317,8 @@ impl Palette {
 
     fn light() -> Self {
         Self {
+            panel_radius: 0,
+            brand: Color32::from_rgb(244, 91, 53),
             background: Color32::from_rgb(236, 236, 236),
             panel: Color32::from_rgb(255, 255, 255),
             panel_alt: Color32::from_rgb(246, 246, 246),
@@ -283,13 +357,27 @@ mod tests {
     fn switching_themes_preserves_palette_and_typography_across_frames() {
         let context = Context::default();
         install_fonts(&context);
-        for choice in [ThemeChoice::Dark, ThemeChoice::Light, ThemeChoice::Dark] {
-            choice.apply(&context);
+        for (choice, interface) in [
+            (ThemeChoice::Dark, InterfaceStyle::Classic),
+            (ThemeChoice::Light, InterfaceStyle::Modern),
+            (ThemeChoice::Dark, InterfaceStyle::Modern),
+            (ThemeChoice::Light, InterfaceStyle::Classic),
+            (ThemeChoice::Dark, InterfaceStyle::Classic),
+        ] {
+            choice.apply_style(&context, interface);
             for _ in 0..2 {
                 let mut output = context.run_ui(egui::RawInput::default(), |ui| {
                     let style = ui.style();
                     assert_eq!(style.visuals.dark_mode, choice == ThemeChoice::Dark);
-                    assert_eq!(style.visuals.panel_fill, choice.palette().panel);
+                    assert_eq!(style.visuals.panel_fill, interface.palette(choice).panel);
+                    assert_eq!(
+                        style.visuals.widgets.inactive.corner_radius,
+                        egui::CornerRadius::same(if interface == InterfaceStyle::Modern {
+                            5
+                        } else {
+                            2
+                        })
+                    );
                     assert_eq!(style.text_styles[&TextStyle::Body].size, 13.0);
                     assert!(style.visuals.text_options.font_hinting);
                     assert!(!style.visuals.text_options.subpixel_binning);

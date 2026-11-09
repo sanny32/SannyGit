@@ -13,7 +13,7 @@ use crate::{
 use super::controls::icons::{self, Icon};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
-    let palette = app.theme.palette();
+    let palette = app.palette();
     let Some(change) = app.changes.get(app.selected_change) else {
         return;
     };

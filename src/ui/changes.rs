@@ -9,7 +9,7 @@ use eframe::egui::{Align, Align2, Color32, FontId, Layout, Rect, RichText, Sense
 use egui_extras::{Column, TableBuilder};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
-    let palette = app.theme.palette();
+    let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     let tight = ui.available_width() < 420.0;
     let filter_height = if tight { 50.0 } else { 30.0 };

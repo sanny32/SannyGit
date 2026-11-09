@@ -2,7 +2,7 @@ use super::controls::tooltips::TooltipResponse;
 use super::controls::EditableText;
 use crate::{
     app::{SannyGitApp, SettingsPage},
-    theme::{semibold_family, Palette, ThemeChoice},
+    theme::{semibold_family, InterfaceStyle, Palette, ThemeChoice},
 };
 use eframe::egui::{
     self, Align, CentralPanel, Frame, Key, Layout, Margin, Panel, RichText, ScrollArea, Ui, Vec2,
@@ -37,7 +37,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
 }
 
 fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
-    let palette = app.theme.palette();
+    let palette = app.palette();
     ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
     footer(ui, app, palette);
     navigation(ui, app, palette);
@@ -71,6 +71,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     match saved {
                         Ok(()) => {
                             app.theme = app.settings_window.theme;
+                            app.interface_style = app.settings_window.interface_style;
                             app.skip_push_confirmation = app.settings_window.skip_push_confirmation;
                             app.tracking.set_auto_fetch(app.settings_window.auto_fetch);
                             app.llm_config = next_llm;
@@ -164,6 +165,13 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         SettingsPage::Appearance => {
             heading(ui, "Appearance");
             group(ui, palette, "Interface", |ui| {
+                ui.label("Interface style:");
+                interface_choices(
+                    ui,
+                    &mut app.settings_window.interface_style,
+                    app.settings_window.theme,
+                );
+                ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.label("Color theme:");
                     egui::ComboBox::from_id_salt("preferences.theme")
@@ -179,9 +187,6 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                             }
                         });
                 });
-                ui.add_space(6.0);
-                ui.label("Preview:");
-                theme_preview(ui, app.settings_window.theme);
             });
         }
         SettingsPage::Remote => {
@@ -328,45 +333,83 @@ fn group(ui: &mut Ui, palette: Palette, title: &str, contents: impl FnOnce(&mut 
         });
 }
 
-fn theme_preview(ui: &mut Ui, theme: ThemeChoice) {
-    let palette = theme.palette();
-    Frame::new()
-        .fill(palette.editor)
-        .stroke((1.0, palette.border))
-        .inner_margin(0)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            Frame::new()
-                .fill(palette.header)
-                .inner_margin(Margin::symmetric(8, 5))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(RichText::new("Working Tree  /  src / main.rs").color(palette.text));
-                });
-            for (text, fill, color) in [
-                ("  1    fn main() {", palette.editor, palette.text),
-                (
-                    "  2  -     start();",
-                    palette.removed_background,
-                    palette.removed_text,
-                ),
-                (
-                    "  2  +     run();",
-                    palette.added_background,
-                    palette.added_text,
-                ),
-                ("  3    }", palette.editor, palette.text),
-            ] {
-                Frame::new()
-                    .fill(fill)
-                    .inner_margin(Margin::symmetric(8, 3))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.label(RichText::new(text).monospace().color(color));
+fn interface_choices(ui: &mut Ui, selected: &mut InterfaceStyle, theme: ThemeChoice) {
+    let width = ui.available_width().min(380.0);
+    ui.allocate_ui_with_layout(Vec2::new(width, 0.0), Layout::top_down(Align::Min), |ui| {
+        ui.set_width(width);
+        ui.columns(2, |columns| {
+            for (column, style) in columns
+                .iter_mut()
+                .zip([InterfaceStyle::Classic, InterfaceStyle::Modern])
+            {
+                column.with_layout(Layout::top_down(Align::Center), |column| {
+                    let (uri, bytes): (&str, &[u8]) = match (style, theme) {
+                        (InterfaceStyle::Classic, ThemeChoice::Light) => (
+                            "bytes://previews/classic-light.png",
+                            include_bytes!("../../assets/previews/classic-light.png"),
+                        ),
+                        (InterfaceStyle::Classic, ThemeChoice::Dark) => (
+                            "bytes://previews/classic-dark.png",
+                            include_bytes!("../../assets/previews/classic-dark.png"),
+                        ),
+                        (InterfaceStyle::Modern, ThemeChoice::Light) => (
+                            "bytes://previews/modern-light.png",
+                            include_bytes!("../../assets/previews/modern-light.png"),
+                        ),
+                        (InterfaceStyle::Modern, ThemeChoice::Dark) => (
+                            "bytes://previews/modern-dark.png",
+                            include_bytes!("../../assets/previews/modern-dark.png"),
+                        ),
+                    };
+                    let palette = style.palette(theme);
+                    let (rect, _) =
+                        column.allocate_exact_size(Vec2::splat(112.0), egui::Sense::hover());
+                    egui::Image::from_bytes(uri, bytes)
+                        .fit_to_exact_size(Vec2::splat(112.0))
+                        .corner_radius(4)
+                        .paint_at(column, rect);
+                    let response = column.interact(
+                        rect,
+                        column.scope_id().with(("interface.preview", style.label())),
+                        egui::Sense::click(),
+                    );
+                    response.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::Role::Button,
+                            true,
+                            *selected == style,
+                            format!("{} interface preview", style.label()),
+                        )
                     });
+                    column.painter().rect_stroke(
+                        response.rect,
+                        4,
+                        (
+                            if *selected == style { 2.0 } else { 1.0 },
+                            if *selected == style || response.hovered() {
+                                palette.accent
+                            } else {
+                                palette.border
+                            },
+                        ),
+                        egui::StrokeKind::Inside,
+                    );
+                    if response.clicked() {
+                        *selected = style;
+                    }
+                    column.radio_value(selected, style, style.label());
+                    column.label(
+                        RichText::new(match style {
+                            InterfaceStyle::Classic => "Compact stacked panels",
+                            InterfaceStyle::Modern => "Changes and diff side by side",
+                        })
+                        .small()
+                        .color(column.visuals().weak_text_color()),
+                    );
+                });
             }
         });
+    });
 }
 
 #[cfg(test)]
@@ -381,6 +424,7 @@ mod tests {
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
             let context = egui::Context::default();
             crate::theme::install_fonts(&context);
+            egui_extras::install_image_loaders(&context);
             theme.apply(&context);
             let mut app = SannyGitApp::with_theme(theme);
             app.settings_window.llm_api_key_loaded = true;
@@ -444,6 +488,168 @@ mod tests {
         }
     }
 
+    #[test]
+    fn thumbnails_load_and_support_image_and_radio_selection() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let context = egui::Context::default();
+            crate::theme::install_fonts(&context);
+            egui_extras::install_image_loaders(&context);
+            theme.apply(&context);
+            context.options_mut(|options| options.warn_on_id_clash = true);
+            let mut app = SannyGitApp::with_theme(theme);
+            let render = |app: &mut SannyGitApp, events| {
+                let mut output = context.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            pos2(0.0, 0.0),
+                            Vec2::new(680.0, 380.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| window_contents(ui, app),
+                );
+                output.textures_delta.clear();
+                assert!(!output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("widget ID"))
+                }), "Interface choices have conflicting widget IDs");
+                output
+            };
+            let mut output = render(&mut app, vec![]);
+            output.textures_delta.clear();
+            let mut thumbnails: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect) if rect.rect.size() == Vec2::splat(112.0) => {
+                        Some(rect.rect)
+                    }
+                    _ => None,
+                })
+                .collect();
+            thumbnails.sort_by(|a, b| a.left().total_cmp(&b.left()));
+            thumbnails.dedup();
+            assert_eq!(thumbnails.len(), 2);
+            assert!(thumbnails[1].right() - thumbnails[0].left() <= 380.0);
+            assert!((thumbnails[1].center().x - thumbnails[0].center().x) < 220.0);
+            let suffix = if theme == ThemeChoice::Light {
+                "light"
+            } else {
+                "dark"
+            };
+            for style in ["classic", "modern"] {
+                let uri = format!("bytes://previews/{style}-{suffix}.png");
+                let loaded = context.try_load_image(&uri, Default::default()).unwrap();
+                let egui::load::ImagePoll::Ready { image } = loaded else {
+                    panic!("Preview did not load");
+                };
+                assert_eq!(image.size, [224, 224]);
+            }
+            let classic_radio = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == "Classic" => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            output.textures_delta.clear();
+            for (target, expected) in [
+                (thumbnails[1].center(), InterfaceStyle::Modern),
+                (thumbnails[0].center(), InterfaceStyle::Classic),
+                (thumbnails[1].center(), InterfaceStyle::Modern),
+                (classic_radio, InterfaceStyle::Classic),
+            ] {
+                for pressed in [true, false] {
+                    let mut output = render(
+                        &mut app,
+                        vec![
+                            Event::PointerMoved(target),
+                            Event::PointerButton {
+                                pos: target,
+                                button: PointerButton::Primary,
+                                pressed,
+                                modifiers: Modifiers::NONE,
+                            },
+                        ],
+                    );
+                    output.textures_delta.clear();
+                }
+                assert_eq!(app.settings_window.interface_style, expected);
+                assert_eq!(app.interface_style, InterfaceStyle::Classic);
+            }
+        }
+    }
+
+    #[test]
+    fn appearance_changes_apply_on_ok_and_cancel_discards_them() {
+        for button in ["Cancel", "OK"] {
+            let context = egui::Context::default();
+            crate::theme::install_fonts(&context);
+            egui_extras::install_image_loaders(&context);
+            ThemeChoice::Light.apply(&context);
+            let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+            app.open_settings();
+            app.settings_window.interface_style = InterfaceStyle::Modern;
+            app.settings_window.theme = ThemeChoice::Dark;
+            let render = |app: &mut SannyGitApp, events| {
+                context.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            pos2(0.0, 0.0),
+                            Vec2::new(680.0, 380.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| window_contents(ui, app),
+                )
+            };
+            let mut output = render(&mut app, vec![]);
+            assert!(visible_text(&output.shapes, "Interface style:"));
+            assert!(visible_text(&output.shapes, "Modern"));
+            let target = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == button => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            output.textures_delta.clear();
+            for pressed in [true, false] {
+                let mut output = render(
+                    &mut app,
+                    vec![
+                        Event::PointerMoved(target),
+                        Event::PointerButton {
+                            pos: target,
+                            button: PointerButton::Primary,
+                            pressed,
+                            modifiers: Modifiers::NONE,
+                        },
+                    ],
+                );
+                output.textures_delta.clear();
+            }
+            assert!(!app.settings_window.open);
+            let (style, theme) = if button == "OK" {
+                (InterfaceStyle::Modern, ThemeChoice::Dark)
+            } else {
+                (InterfaceStyle::Classic, ThemeChoice::Light)
+            };
+            assert_eq!(app.interface_style, style);
+            assert_eq!(app.theme, theme);
+            app.open_settings();
+            assert_eq!(app.settings_window.interface_style, style);
+            assert_eq!(app.settings_window.theme, theme);
+        }
+    }
+
     fn visible_text(shapes: &[ClippedShape], expected: &str) -> bool {
         shapes.iter().any(|shape| {
             let egui::Shape::Text(text) = &shape.shape else {
@@ -493,6 +699,7 @@ mod tests {
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
             let context = egui::Context::default();
             crate::theme::install_fonts(&context);
+            egui_extras::install_image_loaders(&context);
             theme.apply(&context);
             let mut app = SannyGitApp::with_theme(theme);
             app.settings_window.llm_api_key_loaded = true;

@@ -7,7 +7,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let Some(mut dialog) = app.network_dialog.take() else {
         return;
     };
-    let palette = app.theme.palette();
+    let palette = app.palette();
     let busy = app.busy();
     let mut submit = false;
     let mut keep = true;
@@ -73,7 +73,7 @@ fn push_confirmation(
     submit: &mut bool,
     keep: &mut bool,
 ) {
-    let palette = app.theme.palette();
+    let palette = app.palette();
     let loaded = dialog.state.is_some();
     let state = dialog.state.clone().unwrap_or_default();
     super::controls::dialog_style::section(ui, palette.header, egui::Margin::same(20), |ui| {

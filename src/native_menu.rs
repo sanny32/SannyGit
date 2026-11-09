@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn paste_event_is_delivered_to_the_focused_text_edit() {
         let context = egui::Context::default();
-        let id = egui::Id::new("paste.target");
+        let id = egui::Id::unique("paste.target");
         let mut value = String::new();
         let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             ui.memory_mut(|memory| memory.request_focus(id));

@@ -33,7 +33,7 @@ pub(super) fn choose_folder(ui: &mut Ui, value: &mut String) {
 }
 
 pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
-    let palette = app.theme.palette();
+    let palette = app.palette();
     let busy = app.busy();
     let mut job = None;
     super::controls::dialog_style::modal(ctx, palette, "clone.wizard").show(ctx, |ui| {
@@ -210,7 +210,7 @@ fn source_page(ui: &mut Ui, app: &mut SannyGitApp) {
                 [width, 28.0],
                 TextEdit::singleline(&mut app.manager.clone_source).editable(),
             );
-            ui.label(RichText::new("e.g. https://server/path/to/repository").small().color(app.theme.palette().muted));
+            ui.label(RichText::new("e.g. https://server/path/to/repository").small().color(app.palette().muted));
         });
     });
 }

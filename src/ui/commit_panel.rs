@@ -10,7 +10,7 @@ use eframe::egui::{
 };
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
-    let palette = app.theme.palette();
+    let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     super::header(ui, 28.0, palette, |ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(60.0, 28.0), Sense::hover());
@@ -119,7 +119,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     if ui
                         .add_enabled(
                             blocker.is_none(),
-                            Button::new("Commit").min_size(Vec2::new(72.0, 24.0)),
+                            if app.interface_style == crate::theme::InterfaceStyle::Modern {
+                                super::controls::dialog_style::primary("✓  Commit", palette)
+                            } else {
+                                Button::new("Commit").min_size(Vec2::new(72.0, 24.0))
+                            },
                         )
                         .help_text("Commit all changes, including new files")
                         .disabled_help_text(blocker.unwrap_or(""))

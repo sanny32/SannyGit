@@ -9,7 +9,7 @@ use crate::{
 use eframe::egui::{Align, CollapsingHeader, Layout, RichText, ScrollArea, TextEdit, Ui};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
-    let palette = app.theme.palette();
+    let palette = app.palette();
     if app.open_dialog {
         let ctx = ui.ctx().clone();
         let busy = app.busy();
@@ -65,7 +65,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let badge = app.tracking.badge();
     let tracking_help = app.tracking.description();
     let branch_status = Some((badge.as_str(), tracking_help.as_str()));
-    let height = 24.0;
+    let height = if palette.panel_radius > 0 { 44.0 } else { 24.0 };
     let mut requested = None;
     let mut move_to = None;
     let mut context_action = None;
@@ -246,8 +246,12 @@ fn repository_row(
             .x;
         let width = (ui.available_width() - suffix_width - 4.0).max(20.0);
         ui.allocate_ui_with_layout(
-            eframe::egui::vec2(width, 20.0),
-            Layout::left_to_right(Align::Center).with_main_align(Align::Min),
+            eframe::egui::vec2(width, if palette.panel_radius > 0 { 38.0 } else { 20.0 }),
+            if palette.panel_radius > 0 {
+                Layout::top_down(Align::Min)
+            } else {
+                Layout::left_to_right(Align::Center).with_main_align(Align::Min)
+            },
             |ui| {
                 ui.set_min_width(width);
                 ui.add(
@@ -260,6 +264,14 @@ fn repository_row(
                     .truncate()
                     .sense(eframe::egui::Sense::hover()),
                 );
+                if palette.panel_radius > 0 {
+                    ui.add(
+                        eframe::egui::Label::new(
+                            RichText::new(&repository.path).small().color(palette.muted),
+                        )
+                        .truncate(),
+                    );
+                }
             },
         );
         if !suffix.is_empty() {

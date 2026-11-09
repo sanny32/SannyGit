@@ -62,7 +62,16 @@ fn header<R>(
 ) -> InnerResponse<R> {
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, palette.header);
+    ui.painter().rect_filled(
+        rect,
+        eframe::egui::CornerRadius {
+            nw: palette.panel_radius,
+            ne: palette.panel_radius,
+            sw: 0,
+            se: 0,
+        },
+        palette.header,
+    );
     ui.painter().line_segment(
         [rect.left_bottom(), rect.right_bottom()],
         (1.0, palette.border),
@@ -79,14 +88,21 @@ fn panel_frame(palette: Palette) -> Frame {
     Frame::new()
         .fill(palette.panel)
         .stroke((1.0, palette.border))
-        .corner_radius(0)
+        .corner_radius(palette.panel_radius)
 }
 
 fn sidebar_contents(ui: &mut Ui, app: &mut SannyGitApp) -> eframe::egui::Rect {
-    let palette = app.theme.palette();
+    let palette = app.palette();
     let branches = Panel::bottom("working_tree.v3.branches")
         .resizable(true)
-        .default_size(ui.available_height() * 0.36)
+        .default_size(
+            ui.available_height()
+                * if app.interface_style == crate::theme::InterfaceStyle::Modern {
+                    0.65
+                } else {
+                    0.36
+                },
+        )
         .size_range(130.0..=(ui.available_height() - 120.0).max(130.0))
         .frame(panel_frame(palette).inner_margin(8).outer_margin(Margin {
             top: 4,
@@ -107,7 +123,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     // Keep dense panel rows compact without truncating floating tooltips.
     ui.style_mut().wrap_mode = Some(eframe::egui::TextWrapMode::Truncate);
     let context = ui.ctx().clone();
-    let palette = app.theme.palette();
+    let palette = app.palette();
     toolbar::show(ui, app);
     settings::show(ui.ctx(), app);
     repository_dialogs::show(ui, app);
@@ -164,6 +180,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             sidebar_contents(ui, app);
         });
 
+    if app.interface_style == crate::theme::InterfaceStyle::Modern {
+        modern_workspace(ui, app);
+        return;
+    }
+
     CentralPanel::default()
         .frame(Frame::new().fill(palette.background).inner_margin(Margin {
             left: 0,
@@ -212,6 +233,73 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     bottom: 4,
                     ..Margin::ZERO
                 }))
+                .show(ui, |ui| diff_view::show(ui, app));
+        });
+}
+
+// Separate panel IDs preserve each style's user-adjusted split positions.
+fn modern_workspace(ui: &mut Ui, app: &mut SannyGitApp) {
+    let palette = app.palette();
+    CentralPanel::default()
+        .frame(Frame::new().fill(palette.background).inner_margin(Margin {
+            left: 0,
+            right: 6,
+            top: 4,
+            bottom: 4,
+        }))
+        .show(ui, |ui| {
+            let bottom_limit = (ui.available_height() * 0.55).max(170.0);
+            Panel::bottom("working_tree.modern.bottom")
+                .resizable(true)
+                .default_size(230.0)
+                .size_range(170.0..=bottom_limit)
+                .frame(Frame::new().fill(palette.background).inner_margin(Margin {
+                    top: 6,
+                    ..Margin::ZERO
+                }))
+                .show(ui, |ui| {
+                    ui.take_available_space();
+                    let commit_limit = (ui.available_width() - 420.0).max(300.0);
+                    Panel::left("working_tree.modern.commit")
+                        .resizable(true)
+                        .default_size(ui.available_width() * 0.42)
+                        .size_range(300.0..=commit_limit)
+                        .frame(panel_frame(palette).outer_margin(Margin {
+                            right: 6,
+                            ..Margin::ZERO
+                        }))
+                        .show(ui, |ui| {
+                            ui.take_available_space();
+                            commit_panel::show(ui, app);
+                        });
+                    CentralPanel::default()
+                        .frame(panel_frame(palette))
+                        .show(ui, |ui| journal::show(ui, app));
+                });
+            let changes_limit = (ui.available_width() - 320.0).max(310.0);
+            Panel::left("working_tree.modern.changes")
+                .resizable(true)
+                .default_size(ui.available_width() * 0.48)
+                .size_range(310.0..=changes_limit)
+                .frame(panel_frame(palette).outer_margin(Margin {
+                    right: 6,
+                    ..Margin::ZERO
+                }))
+                .show(ui, |ui| {
+                    ui.take_available_space();
+                    header(ui, 34.0, palette, |ui| {
+                        let name = app
+                            .repositories
+                            .get(app.selected_repository)
+                            .map_or("Working Tree", |repository| repository.name.as_str());
+                        ui.heading(name);
+                        ui.label("›");
+                        ui.label(&app.current_branch);
+                    });
+                    changes::show(ui, app);
+                });
+            CentralPanel::default()
+                .frame(panel_frame(palette))
                 .show(ui, |ui| diff_view::show(ui, app));
         });
 }

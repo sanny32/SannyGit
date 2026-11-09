@@ -46,7 +46,7 @@ enum WorkerResult {
 use crate::{
     git,
     models::{ChangeFile, Commit, Repository},
-    theme::{ThemeChoice, THEME_STORAGE_KEY},
+    theme::{InterfaceStyle, Palette, ThemeChoice, INTERFACE_STYLE_STORAGE_KEY, THEME_STORAGE_KEY},
     ui,
 };
 
@@ -70,6 +70,7 @@ pub struct SettingsWindow {
     pub open: bool,
     pub page: SettingsPage,
     pub theme: ThemeChoice,
+    pub interface_style: InterfaceStyle,
     pub auto_fetch: bool,
     pub skip_push_confirmation: bool,
     pub llm: crate::llm::Config,
@@ -84,6 +85,7 @@ impl SettingsWindow {
             open: false,
             page: SettingsPage::Appearance,
             theme,
+            interface_style: InterfaceStyle::default(),
             auto_fetch: true,
             skip_push_confirmation: false,
             llm: crate::llm::Config::default(),
@@ -109,10 +111,12 @@ pub struct SannyGitApp {
     #[cfg(target_os = "macos")]
     pub(crate) pending_native_edit_events: Vec<eframe::egui::Event>,
     pub theme: ThemeChoice,
+    pub interface_style: InterfaceStyle,
     pub settings_window: SettingsWindow,
     pub llm_config: crate::llm::Config,
     pub about_dialog: bool,
     applied_theme: ThemeChoice,
+    applied_interface_style: InterfaceStyle,
     pub repositories: Vec<Repository>,
     pub refs: Vec<crate::models::BranchRef>,
     pub refs_current: bool,
@@ -176,9 +180,15 @@ impl SannyGitApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, THEME_STORAGE_KEY))
             .unwrap_or(system_theme);
-        theme.apply(&creation_context.egui_ctx);
+        let interface_style = creation_context
+            .storage
+            .and_then(|storage| eframe::get_value(storage, INTERFACE_STYLE_STORAGE_KEY))
+            .unwrap_or_default();
+        theme.apply_style(&creation_context.egui_ctx, interface_style);
 
         let mut app = Self::with_theme(theme);
+        app.interface_style = interface_style;
+        app.applied_interface_style = interface_style;
         app.skip_push_confirmation = creation_context
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.skip_push_confirmation"))
@@ -251,10 +261,12 @@ impl SannyGitApp {
             #[cfg(target_os = "macos")]
             pending_native_edit_events: Vec::new(),
             theme,
+            interface_style: InterfaceStyle::default(),
             settings_window: SettingsWindow::new(theme),
             llm_config: crate::llm::Config::default(),
             about_dialog: false,
             applied_theme: theme,
+            applied_interface_style: InterfaceStyle::default(),
             repositories: Vec::new(),
             refs: Vec::new(),
             refs_current: false,
@@ -442,7 +454,12 @@ impl SannyGitApp {
         context.request_repaint();
     }
 
+    pub fn palette(&self) -> Palette {
+        self.interface_style.palette(self.theme)
+    }
+
     pub fn open_settings(&mut self) {
+        self.settings_window.interface_style = self.interface_style;
         self.settings_window.theme = self.theme;
         self.settings_window.auto_fetch = self.tracking.auto_fetch;
         self.settings_window.skip_push_confirmation = self.skip_push_confirmation;
@@ -1182,8 +1199,10 @@ impl SannyGitApp {
 
 impl eframe::App for SannyGitApp {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
-        if self.applied_theme != self.theme {
-            self.theme.apply(ui.ctx());
+        if self.applied_theme != self.theme || self.applied_interface_style != self.interface_style
+        {
+            self.theme.apply_style(ui.ctx(), self.interface_style);
+            self.applied_interface_style = self.interface_style;
             self.applied_theme = self.theme;
         }
         self.poll_worker();
@@ -1265,6 +1284,7 @@ impl eframe::App for SannyGitApp {
         eframe::set_value(storage, "sannygit.auto_fetch", &self.tracking.auto_fetch);
         eframe::set_value(storage, "sannygit.llm", &self.llm_config);
         eframe::set_value(storage, THEME_STORAGE_KEY, &self.theme);
+        eframe::set_value(storage, INTERFACE_STYLE_STORAGE_KEY, &self.interface_style);
         let paths: Vec<_> = self.repositories.iter().map(|r| &r.path).collect();
         eframe::set_value(storage, "sannygit.repositories", &paths);
         let active = self
@@ -1620,6 +1640,99 @@ mod tests {
 
     fn visible_text(shapes: &[ClippedShape], expected: &str) -> bool {
         visible_text_count(shapes, expected) > 0
+    }
+
+    #[test]
+    fn modern_layout_fits_both_sizes_and_color_themes_without_loading_jumps() {
+        for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
+            for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+                let context = egui::Context::default();
+                crate::theme::install_fonts(&context);
+                egui_extras::install_image_loaders(&context);
+                theme.apply_style(&context, InterfaceStyle::Modern);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.interface_style = InterfaceStyle::Modern;
+                app.repositories = crate::mock_data::repositories();
+                app.changes = crate::mock_data::changes();
+                app.commits = crate::mock_data::commits();
+                app.refs = crate::mock_data::refs();
+                app.current_branch = "main".into();
+                app.selected_change = 2;
+                app.loaded_diff = Some(2);
+                app.diff_preview = Some(crate::models::DiffPreview::new(&app.changes[2].diff));
+                let render = |app: &mut SannyGitApp| {
+                    let mut output = context.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                            ..Default::default()
+                        },
+                        |ui| ui::show(ui, app),
+                    );
+                    output.textures_delta.clear();
+                    output
+                };
+                for _ in 0..3 {
+                    render(&mut app);
+                }
+                let output = render(&mut app);
+                for label in [
+                    "Repositories",
+                    "Branches",
+                    "Settings",
+                    "Commit",
+                    "Journal",
+                    "diff_view.rs",
+                    "Initial commit",
+                ] {
+                    assert!(
+                        visible_text(&output.shapes, label),
+                        "Missing {label} at {size:?} in {theme:?}"
+                    );
+                }
+                let label_rect = |label: &str| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) if text.galley.job.text == label => {
+                                Some(text.galley.rect.translate(text.pos.to_vec2()))
+                            }
+                            _ => None,
+                        })
+                        .unwrap()
+                };
+                assert!(label_rect("diff_view.rs").left() > label_rect("File").right());
+                assert!(label_rect("Journal").left() > label_rect("Commit").right());
+                assert!(label_rect("Commit").top() > label_rect("File").bottom());
+                let panels = || {
+                    context.data(|data| {
+                        let mut rects: Vec<_> = data
+                            .iter_temp_by_type::<egui::PanelState>()
+                            .map(|panel| panel.outer_rect)
+                            .collect();
+                        rects.sort_by(|a, b| {
+                            a.left()
+                                .total_cmp(&b.left())
+                                .then(a.top().total_cmp(&b.top()))
+                        });
+                        rects
+                    })
+                };
+                let before = panels();
+                app.changes.clear();
+                app.commits.clear();
+                app.refs_loading = true;
+                app.history_loading = true;
+                for _ in 0..3 {
+                    render(&mut app);
+                }
+                assert_eq!(
+                    before,
+                    panels(),
+                    "Loading moved panels at {size:?} in {theme:?}"
+                );
+            }
+        }
     }
 
     #[test]

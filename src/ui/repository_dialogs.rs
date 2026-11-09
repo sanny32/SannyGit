@@ -74,7 +74,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let mut job = None;
     Window::new(title).id(egui::Id::unique(title)).open(&mut open).default_width(540.0)
         .collapsible(false)
-        .frame(super::controls::dialog_style::frame(ui.ctx(), app.theme.palette()).inner_margin(18))
+        .frame(super::controls::dialog_style::frame(ui.ctx(), app.palette()).inner_margin(18))
         .max_size(ui.ctx().content_rect().size() - egui::vec2(40.0,40.0))
         .show(ui.ctx(), |ui| {
             super::controls::dialog_style::setup(ui);
@@ -148,7 +148,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     });
                 }
             });
-            if let Some(error) = &app.error { ui.label(RichText::new(error).color(app.theme.palette().removed_text)); }
+            if let Some(error) = &app.error { ui.label(RichText::new(error).color(app.palette().removed_text)); }
         });
     if !open {
         app.manager.dialog = None;
@@ -159,7 +159,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
 }
 
 fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
-    let palette = app.theme.palette();
+    let palette = app.palette();
     let busy = app.busy();
     let mut job = None;
     let mut close = false;

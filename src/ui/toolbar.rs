@@ -50,7 +50,9 @@ fn action_button(
             .rect_filled(response.rect.shrink(1.0), 3.0, fill);
     }
 
-    let color = if enabled {
+    let color = if enabled && palette.panel_radius > 0 {
+        palette.text
+    } else if enabled {
         palette.accent
     } else {
         palette.muted
@@ -76,7 +78,7 @@ fn action_button(
 
 #[cfg(not(target_os = "macos"))]
 fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
-    let palette = app.theme.palette();
+    let palette = app.palette();
     Panel::top("working_tree.menu")
         .exact_size(24.0)
         .frame(
@@ -119,11 +121,65 @@ fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem
     }
 }
 
+fn brand(ui: &mut Ui, palette: Palette) {
+    use eframe::egui::{text::LayoutJob, TextFormat};
+
+    let mut title = LayoutJob::default();
+    for (text, color) in [("Sanny", palette.text), ("Git", palette.brand)] {
+        title.append(
+            text,
+            0.0,
+            TextFormat {
+                font_id: FontId::new(24.0, crate::theme::semibold_family()),
+                color,
+                ..Default::default()
+            },
+        );
+    }
+    let title = ui.fonts_mut(|fonts| fonts.layout_job(title));
+    let subtitle = ui.painter().layout_no_wrap(
+        "A simple Git client.".into(),
+        FontId::proportional(11.0),
+        palette.muted,
+    );
+    let icon_size = 44.0;
+    let gap = 8.0;
+    // Align visible glyphs instead of the font's extra space above and below each line.
+    let title_bounds = title.mesh_bounds;
+    let subtitle_bounds = subtitle.mesh_bounds;
+    let line_gap = 3.0;
+    let text_height = title_bounds.height() + line_gap + subtitle_bounds.height();
+    let width = icon_size + gap + title_bounds.width().max(subtitle_bounds.width());
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(width, icon_size.max(text_height)),
+        eframe::egui::Sense::hover(),
+    );
+    eframe::egui::Image::from_bytes(
+        "bytes://app/sannygit.svg",
+        include_bytes!("../../assets/app/sannygit.svg"),
+    )
+    .paint_at(
+        ui,
+        Rect::from_center_size(
+            rect.left_center() + Vec2::new(icon_size / 2.0, 0.0),
+            Vec2::splat(icon_size),
+        ),
+    );
+    let text_origin = rect.left_center() + Vec2::new(icon_size + gap, -text_height / 2.0);
+    let title_origin = text_origin - title_bounds.min.to_vec2();
+    let subtitle_origin = text_origin + Vec2::new(0.0, title_bounds.height() + line_gap)
+        - subtitle_bounds.min.to_vec2();
+    ui.painter().galley(title_origin, title, palette.text);
+    ui.painter()
+        .galley(subtitle_origin, subtitle, palette.muted);
+}
+
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     #[cfg(not(target_os = "macos"))]
     menu_bar(ui, app);
-    let palette = app.theme.palette();
-    let height = 52.0;
+    let palette = app.palette();
+    let modern = app.interface_style == crate::theme::InterfaceStyle::Modern;
+    let height = if modern { 68.0 } else { 52.0 };
     Panel::top("working_tree.v2.toolbar")
         .exact_size(height)
         .frame(Frame::new().fill(palette.header).inner_margin(Margin {
@@ -134,6 +190,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         }))
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
+                if modern {
+                    brand(ui, palette);
+                    ui.add_space(12.0);
+                }
                 let action_width = 58.0;
                 for (icon, label) in [
                     (Icon::Pull, "Pull"),

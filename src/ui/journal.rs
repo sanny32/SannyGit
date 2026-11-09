@@ -8,7 +8,7 @@ use egui_extras::{Column, TableBuilder};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     details(ui, app);
-    let palette = app.theme.palette();
+    let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     let wide = ui.available_width() >= 580.0;
     super::header(ui, 28.0, palette, |ui| {
@@ -197,7 +197,7 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
     else {
         return;
     };
-    let palette = app.theme.palette();
+    let palette = app.palette();
     let mut open = true;
     let mut retry = false;
     Window::new("Commit details")

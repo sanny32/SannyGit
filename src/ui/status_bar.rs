@@ -4,7 +4,7 @@ use crate::app::SannyGitApp;
 use eframe::egui::{Align, Frame, Layout, Margin, Panel, RichText, Ui};
 
 pub fn show(ui: &mut Ui, app: &SannyGitApp) {
-    let palette = app.theme.palette();
+    let palette = app.palette();
     Panel::bottom("working_tree.v2.status")
         .exact_size(26.0)
         .frame(
