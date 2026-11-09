@@ -43,7 +43,12 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     navigation(ui, app, palette);
     CentralPanel::default()
         .frame(Frame::new().fill(palette.header).inner_margin(12))
-        .show(ui, |ui| page(ui, app, palette));
+        .show(ui, |ui| {
+            ScrollArea::vertical()
+                .id_salt("preferences.page")
+                .auto_shrink([false, false])
+                .show(ui, |ui| page(ui, app, palette));
+        });
 }
 
 fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
@@ -71,6 +76,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     match saved {
                         Ok(()) => {
                             app.theme = app.settings_window.theme;
+                            app.preferences = app.settings_window.preferences.clone();
                             app.interface_style = app.settings_window.interface_style;
                             app.skip_push_confirmation = app.settings_window.skip_push_confirmation;
                             app.tracking.set_auto_fetch(app.settings_window.auto_fetch);
@@ -114,7 +120,8 @@ fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                             entry(ui, app, SettingsPage::General, "General")
                         });
                         section(ui, "User Interface", |ui| {
-                            entry(ui, app, SettingsPage::Appearance, "Appearance")
+                            entry(ui, app, SettingsPage::Appearance, "Appearance");
+                            entry(ui, app, SettingsPage::DateTime, "Date & Time");
                         });
                         section(ui, "Git", |ui| {
                             entry(ui, app, SettingsPage::Remote, "Remote")
@@ -149,7 +156,44 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
     match app.settings_window.page {
         SettingsPage::General => {
+            ui.spacing_mut().item_spacing.y = 4.0;
             heading(ui, "General");
+            ui.horizontal(|ui| {
+                ui.label("Language:");
+                egui::ComboBox::from_id_salt("preferences.language")
+                    .selected_text(app.settings_window.preferences.language.label())
+                    .width(150.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut app.settings_window.preferences.language,
+                            crate::preferences::Language::English,
+                            "English",
+                        );
+                    })
+                    .response
+                    .help_text("English is currently the only available language");
+            });
+            ui.add_space(4.0);
+            group(ui, palette, "Startup", |ui| {
+                ui.checkbox(
+                    &mut app.settings_window.preferences.show_welcome,
+                    "Show welcome dialog if no repository is reopened",
+                );
+            });
+            ui.add_space(4.0);
+            group(ui, palette, "Double-clicking a local file", |ui| {
+                ui.radio_value(
+                    &mut app.settings_window.preferences.file_double_click,
+                    crate::preferences::FileDoubleClick::ShowDiff,
+                    "Show changes in the diff panel",
+                );
+                ui.radio_value(
+                    &mut app.settings_window.preferences.file_double_click,
+                    crate::preferences::FileDoubleClick::ToggleStage,
+                    "Stage or unstage changes",
+                );
+            });
+            ui.add_space(4.0);
             group(ui, palette, "Confirmations", |ui| {
                 ui.checkbox(
                     &mut app.settings_window.skip_push_confirmation,
@@ -160,33 +204,125 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         .small()
                         .color(palette.muted),
                 );
+                if ui
+                    .add_enabled(
+                        app.settings_window.skip_push_confirmation,
+                        egui::Button::new("Restore confirmation dialogs"),
+                    )
+                    .help_text("Re-enable the upstream push confirmation")
+                    .disabled_help_text("All confirmation dialogs are already enabled")
+                    .clicked()
+                {
+                    app.settings_window.skip_push_confirmation = false;
+                }
             });
         }
         SettingsPage::Appearance => {
             heading(ui, "Appearance");
             group(ui, palette, "Interface", |ui| {
-                ui.label("Interface style:");
                 interface_choices(
                     ui,
                     &mut app.settings_window.interface_style,
-                    app.settings_window.theme,
+                    if app.settings_window.preferences.follow_system_theme {
+                        ThemeChoice::from_system(ui.ctx(), app.settings_window.theme)
+                    } else {
+                        app.settings_window.theme
+                    },
                 );
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.label("Color theme:");
                     egui::ComboBox::from_id_salt("preferences.theme")
-                        .selected_text(app.settings_window.theme.label())
+                        .selected_text(if app.settings_window.preferences.follow_system_theme {
+                            "Automatic (system)"
+                        } else {
+                            app.settings_window.theme.label()
+                        })
                         .width(150.0)
                         .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(
+                                    app.settings_window.preferences.follow_system_theme,
+                                    "Automatic (system)",
+                                )
+                                .clicked()
+                            {
+                                app.settings_window.preferences.follow_system_theme = true;
+                            }
                             for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
-                                ui.selectable_value(
-                                    &mut app.settings_window.theme,
-                                    theme,
-                                    theme.label(),
-                                );
+                                if ui
+                                    .selectable_label(
+                                        !app.settings_window.preferences.follow_system_theme
+                                            && app.settings_window.theme == theme,
+                                        theme.label(),
+                                    )
+                                    .clicked()
+                                {
+                                    app.settings_window.preferences.follow_system_theme = false;
+                                    app.settings_window.theme = theme;
+                                }
                             }
                         });
                 });
+            });
+        }
+        SettingsPage::DateTime => {
+            use crate::preferences::{DateFormat, TimeFormat};
+            heading(ui, "Date & Time");
+            group(ui, palette, "Commit dates", |ui| {
+                let preferences = &mut app.settings_window.preferences;
+                egui::Grid::new("preferences.date_time")
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        form_label(ui, "Date format:");
+                        egui::ComboBox::from_id_salt("preferences.date_format")
+                            .selected_text(preferences.date_format.label())
+                            .width(150.0)
+                            .show_ui(ui, |ui| {
+                                for format in [
+                                    DateFormat::Iso,
+                                    DateFormat::DayMonthYear,
+                                    DateFormat::MonthDayYear,
+                                ] {
+                                    ui.selectable_value(
+                                        &mut preferences.date_format,
+                                        format,
+                                        format.label(),
+                                    );
+                                }
+                            });
+                        ui.end_row();
+                        form_label(ui, "Example:");
+                        ui.label(RichText::new(preferences.date_example()).color(palette.muted));
+                        ui.end_row();
+                        form_label(ui, "Time format:");
+                        egui::ComboBox::from_id_salt("preferences.time_format")
+                            .selected_text(preferences.time_format.label())
+                            .width(150.0)
+                            .show_ui(ui, |ui| {
+                                for format in [TimeFormat::Hours24, TimeFormat::Hours12] {
+                                    ui.selectable_value(
+                                        &mut preferences.time_format,
+                                        format,
+                                        format.label(),
+                                    );
+                                }
+                            });
+                        ui.end_row();
+                        form_label(ui, "Example:");
+                        ui.label(RichText::new(preferences.time_example()).color(palette.muted));
+                        ui.end_row();
+                    });
+                ui.add_space(8.0);
+                ui.checkbox(
+                    &mut preferences.verbose_dates,
+                    "Show Today and Yesterday for recent dates",
+                );
+                ui.label(
+                    RichText::new("Commit dates are shown in your local time zone.")
+                        .small()
+                        .color(palette.muted),
+                );
             });
         }
         SettingsPage::Remote => {
@@ -398,14 +534,6 @@ fn interface_choices(ui: &mut Ui, selected: &mut InterfaceStyle, theme: ThemeCho
                         *selected = style;
                     }
                     column.radio_value(selected, style, style.label());
-                    column.label(
-                        RichText::new(match style {
-                            InterfaceStyle::Classic => "Compact stacked panels",
-                            InterfaceStyle::Modern => "Changes and diff side by side",
-                        })
-                        .small()
-                        .color(column.visuals().weak_text_color()),
-                    );
                 });
             }
         });
@@ -446,6 +574,7 @@ mod tests {
                     (SettingsPage::General, "General"),
                     (SettingsPage::Remote, "Remote"),
                     (SettingsPage::Appearance, "Appearance"),
+                    (SettingsPage::DateTime, "Date & Time"),
                     (SettingsPage::Llm, "Commit messages"),
                 ] {
                     let mut output = render(&mut app, Vec::new());
@@ -539,9 +668,15 @@ mod tests {
             };
             for style in ["classic", "modern"] {
                 let uri = format!("bytes://previews/{style}-{suffix}.png");
-                let loaded = context.try_load_image(&uri, Default::default()).unwrap();
-                let egui::load::ImagePoll::Ready { image } = loaded else {
-                    panic!("Preview did not load");
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                let image = loop {
+                    match context.try_load_image(&uri, Default::default()).unwrap() {
+                        egui::load::ImagePoll::Ready { image } => break image,
+                        egui::load::ImagePoll::Pending { .. } => {
+                            assert!(std::time::Instant::now() < deadline, "Preview did not load");
+                            std::thread::sleep(std::time::Duration::from_millis(1));
+                        }
+                    }
                 };
                 assert_eq!(image.size, [224, 224]);
             }
@@ -594,6 +729,11 @@ mod tests {
             app.open_settings();
             app.settings_window.interface_style = InterfaceStyle::Modern;
             app.settings_window.theme = ThemeChoice::Dark;
+            app.settings_window.preferences.show_welcome = false;
+            app.settings_window.preferences.file_double_click =
+                crate::preferences::FileDoubleClick::ToggleStage;
+            app.settings_window.preferences.date_format =
+                crate::preferences::DateFormat::DayMonthYear;
             let render = |app: &mut SannyGitApp, events| {
                 context.run_ui(
                     RawInput {
@@ -608,7 +748,6 @@ mod tests {
                 )
             };
             let mut output = render(&mut app, vec![]);
-            assert!(visible_text(&output.shapes, "Interface style:"));
             assert!(visible_text(&output.shapes, "Modern"));
             let target = output
                 .shapes
@@ -644,6 +783,23 @@ mod tests {
             };
             assert_eq!(app.interface_style, style);
             assert_eq!(app.theme, theme);
+            assert_eq!(app.preferences.show_welcome, button != "OK");
+            assert_eq!(
+                app.preferences.file_double_click,
+                if button == "OK" {
+                    crate::preferences::FileDoubleClick::ToggleStage
+                } else {
+                    crate::preferences::FileDoubleClick::ShowDiff
+                }
+            );
+            assert_eq!(
+                app.preferences.date_format,
+                if button == "OK" {
+                    crate::preferences::DateFormat::DayMonthYear
+                } else {
+                    crate::preferences::DateFormat::Iso
+                }
+            );
             app.open_settings();
             assert_eq!(app.settings_window.interface_style, style);
             assert_eq!(app.settings_window.theme, theme);
@@ -706,6 +862,7 @@ mod tests {
             for (page, title) in [
                 (SettingsPage::General, "Confirmations"),
                 (SettingsPage::Appearance, "Color theme:"),
+                (SettingsPage::DateTime, "Time format:"),
                 (SettingsPage::Remote, "Automatic fetch"),
                 (SettingsPage::Llm, "Endpoint:"),
             ] {
@@ -724,6 +881,19 @@ mod tests {
                 assert!(visible_text(&output.shapes, title));
                 assert!(visible_text(&output.shapes, "Cancel"));
                 assert!(visible_text(&output.shapes, "OK"));
+                if page == SettingsPage::General {
+                    for label in ["Language:", "English", "Restore confirmation dialogs"] {
+                        assert!(
+                            visible_text(&output.shapes, label),
+                            "Missing {label} at minimum size"
+                        );
+                    }
+                }
+                if page == SettingsPage::DateTime {
+                    for label in ["Date format:", "Time format:"] {
+                        assert_eq!(text_rows(&output.shapes, label), Some(1));
+                    }
+                }
                 if page == SettingsPage::Llm {
                     assert!(visible_text(&output.shapes, crate::llm::DEFAULT_ENDPOINT));
                     assert!(white_rect_count(&output.shapes) >= 3);

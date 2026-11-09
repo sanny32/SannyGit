@@ -136,6 +136,14 @@ pub enum ThemeChoice {
 }
 
 impl ThemeChoice {
+    pub fn from_system(context: &Context, fallback: Self) -> Self {
+        match context.system_theme() {
+            Some(egui::Theme::Light) => Self::Light,
+            Some(egui::Theme::Dark) => Self::Dark,
+            None => fallback,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Light => "Light",
@@ -352,6 +360,30 @@ impl Palette {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_theme_tracks_system_changes_and_keeps_a_fallback() {
+        let context = Context::default();
+        for (system, expected) in [
+            (Some(egui::Theme::Light), ThemeChoice::Light),
+            (Some(egui::Theme::Dark), ThemeChoice::Dark),
+            (None, ThemeChoice::Light),
+        ] {
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    system_theme: system,
+                    ..Default::default()
+                },
+                |ui| {
+                    assert_eq!(
+                        ThemeChoice::from_system(ui.ctx(), ThemeChoice::Light),
+                        expected
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        }
+    }
 
     #[test]
     fn switching_themes_preserves_palette_and_typography_across_frames() {

@@ -62,6 +62,7 @@ pub enum ChangeFilter {
 pub enum SettingsPage {
     General,
     Appearance,
+    DateTime,
     Remote,
     Llm,
 }
@@ -70,6 +71,7 @@ pub struct SettingsWindow {
     pub open: bool,
     pub page: SettingsPage,
     pub theme: ThemeChoice,
+    pub preferences: crate::preferences::Preferences,
     pub interface_style: InterfaceStyle,
     pub auto_fetch: bool,
     pub skip_push_confirmation: bool,
@@ -85,6 +87,10 @@ impl SettingsWindow {
             open: false,
             page: SettingsPage::Appearance,
             theme,
+            preferences: crate::preferences::Preferences {
+                follow_system_theme: false,
+                ..Default::default()
+            },
             interface_style: InterfaceStyle::default(),
             auto_fetch: true,
             skip_push_confirmation: false,
@@ -111,10 +117,13 @@ pub struct SannyGitApp {
     #[cfg(target_os = "macos")]
     pub(crate) pending_native_edit_events: Vec<eframe::egui::Event>,
     pub theme: ThemeChoice,
+    pub preferences: crate::preferences::Preferences,
     pub interface_style: InterfaceStyle,
     pub settings_window: SettingsWindow,
     pub llm_config: crate::llm::Config,
     pub about_dialog: bool,
+    pub welcome_open: bool,
+    welcome_pending: bool,
     applied_theme: ThemeChoice,
     applied_interface_style: InterfaceStyle,
     pub repositories: Vec<Repository>,
@@ -176,10 +185,21 @@ impl SannyGitApp {
         } else {
             ThemeChoice::Light
         };
-        let theme = creation_context
+        let saved_theme = creation_context
             .storage
-            .and_then(|storage| eframe::get_value(storage, THEME_STORAGE_KEY))
-            .unwrap_or(system_theme);
+            .and_then(|storage| eframe::get_value(storage, THEME_STORAGE_KEY));
+        let preferences: crate::preferences::Preferences = creation_context
+            .storage
+            .and_then(|storage| eframe::get_value(storage, crate::preferences::STORAGE_KEY))
+            .unwrap_or_else(|| crate::preferences::Preferences {
+                follow_system_theme: saved_theme.is_none(),
+                ..Default::default()
+            });
+        let theme = if preferences.follow_system_theme {
+            system_theme
+        } else {
+            saved_theme.unwrap_or(system_theme)
+        };
         let interface_style = creation_context
             .storage
             .and_then(|storage| eframe::get_value(storage, INTERFACE_STYLE_STORAGE_KEY))
@@ -187,6 +207,8 @@ impl SannyGitApp {
         theme.apply_style(&creation_context.egui_ctx, interface_style);
 
         let mut app = Self::with_theme(theme);
+        app.preferences = preferences;
+        app.welcome_pending = app.preferences.show_welcome;
         app.interface_style = interface_style;
         app.applied_interface_style = interface_style;
         app.skip_push_confirmation = creation_context
@@ -261,10 +283,16 @@ impl SannyGitApp {
             #[cfg(target_os = "macos")]
             pending_native_edit_events: Vec::new(),
             theme,
+            preferences: crate::preferences::Preferences {
+                follow_system_theme: false,
+                ..Default::default()
+            },
             interface_style: InterfaceStyle::default(),
             settings_window: SettingsWindow::new(theme),
             llm_config: crate::llm::Config::default(),
             about_dialog: false,
+            welcome_open: false,
+            welcome_pending: false,
             applied_theme: theme,
             applied_interface_style: InterfaceStyle::default(),
             repositories: Vec::new(),
@@ -446,12 +474,26 @@ impl SannyGitApp {
             MenuAction::Push => self.open_remote(crate::remotes::Operation::Push),
             MenuAction::ReloadHistory => self.reload_history(),
             MenuAction::Preferences => self.open_settings(),
-            MenuAction::LightTheme => self.theme = ThemeChoice::Light,
-            MenuAction::DarkTheme => self.theme = ThemeChoice::Dark,
+            MenuAction::LightTheme => {
+                self.preferences.follow_system_theme = false;
+                self.theme = ThemeChoice::Light;
+            }
+            MenuAction::DarkTheme => {
+                self.preferences.follow_system_theme = false;
+                self.theme = ThemeChoice::Dark;
+            }
             MenuAction::Close => context.send_viewport_cmd(eframe::egui::ViewportCommand::Close),
             MenuAction::About => self.about_dialog = true,
         }
         context.request_repaint();
+    }
+
+    fn finish_startup(&mut self) {
+        if self.welcome_pending && !self.busy() && self.error.is_none() {
+            self.welcome_open = self.preferences.show_welcome
+                && self.repositories.get(self.selected_repository).is_none();
+            self.welcome_pending = false;
+        }
     }
 
     pub fn palette(&self) -> Palette {
@@ -459,6 +501,7 @@ impl SannyGitApp {
     }
 
     pub fn open_settings(&mut self) {
+        self.settings_window.preferences = self.preferences.clone();
         self.settings_window.interface_style = self.interface_style;
         self.settings_window.theme = self.theme;
         self.settings_window.auto_fetch = self.tracking.auto_fetch;
@@ -1199,6 +1242,9 @@ impl SannyGitApp {
 
 impl eframe::App for SannyGitApp {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+        if self.preferences.follow_system_theme {
+            self.theme = ThemeChoice::from_system(ui.ctx(), self.theme);
+        }
         if self.applied_theme != self.theme || self.applied_interface_style != self.interface_style
         {
             self.theme.apply_style(ui.ctx(), self.interface_style);
@@ -1206,6 +1252,7 @@ impl eframe::App for SannyGitApp {
             self.applied_theme = self.theme;
         }
         self.poll_worker();
+        self.finish_startup();
         self.poll_working_tree();
         let root = self
             .repositories
@@ -1218,6 +1265,7 @@ impl eframe::App for SannyGitApp {
             && !self.history_loading
             && self.state_current
             && !self.open_dialog
+            && !self.welcome_open
             && self.manager.dialog.is_none()
             && self.network_dialog.is_none()
             && self.remote_checkout.is_none();
@@ -1284,6 +1332,7 @@ impl eframe::App for SannyGitApp {
         eframe::set_value(storage, "sannygit.auto_fetch", &self.tracking.auto_fetch);
         eframe::set_value(storage, "sannygit.llm", &self.llm_config);
         eframe::set_value(storage, THEME_STORAGE_KEY, &self.theme);
+        eframe::set_value(storage, crate::preferences::STORAGE_KEY, &self.preferences);
         eframe::set_value(storage, INTERFACE_STYLE_STORAGE_KEY, &self.interface_style);
         let paths: Vec<_> = self.repositories.iter().map(|r| &r.path).collect();
         eframe::set_value(storage, "sannygit.repositories", &paths);
@@ -1640,6 +1689,114 @@ mod tests {
 
     fn visible_text(shapes: &[ClippedShape], expected: &str) -> bool {
         visible_text_count(shapes, expected) > 0
+    }
+
+    #[test]
+    fn welcome_waits_for_restore_and_only_opens_without_an_active_repository() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.welcome_pending = true;
+        let (_sender, receiver) = mpsc::channel();
+        app.worker = Some(receiver);
+        app.finish_startup();
+        assert!(app.welcome_pending);
+        assert!(!app.welcome_open);
+        app.worker = None;
+        app.repositories = crate::mock_data::repositories();
+        app.selected_repository = 0;
+        app.finish_startup();
+        assert!(!app.welcome_open);
+        app.welcome_pending = true;
+        app.selected_repository = usize::MAX;
+        app.finish_startup();
+        assert!(app.welcome_open);
+        app.welcome_open = false;
+        app.finish_startup();
+        assert!(!app.welcome_open, "Welcome must not reopen after closing");
+        app.welcome_pending = true;
+        app.preferences.show_welcome = false;
+        app.finish_startup();
+        assert!(!app.welcome_open);
+    }
+
+    #[test]
+    fn double_click_staging_setting_changes_only_the_index() {
+        use crate::preferences::FileDoubleClick;
+        use egui::{Event, Modifiers, PointerButton};
+        for mode in [FileDoubleClick::ShowDiff, FileDoubleClick::ToggleStage] {
+            let repo = crate::git::tests::TempRepo::new();
+            std::fs::write(repo.0.join("example.txt"), "Keep working-tree content\n").unwrap();
+            let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+            app.apply_snapshot(git::load(&repo.0).unwrap());
+            app.preferences.file_double_click = mode;
+            let context = egui::Context::default();
+            crate::theme::install_fonts(&context);
+            egui_extras::install_image_loaders(&context);
+            ThemeChoice::Light.apply(&context);
+            let render = |app: &mut SannyGitApp, time, events| {
+                let mut output = context.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            Vec2::new(1100.0, 700.0),
+                        )),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| ui::show(ui, app),
+                );
+                output.textures_delta.clear();
+                output
+            };
+            for round in 0..2 {
+                let start = 1.0 + round as f64;
+                let mut output = render(&mut app, start - 0.5, vec![]);
+                for _ in 0..2 {
+                    output = render(&mut app, start - 0.4, vec![]);
+                }
+                let target = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.job.text == "example.txt" => {
+                            Some(text.pos + text.galley.size() / 2.0)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                for (step, pressed) in [true, false, true, false].into_iter().enumerate() {
+                    render(
+                        &mut app,
+                        start + step as f64 * 0.05,
+                        vec![
+                            Event::PointerMoved(target),
+                            Event::PointerButton {
+                                pos: target,
+                                button: PointerButton::Primary,
+                                pressed,
+                                modifiers: Modifiers::NONE,
+                            },
+                        ],
+                    );
+                }
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while app.busy() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    app.poll_worker();
+                }
+                assert!(!app.busy());
+                assert!(app.error.is_none(), "{:?}", app.error);
+                let snapshot = git::load(&repo.0).unwrap();
+                assert_eq!(
+                    snapshot.changes[0].staged,
+                    mode == FileDoubleClick::ToggleStage && round == 0
+                );
+                assert_eq!(
+                    std::fs::read_to_string(repo.0.join("example.txt")).unwrap(),
+                    "Keep working-tree content\n"
+                );
+            }
+        }
     }
 
     #[test]

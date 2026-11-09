@@ -85,6 +85,20 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         return;
     }
     let mut selected = None;
+    let date_width = ui
+        .painter()
+        .layout_no_wrap(
+            format!(
+                "{} {}",
+                app.preferences.date_format.label(),
+                app.preferences.time_format.label()
+            ),
+            eframe::egui::FontId::proportional(13.0),
+            palette.muted,
+        )
+        .size()
+        .x
+        + 8.0;
     TableBuilder::new(ui)
         .striped(true)
         .sense(Sense::click())
@@ -92,7 +106,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .column(Column::exact(if wide { 70.0 } else { 46.0 }))
         .column(Column::remainder().at_least(80.0))
         .column(Column::exact(if wide { 100.0 } else { 70.0 }))
-        .column(Column::exact(if wide { 116.0 } else { 86.0 }))
+        .column(Column::exact(date_width.clamp(116.0, 170.0)))
         .column(Column::exact(72.0))
         .min_scrolled_height(0.0)
         .header(24.0, |mut header| {
@@ -117,8 +131,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         .help_text(&commit.email);
                 });
                 row.col(|ui| {
-                    let date = commit.date.replace('T', " ");
-                    ui.label(RichText::new(date.get(..16).unwrap_or(&date)).color(palette.muted))
+                    let date = app.preferences.commit_date(&commit.date);
+                    ui.label(RichText::new(date).color(palette.muted))
                         .help_text(&commit.date);
                 });
                 row.col(|ui| {
@@ -225,10 +239,14 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
                             .selectable(true),
                     );
                     ui.add(
-                        Label::new(format!("Date: {}", commit.date))
-                            .wrap()
-                            .selectable(true),
-                    );
+                        Label::new(format!(
+                            "Date: {}",
+                            app.preferences.commit_date(&commit.date)
+                        ))
+                        .wrap()
+                        .selectable(true),
+                    )
+                    .help_text(&commit.date);
                     ui.add(
                         Label::new(if commit.parents.is_empty() {
                             "Parents: none in available history (root or shallow boundary)".into()

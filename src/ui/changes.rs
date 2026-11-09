@@ -141,6 +141,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 if response.clicked() {
                     app.selected_change = index;
                 }
+                if response.double_clicked()
+                    && app.preferences.file_double_click == crate::preferences::FileDoubleClick::ToggleStage
+                    && operations_enabled && change.kind != ChangeKind::Conflicted
+                {
+                    staging_request = Some((index, !change.staged));
+                }
             });
         });
     ui.data_mut(|data| data.insert_persisted(widths_id, [index_width, status_width]));

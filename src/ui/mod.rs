@@ -127,6 +127,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     toolbar::show(ui, app);
     settings::show(ui.ctx(), app);
     repository_dialogs::show(ui, app);
+    welcome(ui, app);
     eframe::egui::Window::new("About SannyGit")
         .open(&mut app.about_dialog)
         .resizable(false)
@@ -235,6 +236,52 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 }))
                 .show(ui, |ui| diff_view::show(ui, app));
         });
+}
+
+fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
+    if !app.welcome_open {
+        return;
+    }
+    let palette = app.palette();
+    dialog_style::modal(ui.ctx(), palette, "application.welcome").show(ui.ctx(), |ui| {
+        ui.set_width(380.0);
+        dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        dialog_style::section(ui, palette.panel, Margin::same(18), |ui| {
+            ui.heading("Welcome to SannyGit");
+            ui.add_space(8.0);
+            ui.label("Open a local repository or clone one to get started.");
+            ui.add_space(14.0);
+            if ui
+                .add_sized(
+                    [ui.available_width(), 28.0],
+                    eframe::egui::Button::new("Open or create repository…"),
+                )
+                .clicked()
+            {
+                app.welcome_open = false;
+                app.open_dialog = true;
+            }
+            ui.add_space(6.0);
+            if ui
+                .add_sized(
+                    [ui.available_width(), 28.0],
+                    eframe::egui::Button::new("Clone repository…"),
+                )
+                .clicked()
+            {
+                app.welcome_open = false;
+                app.handle_menu_action(crate::menu::MenuAction::Clone, ui.ctx());
+            }
+        });
+        dialog_style::section(ui, palette.header, Margin::symmetric(18, 12), |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.add(dialog_style::button("Close")).clicked() {
+                    app.welcome_open = false;
+                }
+            });
+        });
+    });
 }
 
 // Separate panel IDs preserve each style's user-adjusted split positions.
