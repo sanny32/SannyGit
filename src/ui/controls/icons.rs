@@ -123,28 +123,134 @@ pub fn paint(ui: &mut Ui, icon: Icon, color: Color32, size: f32) {
     ui.add(image(icon, color, size));
 }
 
-pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str, size: Vec2) -> Response {
-    ui.add(
-        Button::image(image(icon, ui.visuals().text_color(), 14.0))
-            .frame(false)
-            .min_size(size),
-    )
-    .help_text(tooltip)
+// All icon-only actions use this geometry, including menu triggers and disabled
+// controls. Local dialog padding must not change their hit area or hover frame.
+pub const BUTTON_SIZE: f32 = 26.0;
+const BUTTON_ICON_SIZE: f32 = 16.0;
+
+fn button_widget(ui: &Ui, icon: Icon) -> Button<'static> {
+    Button::new(image(icon, ui.visuals().text_color(), BUTTON_ICON_SIZE))
+        .frame(true)
+        .frame_when_inactive(false)
+        .min_size(Vec2::splat(BUTTON_SIZE))
+}
+
+fn button_scope<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.scope(|ui| {
+        ui.spacing_mut().button_padding = Vec2::splat(4.0);
+        ui.spacing_mut().interact_size = Vec2::splat(BUTTON_SIZE);
+        contents(ui)
+    })
+    .inner
+}
+
+pub fn action(ui: &mut Ui, icon: Icon, enabled: bool) -> Response {
+    button_scope(ui, |ui| {
+        let background = ui.painter().add(eframe::egui::Shape::Noop);
+        let response = ui.add_enabled(enabled, button_widget(ui, icon));
+        // Keep disabled feedback subtle; its tooltip explains the unavailable action.
+        if !response.enabled() && response.contains_pointer() {
+            ui.painter().set(
+                background,
+                eframe::egui::Shape::rect_filled(
+                    response.rect,
+                    ui.visuals().widgets.inactive.corner_radius,
+                    ui.visuals().widgets.hovered.weak_bg_fill,
+                ),
+            );
+        }
+        response
+    })
+}
+
+pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str) -> Response {
+    action(ui, icon, true).help_text(tooltip)
+}
+
+pub fn menu(ui: &mut Ui, icon: Icon, tooltip: &str, contents: impl FnOnce(&mut Ui)) -> Response {
+    let spacing = ui.spacing().clone();
+    button_scope(ui, |ui| {
+        eframe::egui::containers::menu::MenuButton::from_button(button_widget(ui, icon))
+            .ui(ui, |ui| {
+                *ui.spacing_mut() = spacing;
+                contents(ui);
+            })
+            .0
+            .help_text(tooltip)
+    })
 }
 
 pub fn unavailable(ui: &mut Ui, icon: Icon, tooltip: &str) {
-    let response = ui.add_enabled(
-        false,
-        Button::image(image(icon, ui.visuals().text_color(), 14.0))
-            .frame(false)
-            .min_size(Vec2::splat(20.0)),
-    );
-    response.disabled_help_text(tooltip);
+    action(ui, icon, false).disabled_help_text(tooltip);
 }
 
 #[cfg(test)]
 mod tests {
     use super::Icon;
+
+    #[test]
+    fn icon_actions_and_menus_share_geometry_across_styles_and_states() {
+        use super::*;
+        use crate::theme::{install_fonts, InterfaceStyle, ThemeChoice};
+        use eframe::egui::{vec2, Context, Event, Pos2, RawInput, Rect};
+
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for interface in [InterfaceStyle::Classic, InterfaceStyle::Modern] {
+                for padding in [Vec2::ZERO, vec2(12.0, 8.0)] {
+                    let ctx = Context::default();
+                    install_fonts(&ctx);
+                    theme.apply_style(&ctx, interface);
+                    let mut pointer = Pos2::ZERO;
+                    for frame in 0..4 {
+                        let mut rects = Vec::new();
+                        let mut output = ctx.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(
+                                    Pos2::ZERO,
+                                    vec2(1100.0, 700.0),
+                                )),
+                                events: if frame > 0 {
+                                    vec![Event::PointerMoved(pointer)]
+                                } else {
+                                    vec![]
+                                },
+                                ..Default::default()
+                            },
+                            |ui| {
+                                ui.spacing_mut().button_padding = padding;
+                                ui.spacing_mut().interact_size = vec2(40.0, 40.0);
+                                ui.horizontal(|ui| {
+                                    for icon in [
+                                        Icon::Fetch,
+                                        Icon::Plus,
+                                        Icon::Sparkles,
+                                        Icon::Stop,
+                                        Icon::Folder,
+                                        Icon::Close,
+                                    ] {
+                                        rects.push(action(ui, icon, true).rect);
+                                        rects.push(action(ui, icon, false).rect);
+                                    }
+                                    rects.push(menu(ui, Icon::Chevron, "Options", |_| {}).rect);
+                                });
+                                assert_eq!(ui.spacing().button_padding, padding);
+                                assert_eq!(ui.spacing().interact_size, vec2(40.0, 40.0));
+                            },
+                        );
+                        output.textures_delta.clear();
+                        for rect in &rects {
+                            assert_eq!(
+                                rect.size(),
+                                Vec2::splat(BUTTON_SIZE),
+                                "{theme:?} {interface:?} {padding:?}: {rect:?}"
+                            );
+                        }
+                        pointer = rects[frame % rects.len()].center();
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn file_icons_handle_case_paths_and_unknown_extensions() {

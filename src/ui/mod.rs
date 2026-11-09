@@ -11,6 +11,7 @@ mod repository_dialogs;
 mod settings;
 mod status_bar;
 mod toolbar;
+mod workspace;
 
 use controls::dialog_style;
 
@@ -178,7 +179,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     Panel::left("working_tree.v3.sidebar")
         .resizable(true)
         .default_size((context.content_rect().width() * 0.17).clamp(200.0, 270.0))
-        .size_range(190.0..=350.0)
+        .size_range(190.0..=(ui.available_width() - 740.0).max(190.0))
         .frame(Frame::new().fill(palette.background).inner_margin(4))
         .show(ui, |ui| {
             ui.take_available_space();
@@ -201,7 +202,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             Panel::bottom("working_tree.v3.journal")
                 .resizable(true)
                 .default_size(180.0)
-                .size_range(150.0..=300.0)
+                .size_range(150.0..=(ui.available_height() - 380.0).max(150.0))
                 .frame(panel_frame(palette))
                 .show(ui, |ui| {
                     ui.take_available_space();
@@ -210,7 +211,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             Panel::top("working_tree.v3.files")
                 .resizable(true)
                 .default_size((context.content_rect().height() * 0.38).max(300.0))
-                .size_range(260.0..=550.0)
+                .size_range(180.0..=(ui.available_height() - 160.0).max(180.0))
                 .frame(Frame::new().fill(palette.background).inner_margin(Margin {
                     bottom: 4,
                     ..Margin::ZERO
@@ -220,7 +221,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     Panel::right("working_tree.v3.commit")
                         .resizable(true)
                         .default_size(ui.available_width() * 0.29)
-                        .size_range(260.0..=450.0)
+                        .size_range(260.0..=(ui.available_width() - 310.0).max(260.0))
                         .frame(panel_frame(palette).outer_margin(Margin {
                             left: 4,
                             ..Margin::ZERO
@@ -299,59 +300,7 @@ fn modern_workspace(ui: &mut Ui, app: &mut SannyGitApp) {
             bottom: 4,
         }))
         .show(ui, |ui| {
-            let bottom_limit = (ui.available_height() * 0.55).max(170.0);
-            Panel::bottom("working_tree.modern.bottom")
-                .resizable(true)
-                .default_size(230.0)
-                .size_range(170.0..=bottom_limit)
-                .frame(Frame::new().fill(palette.background).inner_margin(Margin {
-                    top: 6,
-                    ..Margin::ZERO
-                }))
-                .show(ui, |ui| {
-                    ui.take_available_space();
-                    let commit_limit = (ui.available_width() - 420.0).max(300.0);
-                    Panel::left("working_tree.modern.commit")
-                        .resizable(true)
-                        .default_size(ui.available_width() * 0.42)
-                        .size_range(300.0..=commit_limit)
-                        .frame(panel_frame(palette).outer_margin(Margin {
-                            right: 6,
-                            ..Margin::ZERO
-                        }))
-                        .show(ui, |ui| {
-                            ui.take_available_space();
-                            commit_panel::show(ui, app);
-                        });
-                    CentralPanel::default()
-                        .frame(panel_frame(palette))
-                        .show(ui, |ui| journal::show(ui, app));
-                });
-            let changes_limit = (ui.available_width() - 320.0).max(310.0);
-            Panel::left("working_tree.modern.changes")
-                .resizable(true)
-                .default_size(ui.available_width() * 0.48)
-                .size_range(310.0..=changes_limit)
-                .frame(panel_frame(palette).outer_margin(Margin {
-                    right: 6,
-                    ..Margin::ZERO
-                }))
-                .show(ui, |ui| {
-                    ui.take_available_space();
-                    header(ui, 34.0, palette, |ui| {
-                        let name = app
-                            .repositories
-                            .get(app.selected_repository)
-                            .map_or("Working Tree", |repository| repository.name.as_str());
-                        ui.heading(name);
-                        ui.label("›");
-                        ui.label(&app.current_branch);
-                    });
-                    changes::show(ui, app);
-                });
-            CentralPanel::default()
-                .frame(panel_frame(palette))
-                .show(ui, |ui| diff_view::show(ui, app));
+            workspace::show(ui, app);
         });
 }
 

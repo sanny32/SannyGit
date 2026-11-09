@@ -43,24 +43,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.add_enabled_ui(
                 !app.busy() && app.repositories.get(app.selected_repository).is_some(),
                 |ui| {
-                    if icons::button(
-                        ui,
-                        Icon::Plus,
-                        "Create local branch from HEAD",
-                        Vec2::splat(20.0),
-                    )
-                    .clicked()
-                    {
+                    if icons::button(ui, Icon::Plus, "Create local branch from HEAD").clicked() {
                         app.branch_dialog_open = true;
                     }
-                    if icons::button(
-                        ui,
-                        Icon::Fetch,
-                        "Reload branches and tags",
-                        Vec2::splat(20.0),
-                    )
-                    .clicked()
-                    {
+                    if icons::button(ui, Icon::Fetch, "Reload branches and tags").clicked() {
                         app.refresh();
                     }
                 },

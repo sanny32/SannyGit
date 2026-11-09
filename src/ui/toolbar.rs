@@ -5,7 +5,8 @@ use eframe::egui::{
     Align, Align2, Button, FontId, Frame, Layout, Margin, Panel, Rect, Response, Ui, Vec2,
 };
 
-const TOOLBAR_BUTTON_HEIGHT: f32 = 40.0;
+const TOOLBAR_BUTTON_HEIGHT: f32 = 48.0;
+const TOOLBAR_BUTTON_PADDING_Y: f32 = 4.0;
 const TOOLBAR_ICON_SIZE: f32 = 22.0;
 const HOVER_ANIMATION_TIME: f32 = 0.12;
 const PRESS_ANIMATION_TIME: f32 = 0.07;
@@ -62,12 +63,14 @@ fn action_button(
     icons::image(icon, color, icon_size).paint_at(
         ui,
         Rect::from_center_size(
-            response.rect.center_top() + Vec2::new(0.0, 11.0) + press_offset,
+            response.rect.center_top()
+                + Vec2::new(0.0, TOOLBAR_BUTTON_PADDING_Y + 11.0)
+                + press_offset,
             Vec2::splat(icon_size),
         ),
     );
     ui.painter().text(
-        response.rect.center_top() + Vec2::new(0.0, 24.0) + press_offset,
+        response.rect.center_top() + Vec2::new(0.0, TOOLBAR_BUTTON_PADDING_Y + 24.0) + press_offset,
         Align2::CENTER_TOP,
         label,
         FontId::proportional(12.0),
@@ -179,7 +182,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     menu_bar(ui, app);
     let palette = app.palette();
     let modern = app.interface_style == crate::theme::InterfaceStyle::Modern;
-    let height = if modern { 68.0 } else { 52.0 };
+    let height = if modern { 68.0 } else { 56.0 };
     Panel::top("working_tree.v2.toolbar")
         .exact_size(height)
         .frame(Frame::new().fill(palette.header).inner_margin(Margin {
@@ -211,7 +214,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         ui.separator();
                     }
                     ui.allocate_ui_with_layout(
-                        Vec2::new(action_width, 40.0),
+                        Vec2::new(action_width, TOOLBAR_BUTTON_HEIGHT),
                         Layout::top_down(Align::Center),
                         |ui| {
                             ui.set_min_width(action_width);

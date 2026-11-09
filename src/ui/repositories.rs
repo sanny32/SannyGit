@@ -49,14 +49,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 Icon::Chevron,
                 "Repository management is not implemented yet",
             );
-            if icons::button(
-                ui,
-                Icon::Plus,
-                "Open repository",
-                eframe::egui::Vec2::splat(20.0),
-            )
-            .clicked()
-            {
+            if icons::button(ui, Icon::Plus, "Open repository").clicked() {
                 app.open_dialog = true;
             }
         });

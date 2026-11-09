@@ -8,16 +8,7 @@ use crate::{
 use eframe::egui::{self, Align, Button, ComboBox, Layout, RichText, TextEdit, Ui};
 
 pub(super) fn choose_folder(ui: &mut Ui, value: &mut String) {
-    let response = ui
-        .scope(|ui| {
-            ui.spacing_mut().button_padding = egui::vec2(4.0, 4.0);
-            ui.add(
-                Button::image(icons::image(Icon::Folder, ui.visuals().text_color(), 16.0))
-                    .min_size(egui::vec2(28.0, 28.0)),
-            )
-            .help_text("Open directory chooser")
-        })
-        .inner;
+    let response = icons::button(ui, Icon::Folder, "Open directory chooser");
     if response.clicked() {
         let mut picker = rfd::FileDialog::new()
             .set_title("Choose directory")

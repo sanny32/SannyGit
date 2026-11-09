@@ -1,3 +1,4 @@
+use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
 use crate::{
     app::SannyGitApp,
@@ -32,67 +33,55 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            eframe::egui::containers::menu::MenuButton::from_button(
-                Button::image(super::controls::icons::image(
-                    super::controls::icons::Icon::Chevron,
-                    palette.muted,
-                    14.0,
-                ))
-                .frame(false)
-                .min_size(Vec2::new(20.0, 26.0)),
-            )
-            .ui(ui, |ui| {
-                if app.generating_commit_message && ui.button("Cancel generation").clicked() {
-                    app.cancel_commit_message_generation();
-                    ui.close();
-                }
-                let blocker = app.generate_commit_message_blocker();
-                if ui
-                    .add_enabled(blocker.is_none(), Button::new("Generate commit message"))
-                    .disabled_help_text(blocker.unwrap_or(""))
-                    .clicked()
-                {
-                    app.generate_commit_message();
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(
-                        app.repositories.get(app.selected_repository).is_some(),
-                        Button::new("Repository LLM settings…"),
-                    )
-                    .clicked()
-                {
-                    app.open_repository_llm_settings();
-                    ui.close();
-                }
-            })
-            .0
-            .help_text("Commit message generation options");
+            icons::menu(
+                ui,
+                Icon::Chevron,
+                "Commit message generation options",
+                |ui| {
+                    if app.generating_commit_message && ui.button("Cancel generation").clicked() {
+                        app.cancel_commit_message_generation();
+                        ui.close();
+                    }
+                    let blocker = app.generate_commit_message_blocker();
+                    if ui
+                        .add_enabled(blocker.is_none(), Button::new("Generate commit message"))
+                        .disabled_help_text(blocker.unwrap_or(""))
+                        .clicked()
+                    {
+                        app.generate_commit_message();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            app.repositories.get(app.selected_repository).is_some(),
+                            Button::new("Repository LLM settings…"),
+                        )
+                        .clicked()
+                    {
+                        app.open_repository_llm_settings();
+                        ui.close();
+                    }
+                },
+            );
 
             let blocker = app.generate_commit_message_blocker();
             let generating = app.generating_commit_message;
-            if ui
-                .add_enabled(
-                    generating || blocker.is_none(),
-                    Button::image(super::controls::icons::image(
-                        if generating {
-                            super::controls::icons::Icon::Stop
-                        } else {
-                            super::controls::icons::Icon::Sparkles
-                        },
-                        palette.muted,
-                        if generating { 14.0 } else { 20.0 },
-                    ))
-                    .frame(false)
-                    .min_size(Vec2::new(26.0, 26.0)),
-                )
-                .help_text(if generating {
-                    "Cancel commit message generation"
+            if icons::action(
+                ui,
+                if generating {
+                    Icon::Stop
                 } else {
-                    "Generate a commit message from all changes, including new files"
-                })
-                .disabled_help_text(blocker.unwrap_or(""))
-                .clicked()
+                    Icon::Sparkles
+                },
+                generating || blocker.is_none(),
+            )
+            .help_text(if generating {
+                "Cancel commit message generation"
+            } else {
+                "Generate a commit message from all changes, including new files"
+            })
+            .disabled_help_text(blocker.unwrap_or(""))
+            .clicked()
             {
                 if generating {
                     app.cancel_commit_message_generation();

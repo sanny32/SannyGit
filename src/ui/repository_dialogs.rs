@@ -270,7 +270,6 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                                 super::controls::icons::button(
                                                     ui, super::controls::icons::Icon::Folder,
                                                     "Choose GPG program",
-                                                    egui::vec2(22.0, 22.0),
                                                 );
                                             });
                                             ui.end_row();

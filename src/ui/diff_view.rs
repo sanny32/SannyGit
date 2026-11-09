@@ -30,20 +30,19 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
 
     ui.spacing_mut().item_spacing.y = 0.0;
     let mut close = false;
-    super::header(ui, 26.0, palette, |ui| {
+    super::header(ui, 30.0, palette, |ui| {
         ui.label("Changes");
         Frame::new()
             .fill(palette.panel)
             .stroke((1.0, palette.border))
             .corner_radius(4)
-            .inner_margin(Margin::symmetric(6, 2))
+            .inner_margin(Margin::symmetric(6, 0))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     icons::paint(ui, Icon::for_file(&change.path), palette.accent, 14.0);
                     ui.label(file_name(&change.path));
                     ui.add_space(4.0);
-                    close =
-                        icons::button(ui, Icon::Close, "Close diff", Vec2::splat(18.0)).clicked();
+                    close = icons::button(ui, Icon::Close, "Close diff").clicked();
                 });
             });
     });
