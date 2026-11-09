@@ -3,6 +3,10 @@ use eframe::egui::{Button, Color32, Image, Response, Ui, Vec2};
 
 #[derive(Clone, Copy)]
 pub enum Icon {
+    GitHub,
+    GitLab,
+    Bitbucket,
+    AzureDevOps,
     Pull,
     Push,
     Fetch,
@@ -38,6 +42,10 @@ impl Icon {
             };
         }
         match self {
+            Self::GitHub => svg!("github"),
+            Self::GitLab => svg!("gitlab"),
+            Self::Bitbucket => svg!("bitbucket"),
+            Self::AzureDevOps => svg!("azure-devops"),
             Self::Pull => svg!("pull"),
             Self::Push => svg!("push"),
             Self::Fetch => svg!("fetch"),

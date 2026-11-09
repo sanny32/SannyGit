@@ -33,6 +33,7 @@ pub struct RepositoryManager {
     pub clone_name: String,
     pub group_name: String,
     pub clone_source: String,
+    pub clone_form: crate::clone_source::Form,
     pub destination: String,
     pub search_root: String,
     pub search_depth: usize,
@@ -60,6 +61,7 @@ impl Default for RepositoryManager {
             clone_name: String::new(),
             group_name: String::new(),
             clone_source: String::new(),
+            clone_form: crate::clone_source::Form::default(),
             destination: String::new(),
             search_root: String::new(),
             search_depth: 6,
@@ -496,6 +498,40 @@ mod tests {
             app.poll_worker();
         }
         assert!(!app.busy(), "Repository restore did not finish");
+    }
+
+    #[test]
+    fn clone_form_inspects_branches_and_opens_the_finished_clone() {
+        let repo = crate::git::tests::TempRepo::new();
+        repo.write("file", "clone fixture\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "fixture"]);
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.manager.dialog = Some(Dialog::Clone);
+        *app.manager.clone_form.input() = repo.0.to_string_lossy().into_owned();
+        app.manager.clone_source = app.manager.clone_form.resolve().unwrap();
+        app.run_repository_job(Job::InspectClone(app.manager.clone_source.clone()));
+        finish_restore(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert_eq!(app.manager.clone_step, 1);
+        assert_eq!(app.manager.clone_branches, vec!["main"]);
+        let destination = repo.0.join("finished-clone");
+        app.run_repository_job(Job::Clone {
+            source: app.manager.clone_source.clone(),
+            destination: destination.to_string_lossy().into_owned(),
+            options: app.manager.clone_options.clone(),
+        });
+        finish_restore(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert_eq!(app.manager.dialog, None);
+        assert_eq!(
+            std::fs::read_to_string(destination.join("file")).unwrap(),
+            "clone fixture\n"
+        );
+        assert_eq!(
+            PathBuf::from(&app.repositories[app.selected_repository].path),
+            destination.canonicalize().unwrap()
+        );
     }
 
     #[test]

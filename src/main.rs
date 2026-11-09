@@ -2,6 +2,7 @@
 
 mod app;
 mod branches;
+mod clone_source;
 mod diff;
 mod git;
 mod history;

@@ -2,6 +2,7 @@ use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
 use crate::{
     app::{RepositoryJob, SannyGitApp},
+    clone_source::Provider,
     repository,
 };
 use eframe::egui::{self, Align, Button, ComboBox, Layout, RichText, TextEdit, Ui};
@@ -89,25 +90,39 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     palette.header,
                     egui::Margin::same(18),
                     |ui| {
-                        ui.set_min_height(270.0);
                         ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
-                        ui.add_enabled_ui(!busy, |ui| match step {
-                            0 => source_page(ui, app),
-                            1 => selection_page(ui, app),
-                            _ => directory_page(ui, app),
-                        });
-                        if let Some(error) = &app.error {
-                            ui.add(
-                                egui::Label::new(RichText::new(error).color(palette.removed_text))
-                                    .wrap(),
-                            );
-                        }
-                        if busy {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label(&app.status);
-                            });
-                        }
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), 258.0),
+                            Layout::top_down(Align::Min),
+                            |ui| {
+                                ui.set_min_height(258.0);
+                                ui.add_enabled_ui(!busy, |ui| match step {
+                                    0 => source_page(ui, app),
+                                    1 => selection_page(ui, app),
+                                    _ => directory_page(ui, app),
+                                });
+                            },
+                        );
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), 20.0),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                ui.set_min_height(20.0);
+                                if busy {
+                                    ui.spinner();
+                                    ui.add(egui::Label::new(&app.status).truncate())
+                                        .help_text(&app.status);
+                                } else if let Some(error) = &app.error {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(error).color(palette.removed_text),
+                                        )
+                                        .truncate(),
+                                    )
+                                    .help_text(error);
+                                }
+                            },
+                        );
                     },
                 );
                 super::controls::dialog_style::section(
@@ -136,7 +151,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                                     && !app.manager.clone_name.contains(['/', '\\']);
                                 let enabled = !busy
                                     && match step {
-                                        0 => !app.manager.clone_source.trim().is_empty(),
+                                        0 => app.manager.clone_form.resolve().is_ok(),
                                         2 => valid_name && !app.manager.clone_parent.is_empty(),
                                         _ => true,
                                     };
@@ -151,11 +166,13 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                                     .clicked()
                                 {
                                     match step {
-                                        0 => {
-                                            job = Some(RepositoryJob::InspectClone(
-                                                app.manager.clone_source.clone(),
-                                            ))
-                                        }
+                                        0 => match app.manager.clone_form.resolve() {
+                                            Ok(source) => {
+                                                app.manager.clone_source = source.clone();
+                                                job = Some(RepositoryJob::InspectClone(source));
+                                            }
+                                            Err(error) => app.error = Some(error),
+                                        },
                                         1 => app.manager.clone_step = 2,
                                         _ => {
                                             job = Some(RepositoryJob::Clone {
@@ -195,21 +212,65 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
 fn source_page(ui: &mut Ui, app: &mut SannyGitApp) {
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
-            ui.set_width(152.0);
+            ui.set_width(184.0);
             ui.spacing_mut().item_spacing.y = 3.0;
-            ui.add_sized([152.0, 26.0], Button::selectable(true, "URL or Path"));
-            for provider in ["GitHub", "GitHub Enterprise", "Bitbucket", "Bitbucket Server", "GitLab", "GitLab (Self Hosted)", "Azure DevOps", "Azure DevOps Server"] {
-                ui.add_enabled_ui(false, |ui| { ui.add_sized([152.0, 26.0], Button::new(provider)); })
-                    .response.help_text("Hosting accounts are not supported. Use URL or Path with your existing Git credentials.");
+            for provider in Provider::ALL {
+                let icon = match provider {
+                    Provider::Url => Icon::Repository,
+                    Provider::GitHub | Provider::GitHubEnterprise => Icon::GitHub,
+                    Provider::Bitbucket | Provider::BitbucketServer => Icon::Bitbucket,
+                    Provider::GitLab | Provider::GitLabSelfHosted => Icon::GitLab,
+                    Provider::Azure | Provider::AzureServer => Icon::AzureDevOps,
+                };
+                let button = Button::new((
+                    icons::image(icon, ui.visuals().text_color(), 16.0),
+                    provider.label(),
+                    egui::Atom::grow(),
+                ))
+                .gap(8.0)
+                .selected(app.manager.clone_form.provider == provider);
+                if ui.add_sized([184.0, 26.0], button).clicked() {
+                    app.manager.clone_form.provider = provider;
+                    app.error = None;
+                }
             }
         });
         ui.vertical(|ui| {
+            let provider = app.manager.clone_form.provider;
             let width = ui.available_width();
-            ui.add_sized(
-                [width, 28.0],
-                TextEdit::singleline(&mut app.manager.clone_source),
-            );
-            ui.label(RichText::new("e.g. https://server/path/to/repository").small().color(app.palette().muted));
+            if provider.self_hosted() {
+                ui.label("Server URL:");
+                if ui
+                    .add_sized(
+                        [width, 28.0],
+                        TextEdit::singleline(app.manager.clone_form.server())
+                            .hint_text("https://git.example.com"),
+                    )
+                    .changed()
+                {
+                    app.error = None;
+                }
+            }
+            ui.label(if provider == Provider::Url {
+                "Repository URL or local path:"
+            } else {
+                "Repository path or clone URL:"
+            });
+            if ui
+                .add_sized(
+                    [width, 28.0],
+                    TextEdit::singleline(app.manager.clone_form.input()).hint_text(provider.hint()),
+                )
+                .changed()
+            {
+                app.error = None;
+            }
+            if provider == Provider::Url {
+                ui.horizontal(|ui| {
+                    ui.label("Local repository:");
+                    choose_folder(ui, app.manager.clone_form.input());
+                });
+            }
         });
     });
 }
@@ -282,4 +343,76 @@ fn directory_page(ui: &mut Ui, app: &mut SannyGitApp) {
             );
             ui.end_row();
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{install_fonts, ThemeChoice};
+
+    #[test]
+    fn providers_align_left_and_errors_preserve_footer_in_both_themes() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                let ctx = egui::Context::default();
+                install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                let mut footer = None;
+                for provider in Provider::ALL {
+                    app.manager.clone_form.provider = provider;
+                    for error in [None, Some("Connection failed. ".repeat(100))] {
+                        app.error = error;
+                        let mut output = egui::FullOutput::default();
+                        for _ in 0..3 {
+                            output = ctx.run_ui(
+                                egui::RawInput {
+                                    screen_rect: Some(egui::Rect::from_min_size(
+                                        egui::Pos2::ZERO,
+                                        size,
+                                    )),
+                                    ..Default::default()
+                                },
+                                |ui| show(ui.ctx(), &mut app),
+                            );
+                            output.textures_delta.clear();
+                        }
+                        let text = |label: &str| {
+                            output
+                                .shapes
+                                .iter()
+                                .find_map(|shape| match &shape.shape {
+                                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                                        let rect = text.galley.rect.translate(text.pos.to_vec2());
+                                        assert!(
+                                            shape.clip_rect.contains_rect(rect),
+                                            "Clipped {label}: {rect:?}"
+                                        );
+                                        assert_eq!(text.galley.rows.len(), 1, "Wrapped {label}");
+                                        Some(text.pos)
+                                    }
+                                    _ => None,
+                                })
+                                .unwrap_or_else(|| panic!("Missing {label}"))
+                        };
+                        let left = text(Provider::Url.label()).x;
+                        for source in Provider::ALL {
+                            assert!((text(source.label()).x - left).abs() < 0.5);
+                        }
+                        let cancel = text("Cancel");
+                        if let Some(previous) = footer {
+                            assert!(
+                                cancel.distance(previous) < 0.5,
+                                "Footer moved for {provider:?}: {previous:?} -> {cancel:?}"
+                            );
+                        }
+                        footer = Some(cancel);
+                        assert!(text("Continue").y < size.y);
+                        assert!(!app.busy(), "Rendering must not start Git operations");
+                    }
+                }
+            }
+        }
+    }
 }
