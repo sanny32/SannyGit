@@ -4,12 +4,20 @@ use crate::{
     repository::{self, Preferences, SearchResult, Settings, Worktree},
 };
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
         Arc,
     },
+    time::{Duration, Instant},
 };
+
+struct HostingUpdate {
+    path: String,
+    provider: Result<Option<crate::clone_source::Provider>, String>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dialog {
@@ -23,6 +31,9 @@ pub enum Dialog {
 }
 
 pub struct RepositoryManager {
+    pub hosting: HashMap<String, crate::clone_source::Provider>,
+    hosting_checked: HashMap<String, Instant>,
+    hosting_receiver: Option<Receiver<HostingUpdate>>,
     pub preferences: Preferences,
     pub dialog: Option<Dialog>,
     pub highlighted_repository: Option<String>,
@@ -51,6 +62,9 @@ pub struct RepositoryManager {
 impl Default for RepositoryManager {
     fn default() -> Self {
         Self {
+            hosting: HashMap::new(),
+            hosting_checked: HashMap::new(),
+            hosting_receiver: None,
             preferences: Preferences::default(),
             dialog: None,
             highlighted_repository: None,
@@ -130,6 +144,59 @@ pub enum ResultMessage {
 }
 
 impl SannyGitApp {
+    pub(super) fn update_repository_hosting(&mut self, context: &eframe::egui::Context) {
+        if let Some(receiver) = &self.manager.hosting_receiver {
+            match receiver.try_recv() {
+                Ok(update) => {
+                    if self.repositories.iter().any(|r| r.path == update.path) {
+                        // Keep the last known icon on read errors and retry later.
+                        if let Ok(provider) = update.provider {
+                            if let Some(provider) = provider {
+                                self.manager.hosting.insert(update.path.clone(), provider);
+                            } else {
+                                self.manager.hosting.remove(&update.path);
+                            }
+                        }
+                        self.manager
+                            .hosting_checked
+                            .insert(update.path, Instant::now());
+                    }
+                    self.manager.hosting_receiver = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.manager.hosting_receiver = None;
+                }
+            }
+        }
+        let Some(repository) = self.repositories.iter().find(|r| {
+            self.manager
+                .hosting_checked
+                .get(&r.path)
+                .is_none_or(|checked| checked.elapsed() >= Duration::from_secs(30))
+        }) else {
+            return;
+        };
+        let path = repository.path.clone();
+        let context = context.clone();
+        let (sender, receiver) = mpsc::channel();
+        // Rate-limit retries even when a thread cannot be started.
+        self.manager
+            .hosting_checked
+            .insert(path.clone(), Instant::now());
+        if std::thread::Builder::new()
+            .name("sannygit-hosting".into())
+            .spawn(move || {
+                let provider = repository::hosting_provider(std::path::Path::new(&path));
+                let _ = sender.send(HostingUpdate { path, provider });
+                context.request_repaint();
+            })
+            .is_ok()
+        {
+            self.manager.hosting_receiver = Some(receiver);
+        }
+    }
+
     pub fn run_repository_job(&mut self, job: Job) {
         if self.busy() {
             return;
@@ -475,6 +542,51 @@ mod tests {
     use super::*;
     use crate::theme::ThemeChoice;
     use std::collections::HashMap;
+
+    #[test]
+    fn hosting_updates_inactive_repositories_and_retains_icons_on_errors() {
+        let repo = crate::git::tests::TempRepo::new();
+        repo.git(&["remote", "add", "origin", "git@github.com:owner/repo.git"]);
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        let path = repo.0.to_string_lossy().into_owned();
+        app.repositories = vec![crate::models::Repository {
+            name: "Test".into(),
+            path: path.clone(),
+        }];
+        app.selected_repository = usize::MAX;
+        let context = eframe::egui::Context::default();
+        app.update_repository_hosting(&context);
+        assert!(!app.busy());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app.manager.hosting_receiver.is_some() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+            app.update_repository_hosting(&context);
+        }
+        assert_eq!(
+            app.manager.hosting.get(&path),
+            Some(&crate::clone_source::Provider::GitHub)
+        );
+        for (provider, expected) in [
+            (
+                Err("Read failed".into()),
+                Some(crate::clone_source::Provider::GitHub),
+            ),
+            (Ok(None), None),
+        ] {
+            let (sender, receiver) = mpsc::channel();
+            sender
+                .send(HostingUpdate {
+                    path: path.clone(),
+                    provider,
+                })
+                .unwrap();
+            app.manager.hosting_receiver = Some(receiver);
+            app.update_repository_hosting(&context);
+            assert_eq!(app.manager.hosting.get(&path).copied(), expected);
+        }
+        assert_eq!(app.selected_repository, usize::MAX);
+    }
 
     #[derive(Default)]
     struct Storage(HashMap<String, String>);

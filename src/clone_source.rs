@@ -14,6 +14,31 @@ pub enum Provider {
 }
 
 impl Provider {
+    pub fn from_remote_url(remote: &str) -> Option<Self> {
+        let host = if remote.contains("://") {
+            let url = reqwest::Url::parse(remote).ok()?;
+            if !matches!(url.scheme(), "https" | "http" | "ssh" | "git") {
+                return None;
+            }
+            url.host_str()?.to_ascii_lowercase()
+        } else {
+            // SCP-style SSH addresses, e.g. git@github.com:owner/repository.git.
+            let (authority, _) = remote.split_once(':')?;
+            if authority.contains(['/', '\\']) {
+                return None;
+            }
+            authority.rsplit('@').next()?.to_ascii_lowercase()
+        };
+        match host.as_str() {
+            "github.com" | "ssh.github.com" => Some(Self::GitHub),
+            "gitlab.com" | "altssh.gitlab.com" => Some(Self::GitLab),
+            "bitbucket.org" | "altssh.bitbucket.org" => Some(Self::Bitbucket),
+            "dev.azure.com" | "ssh.dev.azure.com" => Some(Self::Azure),
+            _ if host.ends_with(".visualstudio.com") => Some(Self::Azure),
+            _ => None,
+        }
+    }
+
     pub const ALL: [Self; 9] = [
         Self::Url,
         Self::GitHub,
@@ -148,6 +173,40 @@ impl Form {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_hosting_from_https_and_ssh_without_guessing_from_paths() {
+        for (remote, expected) in [
+            ("https://github.com/owner/repo.git", Some(Provider::GitHub)),
+            ("git@GitHub.com:owner/repo.git", Some(Provider::GitHub)),
+            (
+                "ssh://git@gitlab.com:2222/group/repo.git",
+                Some(Provider::GitLab),
+            ),
+            ("git@bitbucket.org:team/repo.git", Some(Provider::Bitbucket)),
+            (
+                "https://dev.azure.com/org/project/_git/repo",
+                Some(Provider::Azure),
+            ),
+            (
+                "git@ssh.dev.azure.com:v3/org/project/repo",
+                Some(Provider::Azure),
+            ),
+            (
+                "https://org.visualstudio.com/project/_git/repo",
+                Some(Provider::Azure),
+            ),
+            ("https://github.com.example.org/repo", None),
+            ("https://github.com@other.example/repo", None),
+            ("https://example.org/github.com/repo", None),
+            ("/tmp/github.com:repo", None),
+            (r"C:\github.com\repo", None),
+            ("file://github.com/repo", None),
+            ("git@gitlab.internal:group/repo", None),
+        ] {
+            assert_eq!(Provider::from_remote_url(remote), expected, "{remote}");
+        }
+    }
 
     #[test]
     fn resolves_every_provider_and_keeps_each_form() {

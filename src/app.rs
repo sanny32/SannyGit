@@ -1341,6 +1341,7 @@ impl eframe::App for SannyGitApp {
         self.poll_worker();
         self.finish_startup();
         self.poll_working_tree();
+        self.update_repository_hosting(ui.ctx());
         let root = self
             .repositories
             .get(self.selected_repository)

@@ -34,6 +34,17 @@ pub enum Icon {
 }
 
 impl Icon {
+    pub fn for_provider(provider: crate::clone_source::Provider) -> Self {
+        use crate::clone_source::Provider;
+        match provider {
+            Provider::Url => Self::Repository,
+            Provider::GitHub | Provider::GitHubEnterprise => Self::GitHub,
+            Provider::GitLab | Provider::GitLabSelfHosted => Self::GitLab,
+            Provider::Bitbucket | Provider::BitbucketServer => Self::Bitbucket,
+            Provider::Azure | Provider::AzureServer => Self::AzureDevOps,
+        }
+    }
+
     pub fn for_file(path: &str) -> Self {
         let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
         let extension = name

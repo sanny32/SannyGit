@@ -42,6 +42,27 @@ pub struct SearchResult {
     pub skipped: usize,
 }
 
+/// Reads local Git configuration only; never connects to the hosting service.
+pub fn hosting_provider(root: &Path) -> Result<Option<crate::clone_source::Provider>, String> {
+    let names = git::text(git::run(root, &["remote"])?)?;
+    let mut names: Vec<_> = names.lines().collect();
+    names.sort_unstable();
+    if names.contains(&"origin") {
+        names = vec!["origin"];
+    }
+    for name in names {
+        if name.is_empty() || name.starts_with('-') || name.chars().any(char::is_control) {
+            return Err("Unsupported remote name".into());
+        }
+        // get-url also applies Git's insteadOf aliases without exposing URLs to the UI.
+        let url = git::text(git::run(root, &["remote", "get-url", "--", name])?)?;
+        if let Some(provider) = crate::clone_source::Provider::from_remote_url(url.trim()) {
+            return Ok(Some(provider));
+        }
+    }
+    Ok(None)
+}
+
 fn new_destination(path: &Path) -> Result<PathBuf, String> {
     let absolute = if path.is_absolute() {
         path.to_owned()
@@ -682,6 +703,40 @@ fn spawn_window(path: Option<&Path>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hosting_uses_origin_resolves_aliases_and_handles_removed_remotes() {
+        use crate::{clone_source::Provider, git::tests::TempRepo};
+        let repo = TempRepo::new();
+        assert_eq!(super::hosting_provider(&repo.0).unwrap(), None);
+        repo.git(&["remote", "add", "upstream", "git@gitlab.com:group/repo.git"]);
+        assert_eq!(
+            super::hosting_provider(&repo.0).unwrap(),
+            Some(Provider::GitLab)
+        );
+        repo.git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/owner/repo.git",
+        ]);
+        assert_eq!(
+            super::hosting_provider(&repo.0).unwrap(),
+            Some(Provider::GitHub)
+        );
+        repo.git(&["config", "url.https://bitbucket.org/.insteadOf", "work:"]);
+        repo.git(&["remote", "set-url", "origin", "work:team/repo.git"]);
+        assert_eq!(
+            super::hosting_provider(&repo.0).unwrap(),
+            Some(Provider::Bitbucket)
+        );
+        repo.git(&["remote", "set-url", "origin", "/local/repository"]);
+        assert_eq!(super::hosting_provider(&repo.0).unwrap(), None);
+        repo.git(&["remote", "remove", "origin"]);
+        repo.git(&["remote", "remove", "upstream"]);
+        assert_eq!(super::hosting_provider(&repo.0).unwrap(), None);
+        assert!(super::hosting_provider(&repo.0.join("missing")).is_err());
+    }
+
     use super::*;
     use crate::git::tests::TempRepo;
 

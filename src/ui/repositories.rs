@@ -108,6 +108,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 ui,
                                 index,
                                 repository,
+                                app.manager
+                                    .hosting
+                                    .get(&repository.path)
+                                    .copied()
+                                    .map_or(Icon::Repository, Icon::for_provider),
                                 app.selected_repository,
                                 branch_status,
                                 &mut app.manager.highlighted_repository,
@@ -137,6 +142,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     ui,
                     index,
                     repository,
+                    app.manager
+                        .hosting
+                        .get(&repository.path)
+                        .copied()
+                        .map_or(Icon::Repository, Icon::for_provider),
                     app.selected_repository,
                     branch_status,
                     &mut app.manager.highlighted_repository,
@@ -196,6 +206,7 @@ fn repository_row(
     ui: &mut Ui,
     index: usize,
     repository: &crate::models::Repository,
+    icon: Icon,
     selected: usize,
     branch_status: Option<(&str, &str)>,
     highlighted: &mut Option<String>,
@@ -213,7 +224,7 @@ fn repository_row(
     let response = super::controls::selectable_row(ui, selected_row, height, |ui| {
         icons::paint(
             ui,
-            Icon::Repository,
+            icon,
             if active && branch_status.is_some_and(|(badge, _)| badge.contains(['↑', '↓'])) {
                 palette.accent
             } else if active {
@@ -432,6 +443,7 @@ mod tests {
                                 ui,
                                 0,
                                 &repository,
+                                Icon::Repository,
                                 if active { 0 } else { usize::MAX },
                                 None,
                                 &mut highlighted,
@@ -551,6 +563,7 @@ mod tests {
                                 ui,
                                 0,
                                 &repository,
+                                Icon::Repository,
                                 0,
                                 Some(("↑1 ↓1", "Upstream: origin/main")),
                                 &mut highlighted,
@@ -634,6 +647,7 @@ mod tests {
                             ui,
                             0,
                             &repository,
+                            Icon::Repository,
                             usize::MAX,
                             None,
                             &mut highlighted,
