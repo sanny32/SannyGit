@@ -430,7 +430,10 @@ fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         )
                         .inner;
                     super::controls::icons::image(
-                        super::controls::icons::Icon::Repository,
+                        app.manager.hosting.get(path).copied().map_or(
+                            super::controls::icons::Icon::Repository,
+                            super::controls::icons::Icon::for_provider,
+                        ),
                         palette.text,
                         20.0,
                     )
