@@ -4,6 +4,9 @@ use crate::{app::SannyGitApp, remotes::Operation};
 use eframe::egui::{self, Align, ComboBox, Layout, RichText, TextEdit};
 
 pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
+    if app.push_dialog_hidden() {
+        return;
+    }
     let Some(mut dialog) = app.network_dialog.take() else {
         return;
     };
@@ -223,6 +226,46 @@ mod tests {
         remotes::State,
         theme::{install_fonts, ThemeChoice},
     };
+
+    #[test]
+    fn skipped_push_does_not_render_a_modal() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1400.0, 900.0)] {
+                let ctx = egui::Context::default();
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.skip_push_confirmation = true;
+                app.network_dialog = Some(RemoteDialog {
+                    operation: Operation::Push,
+                    state: None,
+                    remote: "origin".into(),
+                    branch: "main".into(),
+                    set_upstream: false,
+                    dont_show_again: false,
+                });
+                for loaded in [false, true] {
+                    if loaded {
+                        app.network_dialog.as_mut().unwrap().state = Some(State {
+                            remotes: vec!["origin".into()],
+                            branch: Some("main".into()),
+                            upstream_remote: Some("origin".into()),
+                            upstream_ref: Some("main".into()),
+                        });
+                    }
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                            ..Default::default()
+                        },
+                        |ui| show(ui.ctx(), &mut app),
+                    );
+                    assert!(output.shapes.is_empty());
+                    assert!(app.network_dialog.is_some());
+                    output.textures_delta.clear();
+                }
+            }
+        }
+    }
 
     #[test]
     fn push_size_is_stable_from_loading_through_progress_and_errors() {

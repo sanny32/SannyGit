@@ -200,7 +200,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     "Skip confirmation when pushing to upstream",
                 );
                 ui.label(
-                    RichText::new("SannyGit will still report Git errors and rejected pushes.")
+                    RichText::new("Push results and errors appear in the status bar without opening a dialog.")
                         .small()
                         .color(palette.muted),
                 );

@@ -28,6 +28,21 @@ impl RemoteDialog {
 }
 
 impl SannyGitApp {
+    pub fn push_dialog_hidden(&self) -> bool {
+        self.skip_push_confirmation
+            && self.network_dialog.as_ref().is_some_and(|dialog| {
+                dialog.operation == Operation::Push
+                    && (dialog.state.is_none() || dialog.can_skip_confirmation())
+            })
+    }
+
+    pub(super) fn finish_hidden_push(&mut self) {
+        self.network_dialog = None;
+        if let Some(error) = self.error.take() {
+            self.status = format!("Push failed: {error}");
+        }
+    }
+
     pub fn remote_allowed(&self) -> bool {
         !self.busy()
             && self.state_current
@@ -49,10 +64,13 @@ impl SannyGitApp {
         });
         self.error = None;
         self.status = "Loading remotes…".into();
-        self.start_worker(move || WorkerResult::RemoteInfo {
+        if !self.start_worker(move || WorkerResult::RemoteInfo {
             operation,
             result: remotes::load(&root),
-        });
+        }) && self.push_dialog_hidden()
+        {
+            self.finish_hidden_push();
+        }
     }
 
     pub(super) fn apply_remote_info(
@@ -95,7 +113,12 @@ impl SannyGitApp {
                     }
                 }
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => {
+                self.error = Some(error);
+                if self.push_dialog_hidden() {
+                    self.finish_hidden_push();
+                }
+            }
         }
     }
 
@@ -157,6 +180,9 @@ impl SannyGitApp {
             }
         }) {
             self.manager.cancel = None;
+            if self.push_dialog_hidden() {
+                self.finish_hidden_push();
+            }
         }
     }
 }
@@ -195,6 +221,25 @@ mod tests {
         assert!(!dialog.can_skip_confirmation());
         dialog.state = None;
         assert!(!dialog.can_skip_confirmation());
+    }
+
+    #[test]
+    fn skipped_push_hides_loading_and_reports_configuration_errors_in_status() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.skip_push_confirmation = true;
+        app.network_dialog = Some(RemoteDialog {
+            operation: Operation::Push,
+            state: None,
+            remote: String::new(),
+            branch: String::new(),
+            set_upstream: false,
+            dont_show_again: false,
+        });
+        assert!(app.push_dialog_hidden());
+        app.apply_remote_info(Operation::Push, Err("Cannot read configuration".into()));
+        assert!(app.network_dialog.is_none());
+        assert!(app.error.is_none());
+        assert!(app.status.contains("Cannot read configuration"));
     }
 
     #[test]

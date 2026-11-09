@@ -33,7 +33,13 @@ pub fn show(ui: &mut Ui, app: &SannyGitApp) {
                 ui.separator();
                 ui.label(format!("{} changes", app.changes.len()));
                 ui.separator();
-                ui.label(RichText::new(&app.status).size(12.0).color(palette.muted));
+                ui.add(
+                    eframe::egui::Label::new(
+                        RichText::new(&app.status).size(12.0).color(palette.muted),
+                    )
+                    .truncate(),
+                )
+                .help_text(&app.status);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some(repository) = app.repositories.get(app.selected_repository) {
                         ui.label(RichText::new(&repository.path).size(12.0));

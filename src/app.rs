@@ -1008,6 +1008,9 @@ impl SannyGitApp {
                     self.commit_preview_error = self.error.clone();
                 }
                 self.status = "Operation failed".into();
+                if self.push_dialog_hidden() {
+                    self.finish_hidden_push();
+                }
                 return;
             }
         };
@@ -1117,6 +1120,7 @@ impl SannyGitApp {
                 outcome,
                 snapshot,
             } => {
+                let hidden_push = success == "Push complete" && self.push_dialog_hidden();
                 if matches!(
                     success,
                     "Fetch complete" | "Pull complete" | "Push complete"
@@ -1174,6 +1178,9 @@ impl SannyGitApp {
                             "Operation failed; check the refreshed repository state".into();
                     }
                 }
+                if hidden_push {
+                    self.finish_hidden_push();
+                }
             }
             WorkerResult::Diff { index, result } => {
                 if self.selected_change == index {
@@ -1219,6 +1226,7 @@ impl SannyGitApp {
         }
         self.loaded_diff = Some(index);
         if self.error.is_none()
+            && !self.status.starts_with("Push ")
             && !matches!(
                 self.status.as_str(),
                 "Commit created"
@@ -1472,6 +1480,72 @@ mod tests {
         assert!(app.commit_blocker().unwrap().contains("conflicts"));
         assert!(!app.staging_allowed(0, true));
         assert!(!app.staging_allowed(0, false));
+    }
+
+    #[test]
+    fn skipped_push_reports_results_without_dialogs() {
+        for skip in [false, true] {
+            for failed in [false, true] {
+                for refresh_failed in [false, true] {
+                    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+                    app.repositories = vec![Repository {
+                        name: "test".into(),
+                        path: "/test".into(),
+                    }];
+                    app.selected_repository = 0;
+                    app.skip_push_confirmation = skip;
+                    app.network_dialog = Some(RemoteDialog {
+                        operation: crate::remotes::Operation::Push,
+                        state: Some(crate::remotes::State {
+                            remotes: vec!["origin".into()],
+                            branch: Some("main".into()),
+                            upstream_remote: Some("origin".into()),
+                            upstream_ref: Some("main".into()),
+                        }),
+                        remote: "origin".into(),
+                        branch: "main".into(),
+                        set_upstream: false,
+                        dont_show_again: false,
+                    });
+                    assert_eq!(app.push_dialog_hidden(), skip);
+                    deliver(
+                        &mut app,
+                        WorkerResult::Operation {
+                            committed: false,
+                            success: "Push complete",
+                            outcome: if failed {
+                                Err("Rejected".into())
+                            } else {
+                                Ok(())
+                            },
+                            snapshot: if refresh_failed {
+                                Err("Refresh failed".into())
+                            } else {
+                                Ok(git::Snapshot {
+                                    repository: Repository {
+                                        name: "test".into(),
+                                        path: "/test".into(),
+                                    },
+                                    branch: "main".into(),
+                                    changes: vec![],
+                                })
+                            },
+                        },
+                    );
+                    assert_eq!(app.network_dialog.is_some(), !skip && failed);
+                    assert_eq!(app.error.is_some(), !skip && (failed || refresh_failed));
+                    if skip {
+                        assert!(app.status.contains(if failed {
+                            "Rejected"
+                        } else if refresh_failed {
+                            "Refresh failed"
+                        } else {
+                            "Push complete"
+                        }));
+                    }
+                }
+            }
+        }
     }
 
     #[test]
