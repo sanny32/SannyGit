@@ -499,6 +499,53 @@ mod tests {
     }
 
     #[test]
+    fn repository_llm_settings_persist_without_secrets_and_inherit_global_defaults() {
+        let mut app = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
+        app.llm_config.instructions = "Global instructions".into();
+        let custom = crate::llm::Config {
+            endpoint: "http://localhost:1234/v1".into(),
+            model: "local-model".into(),
+            instructions: "Repository instructions".into(),
+            api_key: "private-key".into(),
+            ..Default::default()
+        };
+        app.repository_llm_configs
+            .insert("/first".into(), custom.clone());
+        assert_eq!(app.effective_llm_config("/first"), &custom);
+        assert_eq!(app.effective_llm_config("/second"), &app.llm_config);
+        app.llm_config.instructions = "Updated global instructions".into();
+        assert_eq!(
+            app.effective_llm_config("/first").instructions,
+            "Repository instructions"
+        );
+        assert_eq!(
+            app.effective_llm_config("/second").instructions,
+            "Updated global instructions"
+        );
+
+        let mut storage = Storage::default();
+        eframe::App::save(&mut app, &mut storage);
+        let mut restored = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
+        restored.llm_config = eframe::get_value(&storage, "sannygit.llm").unwrap();
+        restored.repository_llm_configs =
+            eframe::get_value(&storage, "sannygit.repository_llm").unwrap();
+        let config = restored.effective_llm_config("/first");
+        assert_eq!(config.endpoint, custom.endpoint);
+        assert_eq!(config.model, custom.model);
+        assert_eq!(config.instructions, custom.instructions);
+        assert!(config.api_key.is_empty());
+        assert!(!storage
+            .0
+            .values()
+            .any(|value| value.contains("private-key")));
+        restored.repository_llm_configs.remove("/first");
+        assert_eq!(
+            restored.effective_llm_config("/first"),
+            &restored.llm_config
+        );
+    }
+
+    #[test]
     fn active_repository_restores_by_path_and_explicit_close_clears_it() {
         let repo = crate::git::tests::TempRepo::new();
         let path = repo.0.canonicalize().unwrap().to_str().unwrap().to_owned();

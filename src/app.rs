@@ -6,6 +6,7 @@ mod working_tree;
 pub use repositories::{Dialog as RepositoryDialog, Job as RepositoryJob, RepositoryManager};
 
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     sync::mpsc::{self, Receiver},
 };
@@ -67,6 +68,32 @@ pub enum SettingsPage {
     Llm,
 }
 
+#[derive(Clone, Default)]
+pub struct LlmSettings {
+    pub config: crate::llm::Config,
+    pub api_key_dirty: bool,
+    pub api_key_loaded: bool,
+    pub secret_error: Option<String>,
+}
+
+impl LlmSettings {
+    pub fn save_secret(
+        &self,
+        previous: &crate::llm::Config,
+        repository: Option<&str>,
+    ) -> Result<(), String> {
+        let config = &self.config;
+        let changed = self.api_key_dirty
+            || config.store_api_key != previous.store_api_key
+            || (!config.api_key.is_empty()
+                && (config.endpoint != previous.endpoint || config.model != previous.model));
+        if changed {
+            crate::llm::save_api_key(config, repository)?;
+        }
+        Ok(())
+    }
+}
+
 pub struct SettingsWindow {
     pub open: bool,
     pub page: SettingsPage,
@@ -75,10 +102,9 @@ pub struct SettingsWindow {
     pub interface_style: InterfaceStyle,
     pub auto_fetch: bool,
     pub skip_push_confirmation: bool,
-    pub llm: crate::llm::Config,
-    pub llm_api_key_dirty: bool,
-    pub llm_api_key_loaded: bool,
-    pub llm_secret_error: Option<String>,
+    pub llm: LlmSettings,
+    pub llm_repositories: BTreeMap<String, LlmSettings>,
+    pub llm_repository: Option<String>,
 }
 
 impl SettingsWindow {
@@ -94,10 +120,9 @@ impl SettingsWindow {
             interface_style: InterfaceStyle::default(),
             auto_fetch: true,
             skip_push_confirmation: false,
-            llm: crate::llm::Config::default(),
-            llm_api_key_dirty: false,
-            llm_api_key_loaded: false,
-            llm_secret_error: None,
+            llm: LlmSettings::default(),
+            llm_repositories: BTreeMap::new(),
+            llm_repository: None,
         }
     }
 }
@@ -121,6 +146,7 @@ pub struct SannyGitApp {
     pub interface_style: InterfaceStyle,
     pub settings_window: SettingsWindow,
     pub llm_config: crate::llm::Config,
+    pub repository_llm_configs: BTreeMap<String, crate::llm::Config>,
     pub about_dialog: bool,
     pub welcome_open: bool,
     welcome_pending: bool,
@@ -224,6 +250,10 @@ impl SannyGitApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.llm"))
             .unwrap_or_default();
+        app.repository_llm_configs = creation_context
+            .storage
+            .and_then(|storage| eframe::get_value(storage, "sannygit.repository_llm"))
+            .unwrap_or_default();
         if let Some(api_key) = std::env::var_os("SANNYGIT_LLM_API_KEY") {
             app.llm_config.api_key = api_key.to_string_lossy().into_owned();
         }
@@ -291,6 +321,7 @@ impl SannyGitApp {
             interface_style: InterfaceStyle::default(),
             settings_window: SettingsWindow::new(theme),
             llm_config: crate::llm::Config::default(),
+            repository_llm_configs: BTreeMap::new(),
             about_dialog: false,
             welcome_open: false,
             welcome_pending: false,
@@ -508,11 +539,38 @@ impl SannyGitApp {
         self.settings_window.theme = self.theme;
         self.settings_window.auto_fetch = self.tracking.auto_fetch;
         self.settings_window.skip_push_confirmation = self.skip_push_confirmation;
-        self.settings_window.llm = self.llm_config.clone();
-        self.settings_window.llm_api_key_dirty = false;
-        self.settings_window.llm_api_key_loaded = false;
-        self.settings_window.llm_secret_error = None;
+        self.settings_window.llm = LlmSettings {
+            config: self.llm_config.clone(),
+            ..Default::default()
+        };
+        self.settings_window.llm_repositories = self
+            .repository_llm_configs
+            .iter()
+            .map(|(path, config)| {
+                (
+                    path.clone(),
+                    LlmSettings {
+                        config: config.clone(),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        self.settings_window.llm_repository = None;
         self.settings_window.open = true;
+    }
+
+    pub fn open_repository_llm_settings(&mut self) {
+        let Some(path) = self
+            .repositories
+            .get(self.selected_repository)
+            .map(|repository| repository.path.clone())
+        else {
+            return;
+        };
+        self.open_settings();
+        self.settings_window.page = SettingsPage::Llm;
+        self.settings_window.llm_repository = Some(path);
     }
 
     pub fn refresh(&mut self) {
@@ -967,17 +1025,28 @@ impl SannyGitApp {
         }
     }
 
+    pub fn effective_llm_config(&self, path: &str) -> &crate::llm::Config {
+        self.repository_llm_configs
+            .get(path)
+            .unwrap_or(&self.llm_config)
+    }
+
     pub fn generate_commit_message(&mut self) {
         if self.generate_commit_message_blocker().is_some() {
             return;
         }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
-        let mut config = self.llm_config.clone();
+        let path = self.repositories[self.selected_repository].path.clone();
+        let repository_scope = self
+            .repository_llm_configs
+            .contains_key(&path)
+            .then_some(path.clone());
+        let mut config = self.effective_llm_config(&path).clone();
         self.error = None;
         self.status = "Generating commit message…".into();
         self.generating_commit_message = self.start_worker(move || {
             WorkerResult::CommitMessage(git::commit_patch(&root).and_then(|patch| {
-                crate::llm::load_api_key_if_needed(&mut config)?;
+                crate::llm::load_api_key_if_needed(&mut config, repository_scope.as_deref())?;
                 crate::llm::generate(&config, &patch)
             }))
         });
@@ -1349,6 +1418,11 @@ impl eframe::App for SannyGitApp {
         );
         eframe::set_value(storage, "sannygit.auto_fetch", &self.tracking.auto_fetch);
         eframe::set_value(storage, "sannygit.llm", &self.llm_config);
+        eframe::set_value(
+            storage,
+            "sannygit.repository_llm",
+            &self.repository_llm_configs,
+        );
         eframe::set_value(storage, THEME_STORAGE_KEY, &self.theme);
         eframe::set_value(storage, crate::preferences::STORAGE_KEY, &self.preferences);
         eframe::set_value(storage, INTERFACE_STYLE_STORAGE_KEY, &self.interface_style);

@@ -52,9 +52,14 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     app.generate_commit_message();
                     ui.close();
                 }
-                if ui.button("LLM settings…").clicked() {
-                    app.open_settings();
-                    app.settings_window.page = crate::app::SettingsPage::Llm;
+                if ui
+                    .add_enabled(
+                        app.repositories.get(app.selected_repository).is_some(),
+                        Button::new("Repository LLM settings…"),
+                    )
+                    .clicked()
+                {
+                    app.open_repository_llm_settings();
                     ui.close();
                 }
             })

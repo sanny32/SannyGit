@@ -14,13 +14,22 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         return;
     }
 
+    let repository = app.settings_window.llm_repository.as_deref();
+    let (title, size, min_size) = if repository.is_some() {
+        ("Repository LLM Settings", [560.0, 420.0], [500.0, 380.0])
+    } else {
+        ("SannyGit Preferences", [740.0, 420.0], [680.0, 380.0])
+    };
     let builder = ViewportBuilder::default()
-        .with_title("SannyGit Preferences")
-        .with_inner_size([740.0, 420.0])
-        .with_min_inner_size([680.0, 380.0])
+        .with_title(title)
+        .with_inner_size(size)
+        .with_min_inner_size(min_size)
         .with_maximize_button(false);
+    let viewport_id = match repository {
+        Some(path) => ViewportId::from_hash_of(("sannygit.repository_llm", path)),
+        None => ViewportId::from_hash_of("sannygit.preferences"),
+    };
     let ctx = ctx.clone();
-    let viewport_id = ViewportId::from_hash_of("sannygit.preferences");
     ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
         #[cfg(target_os = "macos")]
         ui.input_mut(|input| input.events.append(&mut app.pending_native_edit_events));
@@ -40,20 +49,26 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
     footer(ui, app, palette);
-    navigation(ui, app, palette);
+    if app.settings_window.llm_repository.is_none() {
+        navigation(ui, app, palette);
+    }
     CentralPanel::default()
         .frame(Frame::new().fill(palette.header).inner_margin(12))
         .show(ui, |ui| {
-            let page_height = ui.available_height();
-            ScrollArea::vertical()
-                .id_salt("preferences.page")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if app.settings_window.page == SettingsPage::Llm {
-                        ui.set_max_height(page_height);
-                    }
-                    page(ui, app, palette);
-                });
+            if app.settings_window.llm_repository.is_some() {
+                repository_llm_page(ui, app, palette);
+            } else {
+                let page_height = ui.available_height();
+                ScrollArea::vertical()
+                    .id_salt("preferences.page")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if app.settings_window.page == SettingsPage::Llm {
+                            ui.set_max_height(page_height);
+                        }
+                        page(ui, app, palette);
+                    });
+            }
         });
 }
 
@@ -71,30 +86,21 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     .add(super::controls::dialog_style::primary("OK", palette))
                     .clicked()
                 {
-                    let next_llm = app.settings_window.llm.clone();
-                    let secret_changed = app.settings_window.llm_api_key_dirty
-                        || next_llm.store_api_key != app.llm_config.store_api_key
-                        || (!next_llm.api_key.is_empty()
-                            && (next_llm.endpoint != app.llm_config.endpoint
-                                || next_llm.model != app.llm_config.model));
-                    let saved = if secret_changed {
-                        crate::llm::save_api_key(&next_llm)
-                    } else {
-                        Ok(())
-                    };
-                    match saved {
+                    match apply_settings(app) {
                         Ok(()) => {
-                            app.theme = app.settings_window.theme;
-                            app.preferences = app.settings_window.preferences.clone();
-                            app.interface_style = app.settings_window.interface_style;
-                            app.skip_push_confirmation = app.settings_window.skip_push_confirmation;
-                            app.tracking.set_auto_fetch(app.settings_window.auto_fetch);
-                            app.llm_config = next_llm;
-                            app.settings_window.llm_secret_error = None;
                             app.settings_window.open = false;
                             ui.ctx().send_viewport_cmd(ViewportCommand::Close);
                         }
-                        Err(error) => app.settings_window.llm_secret_error = Some(error),
+                        Err(error) => {
+                            app.settings_window.page = SettingsPage::Llm;
+                            let draft = match app.settings_window.llm_repository.as_deref() {
+                                Some(path) => app.settings_window.llm_repositories.get_mut(path),
+                                None => Some(&mut app.settings_window.llm),
+                            };
+                            if let Some(draft) = draft {
+                                draft.secret_error = Some(error);
+                            }
+                        }
                     }
                 }
                 if ui
@@ -351,109 +357,242 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             });
         }
         SettingsPage::Llm => {
-            if !app.settings_window.llm_api_key_loaded {
-                app.settings_window.llm_api_key_loaded = true;
-                app.settings_window.llm_secret_error =
-                    crate::llm::load_api_key_if_needed(&mut app.settings_window.llm).err();
-            }
             heading(ui, "LLM commit messages");
-            group(ui, palette, "OpenAI-compatible API", |ui| {
-                egui::Grid::new("preferences.llm.connection")
-                    .num_columns(2)
-                    .spacing([8.0, 6.0])
-                    .show(ui, |ui| {
-                        form_label(ui, "Endpoint:");
-                        let mut endpoint = app.settings_window.llm.endpoint.clone();
-                        let endpoints: Vec<_> = crate::llm::PROVIDER_PRESETS
-                            .iter()
-                            .map(|provider| provider.endpoint.to_owned())
-                            .collect();
-                        let endpoint_response = super::controls::editable_combobox::show(
-                            ui,
-                            ui.make_persistent_id("preferences.llm.endpoint"),
-                            &mut endpoint,
-                            &endpoints,
-                            ui.available_width(),
-                            palette,
-                            "No provider presets",
-                        );
-                        let preset_selected =
-                            endpoint_response.changed() && !endpoint_response.has_focus();
-                        endpoint_response.clone().help_text(
-                            crate::llm::PROVIDER_PRESETS
-                                .iter()
-                                .find(|provider| provider.endpoint == endpoint)
-                                .map_or("Custom endpoint", |provider| provider.name),
-                        );
-                        if endpoint != app.settings_window.llm.endpoint {
-                            app.settings_window.llm.endpoint = endpoint;
-                            app.settings_window.llm.api_key.clear();
-                            app.settings_window.llm_api_key_dirty = false;
-                            app.settings_window.llm_secret_error = None;
-                            if let Some(provider) =
-                                crate::llm::PROVIDER_PRESETS.iter().find(|provider| {
-                                    provider.endpoint == app.settings_window.llm.endpoint
-                                })
-                            {
-                                app.settings_window.llm.model = provider.model.to_owned();
-                            }
-                        }
-                        // Read only after editing finishes, rather than prompting
-                        // Keychain for every character typed into a custom URL.
-                        if preset_selected || endpoint_response.lost_focus() {
-                            app.settings_window.llm_api_key_loaded = true;
-                            app.settings_window.llm_secret_error =
-                                crate::llm::load_api_key_if_needed(&mut app.settings_window.llm)
-                                    .err();
-                        }
-                        ui.end_row();
-                        form_label(ui, "Model:");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut app.settings_window.llm.model)
-                                .editable()
-                                .desired_width(f32::INFINITY),
-                        );
-                        ui.end_row();
-                        form_label(ui, "API key:");
-                        let api_key_response = ui.add(
-                            egui::TextEdit::singleline(&mut app.settings_window.llm.api_key)
-                                .editable()
-                                .password(true)
-                                .desired_width(f32::INFINITY),
-                        );
-                        if api_key_response.changed() {
-                            app.settings_window.llm_api_key_dirty = true;
-                        }
-                        ui.end_row();
-                    });
-                ui.checkbox(
-                    &mut app.settings_window.llm.store_api_key,
-                    "Store API key and model securely",
-                );
-                let secret_error = app
-                    .settings_window
-                    .llm_secret_error
-                    .as_deref()
-                    .unwrap_or("");
-                ui.add_sized(
-                    [ui.available_width(), 20.0],
-                    egui::Label::new(
-                        RichText::new(secret_error)
-                            .small()
-                            .color(palette.removed_text),
-                    )
-                    .truncate(),
-                )
-                .help_text(secret_error);
-                ui.add_space(6.0);
-                ui.label("Generation instructions:");
-                ui.add_sized(
-                    [ui.available_width(), ui.available_height().max(76.0)],
-                    egui::TextEdit::multiline(&mut app.settings_window.llm.instructions).editable(),
-                );
-            });
+            llm_form(ui, &mut app.settings_window.llm, palette, None);
         }
     }
+}
+
+fn apply_settings(app: &mut SannyGitApp) -> Result<(), String> {
+    if let Some(path) = &app.settings_window.llm_repository {
+        if let Some(draft) = app.settings_window.llm_repositories.get(path) {
+            let previous = app
+                .repository_llm_configs
+                .get(path)
+                .unwrap_or(&app.llm_config);
+            draft.save_secret(previous, Some(path))?;
+            app.repository_llm_configs
+                .insert(path.clone(), draft.config.clone());
+        } else {
+            app.repository_llm_configs.remove(path);
+        }
+    } else {
+        app.settings_window.llm.save_secret(&app.llm_config, None)?;
+        app.theme = app.settings_window.theme;
+        app.preferences = app.settings_window.preferences.clone();
+        app.interface_style = app.settings_window.interface_style;
+        app.skip_push_confirmation = app.settings_window.skip_push_confirmation;
+        app.tracking.set_auto_fetch(app.settings_window.auto_fetch);
+        app.llm_config = app.settings_window.llm.config.clone();
+    }
+    Ok(())
+}
+
+fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
+    let window = &mut app.settings_window;
+    let path = window.llm_repository.clone();
+    if let Some(path) = &path {
+        let name = app
+            .repositories
+            .iter()
+            .find(|repository| repository.path == *path)
+            .map_or(path.as_str(), |repository| repository.name.as_str());
+        Frame::new()
+            .inner_margin(Margin::symmetric(6, 6))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    let (icon_rect, _) =
+                        ui.allocate_exact_size(Vec2::new(20.0, 38.0), egui::Sense::hover());
+                    let text_rect = ui
+                        .allocate_ui_with_layout(
+                            Vec2::new(ui.available_width(), 38.0),
+                            Layout::top_down(Align::Min),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.y = 2.0;
+                                let name_response = ui
+                                    .add(
+                                        egui::Label::new(
+                                            RichText::new(name).family(semibold_family()),
+                                        )
+                                        .truncate(),
+                                    )
+                                    .help_text(name);
+                                let path_response = ui
+                                    .add(
+                                        egui::Label::new(
+                                            RichText::new(path).small().color(palette.muted),
+                                        )
+                                        .truncate(),
+                                    )
+                                    .help_text(path);
+                                name_response.rect.union(path_response.rect)
+                            },
+                        )
+                        .inner;
+                    super::controls::icons::image(
+                        super::controls::icons::Icon::Repository,
+                        palette.text,
+                        20.0,
+                    )
+                    .paint_at(
+                        ui,
+                        egui::Rect::from_center_size(
+                            egui::pos2(icon_rect.center().x, text_rect.center().y),
+                            Vec2::splat(20.0),
+                        ),
+                    );
+                });
+            });
+    }
+    let mut inherit = path
+        .as_ref()
+        .is_none_or(|path| !window.llm_repositories.contains_key(path));
+    let response = ui.add_enabled(
+        path.is_some(),
+        egui::Checkbox::new(&mut inherit, "Use global settings"),
+    );
+    if response.changed() {
+        if let Some(path) = &path {
+            if inherit {
+                window.llm_repositories.remove(path);
+            } else {
+                window.llm_repositories.insert(
+                    path.clone(),
+                    crate::app::LlmSettings {
+                        config: window.llm.config.clone(),
+                        api_key_dirty: !window.llm.config.api_key.is_empty(),
+                        api_key_loaded: window.llm.api_key_loaded,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    }
+    if let Some(path) = &path {
+        if let Some(draft) = window.llm_repositories.get_mut(path) {
+            llm_form(ui, draft, palette, Some(path));
+        } else {
+            ui.add_enabled_ui(false, |ui| llm_form(ui, &mut window.llm, palette, None));
+        }
+    } else {
+        llm_form(ui, &mut window.llm, palette, None);
+    }
+}
+
+fn llm_form(
+    ui: &mut Ui,
+    draft: &mut crate::app::LlmSettings,
+    palette: Palette,
+    repository: Option<&str>,
+) {
+    if !draft.api_key_loaded {
+        draft.api_key_loaded = true;
+        draft.secret_error =
+            crate::llm::load_api_key_if_needed(&mut draft.config, repository).err();
+    }
+    ui.push_id(("llm.form", repository), |ui| {
+        group(ui, palette, "OpenAI-compatible API", |ui| {
+            egui::Grid::new("preferences.llm.connection")
+                .num_columns(2)
+                .spacing([8.0, 6.0])
+                .show(ui, |ui| {
+                    form_label(ui, "Endpoint:");
+                    let mut endpoint = draft.config.endpoint.clone();
+                    let endpoints: Vec<_> = crate::llm::PROVIDER_PRESETS
+                        .iter()
+                        .map(|provider| provider.endpoint.to_owned())
+                        .collect();
+                    let endpoint_response = super::controls::editable_combobox::show(
+                        ui,
+                        ui.make_persistent_id("preferences.llm.endpoint"),
+                        &mut endpoint,
+                        &endpoints,
+                        ui.available_width(),
+                        palette,
+                        "No provider presets",
+                    );
+                    let preset_selected =
+                        endpoint_response.changed() && !endpoint_response.has_focus();
+                    endpoint_response.clone().help_text(
+                        crate::llm::PROVIDER_PRESETS
+                            .iter()
+                            .find(|provider| provider.endpoint == endpoint)
+                            .map_or("Custom endpoint", |provider| provider.name),
+                    );
+                    if endpoint != draft.config.endpoint {
+                        draft.config.endpoint = endpoint;
+                        draft.config.api_key.clear();
+                        draft.api_key_dirty = false;
+                        draft.secret_error = None;
+                        if let Some(provider) = crate::llm::PROVIDER_PRESETS
+                            .iter()
+                            .find(|provider| provider.endpoint == draft.config.endpoint)
+                        {
+                            draft.config.model = provider.model.to_owned();
+                        }
+                    }
+                    // Read only after editing finishes, rather than prompting
+                    // Keychain for every character typed into a custom URL.
+                    if preset_selected || endpoint_response.lost_focus() {
+                        draft.api_key_loaded = true;
+                        draft.secret_error =
+                            crate::llm::load_api_key_if_needed(&mut draft.config, repository).err();
+                    }
+                    ui.end_row();
+                    form_label(ui, "Model:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.config.model)
+                            .editable()
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.end_row();
+                    form_label(ui, "API key:");
+                    let api_key_response = ui.add(
+                        egui::TextEdit::singleline(&mut draft.config.api_key)
+                            .editable()
+                            .password(true)
+                            .desired_width(f32::INFINITY),
+                    );
+                    if api_key_response.changed() {
+                        draft.api_key_dirty = true;
+                    }
+                    ui.end_row();
+                });
+            ui.checkbox(
+                &mut draft.config.store_api_key,
+                "Store API key and model securely",
+            );
+            let secret_error = draft.secret_error.as_deref().unwrap_or("");
+            ui.add_sized(
+                [ui.available_width(), 20.0],
+                egui::Label::new(
+                    RichText::new(secret_error)
+                        .small()
+                        .color(palette.removed_text),
+                )
+                .truncate(),
+            )
+            .help_text(secret_error);
+            ui.add_space(6.0);
+            ui.label("Generation instructions:");
+            let editor_height = (ui.available_height() - ui.spacing().item_spacing.y).max(24.0);
+            ScrollArea::vertical()
+                .id_salt("llm.instructions")
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .auto_shrink([false, false])
+                .min_scrolled_height(0.0)
+                .max_height(editor_height)
+                .show(ui, |ui| {
+                    ui.add_sized(
+                        [ui.available_width(), editor_height],
+                        egui::TextEdit::multiline(&mut draft.config.instructions)
+                            .desired_rows(1)
+                            .editable(),
+                    );
+                });
+        });
+    });
 }
 
 fn form_label(ui: &mut Ui, text: &str) {
@@ -567,6 +706,200 @@ mod tests {
     };
 
     #[test]
+    fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [Vec2::new(560.0, 420.0), Vec2::new(500.0, 380.0)] {
+                let context = egui::Context::default();
+                crate::theme::install_fonts(&context);
+                egui_extras::install_image_loaders(&context);
+                theme.apply(&context);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.repositories = vec![crate::models::Repository {
+                    name: "Project".into(),
+                    path: "/projects/example".into(),
+                }];
+                app.selected_repository = 0;
+                app.llm_config.store_api_key = false;
+                app.llm_config.instructions = "Global instructions".into();
+                let path = app.repositories[0].path.clone();
+                let render = |app: &mut SannyGitApp, events| {
+                    context.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| window_contents(ui, app),
+                    )
+                };
+                let click = |app: &mut SannyGitApp, label: &str| {
+                    let mut output = render(app, vec![]);
+                    let target = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) if text.galley.job.text == label => {
+                                Some(text.pos + text.galley.size() / 2.0)
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| panic!("Missing {label}"));
+                    output.textures_delta.clear();
+                    for pressed in [true, false] {
+                        let mut output = render(
+                            app,
+                            vec![
+                                Event::PointerMoved(target),
+                                Event::PointerButton {
+                                    pos: target,
+                                    button: PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Modifiers::NONE,
+                                },
+                            ],
+                        );
+                        output.textures_delta.clear();
+                    }
+                };
+                app.open_repository_llm_settings();
+                assert_eq!(
+                    app.settings_window.llm_repository.as_deref(),
+                    Some(path.as_str())
+                );
+                let mut output = render(&mut app, vec![]);
+                output.textures_delta.clear();
+                for label in [
+                    "Project",
+                    "Use global settings",
+                    "Endpoint:",
+                    "OK",
+                    "Cancel",
+                ] {
+                    assert!(visible_text(&output.shapes, label), "Missing {label}");
+                }
+                let text_rect = |label: &str| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) if text.galley.job.text == label => {
+                                Some(text.galley.rect.translate(text.pos.to_vec2()))
+                            }
+                            _ => None,
+                        })
+                        .unwrap()
+                };
+                let name_rect = text_rect("Project");
+                let header_text = name_rect.union(text_rect(&path));
+                let icon_rect = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Rect(rect)
+                            if rect.rect.size() == Vec2::splat(20.0)
+                                && rect.rect.right() < name_rect.left() =>
+                        {
+                            Some(rect.rect)
+                        }
+                        _ => None,
+                    })
+                    .expect("Repository icon must be visible");
+                assert!(
+                    (icon_rect.center().y - header_text.center().y).abs() <= 1.0,
+                    "Repository icon must be centered beside both text lines"
+                );
+                assert!(
+                    !output.shapes.iter().any(|shape| matches!(&shape.shape,
+                        egui::Shape::Rect(rect) if rect.fill == app.palette().selection
+                            && rect.rect.contains(name_rect.center())
+                    )),
+                    "Repository header must not have a selection background"
+                );
+                for label in [
+                    "Repository LLM settings",
+                    "Main Window",
+                    "Settings for:",
+                    "Appearance",
+                    "Global (all repositories)",
+                ] {
+                    assert!(
+                        !visible_text(&output.shapes, label),
+                        "Unexpected {label} in repository form"
+                    );
+                }
+                output.textures_delta.clear();
+                click(&mut app, "Use global settings");
+                let draft = app.settings_window.llm_repositories.get_mut(&path).unwrap();
+                assert_eq!(draft.config.instructions, "Global instructions");
+                draft.config.instructions = "Project instructions".into();
+                draft.config.model = "project-model".into();
+                assert_eq!(
+                    app.settings_window.llm.config.instructions,
+                    "Global instructions"
+                );
+                // Saving the repository form must not apply global preferences.
+                app.settings_window.llm.config.instructions = "Unrelated global draft".into();
+                app.settings_window.theme = if theme == ThemeChoice::Light {
+                    ThemeChoice::Dark
+                } else {
+                    ThemeChoice::Light
+                };
+                click(&mut app, "OK");
+                assert_eq!(
+                    app.effective_llm_config(&path).instructions,
+                    "Project instructions"
+                );
+                assert_eq!(app.effective_llm_config(&path).model, "project-model");
+                assert_eq!(
+                    app.effective_llm_config("/another").instructions,
+                    "Global instructions"
+                );
+                assert_eq!(app.theme, theme);
+
+                app.open_repository_llm_settings();
+                app.settings_window
+                    .llm_repositories
+                    .get_mut(&path)
+                    .unwrap()
+                    .config
+                    .instructions = "Discard me".into();
+                click(&mut app, "Cancel");
+                assert_eq!(
+                    app.effective_llm_config(&path).instructions,
+                    "Project instructions"
+                );
+
+                app.open_repository_llm_settings();
+                click(&mut app, "Use global settings");
+                click(&mut app, "OK");
+                assert!(!app.repository_llm_configs.contains_key(&path));
+                assert_eq!(app.effective_llm_config(&path), &app.llm_config);
+            }
+        }
+    }
+
+    #[test]
+    fn global_preferences_leave_repository_overrides_unchanged() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.llm_config.store_api_key = false;
+        let custom = crate::llm::Config {
+            instructions: "Project instructions".into(),
+            store_api_key: false,
+            ..Default::default()
+        };
+        app.repository_llm_configs
+            .insert("/project".into(), custom.clone());
+        app.open_settings();
+        assert!(app.settings_window.llm_repository.is_none());
+        app.settings_window.llm.config.instructions = "New global instructions".into();
+        // Even a modified repository draft cannot be applied from global preferences.
+        app.settings_window.llm_repositories.clear();
+        apply_settings(&mut app).unwrap();
+        assert_eq!(app.llm_config.instructions, "New global instructions");
+        assert_eq!(app.effective_llm_config("/project"), &custom);
+    }
+
+    #[test]
     fn endpoint_accepts_typed_text_and_clears_the_previous_providers_key() {
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
             let context = egui::Context::default();
@@ -574,8 +907,8 @@ mod tests {
             theme.apply(&context);
             let mut app = SannyGitApp::with_theme(theme);
             app.settings_window.page = SettingsPage::Llm;
-            app.settings_window.llm_api_key_loaded = true;
-            app.settings_window.llm.api_key = "previous-key".into();
+            app.settings_window.llm.api_key_loaded = true;
+            app.settings_window.llm.config.api_key = "previous-key".into();
             let render = |app: &mut SannyGitApp, events| {
                 context.run_ui(
                     RawInput {
@@ -620,8 +953,8 @@ mod tests {
             }
             let mut output = render(&mut app, vec![Event::Text("custom".into())]);
             output.textures_delta.clear();
-            assert!(app.settings_window.llm.endpoint.contains("custom"));
-            assert!(app.settings_window.llm.api_key.is_empty());
+            assert!(app.settings_window.llm.config.endpoint.contains("custom"));
+            assert!(app.settings_window.llm.config.api_key.is_empty());
         }
     }
 
@@ -633,7 +966,7 @@ mod tests {
             egui_extras::install_image_loaders(&context);
             theme.apply(&context);
             let mut app = SannyGitApp::with_theme(theme);
-            app.settings_window.llm_api_key_loaded = true;
+            app.settings_window.llm.api_key_loaded = true;
             let render = |app: &mut SannyGitApp, events| {
                 context.run_ui(
                     RawInput {
@@ -936,7 +1269,7 @@ mod tests {
             egui_extras::install_image_loaders(&context);
             theme.apply(&context);
             let mut app = SannyGitApp::with_theme(theme);
-            app.settings_window.llm_api_key_loaded = true;
+            app.settings_window.llm.api_key_loaded = true;
             for (page, title) in [
                 (SettingsPage::General, "Confirmations"),
                 (SettingsPage::Appearance, "Color theme:"),

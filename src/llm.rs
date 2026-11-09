@@ -104,8 +104,12 @@ fn restore_credential(config: &mut Config, secret: String) -> Result<(), String>
     Ok(())
 }
 
-fn credential_user(endpoint: &str) -> String {
-    format!("llm-api-key:{}", chat_completions_endpoint(endpoint))
+fn credential_user(endpoint: &str, repository: Option<&str>) -> String {
+    let endpoint = chat_completions_endpoint(endpoint);
+    match repository {
+        Some(path) => format!("llm-api-key:repository:{}:{path}:{endpoint}", path.len()),
+        None => format!("llm-api-key:{endpoint}"),
+    }
 }
 
 fn credential_entry(user: &str) -> Result<keyring::Entry, String> {
@@ -183,12 +187,12 @@ fn migrate_macos_api_key(
     Ok(secret)
 }
 
-pub fn load_api_key(config: &Config) -> Result<Option<String>, String> {
+fn load_api_key(config: &Config, repository: Option<&str>) -> Result<Option<String>, String> {
     if !config.store_api_key {
         return Ok(None);
     }
     let endpoint = chat_completions_endpoint(&config.endpoint);
-    let user = credential_user(&endpoint);
+    let user = credential_user(&endpoint, repository);
     #[cfg(target_os = "macos")]
     if let Some(secret) = macos_credentials::load(&user)? {
         return Ok(Some(secret));
@@ -205,7 +209,7 @@ pub fn load_api_key(config: &Config) -> Result<Option<String>, String> {
                 Ok(Some(secret))
             }
         }
-        Err(keyring::Error::NoEntry) if endpoint == DEFAULT_ENDPOINT => {
+        Err(keyring::Error::NoEntry) if repository.is_none() && endpoint == DEFAULT_ENDPOINT => {
             let legacy = credential_entry(LEGACY_KEYRING_USER)?;
             match legacy.get_password() {
                 Ok(secret) => {
@@ -231,18 +235,18 @@ pub fn load_api_key(config: &Config) -> Result<Option<String>, String> {
     }
 }
 
-pub fn load_api_key_if_needed(config: &mut Config) -> Result<(), String> {
+pub fn load_api_key_if_needed(config: &mut Config, repository: Option<&str>) -> Result<(), String> {
     if config.api_key.is_empty() {
-        if let Some(api_key) = load_api_key(config)? {
+        if let Some(api_key) = load_api_key(config, repository)? {
             restore_credential(config, api_key)?;
         }
     }
     Ok(())
 }
 
-pub fn save_api_key(config: &Config) -> Result<(), String> {
+pub fn save_api_key(config: &Config, repository: Option<&str>) -> Result<(), String> {
     let endpoint = chat_completions_endpoint(&config.endpoint);
-    let user = credential_user(&endpoint);
+    let user = credential_user(&endpoint, repository);
     let entry = credential_entry(&user)?;
     if config.store_api_key && !config.api_key.is_empty() {
         let secret = serde_json::to_string(&SavedCredential {
@@ -270,7 +274,7 @@ pub fn save_api_key(config: &Config) -> Result<(), String> {
             }
         }
     }
-    if endpoint == DEFAULT_ENDPOINT {
+    if repository.is_none() && endpoint == DEFAULT_ENDPOINT {
         match credential_entry(LEGACY_KEYRING_USER)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(format!("Cannot remove the saved LLM API key: {error}")),
@@ -446,12 +450,30 @@ mod tests {
     #[test]
     fn api_key_credentials_are_scoped_to_normalized_endpoints() {
         assert_eq!(
-            credential_user(" https://api.kimi.ai/coding/v1/ "),
-            credential_user("https://api.kimi.ai/coding/v1/chat/completions")
+            credential_user(" https://api.kimi.ai/coding/v1/ ", None),
+            credential_user("https://api.kimi.ai/coding/v1/chat/completions", None)
         );
         assert_ne!(
-            credential_user(DEFAULT_ENDPOINT),
-            credential_user("https://api.deepseek.com/v1/chat/completions")
+            credential_user(DEFAULT_ENDPOINT, None),
+            credential_user("https://api.deepseek.com/v1/chat/completions", None)
+        );
+    }
+
+    #[test]
+    fn repository_credentials_are_isolated_from_global_and_other_repositories() {
+        let global = credential_user(DEFAULT_ENDPOINT, None);
+        let first = credential_user(DEFAULT_ENDPOINT, Some("/work/first"));
+        let second = credential_user(DEFAULT_ENDPOINT, Some("/work/second"));
+        assert_eq!(global, format!("llm-api-key:{DEFAULT_ENDPOINT}"));
+        assert_ne!(global, first);
+        assert_ne!(first, second);
+        assert_eq!(
+            first,
+            credential_user("https://api.openai.com/v1/", Some("/work/first"))
+        );
+        assert_ne!(
+            first,
+            credential_user("https://other.example/v1", Some("/work/first"))
         );
     }
 
@@ -494,12 +516,12 @@ mod tests {
             api_key: "from-environment".into(),
             ..Config::default()
         };
-        load_api_key_if_needed(&mut config).unwrap();
+        load_api_key_if_needed(&mut config, None).unwrap();
         assert_eq!(config.api_key, "from-environment");
 
         config.api_key.clear();
         config.store_api_key = false;
-        load_api_key_if_needed(&mut config).unwrap();
+        load_api_key_if_needed(&mut config, None).unwrap();
         assert!(config.api_key.is_empty());
     }
 
