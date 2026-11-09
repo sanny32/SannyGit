@@ -48,7 +48,11 @@ pub(crate) fn run_controlled(
     execute(path, args, None, timeout, cancel, false)
 }
 
-fn run_with_input(path: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+pub(crate) fn run_with_input(
+    path: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
     execute(path, args, input, TIMEOUT, None, false)
 }
 

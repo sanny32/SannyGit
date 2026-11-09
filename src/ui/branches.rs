@@ -111,6 +111,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     }
     if add_tag_requested {
         app.tag_dialog_open = true;
+        app.error = None;
     }
 }
 
@@ -268,6 +269,7 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
         .map(|reference| reference.name.clone())
         .collect();
     let mut keep = true;
+    let busy = app.busy();
     super::controls::dialog_style::modal(&ctx, palette, "branches.add.tag").show(&ctx, |ui| {
         ui.set_width(500.0);
         super::controls::dialog_style::setup(ui);
@@ -284,6 +286,7 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             eframe::egui::Margin::same(18),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
+                ui.add_enabled_ui(!busy, |ui| {
                 ui.horizontal(|ui| {
                         ui.label("Tag:");
                         let combo_width = ui.available_width();
@@ -302,6 +305,7 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                     [ui.available_width(), 120.0],
                     TextEdit::multiline(&mut app.new_tag_message),
                 );
+                });
             },
         );
         super::controls::dialog_style::section(
@@ -311,10 +315,13 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             |ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.add_enabled(false, super::controls::dialog_style::button("Add Tag & Push"))
-                        .disabled_help_text("Tag creation and push are not implemented yet");
-                    ui.add_enabled(false, super::controls::dialog_style::button("Add Tag"))
-                        .disabled_help_text("Tag creation is not implemented yet");
-                    if ui.add(super::controls::dialog_style::button("Cancel")).clicked() {
+                        .disabled_help_text("Pushing tags is not implemented yet");
+                    let blocker = app.create_tag_blocker();
+                    if ui.add_enabled(blocker.is_none(), super::controls::dialog_style::primary("Add Tag", palette))
+                        .disabled_help_text(blocker.unwrap_or("")).clicked() {
+                        app.create_tag();
+                    }
+                    if ui.add_enabled(!busy, super::controls::dialog_style::button("Cancel")).clicked() {
                         keep = false;
                     }
                 });
@@ -551,6 +558,62 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
 mod tests {
     use super::*;
     use eframe::egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect};
+
+    #[test]
+    fn tag_dialog_keeps_geometry_during_validation_progress_and_errors() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            for size in [Vec2::new(1100.0, 700.0), Vec2::new(1400.0, 900.0)] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.repositories = crate::mock_data::repositories();
+                app.selected_repository = 0;
+                app.refs = crate::mock_data::refs();
+                app.state_current = true;
+                app.refs_current = true;
+                app.branch_head_exists = true;
+                app.tag_dialog_open = true;
+                let mut geometry = Vec::new();
+                for stage in 0..4 {
+                    app.new_tag_name = if stage == 0 { "" } else { "feature/new" }.into();
+                    app.refs_current = stage != 2;
+                    app.error = (stage == 3).then(|| "Long error message. ".repeat(100));
+                    for frame in 0..3 {
+                        let mut output = ctx.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                                ..Default::default()
+                            },
+                            |ui| tag_dialog(ui, &mut app),
+                        );
+                        output.textures_delta.clear();
+                        if frame == 2 {
+                            let rect = ctx
+                                .memory(|memory| {
+                                    memory.area_rect(eframe::egui::Id::unique("branches.add.tag"))
+                                })
+                                .unwrap();
+                            assert!(
+                                (rect.center() - (Pos2::ZERO + size * 0.5)).length() < 1.0,
+                                "Tag dialog is off center: {rect:?}"
+                            );
+                            assert!(Rect::from_min_size(Pos2::ZERO, size).contains_rect(rect));
+                            assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, eframe::egui::Shape::Text(text) if text.galley.text() == "Add tag to current branch (HEAD)")));
+                            geometry.push(rect);
+                        }
+                    }
+                }
+                for pair in geometry.windows(2) {
+                    assert_eq!(pair[0], pair[1]);
+                }
+            }
+        }
+    }
 
     #[test]
     fn create_dialog_stays_centered_with_header_and_stable_status_line() {

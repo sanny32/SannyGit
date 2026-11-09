@@ -117,6 +117,74 @@ fn require_clean(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+pub fn tag_hint(name: &str, message: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        Some("Enter a tag name")
+    } else if name.len() > 1024 {
+        Some("Tag name exceeds the 1 KiB limit")
+    } else if name.starts_with('-')
+        || name.starts_with("refs/")
+        || name.contains("..")
+        || name.contains("@{")
+        || name.ends_with('.')
+        || name
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c))
+        || name
+            .split('/')
+            .any(|part| part.is_empty() || part.starts_with('.') || part.ends_with(".lock"))
+    {
+        Some("Use a valid short tag name without whitespace or revision expressions")
+    } else if message.len() > 1024 * 1024 || message.contains('\0') {
+        Some("Tag message must be at most 1 MiB and contain no NUL characters")
+    } else {
+        None
+    }
+}
+
+/// Creates a tag at the current commit, never replacing an existing tag.
+pub fn create_tag(root: &Path, name: &str, message: &str) -> Result<(), String> {
+    if let Some(reason) = tag_hint(name, message) {
+        return Err(reason.into());
+    }
+    git::run(root, &["check-ref-format", &format!("refs/tags/{name}")])?;
+    let refs = load(root)?;
+    if !refs.has_head {
+        return Err("Create the first commit before creating a tag.".into());
+    }
+    if refs
+        .refs
+        .iter()
+        .any(|r| r.full_name == format!("refs/tags/{name}"))
+    {
+        return Err("A tag with this name already exists.".into());
+    }
+    // Resolve HEAD once so both forms refer to the same exact commit.
+    let commit = git::text(git::run(root, &["rev-parse", "--verify", "HEAD^{commit}"])?)?;
+    if message.trim().is_empty() {
+        // Override tag.gpgSign so an empty message always creates a lightweight tag.
+        git::run(
+            root,
+            &["-c", "tag.gpgSign=false", "tag", "--", name, commit.trim()],
+        )
+    } else {
+        git::run_with_input(
+            root,
+            &[
+                "tag",
+                "--annotate",
+                "--file=-",
+                "--cleanup=whitespace",
+                "--",
+                name,
+                commit.trim(),
+            ],
+            Some(message.as_bytes()),
+        )
+    }
+    .map(|_| ())
+}
+
 pub fn switch(root: &Path, full_name: &str) -> Result<(), String> {
     let refs = load(root)?;
     let target = refs
@@ -332,6 +400,83 @@ mod tests {
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "fixture"]);
         repo
+    }
+
+    #[test]
+    fn creates_lightweight_and_annotated_tags_without_touching_dirty_files() {
+        let repo = committed_repo();
+        repo.write("file", "staged\n");
+        repo.git(&["add", "file"]);
+        repo.write("file", "unstaged\n");
+        repo.write("new", "untracked\n");
+        let index = std::fs::read(repo.0.join(".git/index")).unwrap();
+        let status = repo.git(&["status", "--porcelain=v1"]);
+        let head = repo.git(&["rev-parse", "HEAD"]);
+        repo.git(&["config", "tag.gpgSign", "true"]);
+        create_tag(&repo.0, "release/версия", " \n").unwrap();
+        assert_eq!(
+            repo.git(&["cat-file", "-t", "refs/tags/release/версия"])
+                .trim(),
+            "commit"
+        );
+        repo.git(&["config", "tag.gpgSign", "false"]);
+        create_tag(&repo.0, "v1.0", "Release\n\nDetails #1\n").unwrap();
+        assert_eq!(
+            repo.git(&["cat-file", "-t", "refs/tags/v1.0"]).trim(),
+            "tag"
+        );
+        assert!(repo
+            .git(&["cat-file", "-p", "refs/tags/v1.0"])
+            .ends_with("Release\n\nDetails #1\n"));
+        assert_eq!(repo.git(&["rev-parse", "refs/tags/v1.0^{commit}"]), head);
+        assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
+        assert_eq!(repo.git(&["status", "--porcelain=v1"]), status);
+        assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file")).unwrap(),
+            "unstaged\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("new")).unwrap(),
+            "untracked\n"
+        );
+        repo.git(&["checkout", "--detach"]);
+        create_tag(&repo.0, "detached", "").unwrap();
+        assert_eq!(repo.git(&["rev-parse", "refs/tags/detached"]), head);
+    }
+
+    #[test]
+    fn tag_creation_rejects_invalid_names_duplicates_messages_and_unborn_head() {
+        let empty = TempRepo::new();
+        assert!(create_tag(&empty.0, "v1", "")
+            .unwrap_err()
+            .contains("first commit"));
+        let repo = committed_repo();
+        create_tag(&repo.0, "v1", "Original").unwrap();
+        let before = repo.git(&["show-ref"]);
+        for name in [
+            "",
+            "-bad",
+            "refs/tags/bad",
+            "a..b",
+            "a.lock",
+            "space name",
+            "bad\0name",
+            "a@{b",
+            "a^b",
+            "a//b",
+            ".hidden",
+            "a.",
+            "v1",
+        ] {
+            assert!(
+                create_tag(&repo.0, name, "replacement").is_err(),
+                "{name:?}"
+            );
+        }
+        assert!(create_tag(&repo.0, "bad-message", "bad\0message").is_err());
+        assert!(create_tag(&repo.0, "huge", &"x".repeat(1024 * 1024 + 1)).is_err());
+        assert_eq!(repo.git(&["show-ref"]), before);
     }
 
     #[test]

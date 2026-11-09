@@ -654,6 +654,9 @@ impl SannyGitApp {
             self.branch_head_exists = false;
             self.branch_dialog_open = false;
             self.rename_branch_dialog = None;
+            self.tag_dialog_open = false;
+            self.new_tag_name.clear();
+            self.new_tag_message.clear();
             self.remote_checkout = None;
             self.network_dialog = None;
             self.new_branch_name.clear();
@@ -792,6 +795,40 @@ impl SannyGitApp {
                 outcome,
                 snapshot: git::load(&root),
             }
+        });
+    }
+
+    pub fn create_tag_blocker(&self) -> Option<&'static str> {
+        self.branch_base_blocker()
+            .or_else(|| {
+                (!self.branch_head_exists)
+                    .then_some("Create the first commit before creating a tag")
+            })
+            .or_else(|| crate::branches::tag_hint(&self.new_tag_name, &self.new_tag_message))
+            .or_else(|| {
+                self.refs
+                    .iter()
+                    .any(|r| r.full_name == format!("refs/tags/{}", self.new_tag_name))
+                    .then_some("A tag with this name already exists")
+            })
+    }
+
+    pub fn create_tag(&mut self) {
+        if self.create_tag_blocker().is_some() {
+            return;
+        }
+        let root = PathBuf::from(&self.repositories[self.selected_repository].path);
+        let name = self.new_tag_name.clone();
+        let message = self.new_tag_message.clone();
+        self.state_current = false;
+        self.refs_current = false;
+        self.error = None;
+        self.status = "Creating tag…".into();
+        self.start_worker(move || WorkerResult::Operation {
+            committed: false,
+            success: "Tag created",
+            outcome: crate::branches::create_tag(&root, &name, &message),
+            snapshot: git::load(&root),
         });
     }
 
@@ -1307,6 +1344,13 @@ impl SannyGitApp {
                         self.selected_branch = format!("refs/heads/{}", dialog.name);
                         self.selected_ref_group = None;
                     }
+                }
+                if outcome.is_ok() && success == "Tag created" {
+                    self.selected_branch = format!("refs/tags/{}", self.new_tag_name);
+                    self.selected_ref_group = None;
+                    self.tag_dialog_open = false;
+                    self.new_tag_name.clear();
+                    self.new_tag_message.clear();
                 }
                 if committed {
                     self.commit_message.clear();
@@ -1843,6 +1887,49 @@ mod tests {
         );
         assert!(app.rename_branch_dialog.is_none());
         assert_eq!(app.selected_branch, "refs/heads/renamed");
+    }
+
+    #[test]
+    fn tag_creation_requires_fresh_state_and_keeps_draft_on_failure() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories = crate::mock_data::repositories();
+        app.selected_repository = 0;
+        app.new_tag_name = "release/new".into();
+        app.new_tag_message = "Release details".into();
+        app.tag_dialog_open = true;
+        app.state_current = true;
+        assert!(app.create_tag_blocker().is_some());
+        app.refs_current = true;
+        assert!(app.create_tag_blocker().is_some());
+        app.branch_head_exists = true;
+        app.changes = crate::mock_data::changes();
+        assert!(app.create_tag_blocker().is_none());
+        deliver(
+            &mut app,
+            WorkerResult::Operation {
+                committed: false,
+                success: "Tag created",
+                outcome: Err("Tag exists".into()),
+                snapshot: Err("Refresh failed".into()),
+            },
+        );
+        assert!(app.tag_dialog_open);
+        assert_eq!(app.new_tag_name, "release/new");
+        assert_eq!(app.new_tag_message, "Release details");
+        assert!(app.create_tag_blocker().is_some());
+        deliver(
+            &mut app,
+            WorkerResult::Operation {
+                committed: false,
+                success: "Tag created",
+                outcome: Ok(()),
+                snapshot: Err("Refresh failed".into()),
+            },
+        );
+        assert!(!app.tag_dialog_open);
+        assert!(app.new_tag_name.is_empty());
+        assert!(app.new_tag_message.is_empty());
+        assert_eq!(app.selected_branch, "refs/tags/release/new");
     }
 
     #[test]
