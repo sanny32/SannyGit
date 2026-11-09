@@ -1486,6 +1486,10 @@ impl SannyGitApp {
 }
 
 impl eframe::App for SannyGitApp {
+    fn clear_color(&self, _visuals: &eframe::egui::Visuals) -> [f32; 4] {
+        self.palette().background.to_normalized_gamma_f32()
+    }
+
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
         if self.preferences.follow_system_theme {
             self.theme = ThemeChoice::from_system(ui.ctx(), self.theme);

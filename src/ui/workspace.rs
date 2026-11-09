@@ -9,9 +9,10 @@ pub(super) fn show(ui: &mut Ui, app: &mut SannyGitApp) -> [Rect; 4] {
     // neighbour and takes the same amount from the other.
     Panel::bottom("working_tree.modern.linked.rows")
         .resizable(true)
+        .show_separator_line(false)
         .default_size(230.0)
         .size_range(170.0..=(ui.available_height() - 180.0).max(170.0))
-        .frame(Frame::new().fill(palette.background).inner_margin(Margin {
+        .frame(Frame::new().fill(palette.background).outer_margin(Margin {
             top: 6,
             ..Margin::ZERO
         }))
@@ -19,6 +20,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SannyGitApp) -> [Rect; 4] {
             ui.take_available_space();
             let commit = Panel::left("working_tree.modern.linked.commit")
                 .resizable(true)
+                .show_separator_line(false)
                 .default_size(ui.available_width() * 0.42)
                 .size_range(310.0..=(ui.available_width() - 420.0).max(310.0))
                 .frame(super::panel_frame(palette).outer_margin(Margin {
@@ -38,6 +40,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SannyGitApp) -> [Rect; 4] {
         });
     rects[0] = Panel::left("working_tree.modern.linked.files")
         .resizable(true)
+        .show_separator_line(false)
         .default_size(ui.available_width() * 0.48)
         .size_range(310.0..=(ui.available_width() - 320.0).max(310.0))
         .frame(super::panel_frame(palette).outer_margin(Margin {
@@ -82,7 +85,7 @@ mod tests {
             );
             assert!(rect.width() > 300.0 && rect.height() >= 160.0);
         }
-        // Only the fixed divider gutters (six points plus the frame stroke) may remain between panels.
+        // Only the fixed six-point divider gutters may remain between panels.
         assert!((files.left() - bounds.left()).abs() < 1.0);
         assert!((commit.left() - bounds.left()).abs() < 1.0);
         assert!((diff.right() - bounds.right()).abs() < 1.0);
@@ -94,11 +97,53 @@ mod tests {
         assert!((files.bottom() - diff.bottom()).abs() < 1.0);
         assert!((commit.top() - journal.top()).abs() < 1.0);
         assert!(
-            (commit.top() - files.bottom() - 7.0).abs() < 1.0,
+            (commit.top() - files.bottom() - 6.0).abs() < 1.0,
             "{rects:?} bounds={bounds:?}"
         );
         assert!((commit.bottom() - bounds.bottom()).abs() < 1.0);
         assert!((journal.bottom() - bounds.bottom()).abs() < 1.0);
+    }
+
+    #[test]
+    fn horizontal_resize_highlight_spans_the_gutter_without_content_overlap() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [vec2(820.0, 580.0), vec2(1250.0, 900.0)] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                theme.apply_style(&ctx, InterfaceStyle::Modern);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.interface_style = InterfaceStyle::Modern;
+                let bounds = Rect::from_min_size(pos2(0.0, 0.0), size);
+                let mut rects = [Rect::NOTHING; 4];
+                let mut pointer = bounds.min;
+                for frame in 0..5 {
+                    let mut output = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(bounds),
+                            events: vec![Event::PointerMoved(pointer)],
+                            ..Default::default()
+                        },
+                        |ui| {
+                            CentralPanel::default().frame(Frame::NONE).show(ui, |ui| {
+                                rects = show(ui, &mut app);
+                            });
+                        },
+                    );
+                    output.textures_delta.clear();
+                    pointer = pos2(bounds.center().x, rects[0].bottom());
+                    if frame >= 3 {
+                        assert!(output.shapes.iter().any(|shape| {
+                            matches!(&shape.shape, eframe::egui::Shape::LineSegment { points, .. }
+                                if points[0].x == bounds.left()
+                                    && points[1].x == bounds.right()
+                                    && points[0].y == points[1].y
+                                    && points[0].y > rects[0].bottom()
+                                    && points[0].y < rects[2].top())
+                        }), "Horizontal highlight is hidden by content: {theme:?} {size:?}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]

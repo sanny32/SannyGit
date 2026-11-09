@@ -96,6 +96,7 @@ fn sidebar_contents(ui: &mut Ui, app: &mut SannyGitApp) -> eframe::egui::Rect {
     let palette = app.palette();
     let branches = Panel::bottom("working_tree.v3.branches")
         .resizable(true)
+        .show_separator_line(false)
         .default_size(
             ui.available_height()
                 * if app.interface_style == crate::theme::InterfaceStyle::Modern {
@@ -176,11 +177,30 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     }
     status_bar::show(ui, app);
 
+    // Outer margins are transparent. Paint the complete workspace first so
+    // resize gutters never expose the native window's clear color.
+    ui.painter()
+        .rect_filled(ui.available_rect_before_wrap(), 0.0, palette.background);
+
     Panel::left("working_tree.v3.sidebar")
         .resizable(true)
+        .show_separator_line(false)
         .default_size((context.content_rect().width() * 0.17).clamp(200.0, 270.0))
         .size_range(190.0..=(ui.available_width() - 740.0).max(190.0))
-        .frame(Frame::new().fill(palette.background).inner_margin(4))
+        .frame(
+            Frame::new()
+                .fill(palette.background)
+                .inner_margin(Margin {
+                    left: 4,
+                    right: 0,
+                    top: 4,
+                    bottom: 4,
+                })
+                .outer_margin(Margin {
+                    right: 4,
+                    ..Margin::ZERO
+                }),
+        )
         .show(ui, |ui| {
             ui.take_available_space();
             sidebar_contents(ui, app);
@@ -201,6 +221,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .show(ui, |ui| {
             Panel::bottom("working_tree.v3.journal")
                 .resizable(true)
+                .show_separator_line(false)
                 .default_size(180.0)
                 .size_range(150.0..=(ui.available_height() - 380.0).max(150.0))
                 .frame(panel_frame(palette))
@@ -210,6 +231,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
             Panel::top("working_tree.v3.files")
                 .resizable(true)
+                .show_separator_line(false)
                 .default_size((context.content_rect().height() * 0.38).max(300.0))
                 .size_range(180.0..=(ui.available_height() - 160.0).max(180.0))
                 .frame(Frame::new().fill(palette.background).inner_margin(Margin {
@@ -220,6 +242,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     ui.take_available_space();
                     Panel::right("working_tree.v3.commit")
                         .resizable(true)
+                        .show_separator_line(false)
                         .default_size(ui.available_width() * 0.29)
                         .size_range(260.0..=(ui.available_width() - 310.0).max(260.0))
                         .frame(panel_frame(palette).outer_margin(Margin {
@@ -309,6 +332,113 @@ mod tests {
     use super::*;
     use crate::theme::ThemeChoice;
     use eframe::egui::{pos2, vec2, Context, Event, Modifiers, PointerButton, RawInput, Rect};
+
+    #[test]
+    fn sidebar_resize_highlight_is_visible_in_the_vertical_gutter() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [vec2(1100.0, 700.0), vec2(1536.0, 1024.0)] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                theme.apply_style(&ctx, crate::theme::InterfaceStyle::Modern);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.interface_style = crate::theme::InterfaceStyle::Modern;
+                let render = |app: &mut SannyGitApp, events| {
+                    let mut output = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| show(ui, app),
+                    );
+                    output.textures_delta.clear();
+                    let sidebar = ctx.data(|data| {
+                        data.iter_temp_by_type::<eframe::egui::PanelState>()
+                            .map(|state| state.outer_rect)
+                            .find(|r| {
+                                r.left() < 10.0
+                                    && r.width() > 190.0
+                                    && r.width() < 350.0
+                                    && r.height() > 400.0
+                            })
+                            .unwrap()
+                    });
+                    (sidebar, output)
+                };
+                for _ in 0..3 {
+                    render(&mut app, vec![]);
+                }
+                let (before, idle) = render(&mut app, vec![]);
+                let has_highlight = |output: &eframe::egui::FullOutput, rect: Rect| {
+                    output.shapes.iter().any(|shape| {
+                        matches!(&shape.shape, eframe::egui::Shape::LineSegment { points, .. }
+                            if points[0].x == points[1].x
+                                && points[0].x > rect.right() - 4.0
+                                && points[0].x < rect.right()
+                                && points[0].y == rect.top()
+                                && points[1].y == rect.bottom())
+                    })
+                };
+                // The gutter must have the theme background even with no hover
+                // highlight; transparent outer margins otherwise expose black.
+                let gutter = pos2(before.right() - 2.0, before.center().y);
+                let background = idle.shapes.iter().rev().find_map(|shape| {
+                    if !shape.clip_rect.contains(gutter) {
+                        return None;
+                    }
+                    match &shape.shape {
+                        eframe::egui::Shape::Rect(rect)
+                            if rect.rect.contains(gutter) && rect.fill.is_opaque() =>
+                        {
+                            Some(rect.fill)
+                        }
+                        _ => None,
+                    }
+                });
+                assert_eq!(
+                    background,
+                    Some(app.palette().background),
+                    "Unpainted sidebar gutter {theme:?} {size:?}"
+                );
+                assert!(!has_highlight(&idle, before));
+                let pointer = pos2(before.right() - 2.0, before.center().y);
+                render(&mut app, vec![Event::PointerMoved(pointer)]);
+                let (hovered, output) = render(&mut app, vec![Event::PointerMoved(pointer)]);
+                assert_eq!(before, hovered);
+                assert!(
+                    has_highlight(&output, hovered),
+                    "Missing sidebar highlight {theme:?} {size:?}"
+                );
+                render(
+                    &mut app,
+                    vec![Event::PointerButton {
+                        pos: pointer,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    }],
+                );
+                let moved = pointer + vec2(30.0, 0.0);
+                for _ in 0..3 {
+                    render(&mut app, vec![Event::PointerMoved(moved)]);
+                }
+                let (dragged, output) = render(
+                    &mut app,
+                    vec![Event::PointerButton {
+                        pos: moved,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    }],
+                );
+                assert!(
+                    dragged.width() > before.width() + 25.0,
+                    "Sidebar did not resize {theme:?} {size:?}: {before:?} -> {dragged:?}"
+                );
+                assert!(has_highlight(&output, dragged));
+            }
+        }
+    }
 
     #[test]
     fn repository_switch_keeps_panel_rectangles() {
