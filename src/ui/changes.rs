@@ -101,14 +101,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     }
                 });
                 row.col(|ui| {
-                    let icon = if change.path.ends_with(".png") {
-                        Icon::ImageFile
-                    } else if change.kind == ChangeKind::Modified && change.path.ends_with(".rs") {
-                        Icon::Folder
-                    } else {
-                        Icon::File
-                    };
-                    icons::paint(ui, icon, status_color(change.kind, palette), 16.0);
+                    icons::paint(ui, Icon::for_file(&change.path), status_color(change.kind, palette), 16.0);
                     ui.add_space(4.0);
                     ui.add(eframe::egui::Label::new(RichText::new(&change.path).color(palette.text)).truncate())
                         .help_text(if let Some(source) = &change.original_path {

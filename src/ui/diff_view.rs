@@ -39,7 +39,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             .inner_margin(Margin::symmetric(6, 2))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    icons::paint(ui, Icon::File, palette.accent, 14.0);
+                    icons::paint(ui, Icon::for_file(&change.path), palette.accent, 14.0);
                     ui.label(file_name(&change.path));
                     ui.add_space(4.0);
                     close =

@@ -1,7 +1,7 @@
 use super::tooltips::TooltipResponse;
 use eframe::egui::{Button, Color32, Image, Response, Ui, Vec2};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
     GitHub,
     GitLab,
@@ -18,6 +18,8 @@ pub enum Icon {
     Repository,
     Tag,
     File,
+    CodeFile,
+    TextFile,
     Folder,
     ImageFile,
     Settings,
@@ -32,6 +34,29 @@ pub enum Icon {
 }
 
 impl Icon {
+    pub fn for_file(path: &str) -> Self {
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        let extension = name
+            .rsplit_once('.')
+            .map(|(_, ext)| ext.to_ascii_lowercase());
+        match extension.as_deref() {
+            Some(
+                "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg" | "ico" | "tif" | "tiff"
+                | "avif",
+            ) => Self::ImageFile,
+            Some(
+                "rs" | "c" | "h" | "cpp" | "hpp" | "cc" | "cs" | "go" | "py" | "js" | "jsx" | "ts"
+                | "tsx" | "java" | "kt" | "swift" | "rb" | "php" | "sh" | "bash" | "zsh" | "ps1"
+                | "html" | "css" | "scss" | "sql",
+            ) => Self::CodeFile,
+            Some(
+                "md" | "mdx" | "txt" | "rst" | "adoc" | "toml" | "yaml" | "yml" | "json" | "xml"
+                | "ini" | "cfg" | "conf" | "csv" | "log" | "lock",
+            ) => Self::TextFile,
+            _ => Self::File,
+        }
+    }
+
     fn source(self) -> (&'static str, &'static [u8]) {
         macro_rules! svg {
             ($name:literal) => {
@@ -57,6 +82,8 @@ impl Icon {
             Self::Repository => svg!("repository"),
             Self::Tag => svg!("tag"),
             Self::File => svg!("file"),
+            Self::CodeFile => svg!("code-file"),
+            Self::TextFile => svg!("text-file"),
             Self::Folder => svg!("folder"),
             Self::ImageFile => svg!("image-file"),
             Self::Settings => svg!("settings"),
@@ -100,4 +127,27 @@ pub fn unavailable(ui: &mut Ui, icon: Icon, tooltip: &str) {
             .min_size(Vec2::splat(20.0)),
     );
     response.disabled_help_text(tooltip);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Icon;
+
+    #[test]
+    fn file_icons_handle_case_paths_and_unknown_extensions() {
+        for (path, expected) in [
+            ("src/main.rs", Icon::CodeFile),
+            ("web/app.TSX", Icon::CodeFile),
+            ("assets/logo.svg", Icon::ImageFile),
+            (r"assets\photo.JPEG", Icon::ImageFile),
+            ("README.md", Icon::TextFile),
+            ("Cargo.toml", Icon::TextFile),
+            ("folder.png/data", Icon::File),
+            (r"folder.rs\data", Icon::File),
+            ("archive.unknown", Icon::File),
+            ("LICENSE", Icon::File),
+        ] {
+            assert_eq!(Icon::for_file(path), expected, "{path}");
+        }
+    }
 }
