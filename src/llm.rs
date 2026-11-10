@@ -132,15 +132,20 @@ fn credential_entry(user: &str) -> Result<keyring::Entry, String> {
 
 #[cfg(target_os = "macos")]
 mod macos_credentials {
+    use security_framework::access_control::{ProtectionMode, SecAccessControl};
     use security_framework::passwords::{
         delete_generic_password_options, generic_password, set_generic_password_options,
         AccessControlOptions, PasswordOptions,
     };
+    use std::process::{Command, Output};
 
-    use super::PROTECTED_KEYRING_SERVICE;
+    use super::{
+        credential_entry, KEYRING_SERVICE, LEGACY_KEYRING_USER, PROTECTED_KEYRING_SERVICE,
+    };
 
     const ITEM_NOT_FOUND: i32 = -25_300;
     const MISSING_ENTITLEMENT: i32 = -34_018;
+    const SECURITY_ITEM_NOT_FOUND: i32 = 44;
 
     fn options(user: &str) -> PasswordOptions {
         let mut options = PasswordOptions::new_generic_password(PROTECTED_KEYRING_SERVICE, user);
@@ -148,37 +153,129 @@ mod macos_credentials {
         options
     }
 
+    fn security(arguments: &[&str]) -> Result<Output, String> {
+        Command::new("/usr/bin/security")
+            .args(arguments)
+            .output()
+            .map_err(|error| format!("Cannot access the macOS Keychain: {error}"))
+    }
+
+    fn legacy_security_tool_owned() -> Result<Option<bool>, String> {
+        let output = security(&[
+            "find-generic-password",
+            "-s",
+            KEYRING_SERVICE,
+            "-a",
+            LEGACY_KEYRING_USER,
+        ])?;
+        if output.status.code() == Some(SECURITY_ITEM_NOT_FOUND) {
+            return Ok(None);
+        }
+        if !output.status.success() {
+            return Err("Cannot inspect the legacy LLM API key in the macOS Keychain".into());
+        }
+        let metadata = String::from_utf8(output.stdout)
+            .map_err(|_| "Cannot inspect the legacy LLM API key metadata".to_owned())?;
+        Ok(Some(metadata.contains("\"crtr\"<uint32>=\"aapl\"")))
+    }
+
+    pub fn load_unprotected(user: &str) -> Result<Option<String>, String> {
+        match credential_entry(user)?.get_password() {
+            Ok(secret) => Ok(Some(secret)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(format!(
+                "Cannot read the legacy LLM API key from the OS credential manager: {error}"
+            )),
+        }
+    }
+
+    pub fn load_legacy() -> Result<Option<String>, String> {
+        let Some(security_tool_owned) = legacy_security_tool_owned()? else {
+            return Ok(None);
+        };
+        if !security_tool_owned {
+            return load_unprotected(LEGACY_KEYRING_USER);
+        }
+        let output = security(&[
+            "find-generic-password",
+            "-s",
+            KEYRING_SERVICE,
+            "-a",
+            LEGACY_KEYRING_USER,
+            "-w",
+        ])?;
+        if output.status.code() == Some(SECURITY_ITEM_NOT_FOUND) {
+            return Ok(None);
+        }
+        if !output.status.success() {
+            return Err("Cannot read the legacy LLM API key from the macOS Keychain".into());
+        }
+        let mut secret = String::from_utf8(output.stdout)
+            .map_err(|_| "The saved LLM API key is not valid UTF-8".to_owned())?;
+        if secret.ends_with('\n') {
+            secret.pop();
+            if secret.ends_with('\r') {
+                secret.pop();
+            }
+        }
+        Ok(Some(secret))
+    }
+
+    pub fn delete_legacy() -> Result<(), String> {
+        delete_unprotected(LEGACY_KEYRING_USER)
+    }
+
+    pub fn delete_unprotected(user: &str) -> Result<(), String> {
+        // keyring::Entry::delete_credential reads the secret again before
+        // deleting it. SecItemDelete only needs the service/account query.
+        delete_password(PasswordOptions::new_generic_password(KEYRING_SERVICE, user))
+    }
+
+    pub fn save(user: &str, secret: &str) -> Result<(), String> {
+        let mut options = options(user);
+        // Keychain itself authenticates the read; a separate LAContext policy
+        // evaluation cannot authorize access to a legacy login-keychain ACL.
+        let access = SecAccessControl::create_with_protection(
+            Some(ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly),
+            AccessControlOptions::BIOMETRY_CURRENT_SET.bits(),
+        )
+        .map_err(|error| format!("Cannot configure Touch ID protection: {error}"))?;
+        options.set_access_control(access);
+        options.set_label("SannyGit LLM API key");
+        set_generic_password_options(secret.as_bytes(), options).map_err(|error| {
+            if error.code() == MISSING_ENTITLEMENT {
+                signing_error()
+            } else {
+                format!("Cannot save the LLM API key with Touch ID protection: {error}")
+            }
+        })
+    }
+
+    fn signing_error() -> String {
+        "Touch ID key storage requires a signed SannyGit application with Keychain entitlements. This build cannot access the data protection keychain. Use a properly signed build, or turn off secure storage and enter the API key for this session.".into()
+    }
+
     pub fn load(user: &str) -> Result<Option<String>, String> {
         match generic_password(options(user)) {
             Ok(secret) => String::from_utf8(secret)
                 .map(Some)
                 .map_err(|_| "The saved LLM API key is not valid UTF-8".into()),
-            Err(error) if matches!(error.code(), ITEM_NOT_FOUND | MISSING_ENTITLEMENT) => Ok(None),
+            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(None),
+            // Do not fall back to the login keychain after a protected read
+            // fails: it can prompt for a password after a Touch ID attempt.
+            Err(error) if error.code() == MISSING_ENTITLEMENT => Err(signing_error()),
             Err(error) => Err(format!(
                 "Cannot unlock the LLM API key with Touch ID: {error}"
             )),
         }
     }
 
-    pub fn save(user: &str, secret: &str) -> Result<bool, String> {
-        // Require a currently enrolled fingerprint. USER_PRESENCE is not used
-        // here because macOS may satisfy it with the keychain password instead.
-        let mut options = options(user);
-        options.set_access_control_options(AccessControlOptions::BIOMETRY_CURRENT_SET);
-        options.set_label("SannyGit LLM API key");
-        match set_generic_password_options(secret.as_bytes(), options) {
-            Ok(()) => Ok(true),
-            // Development binaries launched by `cargo run` do not have the
-            // application identifier entitlement required by this keychain.
-            Err(error) if error.code() == MISSING_ENTITLEMENT => Ok(false),
-            Err(error) => Err(format!(
-                "Cannot protect the LLM API key with Touch ID: {error}"
-            )),
-        }
+    pub fn delete(user: &str) -> Result<(), String> {
+        delete_password(options(user))
     }
 
-    pub fn delete(user: &str) -> Result<(), String> {
-        match delete_generic_password_options(options(user)) {
+    fn delete_password(options: PasswordOptions) -> Result<(), String> {
+        match delete_generic_password_options(options) {
             Ok(()) => Ok(()),
             Err(error) if matches!(error.code(), ITEM_NOT_FOUND | MISSING_ENTITLEMENT) => Ok(()),
             Err(error) => Err(format!("Cannot remove the saved LLM API key: {error}")),
@@ -186,18 +283,35 @@ mod macos_credentials {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn migrate_macos_api_key(
-    user: &str,
-    entry: &keyring::Entry,
-    secret: String,
-) -> Result<String, String> {
-    if macos_credentials::save(user, &secret)? {
-        entry.delete_credential().map_err(|error| {
-            format!("Cannot remove the unprotected LLM API key after migration: {error}")
-        })?;
+#[cfg(any(target_os = "macos", test))]
+fn load_api_key_from_stores(
+    protected: impl FnOnce() -> Result<Option<String>, String>,
+    scoped: impl FnOnce() -> Result<Option<String>, String>,
+    legacy: impl FnOnce() -> Result<Option<String>, String>,
+) -> Result<Option<String>, String> {
+    if let Some(secret) = protected()? {
+        return Ok(Some(secret));
     }
-    Ok(secret)
+    if let Some(secret) = scoped()? {
+        return Ok(Some(secret));
+    }
+    legacy()
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn load_and_migrate_legacy_api_key(
+    load: impl FnOnce() -> Result<Option<String>, String>,
+    save: impl FnOnce(&str) -> Result<(), String>,
+    delete: impl FnOnce() -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    let Some(secret) = load()? else {
+        return Ok(None);
+    };
+    // Keep the source until the destination is safely written, then return
+    // the value already read instead of querying either entry again.
+    save(&secret)?;
+    delete()?;
+    Ok(Some(secret))
 }
 
 fn load_api_key(config: &Config, repository: Option<&str>) -> Result<Option<String>, String> {
@@ -207,44 +321,50 @@ fn load_api_key(config: &Config, repository: Option<&str>) -> Result<Option<Stri
     let endpoint = chat_completions_endpoint(&config.endpoint);
     let user = credential_user(&endpoint, repository);
     #[cfg(target_os = "macos")]
-    if let Some(secret) = macos_credentials::load(&user)? {
-        return Ok(Some(secret));
-    }
-    let entry = credential_entry(&user)?;
-    match entry.get_password() {
-        Ok(secret) => {
-            #[cfg(target_os = "macos")]
-            {
-                migrate_macos_api_key(&user, &entry, secret).map(Some)
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                Ok(Some(secret))
-            }
-        }
-        Err(keyring::Error::NoEntry) if repository.is_none() && endpoint == DEFAULT_ENDPOINT => {
-            let legacy = credential_entry(LEGACY_KEYRING_USER)?;
-            match legacy.get_password() {
-                Ok(secret) => {
-                    #[cfg(target_os = "macos")]
-                    {
-                        migrate_macos_api_key(&user, &legacy, secret).map(Some)
-                    }
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        Ok(Some(secret))
-                    }
+    {
+        load_api_key_from_stores(
+            || macos_credentials::load(&user),
+            || {
+                load_and_migrate_legacy_api_key(
+                    || macos_credentials::load_unprotected(&user),
+                    |secret| macos_credentials::save(&user, secret),
+                    || macos_credentials::delete_unprotected(&user),
+                )
+            },
+            || {
+                if repository.is_none() && endpoint == DEFAULT_ENDPOINT {
+                    load_and_migrate_legacy_api_key(
+                        macos_credentials::load_legacy,
+                        |secret| macos_credentials::save(&user, secret),
+                        macos_credentials::delete_legacy,
+                    )
+                } else {
+                    Ok(None)
                 }
-                Err(keyring::Error::NoEntry) => Ok(None),
-                Err(error) => Err(format!(
-                    "Cannot read the LLM API key from the OS credential manager: {error}"
-                )),
+            },
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let entry = credential_entry(&user)?;
+        match entry.get_password() {
+            Ok(secret) => Ok(Some(secret)),
+            Err(keyring::Error::NoEntry)
+                if repository.is_none() && endpoint == DEFAULT_ENDPOINT =>
+            {
+                match credential_entry(LEGACY_KEYRING_USER)?.get_password() {
+                    Ok(secret) => Ok(Some(secret)),
+                    Err(keyring::Error::NoEntry) => Ok(None),
+                    Err(error) => Err(format!(
+                        "Cannot read the LLM API key from the OS credential manager: {error}"
+                    )),
+                }
             }
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(format!(
+                "Cannot read the LLM API key from the OS credential manager: {error}"
+            )),
         }
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(format!(
-            "Cannot read the LLM API key from the OS credential manager: {error}"
-        )),
     }
 }
 
@@ -260,6 +380,7 @@ pub fn load_api_key_if_needed(config: &mut Config, repository: Option<&str>) -> 
 pub fn save_api_key(config: &Config, repository: Option<&str>) -> Result<(), String> {
     let endpoint = chat_completions_endpoint(&config.endpoint);
     let user = credential_user(&endpoint, repository);
+    #[cfg(not(target_os = "macos"))]
     let entry = credential_entry(&user)?;
     if config.store_api_key && !config.api_key.is_empty() {
         let secret = serde_json::to_string(&SavedCredential {
@@ -268,10 +389,9 @@ pub fn save_api_key(config: &Config, repository: Option<&str>) -> Result<(), Str
         })
         .map_err(|_| "Cannot encode the LLM credential".to_owned())?;
         #[cfg(target_os = "macos")]
-        if !macos_credentials::save(&user, &secret)? {
-            entry
-                .set_password(&secret)
-                .map_err(|error| format!("Cannot save the LLM API key securely: {error}"))?;
+        {
+            macos_credentials::save(&user, &secret)?;
+            macos_credentials::delete_unprotected(&user)?;
         }
         #[cfg(not(target_os = "macos"))]
         entry
@@ -279,7 +399,11 @@ pub fn save_api_key(config: &Config, repository: Option<&str>) -> Result<(), Str
             .map_err(|error| format!("Cannot save the LLM API key securely: {error}"))?;
     } else {
         #[cfg(target_os = "macos")]
-        macos_credentials::delete(&user)?;
+        {
+            macos_credentials::delete(&user)?;
+            macos_credentials::delete_unprotected(&user)?;
+        }
+        #[cfg(not(target_os = "macos"))]
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(error) => {
@@ -288,9 +412,16 @@ pub fn save_api_key(config: &Config, repository: Option<&str>) -> Result<(), Str
         }
     }
     if repository.is_none() && endpoint == DEFAULT_ENDPOINT {
-        match credential_entry(LEGACY_KEYRING_USER)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(format!("Cannot remove the saved LLM API key: {error}")),
+        #[cfg(target_os = "macos")]
+        {
+            macos_credentials::delete_legacy()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            match credential_entry(LEGACY_KEYRING_USER)?.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(error) => Err(format!("Cannot remove the saved LLM API key: {error}")),
+            }
         }
     } else {
         Ok(())
@@ -933,6 +1064,129 @@ mod tests {
             first,
             credential_user("https://other.example/v1", Some("/work/first"))
         );
+    }
+
+    #[test]
+    fn protected_key_does_not_read_the_login_keychain() {
+        let result = load_api_key_from_stores(
+            || Ok(Some("protected-key".into())),
+            || panic!("must not read the login keychain after Touch ID"),
+            || panic!("must not migrate after Touch ID"),
+        );
+        assert_eq!(result, Ok(Some("protected-key".into())));
+    }
+
+    #[test]
+    fn protected_read_failures_never_fall_back_to_password_authentication() {
+        for error in [
+            "Touch ID cancelled",
+            "missing entitlement",
+            "authentication failed",
+        ] {
+            let result = load_api_key_from_stores(
+                || Err(error.into()),
+                || panic!("must not ask for the login keychain password"),
+                || panic!("must not migrate after a protected read error"),
+            );
+            assert_eq!(result, Err(error.into()));
+        }
+    }
+
+    #[test]
+    fn migration_only_runs_when_the_protected_key_is_absent() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let result = load_api_key_from_stores(
+            || {
+                calls.borrow_mut().push("protected");
+                Ok(None)
+            },
+            || {
+                calls.borrow_mut().push("scoped");
+                Ok(None)
+            },
+            || {
+                calls.borrow_mut().push("legacy");
+                Ok(Some("migrated-key".into()))
+            },
+        );
+        assert_eq!(result, Ok(Some("migrated-key".into())));
+        assert_eq!(*calls.borrow(), ["protected", "scoped", "legacy"]);
+    }
+
+    #[test]
+    fn scoped_migration_success_or_failure_does_not_read_an_unrelated_key() {
+        for result in [
+            Ok(Some("scoped-key".into())),
+            Err("migration cancelled".into()),
+        ] {
+            let expected = result.clone();
+            assert_eq!(
+                load_api_key_from_stores(
+                    || Ok(None),
+                    || result,
+                    || panic!("must not read a different key after scoped migration"),
+                ),
+                expected,
+            );
+        }
+    }
+
+    #[test]
+    fn migration_reads_once_and_saves_before_deleting() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let secret = load_and_migrate_legacy_api_key(
+            || {
+                calls.borrow_mut().push("read");
+                Ok(Some("legacy-key".into()))
+            },
+            |secret| {
+                assert_eq!(secret, "legacy-key");
+                calls.borrow_mut().push("save");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("delete");
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(secret.as_deref(), Some("legacy-key"));
+        assert_eq!(*calls.borrow(), ["read", "save", "delete"]);
+    }
+
+    #[test]
+    fn missing_or_cancelled_legacy_read_does_not_migrate() {
+        for result in [Ok(None), Err("authentication cancelled".into())] {
+            let expected = result.clone();
+            assert_eq!(
+                load_and_migrate_legacy_api_key(
+                    || result,
+                    |_| panic!("must not save without a secret"),
+                    || panic!("must not delete without a secret"),
+                ),
+                expected,
+            );
+        }
+    }
+
+    #[test]
+    fn failed_migration_preserves_the_source() {
+        let result = load_and_migrate_legacy_api_key(
+            || Ok(Some("legacy-key".into())),
+            |_| Err("storage unavailable".into()),
+            || panic!("must not delete after a failed save"),
+        );
+        assert_eq!(result, Err("storage unavailable".into()));
+    }
+
+    #[test]
+    fn migration_reports_cleanup_failure_without_reading_again() {
+        let result = load_and_migrate_legacy_api_key(
+            || Ok(Some("legacy-key".into())),
+            |_| Ok(()),
+            || Err("cannot remove source".into()),
+        );
+        assert_eq!(result, Err("cannot remove source".into()));
     }
 
     #[test]
