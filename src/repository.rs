@@ -233,11 +233,14 @@ fn clone_source(source: &str) -> Result<String, String> {
         }
     }
     let source = if expand_path(source).exists() {
-        expand_path(source)
+        let path = expand_path(source)
             .canonicalize()
-            .map_err(|e| e.to_string())?
-            .to_string_lossy()
-            .into_owned()
+            .map_err(|e| e.to_string())?;
+        // A canonical Windows path uses the verbatim prefix, which Git's
+        // transport parser does not accept. File URLs also escape spaces.
+        reqwest::Url::from_file_path(path)
+            .map_err(|_| "Cannot represent the local repository as a file URL")?
+            .into()
     } else {
         source.into()
     };
@@ -741,6 +744,25 @@ mod tests {
     use crate::git::tests::TempRepo;
 
     #[test]
+    fn local_clone_source_is_an_encoded_file_url() {
+        let repo = TempRepo::new();
+        let path = repo.0.join("source é with spaces");
+        fs::create_dir(&path).unwrap();
+        let source = clone_source(path.to_str().unwrap()).unwrap();
+        assert!(source.starts_with("file://"));
+        assert!(!source.contains(' '));
+        assert_eq!(
+            reqwest::Url::parse(&source)
+                .unwrap()
+                .to_file_path()
+                .unwrap()
+                .canonicalize()
+                .unwrap(),
+            path.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
     fn folder_launchers_report_missing_paths_without_launching() {
         let repo = TempRepo::new();
         let missing = repo.0.join("missing folder");
@@ -794,7 +816,9 @@ mod tests {
         let snapshot = clone_repository(repo.0.to_str().unwrap(), &destination, &cancel).unwrap();
         assert!(snapshot.changes.is_empty());
         assert_eq!(
-            fs::read_to_string(destination.join("file")).unwrap(),
+            fs::read_to_string(destination.join("file"))
+                .unwrap()
+                .replace("\r\n", "\n"),
             "fixture\n"
         );
         assert!(clone_repository(repo.0.to_str().unwrap(), &destination, &cancel).is_err());

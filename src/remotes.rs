@@ -229,9 +229,12 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     fn command(root: &Path, args: &[&str]) -> Vec<u8> {
-        git::run(root, args).unwrap()
+        let mut configured = vec!["-c", "core.autocrlf=false"];
+        configured.extend_from_slice(args);
+        git::run(root, &configured).unwrap()
     }
     fn identity(root: &Path) {
+        command(root, &["config", "core.autocrlf", "false"]);
         command(root, &["config", "user.name", "Remote Test"]);
         command(
             root,

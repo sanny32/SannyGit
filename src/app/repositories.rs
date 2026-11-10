@@ -544,7 +544,7 @@ impl SannyGitApp {
 mod tests {
     use super::*;
     use crate::theme::ThemeChoice;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, path::Path};
 
     #[test]
     fn hosting_updates_inactive_repositories_and_retains_icons_on_errors() {
@@ -640,11 +640,15 @@ mod tests {
         assert!(app.error.is_none(), "{:?}", app.error);
         assert_eq!(app.manager.dialog, None);
         assert_eq!(
-            std::fs::read_to_string(destination.join("file")).unwrap(),
+            std::fs::read_to_string(destination.join("file"))
+                .unwrap()
+                .replace("\r\n", "\n"),
             "clone fixture\n"
         );
         assert_eq!(
-            PathBuf::from(&app.repositories[app.selected_repository].path),
+            PathBuf::from(&app.repositories[app.selected_repository].path)
+                .canonicalize()
+                .unwrap(),
             destination.canonicalize().unwrap()
         );
     }
@@ -727,8 +731,10 @@ mod tests {
         finish_restore(&mut restored);
         assert!(restored.error.is_none());
         assert_eq!(
-            restored.repositories[restored.selected_repository].path,
-            path
+            Path::new(&restored.repositories[restored.selected_repository].path)
+                .canonicalize()
+                .unwrap(),
+            Path::new(&path).canonicalize().unwrap()
         );
         assert_eq!(restored.selected_repository, 0);
         restored.close_repository(true);

@@ -343,26 +343,27 @@ mod tests {
                 let mut app = SannyGitApp::with_theme(theme);
                 app.interface_style = crate::theme::InterfaceStyle::Modern;
                 let render = |app: &mut SannyGitApp, events| {
+                    let mut sidebar_id = None;
                     let mut output = ctx.run_ui(
                         RawInput {
                             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
                             events,
                             ..Default::default()
                         },
-                        |ui| show(ui, app),
+                        |ui| {
+                            sidebar_id =
+                                Some(ui.scope_id().with_salt(eframe::egui::IdSalt::new(
+                                    "working_tree.v3.sidebar",
+                                )));
+                            show(ui, app);
+                        },
                     );
                     output.textures_delta.clear();
-                    let sidebar = ctx.data(|data| {
-                        data.iter_temp_by_type::<eframe::egui::PanelState>()
-                            .map(|state| state.outer_rect)
-                            .find(|r| {
-                                r.left() < 10.0
-                                    && r.width() > 190.0
-                                    && r.width() < 350.0
-                                    && r.height() > 400.0
-                            })
-                            .unwrap()
-                    });
+                    // The branches panel can have the same approximate bounds;
+                    // select the actual sidebar rather than HashMap iteration order.
+                    let sidebar = eframe::egui::PanelState::load(&ctx, sidebar_id.unwrap())
+                        .unwrap()
+                        .outer_rect;
                     (sidebar, output)
                 };
                 for _ in 0..3 {

@@ -164,7 +164,9 @@ mod tests {
                                     eframe::egui::Shape::Text(text)
                                         if text.galley.job.text == "v1.0.0-b1" =>
                                     {
-                                        Some(text.galley.mesh_bounds.translate(text.pos.to_vec2()))
+                                        // Alignment uses the line box; visible glyph
+                                        // bounds vary with the platform's font.
+                                        Some(text.galley.rect.translate(text.pos.to_vec2()))
                                     }
                                     _ => None,
                                 })
