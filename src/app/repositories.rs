@@ -531,6 +531,8 @@ impl SannyGitApp {
         self.loaded_commit = None;
         self.state_current = false;
         self.commit_message.clear();
+        self.contents_preview_open = false;
+        self.contents_preview = None;
         self.journal_filter.clear();
         self.manager.dialog = None;
         self.manager.worktrees.clear();

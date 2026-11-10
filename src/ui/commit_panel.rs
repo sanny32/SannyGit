@@ -25,6 +25,24 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             [rect.left_bottom(), rect.right_bottom()],
             (3.0, palette.accent),
         );
+        let previous = app.commit_contents;
+        ui.add_enabled_ui(!app.busy(), |ui| {
+            eframe::egui::ComboBox::from_id_salt("commit.contents")
+                .width(98.0)
+                .selected_text(app.commit_contents.label())
+                .show_ui(ui, |ui| {
+                    for mode in [
+                        crate::git::CommitContents::All,
+                        crate::git::CommitContents::Staged,
+                    ] {
+                        ui.selectable_value(&mut app.commit_contents, mode, mode.label());
+                    }
+                });
+        });
+        if previous != app.commit_contents {
+            app.contents_preview_open = false;
+            app.contents_preview = None;
+        }
         let staged = app.changes.iter().filter(|c| c.staged).count();
         ui.label(
             RichText::new(format!("{staged} staged"))
@@ -36,10 +54,19 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             icons::menu(
                 ui,
                 Icon::Chevron,
-                "Commit message generation options",
+                "Commit contents and message options",
                 |ui| {
                     if app.generating_commit_message && ui.button("Cancel generation").clicked() {
                         app.cancel_commit_message_generation();
+                        ui.close();
+                    }
+                    let blocker = app.generate_commit_message_blocker();
+                    if ui
+                        .add_enabled(blocker.is_none(), Button::new("Preview commit contents…"))
+                        .disabled_help_text(blocker.unwrap_or(""))
+                        .clicked()
+                    {
+                        app.preview_commit_contents();
                         ui.close();
                     }
                     let blocker = app.generate_commit_message_blocker();
@@ -78,7 +105,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             .help_text(if generating {
                 "Cancel commit message generation"
             } else {
-                "Generate a commit message from all changes, including new files"
+                if app.commit_contents == crate::git::CommitContents::All {
+                    "Generate a commit message from all changes, including new files"
+                } else {
+                    "Generate a commit message from staged contents only"
+                }
             })
             .disabled_help_text(blocker.unwrap_or(""))
             .clicked()
@@ -124,7 +155,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     blocker.is_none(),
                     eframe::egui::Checkbox::new(&mut amend, "Amend last commit"),
                 )
-                .help_text("Replace the last commit with this message and all changes. Rewrites commit history.")
+                .help_text("Replace the last commit using the selected contents mode. Rewrites commit history.")
                 .disabled_help_text(blocker.unwrap_or(""))
                 .changed() {
                     app.set_amend(amend);
@@ -144,10 +175,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 Button::new(label).min_size(Vec2::new(72.0, 24.0))
                             },
                         )
-                        .help_text(if app.amend {
-                            "Replace the last commit with this message and all changes, including new files"
-                        } else {
-                            "Commit all changes, including new files"
+                        .help_text(match (app.amend, app.commit_contents) {
+                            (false, crate::git::CommitContents::All) => "Commit all changes, including new files",
+                            (false, crate::git::CommitContents::Staged) => "Commit staged changes only; preserve unstaged changes",
+                            (true, crate::git::CommitContents::All) => "Replace the last commit with this message and all changes, including new files",
+                            (true, crate::git::CommitContents::Staged) => "Replace the last commit with this message and staged changes only; preserve unstaged changes",
                         })
                         .disabled_help_text(blocker.unwrap_or(""))
                         .clicked()
@@ -157,6 +189,46 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
             });
         });
+    let mut open = app.contents_preview_open;
+    eframe::egui::Window::new("Commit contents preview")
+        .id(eframe::egui::Id::unique("commit.contents.window"))
+        .open(&mut open)
+        .fixed_size(Vec2::new(720.0, 420.0))
+        .collapsible(false)
+        .show(ui.ctx(), |ui| {
+            ui.label(format!(
+                "{}{} — snapshot at preview time",
+                app.commit_contents.label(),
+                if app.amend { " · Amend" } else { "" }
+            ));
+            ui.label("Review again if repository contents change before committing.");
+            ui.allocate_ui_with_layout(
+                Vec2::new(700.0, 360.0),
+                Layout::top_down(Align::Min),
+                |ui| {
+                    ui.set_min_size(Vec2::new(700.0, 360.0));
+                    match &app.contents_preview {
+                        None => {
+                            ui.label("Loading preview…");
+                        }
+                        Some(Err(error)) => {
+                            ui.add(eframe::egui::Label::new(error).truncate())
+                                .help_text(error);
+                        }
+                        Some(Ok(preview)) if preview.lines.is_empty() => {
+                            ui.label("No content changes.");
+                        }
+                        Some(Ok(preview)) => super::diff_view::render_preview(
+                            ui,
+                            preview,
+                            palette,
+                            "commit.contents.preview",
+                        ),
+                    }
+                },
+            );
+        });
+    app.contents_preview_open = open;
 }
 
 fn draw_generation_animation(ui: &Ui, rect: Rect, time: f64, palette: Palette) {
@@ -256,37 +328,105 @@ mod tests {
     fn commit_modes_and_generation_preserve_layout_and_draft_in_both_themes() {
         for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
             for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
-                let context = egui::Context::default();
-                crate::theme::install_fonts(&context);
-                egui_extras::install_image_loaders(&context);
-                theme.apply(&context);
-                let mut app = SannyGitApp::with_theme(theme);
-                app.commit_message = "Existing draft\n\nKeep this text readable.".into();
-                let mut idle_layout = None;
-                for (frame, generating) in [false, true, true, false].into_iter().enumerate() {
-                    app.generating_commit_message = generating;
-                    app.amend = generating;
-                    let input = egui::RawInput {
-                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
-                        time: Some(frame as f64 * 0.75),
-                        ..Default::default()
-                    };
-                    let mut output = context.run_ui(input, |ui| {
-                        ui.set_width(size.x * 0.4);
-                        ui.set_height(size.y * 0.25);
-                        show(ui, &mut app);
-                        let layout = ui.min_rect();
-                        if let Some(idle) = idle_layout {
-                            assert_eq!(layout, idle, "Generation changed layout in {theme:?}");
+                for style in [
+                    crate::theme::InterfaceStyle::Classic,
+                    crate::theme::InterfaceStyle::Modern,
+                ] {
+                    let context = egui::Context::default();
+                    crate::theme::install_fonts(&context);
+                    egui_extras::install_image_loaders(&context);
+                    theme.apply_style(&context, style);
+                    let mut app = SannyGitApp::with_theme(theme);
+                    app.interface_style = style;
+                    app.commit_message = "Existing draft\n\nKeep this text readable.".into();
+                    let mut idle_layout = None;
+                    for (frame, generating) in [false, true, true, false, false, false]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        app.commit_contents = if frame % 2 == 0 {
+                            crate::git::CommitContents::All
                         } else {
-                            idle_layout = Some(layout);
+                            crate::git::CommitContents::Staged
+                        };
+                        app.generating_commit_message = generating;
+                        app.amend = generating;
+                        let input = egui::RawInput {
+                            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                            time: Some(frame as f64 * 0.75),
+                            ..Default::default()
+                        };
+                        let mut output = context.run_ui(input, |ui| {
+                            ui.set_width(size.x * 0.4);
+                            ui.set_height(size.y * 0.25);
+                            show(ui, &mut app);
+                            let layout = ui.min_rect();
+                            if let Some(idle) = idle_layout {
+                                assert_eq!(layout, idle, "Generation changed layout in {theme:?}");
+                            } else {
+                                idle_layout = Some(layout);
+                            }
+                        });
+                        output.textures_delta.clear();
+                        assert_eq!(
+                            app.commit_message,
+                            "Existing draft\n\nKeep this text readable."
+                        );
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn contents_preview_keeps_window_size_during_loading_errors_and_success() {
+        for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
+            for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+                for style in [
+                    crate::theme::InterfaceStyle::Classic,
+                    crate::theme::InterfaceStyle::Modern,
+                ] {
+                    let context = egui::Context::default();
+                    crate::theme::install_fonts(&context);
+                    egui_extras::install_image_loaders(&context);
+                    theme.apply_style(&context, style);
+                    let mut app = SannyGitApp::with_theme(theme);
+                    app.interface_style = style;
+                    app.contents_preview_open = true;
+                    let mut initial = None;
+                    for frame in 0..6 {
+                        app.contents_preview = match frame {
+                            0 | 1 => None,
+                            2 => Some(Err("Long diagnostic text ".repeat(100))),
+                            3 => Some(Ok(crate::models::DiffPreview::new(""))),
+                            _ => Some(Ok(crate::models::DiffPreview::new(
+                                &"+content\n".repeat(200),
+                            ))),
+                        };
+                        let mut output = context.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                                ..Default::default()
+                            },
+                            |ui| show(ui, &mut app),
+                        );
+                        output.textures_delta.clear();
+                        let rect = context
+                            .memory(|memory| {
+                                memory.area_rect(egui::Id::unique("commit.contents.window"))
+                            })
+                            .unwrap();
+                        if frame == 1 {
+                            initial = Some(rect.size());
                         }
-                    });
-                    output.textures_delta.clear();
-                    assert_eq!(
-                        app.commit_message,
-                        "Existing draft\n\nKeep this text readable."
-                    );
+                        if frame > 1 {
+                            assert_eq!(
+                                Some(rect.size()),
+                                initial,
+                                "Preview resized: {theme:?}, {style:?}"
+                            );
+                        }
+                        assert!(rect.width() <= size.x && rect.height() <= size.y);
+                    }
                 }
             }
         }

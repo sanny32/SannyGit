@@ -36,6 +36,7 @@ enum WorkerResult {
         hash: String,
         result: Result<crate::models::DiffPreview, String>,
     },
+    ContentsPreview(Result<crate::models::DiffPreview, String>),
     CommitMessage(Result<String, String>),
     AmendMessage(Result<(String, String), String>),
     Repository(Result<crate::git::Snapshot, String>),
@@ -193,6 +194,9 @@ pub struct SannyGitApp {
     pub journal_filter: String,
     pub current_branch: String,
     pub commit_message: String,
+    pub commit_contents: git::CommitContents,
+    pub contents_preview_open: bool,
+    pub contents_preview: Option<Result<crate::models::DiffPreview, String>>,
     pub generating_commit_message: bool,
     generation_cancel: Option<Arc<AtomicBool>>,
     pub amend: bool,
@@ -378,6 +382,9 @@ impl SannyGitApp {
             journal_filter: String::new(),
             current_branch: String::new(),
             commit_message: String::new(),
+            commit_contents: git::CommitContents::default(),
+            contents_preview_open: false,
+            contents_preview: None,
             generating_commit_message: false,
             generation_cancel: None,
             amend: false,
@@ -447,6 +454,10 @@ impl SannyGitApp {
             }
             Err(e) => {
                 self.error = Some(format!("Cannot start background worker: {e}"));
+                if self.contents_preview_open && self.contents_preview.is_none() {
+                    self.contents_preview =
+                        Some(Err("Background worker stopped unexpectedly".into()));
+                }
                 self.status = "Operation failed".into();
                 false
             }
@@ -661,6 +672,7 @@ impl SannyGitApp {
             let path = self.repositories[index].path.clone();
             self.assign_group(&path, self.manager.preferences.selected_group.clone());
         }
+        self.contents_preview_open = false;
         self.current_branch = snapshot.branch;
         self.changes = snapshot.changes;
         self.selected_change = if same_repository {
@@ -1141,6 +1153,7 @@ impl SannyGitApp {
         if self.amend_blocker().is_some() || enabled == self.amend {
             return;
         }
+        self.contents_preview_open = false;
         if !enabled {
             self.amend = false;
             self.amend_head = None;
@@ -1172,6 +1185,11 @@ impl SannyGitApp {
             Some("Load the last commit before amending")
         } else if self.changes.is_empty() && !self.amend {
             Some("There are no changes to commit")
+        } else if self.commit_contents == git::CommitContents::Staged
+            && !self.amend
+            && !self.changes.iter().any(|c| c.staged)
+        {
+            Some("There are no staged changes to commit")
         } else if self.commit_message.trim().is_empty() {
             Some("Enter a commit message")
         } else if self.commit_message.contains('\0') || self.commit_message.len() > 65_536 {
@@ -1187,6 +1205,8 @@ impl SannyGitApp {
         }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
         let message = self.commit_message.clone();
+        let contents = self.commit_contents;
+        self.contents_preview_open = false;
         self.state_current = false;
         self.error = None;
         let amend_head = self.amend_head.clone().filter(|_| self.amend);
@@ -1198,9 +1218,9 @@ impl SannyGitApp {
         .into();
         self.start_worker(move || {
             let outcome = if let Some(head) = &amend_head {
-                git::amend_commit(&root, &message, head)
+                git::amend_commit(&root, &message, head, contents)
             } else {
-                git::commit(&root, &message)
+                git::commit(&root, &message, contents)
             };
             let committed = outcome.is_ok();
             let snapshot = git::load(&root);
@@ -1224,11 +1244,36 @@ impl SannyGitApp {
             Some("Open a repository first")
         } else if !self.state_current {
             Some("Refresh the repository before generating a message")
-        } else if self.changes.is_empty() {
+        } else if self.amend && self.amend_head.is_none() {
+            Some("Load the last commit before previewing its contents")
+        } else if !self.amend
+            && self.commit_contents == git::CommitContents::Staged
+            && !self.changes.iter().any(|c| c.staged)
+        {
+            Some("There are no staged changes to describe")
+        } else if self.changes.is_empty() && !self.amend {
             Some("There are no changes to describe")
         } else {
             None
         }
+    }
+
+    pub fn preview_commit_contents(&mut self) {
+        if self.generate_commit_message_blocker().is_some() {
+            return;
+        }
+        let root = PathBuf::from(&self.repositories[self.selected_repository].path);
+        let contents = self.commit_contents;
+        let head = self.amend_head.clone().filter(|_| self.amend);
+        self.contents_preview_open = true;
+        self.contents_preview = None;
+        self.start_worker(move || {
+            WorkerResult::ContentsPreview(
+                git::commit_patch(&root, contents, head.as_deref())
+                    .and_then(git::limit_diff)
+                    .map(|patch| crate::models::DiffPreview::new(&patch)),
+            )
+        });
     }
 
     pub fn effective_llm_config(&self, path: &str) -> &crate::llm::Config {
@@ -1252,14 +1297,18 @@ impl SannyGitApp {
         self.status = "Generating commit message…".into();
         let cancel = Arc::new(AtomicBool::new(false));
         self.generation_cancel = Some(cancel.clone());
+        let contents = self.commit_contents;
+        let head = self.amend_head.clone().filter(|_| self.amend);
         self.generating_commit_message = self.start_worker(move || {
-            WorkerResult::CommitMessage(git::commit_patch(&root).and_then(|patch| {
-                if cancel.load(Ordering::Relaxed) {
-                    return Err("Commit message generation cancelled".into());
-                }
-                crate::llm::load_api_key_if_needed(&mut config, repository_scope.as_deref())?;
-                crate::llm::generate(&config, &patch, &cancel)
-            }))
+            WorkerResult::CommitMessage(
+                git::commit_patch(&root, contents, head.as_deref()).and_then(|patch| {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err("Commit message generation cancelled".into());
+                    }
+                    crate::llm::load_api_key_if_needed(&mut config, repository_scope.as_deref())?;
+                    crate::llm::generate(&config, &patch, &cancel)
+                }),
+            )
         });
         if !self.generating_commit_message {
             self.generation_cancel = None;
@@ -1308,6 +1357,10 @@ impl SannyGitApp {
                 {
                     self.commit_preview_error = self.error.clone();
                 }
+                if self.contents_preview_open && self.contents_preview.is_none() {
+                    self.contents_preview =
+                        Some(Err("Background worker stopped unexpectedly".into()));
+                }
                 self.status = "Operation failed".into();
                 if self.push_dialog_hidden() {
                     self.finish_hidden_push();
@@ -1317,6 +1370,7 @@ impl SannyGitApp {
         };
         self.worker = None;
         match result {
+            WorkerResult::ContentsPreview(result) => self.contents_preview = Some(result),
             WorkerResult::RemoteInfo { operation, result } => {
                 self.apply_remote_info(operation, result)
             }
@@ -1954,6 +2008,36 @@ mod tests {
         assert_eq!(app.commit_message, "Generated message");
         assert_eq!(app.error.as_deref(), Some("Provider unavailable"));
         assert!(!app.generating_commit_message);
+    }
+
+    #[test]
+    fn staged_mode_gates_commit_preview_and_generation_but_allows_message_only_amend() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        assert_eq!(app.commit_contents, git::CommitContents::All);
+        app.repositories = crate::mock_data::repositories();
+        app.selected_repository = 0;
+        app.state_current = true;
+        app.commit_message = "Draft".into();
+        app.changes = crate::mock_data::changes();
+        for change in &mut app.changes {
+            change.staged = false;
+            change.kind = crate::models::ChangeKind::Modified;
+        }
+        app.commit_contents = git::CommitContents::Staged;
+        assert!(app.commit_blocker().unwrap().contains("no staged"));
+        assert!(app
+            .generate_commit_message_blocker()
+            .unwrap()
+            .contains("no staged"));
+        app.changes[0].staged = true;
+        assert!(app.commit_blocker().is_none());
+        assert!(app.generate_commit_message_blocker().is_none());
+        app.changes.clear();
+        app.amend = true;
+        app.amend_head = Some("a".repeat(40));
+        assert!(app.commit_blocker().is_none());
+        assert!(app.generate_commit_message_blocker().is_none());
+        assert_eq!(app.commit_message, "Draft");
     }
 
     #[test]

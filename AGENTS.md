@@ -13,8 +13,9 @@ Windows, Linux, and macOS. The UI language is English. The license is MIT.
 - `egui_extras` 0.37 provides tables and SVG support; `serde` handles serialization.
 - The application has a Git CLI backend: repositories, clone, status/diff,
   staging, commit/amend, history, branches/tags, worktrees, and remotes.
-  Mock data is compiled only for tests. Commit and Amend currently stage and
-  include all changes; staged-only commits are not implemented yet.
+  Mock data is compiled only for tests. Commit and Amend default to all changes;
+  an explicit Staged only mode preserves unstaged changes. The selected mode
+  also controls the contents preview and commit-message generation.
 - Commit-message generation uses an explicitly configured OpenAI-compatible
   service or local server. Preserve this existing feature; credentials use
   system credential storage.

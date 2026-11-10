@@ -291,42 +291,74 @@ pub fn validate_message(message: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Returns all changes, including new files, that the next commit will include.
-/// The patch is loaded only after an explicit UI action and is never logged.
-pub fn commit_patch(root: &Path) -> Result<String, String> {
-    let has_head = !run(root, &["rev-parse", "--revs-only", "HEAD"])?.is_empty();
-    let mut patch = if has_head {
-        text(run(
-            root,
-            &["diff", "HEAD", "--no-ext-diff", "--no-textconv"],
-        )?)?
+/// One content selection shared by commit, amend, preview and message generation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CommitContents {
+    #[default]
+    All,
+    Staged,
+}
+
+impl CommitContents {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All changes",
+            Self::Staged => "Staged only",
+        }
+    }
+}
+
+/// Read-only preview of the resulting commit relative to its first parent.
+/// For amend this includes the existing commit as well as the selected changes.
+pub fn commit_patch(
+    root: &Path,
+    contents: CommitContents,
+    amend_head: Option<&str>,
+) -> Result<String, String> {
+    let head = text(run(root, &["rev-parse", "--revs-only", "HEAD"])?)?;
+    let base = if let Some(expected) = amend_head {
+        check_amend_head(root, expected)?;
+        let parents = text(run(root, &["rev-list", "--parents", "-n", "1", expected])?)?;
+        parents.split_whitespace().nth(1).map(str::to_owned)
     } else {
-        let mut patch = text(run(
-            root,
-            &["diff", "--cached", "--no-ext-diff", "--no-textconv"],
-        )?)?;
-        patch.push_str(&text(run(
-            root,
-            &["diff", "--no-ext-diff", "--no-textconv"],
-        )?)?);
-        patch
+        let head = head.trim();
+        (!head.is_empty()).then(|| head.to_owned())
     };
-    // Preview new files without staging them or modifying the real index.
-    for change in load(root)?.changes {
-        if change.kind == ChangeKind::Untracked {
-            writeln!(patch, "\nNew file: {}", change.path).map_err(|e| e.to_string())?;
-            patch.push_str(&diff(root, &change.path, change.kind, None)?);
-            if patch.len() > OUTPUT_LIMIT {
-                return Err("Commit diff exceeds the 2 MiB limit".into());
+    let base = match base {
+        Some(base) => base,
+        None => text(run_with_input(
+            root,
+            &["hash-object", "-t", "tree", "--stdin"],
+            Some(b""),
+        )?)?
+        .trim()
+        .to_owned(),
+    };
+    let mut args = vec!["diff", "--no-ext-diff", "--no-textconv"];
+    if contents == CommitContents::Staged {
+        args.push("--cached");
+    }
+    args.push(&base);
+    args.push("--");
+    let mut patch = text(run(root, &args)?)?;
+    if contents == CommitContents::All {
+        // Preview new files without staging them or modifying the real index.
+        for change in load(root)?.changes {
+            if change.kind == ChangeKind::Untracked {
+                writeln!(patch, "\nNew file: {}", change.path).map_err(|e| e.to_string())?;
+                patch.push_str(&diff(root, &change.path, change.kind, None)?);
+                if patch.len() > OUTPUT_LIMIT {
+                    return Err("Commit diff exceeds the 2 MiB limit".into());
+                }
             }
         }
     }
     Ok(patch)
 }
 
-/// Commits all non-ignored changes after an explicit UI action, including new files.
-pub fn commit(root: &Path, message: &str) -> Result<(), String> {
-    commit_with_mode(root, message, false)
+/// Commits explicitly selected contents after a UI action.
+pub fn commit(root: &Path, message: &str, contents: CommitContents) -> Result<(), String> {
+    commit_with_mode(root, message, false, contents)
 }
 
 /// Loads HEAD explicitly rather than relying on the filtered journal selection.
@@ -353,7 +385,17 @@ pub fn amend_message(root: &Path) -> Result<(String, String), String> {
     Ok((head.to_owned(), message.trim_end_matches('\n').to_owned()))
 }
 
-pub fn amend_commit(root: &Path, message: &str, expected_head: &str) -> Result<(), String> {
+pub fn amend_commit(
+    root: &Path,
+    message: &str,
+    expected_head: &str,
+    contents: CommitContents,
+) -> Result<(), String> {
+    check_amend_head(root, expected_head)?;
+    commit_with_mode(root, message, true, contents)
+}
+
+fn check_amend_head(root: &Path, expected_head: &str) -> Result<(), String> {
     let head = text(run(root, &["rev-parse", "--verify", "HEAD"])?)?;
     if head.trim() != expected_head {
         return Err("HEAD has changed. Turn off Amend last commit and enable it again.".into());
@@ -371,10 +413,15 @@ pub fn amend_commit(root: &Path, message: &str, expected_head: &str) -> Result<(
             return Err("Finish the merge, rebase, cherry-pick or revert before amending.".into());
         }
     }
-    commit_with_mode(root, message, true)
+    Ok(())
 }
 
-fn commit_with_mode(root: &Path, message: &str, amend: bool) -> Result<(), String> {
+fn commit_with_mode(
+    root: &Path,
+    message: &str,
+    amend: bool,
+    contents: CommitContents,
+) -> Result<(), String> {
     validate_message(message)?;
     let snapshot = load(root)?;
     if snapshot
@@ -387,7 +434,12 @@ fn commit_with_mode(root: &Path, message: &str, amend: bool) -> Result<(), Strin
     if snapshot.changes.is_empty() && !amend {
         return Err("There are no changes to commit.".into());
     }
-    run(root, &["add", "--all"])?;
+    if contents == CommitContents::Staged && !amend && !snapshot.changes.iter().any(|c| c.staged) {
+        return Err("There are no staged changes to commit.".into());
+    }
+    if contents == CommitContents::All {
+        run(root, &["add", "--all"])?;
+    }
     // stdin preserves multiline messages without a shell or a message file.
     // Git's configured identity, hooks and signing remain in effect.
     let mut args = vec!["commit", "--file=-", "--cleanup=whitespace"];
@@ -726,6 +778,133 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn staged_commit_preview_and_commit_preserve_partial_file_and_untracked_contents() {
+        for unborn in [true, false] {
+            let repo = TempRepo::new();
+            if !unborn {
+                repo.write("file", "base\n");
+                commit(&repo.0, "Base", CommitContents::All).unwrap();
+            }
+            repo.write("file", "selected\n");
+            repo.git(&["add", "file"]);
+            repo.write("file", "excluded\n");
+            repo.write("new", "private untracked\n");
+            let index = std::fs::read(repo.0.join(".git/index")).unwrap();
+            let patch = commit_patch(&repo.0, CommitContents::Staged, None).unwrap();
+            assert!(patch.contains("+selected"));
+            assert!(!patch.contains("excluded"));
+            assert!(!patch.contains("private untracked"));
+            let all = commit_patch(&repo.0, CommitContents::All, None).unwrap();
+            assert!(all.contains("+excluded"));
+            assert!(!all.contains("+selected"));
+            assert!(all.contains("private untracked"));
+            assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
+            commit(&repo.0, "Selected", CommitContents::Staged).unwrap();
+            assert_eq!(repo.git(&["show", "HEAD:file"]), "selected\n");
+            assert_eq!(repo.git(&["ls-tree", "--name-only", "HEAD"]), "file\n");
+            assert!(repo.git(&["diff", "--cached"]).is_empty());
+            assert_eq!(
+                std::fs::read_to_string(repo.0.join("file")).unwrap(),
+                "excluded\n"
+            );
+            assert_eq!(
+                std::fs::read_to_string(repo.0.join("new")).unwrap(),
+                "private untracked\n"
+            );
+            let head = repo.git(&["rev-parse", "HEAD"]);
+            assert!(commit(&repo.0, "Empty", CommitContents::Staged)
+                .unwrap_err()
+                .contains("no staged"));
+            assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
+        }
+    }
+
+    #[test]
+    fn staged_commit_handles_deletion_rename_and_recreated_working_file() {
+        let repo = TempRepo::new();
+        repo.write("old", "rename contents\n");
+        repo.write("deleted", "delete contents\n");
+        commit(&repo.0, "Base", CommitContents::All).unwrap();
+        repo.git(&["mv", "old", "renamed"]);
+        repo.git(&["rm", "deleted"]);
+        repo.write("deleted", "recreated unstaged\n");
+        repo.write("renamed", "changed after rename\n");
+        let patch = commit_patch(&repo.0, CommitContents::Staged, None).unwrap();
+        assert!(patch.contains("deleted"));
+        assert!(patch.contains("renamed"));
+        assert!(!patch.contains("recreated unstaged"));
+        assert!(!patch.contains("changed after rename"));
+        commit(&repo.0, "Rename and delete", CommitContents::Staged).unwrap();
+        assert_eq!(repo.git(&["ls-tree", "--name-only", "HEAD"]), "renamed\n");
+        assert_eq!(repo.git(&["show", "HEAD:renamed"]), "rename contents\n");
+        assert!(repo.git(&["diff", "--cached"]).is_empty());
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("deleted")).unwrap(),
+            "recreated unstaged\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("renamed")).unwrap(),
+            "changed after rename\n"
+        );
+    }
+
+    #[test]
+    fn staged_amend_preview_includes_original_commit_and_preserves_unstaged_changes() {
+        for root_commit in [true, false] {
+            let repo = TempRepo::new();
+            if !root_commit {
+                repo.write("parent", "parent content\n");
+                commit(&repo.0, "Parent", CommitContents::All).unwrap();
+            }
+            repo.write("original", "original commit content\n");
+            commit(&repo.0, "Original", CommitContents::All).unwrap();
+            let (head, _) = amend_message(&repo.0).unwrap();
+            let parents = repo.git(&["show", "-s", "--format=%P", "HEAD"]);
+            repo.write("original", "unstaged private content\n");
+            repo.write("new", "selected addition\n");
+            repo.git(&["add", "new"]);
+            repo.write("new", "excluded addition\n");
+            let index = std::fs::read(repo.0.join(".git/index")).unwrap();
+            let patch = commit_patch(&repo.0, CommitContents::Staged, Some(&head)).unwrap();
+            assert!(patch.contains("+original commit content"));
+            assert!(patch.contains("+selected addition"));
+            assert!(!patch.contains("unstaged private"));
+            assert!(!patch.contains("excluded addition"));
+            assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
+            amend_commit(&repo.0, "Amended", &head, CommitContents::Staged).unwrap();
+            assert_eq!(repo.git(&["show", "-s", "--format=%P", "HEAD"]), parents);
+            assert_eq!(
+                repo.git(&["show", "HEAD:original"]),
+                "original commit content\n"
+            );
+            assert_eq!(repo.git(&["show", "HEAD:new"]), "selected addition\n");
+            let (next, _) = amend_message(&repo.0).unwrap();
+            let tree = repo.git(&["rev-parse", "HEAD^{tree}"]);
+            assert!(repo.git(&["diff", "--cached"]).is_empty());
+            amend_commit(&repo.0, "Message only", &next, CommitContents::Staged).unwrap();
+            assert_eq!(repo.git(&["rev-parse", "HEAD^{tree}"]), tree);
+            assert_eq!(
+                std::fs::read_to_string(repo.0.join("original")).unwrap(),
+                "unstaged private content\n"
+            );
+            assert_eq!(
+                std::fs::read_to_string(repo.0.join("new")).unwrap(),
+                "excluded addition\n"
+            );
+            let before = std::fs::read(repo.0.join(".git/index")).unwrap();
+            for mode in [CommitContents::All, CommitContents::Staged] {
+                assert!(amend_commit(&repo.0, "Stale", &head, mode)
+                    .unwrap_err()
+                    .contains("HEAD has changed"));
+                assert!(commit_patch(&repo.0, mode, Some(&head))
+                    .unwrap_err()
+                    .contains("HEAD has changed"));
+            }
+            assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), before);
+        }
+    }
+
+    #[test]
     fn commit_patch_includes_new_files_without_changing_the_index() {
         let repo = TempRepo::new();
         repo.write("file.txt", "base\n");
@@ -737,7 +916,7 @@ pub(crate) mod tests {
         repo.write("ignored.txt", "ignored contents\n");
         let before = repo.git(&["status", "--porcelain=v1", "-z"]);
 
-        let patch = commit_patch(&repo.0).unwrap();
+        let patch = commit_patch(&repo.0, CommitContents::All, None).unwrap();
         assert!(patch.contains("+unstaged"));
         assert!(patch.contains("untracked.txt"));
         assert!(patch.contains("+new contents"));
@@ -751,12 +930,12 @@ pub(crate) mod tests {
         repo.write("new file.txt", "initial contents\n");
         repo.write(".gitignore", "ignored\n");
         repo.write("ignored", "keep private\n");
-        let patch = commit_patch(&repo.0).unwrap();
+        let patch = commit_patch(&repo.0, CommitContents::All, None).unwrap();
         assert!(patch.contains("new file.txt"));
         assert!(patch.contains("+initial contents"));
         assert!(!patch.contains("keep private"));
         assert!(load(&repo.0).unwrap().changes.iter().all(|c| !c.staged));
-        commit(&repo.0, "Add initial files").unwrap();
+        commit(&repo.0, "Add initial files", CommitContents::All).unwrap();
         assert_eq!(
             repo.git(&["show", "HEAD:new file.txt"]),
             "initial contents\n"
@@ -924,7 +1103,7 @@ pub(crate) mod tests {
         );
         let index_before = std::fs::read(repo.0.join(".git/index")).unwrap();
         assert!(set_staged(&repo.0, "file", true).is_err());
-        assert!(commit(&repo.0, "Must not commit conflict").is_err());
+        assert!(commit(&repo.0, "Must not commit conflict", CommitContents::All).is_err());
         assert_eq!(
             std::fs::read(repo.0.join(".git/index")).unwrap(),
             index_before
@@ -967,7 +1146,7 @@ pub(crate) mod tests {
             "new and unstaged\n"
         );
         set_staged(&repo.0, path, true).unwrap();
-        commit(&repo.0, "First commit").unwrap();
+        commit(&repo.0, "First commit", CommitContents::All).unwrap();
         repo.write(path, "index version\n");
         set_staged(&repo.0, path, true).unwrap();
         repo.write(path, "working version\n");
@@ -999,7 +1178,7 @@ pub(crate) mod tests {
         repo.write("file", "working tree\n");
         repo.write("other", "untracked\n");
         let message = "Subject é\n\nBody with `text` and $(touch SHOULD_NOT_EXIST)\n# preserved";
-        commit(&repo.0, message).unwrap();
+        commit(&repo.0, message, CommitContents::All).unwrap();
         assert_eq!(repo.git(&["show", "HEAD:file"]), "working tree\n");
         assert_eq!(repo.git(&["log", "-1", "--format=%B"]).trim_end(), message);
         assert_eq!(
@@ -1021,11 +1200,11 @@ pub(crate) mod tests {
         let repo = TempRepo::new();
         assert!(amend_message(&repo.0).unwrap_err().contains("no commit"));
         repo.write("file", "original\n");
-        commit(&repo.0, "Original\n\nBody é").unwrap();
+        commit(&repo.0, "Original\n\nBody é", CommitContents::All).unwrap();
         let (head, message) = amend_message(&repo.0).unwrap();
         assert_eq!(message, "Original\n\nBody é");
         let author = repo.git(&["show", "-s", "--format=%an <%ae> %aI", "HEAD"]);
-        amend_commit(&repo.0, "Reworded\n\nNew body", &head).unwrap();
+        amend_commit(&repo.0, "Reworded\n\nNew body", &head, CommitContents::All).unwrap();
         assert_ne!(repo.git(&["rev-parse", "HEAD"]).trim(), head);
         assert_eq!(repo.git(&["rev-list", "--count", "HEAD"]).trim(), "1");
         assert_eq!(repo.git(&["show", "-s", "--format=%P", "HEAD"]).trim(), "");
@@ -1044,14 +1223,14 @@ pub(crate) mod tests {
     fn amend_includes_all_changes_and_preserves_parents() {
         let repo = TempRepo::new();
         repo.write("file", "base\n");
-        commit(&repo.0, "Base").unwrap();
+        commit(&repo.0, "Base", CommitContents::All).unwrap();
         let parent = repo.git(&["rev-parse", "HEAD"]);
         repo.write("file", "second\n");
-        commit(&repo.0, "Second").unwrap();
+        commit(&repo.0, "Second", CommitContents::All).unwrap();
         let (head, _) = amend_message(&repo.0).unwrap();
         repo.write("file", "replacement\n");
         repo.write("new", "new file\n");
-        amend_commit(&repo.0, "Replacement", &head).unwrap();
+        amend_commit(&repo.0, "Replacement", &head, CommitContents::All).unwrap();
         assert_eq!(repo.git(&["rev-parse", "HEAD^"]), parent);
         assert_eq!(repo.git(&["rev-list", "--count", "HEAD"]).trim(), "2");
         assert_eq!(repo.git(&["show", "HEAD:file"]), "replacement\n");
@@ -1063,16 +1242,18 @@ pub(crate) mod tests {
     fn amend_rejects_stale_head_invalid_message_and_in_progress_operations_before_staging() {
         let repo = TempRepo::new();
         repo.write("file", "base\n");
-        commit(&repo.0, "Base").unwrap();
+        commit(&repo.0, "Base", CommitContents::All).unwrap();
         let (old_head, _) = amend_message(&repo.0).unwrap();
         repo.write("file", "second\n");
-        commit(&repo.0, "Second").unwrap();
+        commit(&repo.0, "Second", CommitContents::All).unwrap();
         let (head, _) = amend_message(&repo.0).unwrap();
         repo.write("new", "not staged\n");
-        assert!(amend_commit(&repo.0, "Stale", &old_head)
-            .unwrap_err()
-            .contains("HEAD has changed"));
-        assert!(amend_commit(&repo.0, " ", &head).is_err());
+        assert!(
+            amend_commit(&repo.0, "Stale", &old_head, CommitContents::All)
+                .unwrap_err()
+                .contains("HEAD has changed")
+        );
+        assert!(amend_commit(&repo.0, " ", &head, CommitContents::All).is_err());
         for marker in [
             "MERGE_HEAD",
             "CHERRY_PICK_HEAD",
@@ -1083,7 +1264,7 @@ pub(crate) mod tests {
         ] {
             let path = repo.0.join(".git").join(marker);
             std::fs::write(&path, &head).unwrap();
-            assert!(amend_commit(&repo.0, "Blocked", &head)
+            assert!(amend_commit(&repo.0, "Blocked", &head, CommitContents::All)
                 .unwrap_err()
                 .contains("Finish"));
             std::fs::remove_file(path).unwrap();
@@ -1101,7 +1282,7 @@ pub(crate) mod tests {
             "unchanged content line one\nunchanged content line two\n",
         );
         set_staged(&repo.0, "old", true).unwrap();
-        commit(&repo.0, "initial").unwrap();
+        commit(&repo.0, "initial", CommitContents::All).unwrap();
         repo.git(&["mv", "old", "new"]);
         repo.write(
             "new",
@@ -1132,12 +1313,12 @@ pub(crate) mod tests {
             assert!(validate_message(message).is_err());
         }
         assert!(validate_message(&"a".repeat(65_537)).is_err());
-        assert!(commit(&repo.0, "Nothing changed")
+        assert!(commit(&repo.0, "Nothing changed", CommitContents::All)
             .unwrap_err()
             .contains("no changes"));
         repo.write("file", "content\n");
         std::fs::write(repo.0.join(".git/index.lock"), "locked").unwrap();
-        assert!(commit(&repo.0, "Add new file")
+        assert!(commit(&repo.0, "Add new file", CommitContents::All)
             .unwrap_err()
             .contains("locked"));
         assert!(set_staged(&repo.0, "file", true)
@@ -1155,7 +1336,7 @@ pub(crate) mod tests {
         use std::os::unix::fs::PermissionsExt;
         let repo = TempRepo::new();
         repo.write("file", "content\n");
-        commit(&repo.0, "Base").unwrap();
+        commit(&repo.0, "Base", CommitContents::All).unwrap();
         let (head, _) = amend_message(&repo.0).unwrap();
         repo.write("file", "updated\n");
         set_staged(&repo.0, "file", true).unwrap();
@@ -1170,11 +1351,32 @@ pub(crate) mod tests {
             "core.hooksPath",
             hooks.to_str().unwrap(),
         ]);
-        assert!(commit(&repo.0, "Rejected").unwrap_err().contains("hooks"));
-        assert!(load(&repo.0).unwrap().changes[0].staged);
-        assert!(amend_commit(&repo.0, "Rejected amend", &head)
+        repo.write("file", "unstaged after selection\n");
+        repo.write("untracked", "not selected\n");
+        let index = repo.git(&["ls-files", "--stage", "-z"]);
+        assert!(commit(&repo.0, "Rejected staged", CommitContents::Staged).is_err());
+        assert!(amend_commit(
+            &repo.0,
+            "Rejected staged amend",
+            &head,
+            CommitContents::Staged
+        )
+        .is_err());
+        assert_eq!(repo.git(&["ls-files", "--stage", "-z"]), index);
+        assert_eq!(repo.git(&["show", ":file"]), "updated\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file")).unwrap(),
+            "unstaged after selection\n"
+        );
+        assert!(commit(&repo.0, "Rejected", CommitContents::All)
             .unwrap_err()
             .contains("hooks"));
+        assert!(load(&repo.0).unwrap().changes[0].staged);
+        assert!(
+            amend_commit(&repo.0, "Rejected amend", &head, CommitContents::All)
+                .unwrap_err()
+                .contains("hooks")
+        );
         assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), head);
         assert!(load(&repo.0).unwrap().changes[0].staged);
     }

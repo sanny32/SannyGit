@@ -1,18 +1,12 @@
 # SannyGit
 
-A desktop Git client for Windows, Linux and macOS, built with Rust and egui and inspired by SmartGit. Under development.
+A desktop Git client for Windows, Linux and macOS, built with Rust and egui and inspired by SmartGit.
 
 Requires Rust 1.95+ and Git 2.36+ on `PATH`.
 
 Supports repository creation and cloning, status and diff, staging/unstaging,
 commit/amend, history, branches and tags, worktrees, fetch, fast-forward-only
-pull, and push. Git operations run in background workers.
-
-Commit and Amend currently stage and include **all changes**, including untracked
-files, regardless of the current staging selection. Draft commit messages are
-not restored after restarting. Discard, stash, merge/rebase, conflict resolution,
-partial staging, and pushing tags are not implemented. History is limited to
-500 commits; large status results and diffs have display limits.
+pull, and push.
 
 ## Run
 
@@ -33,16 +27,10 @@ From the repository directory:
 cargo run
 ```
 
-Commit messages can be generated through an OpenAI-compatible API configured
-under **Preferences → AI → Commit messages**. Review the generated draft before
-explicitly creating the commit.
+Optional commit-message generation through an OpenAI-compatible API or local
+Ollama/LM Studio server is configured under **Preferences → AI → Commit messages**.
 
-For local generation, select the Ollama (`http://localhost:11434/v1/chat/completions`)
-or LM Studio (`http://localhost:1234/v1/chat/completions`) endpoint preset. Start
-the local server separately and enter the exact name of an installed model;
-leave the API key empty unless your server requires authentication. SannyGit
-does not download or start models. Local requests allow up to five minutes
-for model loading and generation.
+## Package
 
 To build an app bundle/package with its icon:
 
@@ -59,9 +47,8 @@ cargo test
 cargo build
 ```
 
-Since `Cargo.lock` is not tracked, fresh checkouts resolve compatible dependencies.
-Tests use temporary Git repositories and loopback HTTP servers; no external service or credentials are
-required. A sandbox must allow local sockets to run the complete test suite.
+Tests use temporary Git repositories and local HTTP servers. No external service
+or credentials are required; local sockets must be allowed.
 
 ## License
 
