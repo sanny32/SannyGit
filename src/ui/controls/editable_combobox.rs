@@ -84,16 +84,23 @@ pub fn show(
             if options.is_empty() {
                 ui.add_enabled(false, egui::Label::new(empty_text));
             }
-            for option in options {
-                if ui.selectable_label(*value == *option, option).clicked() {
-                    if *value != *option {
-                        value.clone_from(option);
-                        response.mark_changed();
+            egui::ScrollArea::vertical()
+                .max_height(220.0)
+                .show(ui, |ui| {
+                    for option in options {
+                        if ui.selectable_label(*value == *option, option).clicked() {
+                            if *value != *option {
+                                value.clone_from(option);
+                                response.mark_changed();
+                            }
+                            ui.close();
+                        }
                     }
-                    ui.close();
-                }
-            }
+                });
         });
+    // `put` advances to the inset editor; keep following controls outside the
+    // entire field, including its dropdown arrow.
+    ui.advance_cursor_after_rect(rect);
     response.union(editor)
 }
 

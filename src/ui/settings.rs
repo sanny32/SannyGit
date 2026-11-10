@@ -388,7 +388,13 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         }
         SettingsPage::Llm => {
             heading(ui, "LLM commit messages");
-            llm_form(ui, &mut app.settings_window.llm, palette, None);
+            llm_form(
+                ui,
+                &mut app.settings_window.llm,
+                palette,
+                None,
+                &mut app.llm_models,
+            );
         }
     }
 }
@@ -504,12 +510,14 @@ fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     }
     if let Some(path) = &path {
         if let Some(draft) = window.llm_repositories.get_mut(path) {
-            llm_form(ui, draft, palette, Some(path));
+            llm_form(ui, draft, palette, Some(path), &mut app.llm_models);
         } else {
-            ui.add_enabled_ui(false, |ui| llm_form(ui, &mut window.llm, palette, None));
+            ui.add_enabled_ui(false, |ui| {
+                llm_form(ui, &mut window.llm, palette, None, &mut app.llm_models)
+            });
         }
     } else {
-        llm_form(ui, &mut window.llm, palette, None);
+        llm_form(ui, &mut window.llm, palette, None, &mut app.llm_models);
     }
 }
 
@@ -518,7 +526,9 @@ fn llm_form(
     draft: &mut crate::app::LlmSettings,
     palette: Palette,
     repository: Option<&str>,
+    catalog: &mut crate::app::ModelCatalog,
 ) {
+    catalog.update();
     if !draft.api_key_loaded {
         draft.api_key_loaded = true;
         draft.secret_error =
@@ -574,14 +584,37 @@ fn llm_form(
                         draft.api_key_loaded = true;
                         draft.secret_error =
                             crate::llm::load_api_key_if_needed(&mut draft.config, repository).err();
+                        if ui.is_enabled() {
+                            catalog.load(&draft.config, repository, ui.ctx());
+                        }
                     }
                     ui.end_row();
                     form_label(ui, "Model:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut draft.config.model)
-                            .hint_text("Enter the model name from your server")
-                            .desired_width(f32::INFINITY),
-                    );
+                    let id = ui.make_persistent_id("preferences.llm.model");
+                    let models = catalog.entry(&draft.config, repository);
+                    let empty_text = if models.loading() {
+                        "Loading models…"
+                    } else if models.error.is_some() {
+                        "Cannot load models; enter a model name"
+                    } else {
+                        "No models returned; enter a model name"
+                    };
+                    super::controls::editable_combobox::show(
+                        ui,
+                        id,
+                        &mut draft.config.model,
+                        &models.options,
+                        ui.available_width(),
+                        palette,
+                        empty_text,
+                    )
+                    .help_text("Select a model from the server or enter a custom model name");
+                    let first_open =
+                        !models.attempted && egui::Popup::is_id_open(ui.ctx(), id.with("popup"));
+                    if ui.is_enabled() && first_open {
+                        catalog.load(&draft.config, repository, ui.ctx());
+                        ui.ctx().request_repaint();
+                    }
                     ui.end_row();
                     form_label(ui, "API key:");
                     let api_key_response = ui.add(
@@ -593,23 +626,36 @@ fn llm_form(
                     if api_key_response.changed() {
                         draft.api_key_dirty = true;
                     }
+                    if api_key_response.lost_focus() && draft.api_key_dirty && ui.is_enabled() {
+                        catalog.load(&draft.config, repository, ui.ctx());
+                    }
                     ui.end_row();
                 });
             ui.checkbox(
                 &mut draft.config.store_api_key,
                 "Store API key and model securely",
             );
-            let secret_error = draft.secret_error.as_deref().unwrap_or("");
+            let models = catalog.entry(&draft.config, repository);
+            let error = draft.secret_error.as_deref().or(models.error.as_deref());
+            let status = error.unwrap_or(if models.loading() {
+                "Loading models…"
+            } else {
+                ""
+            });
+            if models.loading() {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(50));
+            }
             ui.add_sized(
                 [ui.available_width(), 20.0],
-                egui::Label::new(
-                    RichText::new(secret_error)
-                        .small()
-                        .color(palette.removed_text),
-                )
+                egui::Label::new(RichText::new(status).small().color(if error.is_some() {
+                    palette.removed_text
+                } else {
+                    palette.muted
+                }))
                 .truncate(),
             )
-            .help_text(secret_error);
+            .help_text(status);
             ui.add_space(6.0);
             ui.label("Generation instructions:");
             let editor_height = (ui.available_height() - ui.spacing().item_spacing.y).max(24.0);
@@ -931,6 +977,99 @@ mod tests {
         apply_settings(&mut app).unwrap();
         assert_eq!(app.llm_config.instructions, "New global instructions");
         assert_eq!(app.effective_llm_config("/project"), &custom);
+    }
+
+    #[test]
+    fn model_accepts_dropdown_selection_and_custom_text() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [Vec2::new(680.0, 380.0), Vec2::new(740.0, 420.0)] {
+                let context = egui::Context::default();
+                crate::theme::install_fonts(&context);
+                egui_extras::install_image_loaders(&context);
+                theme.apply(&context);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.settings_window.page = SettingsPage::Llm;
+                app.settings_window.llm.api_key_loaded = true;
+                app.settings_window.llm.config.model = "custom-model".into();
+                app.settings_window.llm.config.api_key = "keep-key".into();
+                let models = app.llm_models.entry(&app.settings_window.llm.config, None);
+                models.options = vec![crate::llm::DEFAULT_MODEL.into()];
+                models.attempted = true;
+                let render = |app: &mut SannyGitApp, events| {
+                    context.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| window_contents(ui, app),
+                    )
+                };
+                let click = |app: &mut SannyGitApp, target| {
+                    for pressed in [true, false] {
+                        let mut output = render(
+                            app,
+                            vec![
+                                Event::PointerMoved(target),
+                                Event::PointerButton {
+                                    pos: target,
+                                    button: PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Modifiers::NONE,
+                                },
+                            ],
+                        );
+                        output.textures_delta.clear();
+                    }
+                };
+                let text_center = |shapes: &[ClippedShape], label: &str| {
+                    shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) if text.galley.job.text == label => {
+                                Some(text.pos + text.galley.size() / 2.0)
+                            }
+                            _ => None,
+                        })
+                        .unwrap()
+                };
+                let mut output = render(&mut app, vec![]);
+                output.textures_delta.clear();
+                let mut output = render(&mut app, vec![]);
+                let model_center = text_center(&output.shapes, "custom-model");
+                let field = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Rect(rect)
+                            if rect.fill == app.palette().editor
+                                && rect.rect.contains(model_center) =>
+                        {
+                            Some(rect.rect)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                output.textures_delta.clear();
+                click(&mut app, pos2(field.right() - 10.0, field.center().y));
+                let mut output = render(&mut app, vec![]);
+                let option = text_center(&output.shapes, crate::llm::DEFAULT_MODEL);
+                output.textures_delta.clear();
+                click(&mut app, option);
+                assert_eq!(
+                    app.settings_window.llm.config.model,
+                    crate::llm::DEFAULT_MODEL
+                );
+                let mut output = render(&mut app, vec![]);
+                let editor = text_center(&output.shapes, crate::llm::DEFAULT_MODEL);
+                output.textures_delta.clear();
+                click(&mut app, editor);
+                let mut output = render(&mut app, vec![Event::Text("-custom".into())]);
+                output.textures_delta.clear();
+                assert!(app.settings_window.llm.config.model.contains("-custom"));
+                assert_eq!(app.settings_window.llm.config.api_key, "keep-key");
+            }
+        }
     }
 
     #[test]

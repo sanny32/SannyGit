@@ -364,21 +364,7 @@ pub fn generate(config: &Config, patch: &str, cancel: &AtomicBool) -> Result<Str
 
 async fn generate_response(config: &Config, patch: &str) -> Result<String, String> {
     let request = request_body(config, patch);
-    let local = config.is_local();
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(if local { 300 } else { 60 }));
-    // Local diffs must not pass through an environment-configured proxy or
-    // follow a server redirect to a different host.
-    let client = if local {
-        client
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-    } else {
-        client
-    }
-    .build()
-    .map_err(|error| format!("Cannot initialize the LLM client: {error}"))?;
+    let client = api_client(config, if config.is_local() { 300 } else { 60 })?;
     let request = client
         .post(chat_completions_endpoint(&config.endpoint))
         .json(&request);
@@ -387,10 +373,89 @@ async fn generate_response(config: &Config, patch: &str) -> Result<String, Strin
     } else {
         request.bearer_auth(config.api_key.trim())
     };
-    let mut response = request
+    let response = request
         .send()
         .await
         .map_err(|error| format!("LLM request failed: {error}"))?;
+    parse_message(&read_api_response(response).await?)
+}
+
+/// Fetch the provider's OpenAI-compatible model catalogue without generating text.
+pub fn list_models(config: &Config) -> Result<Vec<String>, String> {
+    let endpoint = models_endpoint(&config.endpoint)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("Cannot initialize the LLM runtime: {error}"))?;
+    runtime.block_on(async {
+        let client = api_client(config, 20)?;
+        let request = client.get(endpoint);
+        let request = if config.api_key.trim().is_empty() {
+            request
+        } else {
+            request.bearer_auth(config.api_key.trim())
+        };
+        let response = request
+            .send()
+            .await
+            .map_err(|error| format!("Cannot load models: {}", error.without_url()))?;
+        parse_models(&read_api_response(response).await?)
+    })
+}
+
+pub fn models_endpoint(endpoint: &str) -> Result<String, String> {
+    let mut url = reqwest::Url::parse(endpoint.trim())
+        .map_err(|_| "Enter a valid LLM endpoint URL".to_owned())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("LLM endpoint must start with http:// or https://".into());
+    }
+    let path = url.path().trim_end_matches('/');
+    let base = path.strip_suffix("/chat/completions").unwrap_or(path);
+    let path = format!("{base}/models");
+    url.set_path(&path);
+    url.set_fragment(None);
+    Ok(url.into())
+}
+
+fn parse_models(value: &Value) -> Result<Vec<String>, String> {
+    let data = value
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or("LLM API response does not contain a model list")?;
+    let mut models = Vec::with_capacity(data.len());
+    for model in data {
+        let id = model
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .ok_or("LLM API model list contains an invalid model ID")?;
+        models.push(id.to_owned());
+    }
+    models.sort();
+    models.dedup();
+    Ok(models)
+}
+
+fn api_client(config: &Config, timeout_seconds: u64) -> Result<Client, String> {
+    let local = config.is_local();
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(timeout_seconds));
+    // Local diffs must not pass through an environment-configured proxy or
+    // follow a server redirect to a different host.
+    if local {
+        client
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+    } else {
+        client
+    }
+    .build()
+    .map_err(|error| format!("Cannot initialize the LLM client: {error}"))
+}
+
+async fn read_api_response(mut response: reqwest::Response) -> Result<Value, String> {
     let status = response.status();
     let mut bytes = Vec::new();
     while let Some(chunk) = response
@@ -406,9 +471,8 @@ async fn generate_response(config: &Config, patch: &str) -> Result<String, Strin
     if !status.is_success() {
         return Err(api_error(status.as_u16(), &bytes));
     }
-    let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("LLM API returned invalid JSON: {error}"))?;
-    parse_message(&value)
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("LLM API returned invalid JSON: {error}"))
 }
 
 fn chat_completions_endpoint(endpoint: &str) -> String {
@@ -472,6 +536,139 @@ fn parse_message(value: &Value) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_urls_accept_base_and_chat_endpoints() {
+        for endpoint in [
+            " https://example.test/coding/v1/ ",
+            "https://example.test/coding/v1/chat/completions",
+            "https://example.test/coding/v1/chat/completions/",
+        ] {
+            assert_eq!(
+                models_endpoint(endpoint).unwrap(),
+                "https://example.test/coding/v1/models"
+            );
+        }
+        assert_eq!(
+            models_endpoint("http://localhost:11434/v1").unwrap(),
+            "http://localhost:11434/v1/models"
+        );
+        assert_eq!(
+            models_endpoint("https://example.test/v1/chat/completions?version=1").unwrap(),
+            "https://example.test/v1/models?version=1"
+        );
+        for endpoint in ["", "invalid", "file:///tmp/models", "ftp://example.test/v1"] {
+            assert!(models_endpoint(endpoint).is_err());
+        }
+    }
+
+    #[test]
+    fn model_list_is_sorted_unique_and_validated() {
+        assert_eq!(
+            parse_models(
+                &json!({"data": [{"id": "z-model"}, {"id": "a-model"}, {"id": " a-model "}]})
+            )
+            .unwrap(),
+            ["a-model", "z-model"]
+        );
+        assert!(parse_models(&json!({"data": []})).unwrap().is_empty());
+        for value in [
+            json!({}),
+            json!({"data": {}}),
+            json!({"data": [{"id": ""}]}),
+            json!({"data": [{"id": 1}]}),
+            json!({"data": [{}]}),
+        ] {
+            assert!(parse_models(&value).is_err());
+        }
+    }
+
+    #[test]
+    fn models_are_loaded_with_optional_auth_and_bounded_responses() {
+        use std::{
+            io::{BufRead, BufReader, Write},
+            net::TcpListener,
+        };
+        for (status, body, key, expected) in [
+            (
+                200,
+                r#"{"data":[{"id":"installed-model"}]}"#.to_owned(),
+                "",
+                Ok(vec!["installed-model".to_owned()]),
+            ),
+            (200, r#"{"data":[]}"#.to_owned(), "test-key", Ok(vec![])),
+            (
+                401,
+                r#"{"error":{"message":"Invalid key"}}"#.to_owned(),
+                "test-key",
+                Err("HTTP 401"),
+            ),
+            (404, "Not found".to_owned(), "", Err("HTTP 404")),
+            (200, "not json".to_owned(), "", Err("invalid JSON")),
+            (
+                200,
+                " ".repeat(MAX_RESPONSE_BYTES + 1),
+                "",
+                Err("1 MiB limit"),
+            ),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let server = std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let mut socket = loop {
+                    match listener.accept() {
+                        Ok((socket, _)) => break socket,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(
+                                std::time::Instant::now() < deadline,
+                                "No model list request received"
+                            );
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("Cannot accept test request: {error}"),
+                    }
+                };
+                socket.set_nonblocking(false).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut headers = String::new();
+                let mut reader = BufReader::new(&mut socket);
+                loop {
+                    let mut line = String::new();
+                    assert!(reader.read_line(&mut line).unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    headers.push_str(&line);
+                }
+                write!(socket, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                headers
+            });
+            let config = Config {
+                endpoint: format!("http://{address}/v1/chat/completions"),
+                model: String::new(),
+                instructions: String::new(),
+                api_key: key.into(),
+                store_api_key: false,
+            };
+            let result = list_models(&config);
+            let headers = server.join().unwrap();
+            assert!(headers.starts_with("GET /v1/models HTTP/1.1\r\n"));
+            let headers = headers.to_ascii_lowercase();
+            if key.is_empty() {
+                assert!(!headers.contains("authorization:"));
+            } else {
+                assert!(headers.contains("authorization: bearer test-key\r\n"));
+            }
+            match expected {
+                Ok(models) => assert_eq!(result.unwrap(), models),
+                Err(detail) => assert!(result.unwrap_err().contains(detail)),
+            }
+        }
+    }
 
     #[test]
     fn cancellation_closes_requests_waiting_for_headers_or_body() {

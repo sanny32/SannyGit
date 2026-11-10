@@ -1,8 +1,10 @@
 mod remotes;
 pub use remotes::RemoteDialog;
+mod llm_models;
 mod repositories;
 mod tracking;
 mod working_tree;
+pub use llm_models::ModelCatalog;
 pub use repositories::{Dialog as RepositoryDialog, Job as RepositoryJob, RepositoryManager};
 
 use std::{
@@ -158,6 +160,7 @@ pub struct SannyGitApp {
     pub settings_window: SettingsWindow,
     pub llm_config: crate::llm::Config,
     pub repository_llm_configs: BTreeMap<String, crate::llm::Config>,
+    pub llm_models: ModelCatalog,
     pub about_dialog: bool,
     pub welcome_open: bool,
     welcome_pending: bool,
@@ -272,6 +275,11 @@ impl SannyGitApp {
         if let Some(api_key) = std::env::var_os("SANNYGIT_LLM_API_KEY") {
             app.llm_config.api_key = api_key.to_string_lossy().into_owned();
         }
+        app.llm_models = creation_context
+            .storage
+            .and_then(|storage| eframe::get_value(storage, llm_models::STORAGE_KEY))
+            .unwrap_or_default();
+        app.refresh_llm_models(&creation_context.egui_ctx);
         #[cfg(target_os = "macos")]
         {
             app.native_menu = crate::native_menu::NativeMenu::new(&creation_context.egui_ctx);
@@ -337,6 +345,7 @@ impl SannyGitApp {
             settings_window: SettingsWindow::new(theme),
             llm_config: crate::llm::Config::default(),
             repository_llm_configs: BTreeMap::new(),
+            llm_models: ModelCatalog::default(),
             about_dialog: false,
             welcome_open: false,
             welcome_pending: false,
@@ -401,6 +410,19 @@ impl SannyGitApp {
         (self.loaded_diff == Some(self.selected_change))
             .then_some(self.diff_preview.as_ref())
             .flatten()
+    }
+
+    fn refresh_llm_models(&mut self, context: &eframe::egui::Context) {
+        // Cloud endpoints usually require authentication. Keep their cached
+        // models until a key is available, without reading the OS key store.
+        if self.llm_config.is_local() || !self.llm_config.api_key.trim().is_empty() {
+            self.llm_models.load(&self.llm_config, None, context);
+        }
+        for (path, config) in &self.repository_llm_configs {
+            if config.is_local() || !config.api_key.trim().is_empty() {
+                self.llm_models.load(config, Some(path), context);
+            }
+        }
     }
 
     pub fn busy(&self) -> bool {
@@ -1573,6 +1595,7 @@ impl eframe::App for SannyGitApp {
     }
 
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+        self.llm_models.update();
         if self.preferences.follow_system_theme {
             self.theme = ThemeChoice::from_system(ui.ctx(), self.theme);
         }
@@ -1664,6 +1687,8 @@ impl eframe::App for SannyGitApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.llm_models.update();
+        eframe::set_value(storage, llm_models::STORAGE_KEY, &self.llm_models);
         eframe::set_value(
             storage,
             "sannygit.skip_push_confirmation",
@@ -1698,6 +1723,114 @@ impl eframe::App for SannyGitApp {
 mod tests {
     use super::*;
     use eframe::egui::{self, epaint::ClippedShape, Rect, Vec2};
+
+    #[test]
+    fn startup_keeps_remote_model_cache_without_requesting_models_when_keys_are_missing() {
+        let context = egui::Context::default();
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.llm_config.api_key = "  ".into();
+        app.repository_llm_configs
+            .insert("/repo".into(), app.llm_config.clone());
+        for scope in [None, Some("/repo")] {
+            app.llm_models.entry(&app.llm_config, scope).options = vec!["cached-model".into()];
+        }
+        app.refresh_llm_models(&context);
+        for scope in [None, Some("/repo")] {
+            let models = app.llm_models.entry(&app.llm_config, scope);
+            assert_eq!(models.options, ["cached-model"]);
+            assert!(!models.attempted);
+            assert!(!models.loading());
+            assert!(models.error.is_none());
+        }
+    }
+
+    #[test]
+    fn startup_refreshes_cached_models_without_loading_credentials_or_changing_selection() {
+        use std::{
+            io::{BufRead, BufReader, Write},
+            net::TcpListener,
+            time::{Duration, Instant},
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            for request in 0..4 {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut socket = loop {
+                    match listener.accept() {
+                        Ok((socket, _)) => break socket,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "Startup did not request models");
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("Cannot accept test request: {error}"),
+                    }
+                };
+                socket.set_nonblocking(false).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = BufReader::new(&mut socket);
+                loop {
+                    let mut line = String::new();
+                    assert!(reader.read_line(&mut line).unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    assert!(!line.to_ascii_lowercase().starts_with("authorization:"));
+                }
+                let body = format!(r#"{{"data":[{{"id":"model-{}"}}]}}"#, request / 2);
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        let context = egui::Context::default();
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.llm_config = crate::llm::Config {
+            endpoint: format!("http://{address}/v1"),
+            model: "my-custom-model".into(),
+            store_api_key: true,
+            ..Default::default()
+        };
+        app.repository_llm_configs
+            .insert("/repo".into(), app.llm_config.clone());
+        for launch in 0..2 {
+            if launch == 1 {
+                let saved = serde_json::to_string(&app.llm_models).unwrap();
+                app.llm_models = serde_json::from_str(&saved).unwrap();
+                assert_eq!(
+                    app.llm_models.entry(&app.llm_config, None).options,
+                    ["model-0"]
+                );
+            }
+            app.refresh_llm_models(&context);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                app.llm_models.update();
+                let loading = [None, Some("/repo")]
+                    .into_iter()
+                    .any(|scope| app.llm_models.entry(&app.llm_config, scope).loading());
+                if !loading {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "Model refresh did not finish");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            for scope in [None, Some("/repo")] {
+                let models = app.llm_models.entry(&app.llm_config, scope);
+                assert!(models.error.is_none(), "{:?}", models.error);
+                assert_eq!(models.options, [format!("model-{launch}")]);
+            }
+            assert_eq!(app.llm_config.model, "my-custom-model");
+            assert_eq!(app.repository_llm_configs["/repo"].model, "my-custom-model");
+        }
+        server.join().unwrap();
+    }
 
     fn deliver(app: &mut SannyGitApp, result: WorkerResult) {
         let (sender, receiver) = mpsc::channel();
