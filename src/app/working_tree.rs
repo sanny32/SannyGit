@@ -93,9 +93,11 @@ impl SannyGitApp {
         let context = context.clone();
         let (sender, receiver) = mpsc::channel();
         self.working_tree.next_read = Instant::now() + CHECK_INTERVAL;
+        let git_executable = self.preferences.git_executable.clone();
         match std::thread::Builder::new()
             .name("sannygit-working-tree".into())
             .spawn(move || {
+                git::set_executable(git_executable);
                 let _ = sender.send(Update::read(path, selected));
                 context.request_repaint();
             }) {

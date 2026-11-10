@@ -69,6 +69,7 @@ pub enum SettingsPage {
     General,
     Appearance,
     DateTime,
+    Git,
     Remote,
     Llm,
 }
@@ -411,9 +412,11 @@ impl SannyGitApp {
         self.working_tree.invalidate();
         self.tracking.cancel();
         let (sender, receiver) = mpsc::channel();
+        let git_executable = self.preferences.git_executable.clone();
         match std::thread::Builder::new()
             .name("sannygit-reader".into())
             .spawn(move || {
+                git::set_executable(git_executable);
                 let _ = sender.send(job());
             }) {
             Ok(_) => {
@@ -557,6 +560,12 @@ impl SannyGitApp {
 
     pub fn open_settings(&mut self) {
         self.settings_window.preferences = self.preferences.clone();
+        if self.settings_window.preferences.git_executable.is_empty() {
+            if let Some(path) = git::find_executable() {
+                self.settings_window.preferences.git_executable =
+                    path.to_string_lossy().into_owned();
+            }
+        }
         self.settings_window.interface_style = self.interface_style;
         self.settings_window.theme = self.theme;
         self.settings_window.auto_fetch = self.tracking.auto_fetch;
@@ -1592,7 +1601,12 @@ impl eframe::App for SannyGitApp {
             && self.manager.dialog.is_none()
             && self.network_dialog.is_none()
             && self.remote_checkout.is_none();
-        self.tracking.update(root, allow_tracking, ui.ctx());
+        self.tracking.update(
+            root,
+            allow_tracking,
+            &self.preferences.git_executable,
+            ui.ctx(),
+        );
         if self.tracking.refs_changed {
             self.tracking.refs_changed = false;
             self.refs_pending = true;

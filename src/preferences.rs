@@ -78,6 +78,7 @@ impl TimeFormat {
 #[serde(default)]
 pub struct Preferences {
     pub language: Language,
+    pub git_executable: String,
     pub follow_system_theme: bool,
     pub show_welcome: bool,
     pub file_double_click: FileDoubleClick,
@@ -90,6 +91,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             language: Language::English,
+            git_executable: String::new(),
             follow_system_theme: true,
             show_welcome: true,
             file_double_click: FileDoubleClick::default(),
@@ -180,6 +182,7 @@ mod tests {
         let preferences = Preferences {
             file_double_click: FileDoubleClick::ToggleStage,
             verbose_dates: true,
+            git_executable: "/Applications/Git Tools/git".into(),
             ..Default::default()
         };
         let json = serde_json::to_string(&preferences).unwrap();

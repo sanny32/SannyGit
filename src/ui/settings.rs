@@ -138,7 +138,8 @@ fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                             entry(ui, app, SettingsPage::DateTime, "Date & Time");
                         });
                         section(ui, "Git", |ui| {
-                            entry(ui, app, SettingsPage::Remote, "Remote")
+                            entry(ui, app, SettingsPage::Git, "Executable");
+                            entry(ui, app, SettingsPage::Remote, "Remote");
                         });
                         section(ui, "AI", |ui| {
                             entry(ui, app, SettingsPage::Llm, "Commit messages")
@@ -337,6 +338,36 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         .small()
                         .color(palette.muted),
                 );
+            });
+        }
+        SettingsPage::Git => {
+            heading(ui, "Git executable");
+            group(ui, palette, "Command", |ui| {
+                ui.label("Path to Git executable:");
+                ui.horizontal(|ui| {
+                    let value = &mut app.settings_window.preferences.git_executable;
+                    ui.add_sized(
+                        [ui.available_width() - 34.0, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(value),
+                    );
+                    if super::controls::icons::button(
+                        ui,
+                        super::controls::icons::Icon::Folder,
+                        "Choose Git executable",
+                    )
+                    .clicked()
+                    {
+                        let mut picker = rfd::FileDialog::new().set_title("Choose Git executable");
+                        if let Some(parent) =
+                            std::path::Path::new(value).parent().filter(|p| p.is_dir())
+                        {
+                            picker = picker.set_directory(parent);
+                        }
+                        if let Some(path) = picker.pick_file() {
+                            *value = path.to_string_lossy().into_owned();
+                        }
+                    }
+                });
             });
         }
         SettingsPage::Remote => {
@@ -986,6 +1017,7 @@ mod tests {
             for background in [false, true] {
                 for (page, label) in [
                     (SettingsPage::General, "General"),
+                    (SettingsPage::Git, "Executable"),
                     (SettingsPage::Remote, "Remote"),
                     (SettingsPage::Appearance, "Appearance"),
                     (SettingsPage::DateTime, "Date & Time"),
@@ -1143,6 +1175,7 @@ mod tests {
             app.open_settings();
             app.settings_window.interface_style = InterfaceStyle::Modern;
             app.settings_window.theme = ThemeChoice::Dark;
+            app.settings_window.preferences.git_executable = "/custom Git/git".into();
             app.settings_window.preferences.show_welcome = false;
             app.settings_window.preferences.file_double_click =
                 crate::preferences::FileDoubleClick::ToggleStage;
@@ -1197,6 +1230,14 @@ mod tests {
             };
             assert_eq!(app.interface_style, style);
             assert_eq!(app.theme, theme);
+            assert_eq!(
+                app.preferences.git_executable,
+                if button == "OK" {
+                    "/custom Git/git"
+                } else {
+                    ""
+                }
+            );
             assert_eq!(app.preferences.show_welcome, button != "OK");
             assert_eq!(
                 app.preferences.file_double_click,
@@ -1277,6 +1318,7 @@ mod tests {
                 (SettingsPage::General, "Confirmations"),
                 (SettingsPage::Appearance, "Color theme:"),
                 (SettingsPage::DateTime, "Time format:"),
+                (SettingsPage::Git, "Path to Git executable:"),
                 (SettingsPage::Remote, "Automatic fetch"),
                 (SettingsPage::Llm, "Endpoint:"),
             ] {

@@ -105,6 +105,7 @@ impl Monitor {
         &mut self,
         root: Option<PathBuf>,
         allow_start: bool,
+        git_executable: &str,
         context: &eframe::egui::Context,
     ) {
         if self.root != root {
@@ -176,9 +177,11 @@ impl Monitor {
         let flag = cancel.clone();
         let (sender, receiver) = mpsc::channel();
         let context = context.clone();
+        let git_executable = git_executable.to_owned();
         match std::thread::Builder::new()
             .name("sannygit-upstream".into())
             .spawn(move || {
+                crate::git::set_executable(git_executable);
                 let mut error = None;
                 let mut fetched = false;
                 let result = tracking::read(&root).and_then(|status| {
@@ -228,6 +231,7 @@ mod tests {
         monitor.update(
             monitor.root.clone(),
             false,
+            "",
             &eframe::egui::Context::default(),
         );
     }
@@ -273,6 +277,7 @@ mod tests {
         monitor.update(
             Some(PathBuf::from("/other-repository")),
             false,
+            "",
             &eframe::egui::Context::default(),
         );
         assert!(monitor.status.is_none());

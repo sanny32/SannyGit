@@ -1,6 +1,7 @@
 //! Git command execution and parsing. Called only by the application's background workers.
 use crate::models::{ChangeFile, ChangeKind, Repository};
 use std::{
+    cell::RefCell,
     fmt::Write,
     io::{Read, Write as IoWrite},
     path::{Path, PathBuf},
@@ -13,6 +14,50 @@ use std::{
 const OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
 const FILE_LIMIT: usize = 5_000;
 const TIMEOUT: Duration = Duration::from_secs(15);
+
+thread_local! {
+    static EXECUTABLE: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+/// Set once at worker startup so every command in an operation uses the same Git.
+pub(crate) fn set_executable(executable: String) {
+    EXECUTABLE.with(|value| *value.borrow_mut() = executable);
+}
+
+/// Find the first executable Git in PATH without launching a process.
+pub(crate) fn find_executable() -> Option<PathBuf> {
+    find_executable_in(&std::env::var_os("PATH")?, &std::env::current_dir().ok()?)
+}
+
+fn find_executable_in(search_path: &std::ffi::OsStr, current_dir: &Path) -> Option<PathBuf> {
+    let name = if cfg!(windows) { "git.exe" } else { "git" };
+    std::env::split_paths(search_path).find_map(|directory| {
+        let candidate = current_dir.join(directory).join(name);
+        let metadata = candidate.metadata().ok()?;
+        if !metadata.is_file() {
+            return None;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                return None;
+            }
+        }
+        Some(candidate)
+    })
+}
+
+fn executable() -> String {
+    EXECUTABLE.with(|value| {
+        let value = value.borrow();
+        if value.is_empty() {
+            "git".into()
+        } else {
+            value.clone()
+        }
+    })
+}
 
 pub struct Snapshot {
     pub repository: Repository,
@@ -72,7 +117,8 @@ fn execute(
     if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
         return Err("Operation cancelled".into());
     }
-    let mut command = Command::new("git");
+    let executable = executable();
+    let mut command = Command::new(&executable);
     command
         .current_dir(path)
         .args(["--no-pager", "--no-optional-locks", "-c", "color.ui=false"])
@@ -98,7 +144,7 @@ fn execute(
     }
     let mut child = command
         .spawn()
-        .map_err(|e| format!("Cannot start Git: {e}"))?;
+        .map_err(|e| format!("Cannot start Git executable \"{executable}\": {e}. Check Preferences > Git > Executable."))?;
     let stdout = child.stdout.take().ok_or("Cannot read Git output")?;
     let stderr = child.stderr.take().ok_or("Cannot read Git errors")?;
     let stdin = child.stdin.take();
@@ -560,6 +606,65 @@ pub(crate) fn limit_diff(patch: String) -> Result<String, String> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn path_discovery_returns_the_first_executable_as_an_absolute_path() {
+        let repo = TempRepo::new();
+        let first = repo.0.join("first Git directory");
+        let second = repo.0.join("second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        let name = if cfg!(windows) { "git.exe" } else { "git" };
+        let candidate = second.join(name);
+        std::fs::write(&candidate, "test executable").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // A non-executable earlier PATH entry must be skipped.
+            std::fs::write(first.join(name), "not executable").unwrap();
+            std::fs::set_permissions(first.join(name), std::fs::Permissions::from_mode(0o600))
+                .unwrap();
+            std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let search =
+            std::env::join_paths([Path::new("first Git directory"), Path::new("second")]).unwrap();
+        assert_eq!(find_executable_in(&search, &repo.0), Some(candidate));
+        assert_eq!(find_executable_in(first.as_os_str(), &repo.0), None);
+    }
+
+    #[test]
+    fn configured_executable_reports_missing_file_without_falling_back() {
+        thread::spawn(|| {
+            let directory = std::env::temp_dir();
+            let missing = directory.join(format!("missing Git executable {}", std::process::id()));
+            set_executable(missing.to_string_lossy().into_owned());
+            let error = run(&directory, &["--version"]).unwrap_err();
+            assert!(error.contains(&*missing.to_string_lossy()));
+            assert!(error.contains("Preferences > Git > Executable"));
+            set_executable(String::new());
+            assert!(run(&directory, &["--version"])
+                .unwrap()
+                .starts_with(b"git version"));
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_executable_supports_spaces_and_preserves_arguments() {
+        thread::spawn(|| {
+            use std::os::unix::fs::PermissionsExt;
+            let repo = TempRepo::new();
+            let executable = repo.0.join("custom Git executable");
+            std::fs::write(&executable, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+            set_executable(executable.to_string_lossy().into_owned());
+            let output = run(&repo.0, &["--version", "argument with spaces", "$(literal)"]).unwrap();
+            assert_eq!(String::from_utf8(output).unwrap(),
+                "--no-pager\n--no-optional-locks\n-c\ncolor.ui=false\n--version\nargument with spaces\n$(literal)\n");
+        }).join().unwrap();
+    }
+
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);

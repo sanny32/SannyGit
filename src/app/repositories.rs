@@ -184,9 +184,11 @@ impl SannyGitApp {
         self.manager
             .hosting_checked
             .insert(path.clone(), Instant::now());
+        let git_executable = self.preferences.git_executable.clone();
         if std::thread::Builder::new()
             .name("sannygit-hosting".into())
             .spawn(move || {
+                git::set_executable(git_executable);
                 let provider = repository::hosting_provider(std::path::Path::new(&path));
                 let _ = sender.send(HostingUpdate { path, provider });
                 context.request_repaint();
