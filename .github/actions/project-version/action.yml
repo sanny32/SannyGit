@@ -1,0 +1,45 @@
+name: SannyGit package version
+description: Read Cargo version and derive native package versions
+outputs:
+  version:
+    description: Cargo package version
+    value: ${{ steps.version.outputs.version }}
+  deb_version:
+    description: Debian package version
+    value: ${{ steps.version.outputs.deb_version }}
+  rpm_version:
+    description: RPM package version
+    value: ${{ steps.version.outputs.rpm_version }}
+  rpm_release:
+    description: RPM package release
+    value: ${{ steps.version.outputs.rpm_release }}
+  file_version:
+    description: Windows numeric file version
+    value: ${{ steps.version.outputs.file_version }}
+runs:
+  using: composite
+  steps:
+    - id: version
+      shell: bash
+      run: |
+        python_bin=python3
+        if [[ "${RUNNER_OS:-}" == Windows ]]; then python_bin=python; fi
+        version="$(cargo metadata --no-deps --format-version 1 | "$python_bin" -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "sannygit"))')"
+        if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+          echo "::error::Tag $GITHUB_REF_NAME does not match Cargo version v$version"
+          exit 1
+        fi
+        base="${version%%[-+]*}"
+        release=1
+        without_metadata="${version%%+*}"
+        if [[ "$without_metadata" == *-* ]]; then
+          prerelease="${without_metadata#*-}"
+          release="0.${prerelease//-/.}"
+        fi
+        {
+          echo "version=$version"
+          echo "deb_version=${version/-/~}"
+          echo "rpm_version=$base"
+          echo "rpm_release=$release"
+          echo "file_version=$base.0"
+        } >> "$GITHUB_OUTPUT"

@@ -1,0 +1,10 @@
+Package: sannygit
+Version: @VERSION@
+Section: devel
+Priority: optional
+Architecture: @ARCH@
+Maintainer: Alexandr Ananev <mail@ananev.org>
+Homepage: https://github.com/sanny32/SannyGit
+Depends: git (>= 2.36), hicolor-icon-theme, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libegl1, libgl1, libx11-6, libxcursor1, libxrandr2, libxi6, libxcb1, libxcb-randr0, @DEPENDS@
+Description: Desktop Git client
+ Compact Git client built with Rust and egui.

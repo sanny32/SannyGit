@@ -7,23 +7,29 @@ usage() {
     cat <<'HELP'
 Usage: ./build.sh [--tests] [--install[=PREFIX]]
 
-Build and package SannyGit in Release mode on Linux or macOS.
+Build SannyGit in Release mode on Linux or macOS.
 Missing build dependencies are installed automatically (sudo may be required).
 
-  --tests             Run the Rust test suite before packaging
-  --install[=PREFIX]  Install after packaging, optionally into PREFIX
+  --tests             Run the Rust test suite after building
+  --install[=PREFIX]  Install after building, optionally into PREFIX
   -h, --help          Show this help without installing or building anything
 
 Default install location: ~/Applications on macOS, ~/.local on Linux.
-Packages are written to Cargo's target directory under package/.
+Distribution packages are produced by CI.
 HELP
 }
 
+run_tests=0
+run_install=0
+install_prefix=""
 for argument in "$@"; do
     case "$argument" in
         -h|--help) usage; exit 0 ;;
-        --tests|--install) ;;
+        --tests) run_tests=1 ;;
+        --install) run_install=1 ;;
         --install=*)
+            run_install=1
+            install_prefix="${argument#--install=}"
             if [ -z "${argument#--install=}" ]; then
                 echo 'Error: --install prefix must not be empty.' >&2
                 exit 1
@@ -162,4 +168,52 @@ then
     export RUSTUP_TOOLCHAIN=stable
 fi
 
-exec "$PYTHON_BIN" "$PROJECT_DIR/scripts/package.py" "$@"
+binary="$(cd "$PROJECT_DIR" && cargo build --release --message-format=json-render-diagnostics | "$PYTHON_BIN" -c '
+import json, sys
+executables = [message["executable"] for line in sys.stdin
+               if (message := json.loads(line)).get("reason") == "compiler-artifact"
+               and message.get("target", {}).get("name") == "sannygit"
+               and message.get("executable")]
+if not executables:
+    sys.exit("Cargo did not report the SannyGit executable.")
+print(executables[-1])
+')"
+if [ "$run_tests" -eq 1 ]; then
+    (cd "$PROJECT_DIR" && cargo test --release)
+fi
+echo "Built: $binary"
+if [ "$run_install" -eq 0 ]; then
+    exit 0
+fi
+
+case "$(uname -s)" in
+    Darwin)
+        install_prefix="${install_prefix:-$HOME/Applications}"
+        bundle="$install_prefix/SannyGit.app"
+        version="$(sed -nE 's/^version = "([^"]+)"/\1/p' "$PROJECT_DIR/Cargo.toml")"
+        mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
+        install -m 755 "$binary" "$bundle/Contents/MacOS/sannygit"
+        install -m 644 "$PROJECT_DIR/assets/app/sannygit.icns" "$bundle/Contents/Resources/sannygit.icns"
+        install -m 644 "$PROJECT_DIR/LICENSE" "$bundle/Contents/Resources/LICENSE"
+        install -m 644 "$PROJECT_DIR/assets/fonts/OFL.txt" "$bundle/Contents/Resources/SourceSans3-OFL.txt"
+        base_version="${version%%[-+]*}"
+        sed "s|@VERSION@|$base_version|g" "$PROJECT_DIR/.github/macos/Info.plist.in" > "$bundle/Contents/Info.plist"
+        codesign --force --sign - "$bundle"
+        codesign --verify --strict "$bundle"
+        echo "Installed: $bundle"
+        ;;
+    Linux)
+        install_prefix="${install_prefix:-$HOME/.local}"
+        mkdir -p "$install_prefix/bin" "$install_prefix/share/applications" \
+            "$install_prefix/share/icons/hicolor/256x256/apps" \
+            "$install_prefix/share/icons/hicolor/scalable/apps" \
+            "$install_prefix/share/licenses/sannygit"
+        install -m 755 "$binary" "$install_prefix/bin/sannygit"
+        install -m 644 "$PROJECT_DIR/.github/linux/usr/share/applications/SannyGit.desktop" "$install_prefix/share/applications/SannyGit.desktop"
+        install -m 644 "$PROJECT_DIR/assets/app/sannygit.png" "$install_prefix/share/icons/hicolor/256x256/apps/sannygit.png"
+        install -m 644 "$PROJECT_DIR/assets/app/sannygit.svg" "$install_prefix/share/icons/hicolor/scalable/apps/sannygit.svg"
+        install -m 644 "$PROJECT_DIR/LICENSE" "$install_prefix/share/licenses/sannygit/LICENSE"
+        install -m 644 "$PROJECT_DIR/assets/fonts/OFL.txt" "$install_prefix/share/licenses/sannygit/SourceSans3-OFL.txt"
+        echo "Installed: $install_prefix/bin/sannygit"
+        ;;
+esac

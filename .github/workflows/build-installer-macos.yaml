@@ -1,0 +1,49 @@
+name: Build macOS disk image
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/project-version
+        id: version
+      - name: Build and stage application
+        run: ./build.sh --install="$GITHUB_WORKSPACE/target/ci-stage"
+      - name: Verify bundle and build disk image
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          stage="$GITHUB_WORKSPACE/target/ci-stage"
+          app="$stage/SannyGit.app"
+          plutil -lint "$app/Contents/Info.plist"
+          codesign --verify --deep --strict "$app"
+          test -x "$app/Contents/MacOS/sannygit"
+          test -f "$app/Contents/Resources/LICENSE"
+          test -f "$app/Contents/Resources/SourceSans3-OFL.txt"
+          ln -s /Applications "$stage/Applications"
+          mkdir -p target/ci-dist
+          dmg="target/ci-dist/sannygit-$APP_VERSION-macos-$(uname -m).dmg"
+          hdiutil create -volname SannyGit -srcfolder "$stage" -format UDZO "$dmg"
+          hdiutil verify "$dmg"
+          (cd target/ci-dist && shasum -a 256 ./*.dmg > SHA256SUMS)
+      - uses: actions/upload-artifact@v6
+        with:
+          name: sannygit-macos-dmg
+          path: target/ci-dist/*
+          if-no-files-found: error

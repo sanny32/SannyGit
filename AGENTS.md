@@ -64,8 +64,8 @@ Windows, Linux, and macOS. The UI language is English. The license is MIT.
 | `src/ui/controls/` | Shared controls, dialog styles, tooltips, and embedded SVG icons |
 | `src/menu.rs`, `src/native_menu.rs` | Application menu actions and macOS native menus |
 | `assets/icons/` | Existing SVG icon set |
-| `scripts/package.py`, `build.rs`, `packaging/` | Native packaging and application resources |
-| `.github/workflows/build-test.yml` | Windows/Linux/macOS checks on stable Rust |
+| `build.sh`, `build.ps1`, `build.rs`, `.github/linux/`, `.github/windows/`, `.github/macos/` | Local build/install scripts and native packaging resources |
+| `.github/workflows/build-test.yml`, `.github/workflows/build-*.yaml` | Cross-platform checks and CI distribution packages on stable Rust |
 
 Create new modules only when needed. Do not create empty architectural scaffolding
 or mix Git logic with panel rendering.

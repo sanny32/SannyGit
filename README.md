@@ -10,7 +10,7 @@ pull, and push.
 
 ## Build
 
-The build scripts install missing dependencies and produce a Release package:
+The build scripts install missing dependencies and build the Release executable:
 
 ```sh
 ./build.sh                       # Linux / macOS
@@ -31,9 +31,15 @@ Linux dependency setup uses apt, dnf, zypper or pacman and may require sudo.
 macOS requires Xcode Command Line Tools; missing tools use Homebrew or rustup.
 Windows dependency setup requires winget and may request elevation.
 
-Packages are written to Cargo's target directory under `package/`. Default install
-locations are `~/Applications` on macOS, `~/.local` on Linux and
+Default install locations are `~/Applications` on macOS, `~/.local` on Linux and
 `%LOCALAPPDATA%\Programs\SannyGit` on Windows. Add `~/.local/bin` to `PATH` on Linux.
+
+## Packages
+
+Separate GitHub Actions workflows create macOS DMG, Windows installer, Linux DEB,
+RPM and AppImage packages. Run them manually or push a `v<version>` tag matching
+`Cargo.toml`. Packages and SHA-256 checksums are available in the workflow's
+artifacts. Packages are not signed with a distribution certificate or notarized.
 
 ## MIT License
 

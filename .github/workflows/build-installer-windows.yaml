@@ -1,0 +1,69 @@
+name: Build Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/project-version
+        id: version
+      - name: Build and stage application
+        run: .\build.ps1 -InstallPrefix "$env:GITHUB_WORKSPACE\target\ci-stage"
+      - name: Install NSIS
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+            choco install nsis -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "NSIS installation failed." }
+          }
+      - name: Build installer
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+          FILE_VERSION: ${{ steps.version.outputs.file_version }}
+        run: |
+          New-Item -ItemType Directory -Path target\ci-dist -Force | Out-Null
+          $setup = "$env:GITHUB_WORKSPACE\target\ci-dist\sannygit-$env:APP_VERSION-win64-setup.exe"
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" /V3 `
+            "/DSTAGE_DIR=$env:GITHUB_WORKSPACE\target\ci-stage" `
+            "/DSRC_DIR=$env:GITHUB_WORKSPACE" `
+            "/DAPP_VERSION=$env:APP_VERSION" "/DFILE_VERSION=$env:FILE_VERSION" `
+            "/DOUT_FILE=$setup" packaging\windows\sannygit.nsi
+          if ($LASTEXITCODE -ne 0) { throw "Installer build failed." }
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path $setup -Leaf)" | Set-Content target\ci-dist\SHA256SUMS -Encoding ascii
+          "SANNYGIT_SETUP=$setup" >> $env:GITHUB_ENV
+      - name: Verify silent installation and uninstallation
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP "SannyGit install check"
+          $process = Start-Process -FilePath $env:SANNYGIT_SETUP -ArgumentList "/S /D=$prefix" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Silent installation failed." }
+          foreach ($file in @("SannyGit.exe", "LICENSE", "SourceSans3-OFL.txt", "Uninstall.exe")) {
+            if (-not (Test-Path (Join-Path $prefix $file))) { throw "Missing installed file: $file" }
+          }
+          Set-Content (Join-Path $prefix "keep.txt") "User file"
+          $process = Start-Process -FilePath (Join-Path $prefix "Uninstall.exe") -ArgumentList "/S" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Silent uninstallation failed." }
+          if (Test-Path (Join-Path $prefix "SannyGit.exe")) { throw "Uninstallation left the executable." }
+          if (-not (Test-Path (Join-Path $prefix "keep.txt"))) { throw "Uninstallation removed user files." }
+      - uses: actions/upload-artifact@v6
+        with:
+          name: sannygit-win64-installer
+          path: target/ci-dist/*
+          if-no-files-found: error

@@ -11,16 +11,16 @@ if ($Help) {
     Write-Host @"
 Usage: .\build.ps1 [-Tests] [-Install] [-InstallPrefix <PREFIX>]
 
-Build and package SannyGit in Release mode on Windows.
+Build SannyGit in Release mode on Windows.
 Missing tools are installed with winget (elevation may be requested).
 
-  -Tests                  Run the Rust test suite before packaging
-  -Install                Install after packaging
+  -Tests                  Run the Rust test suite after building
+  -Install                Install after building
   -InstallPrefix <PREFIX> Install into PREFIX (implies -Install)
   -Help                   Show this help without installing or building anything
 
 Default install location: %LOCALAPPDATA%\Programs\SannyGit.
-Packages are written to Cargo's target directory under package/.
+Distribution packages are produced by CI.
 "@
     exit 0
 }
@@ -47,18 +47,6 @@ function Install-Tool {
     Update-SessionPath
 }
 
-function Find-Python {
-    foreach ($name in @("python", "python3", "py")) {
-        if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { continue }
-        $arguments = if ($name -eq "py") { @("-3") } else { @() }
-        & $name @arguments -c "import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)"
-        if ($LASTEXITCODE -eq 0) {
-            return @{ Command = $name; Arguments = $arguments }
-        }
-    }
-    return $null
-}
-
 function Find-VisualStudio {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vswhere) {
@@ -74,12 +62,6 @@ try {
         throw "InstallPrefix must not be empty."
     }
     Update-SessionPath
-    $python = Find-Python
-    if (-not $python) {
-        Install-Tool "Python.Python.3.13"
-        $python = Find-Python
-        if (-not $python) { throw "Python 3.9+ is not available. Restart the terminal and rerun this script." }
-    }
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Install-Tool "Git.Git" }
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         throw "Git is not available. Restart the terminal and rerun this script."
@@ -125,13 +107,36 @@ try {
         if ($line -match '^([^=]+)=(.*)$') { Set-Item -Path "Env:$($Matches[1])" -Value $Matches[2] }
     }
 
-    $packageArguments = @((Join-Path $PSScriptRoot "scripts\package.py"))
-    if ($Tests) { $packageArguments += "--tests" }
-    if ($InstallPrefix) { $packageArguments += "--install=$InstallPrefix" } elseif ($Install) { $packageArguments += "--install" }
-    $pythonArguments = $python.Arguments
-    $pythonExecutable = $python.Command
-    & $pythonExecutable @pythonArguments @packageArguments
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Push-Location $PSScriptRoot
+    try {
+        $buildOutput = & cargo build --release --message-format=json-render-diagnostics
+        if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)." }
+        $binary = $null
+        foreach ($line in $buildOutput) {
+            $message = $line | ConvertFrom-Json
+            if ($message.reason -eq "compiler-artifact" -and $message.target.name -eq "sannygit" -and $message.executable) {
+                $binary = $message.executable
+            }
+        }
+        if (-not $binary) { throw "Cargo did not report the SannyGit executable." }
+        if ($Tests) {
+            & cargo test --release
+            if ($LASTEXITCODE -ne 0) { throw "Tests failed (exit $LASTEXITCODE)." }
+        }
+    }
+    finally { Pop-Location }
+    Write-Host "Built: $binary"
+    if ($Install -or $InstallPrefix) {
+        $prefix = if ($InstallPrefix) { $InstallPrefix } else {
+            if (-not $env:LOCALAPPDATA) { throw "LOCALAPPDATA is not set; specify -InstallPrefix." }
+            Join-Path $env:LOCALAPPDATA "Programs\SannyGit"
+        }
+        New-Item -ItemType Directory -Path $prefix -Force | Out-Null
+        Copy-Item -LiteralPath $binary -Destination (Join-Path $prefix "SannyGit.exe") -Force
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot "LICENSE") -Destination (Join-Path $prefix "LICENSE") -Force
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot "assets\fonts\OFL.txt") -Destination (Join-Path $prefix "SourceSans3-OFL.txt") -Force
+        Write-Host "Installed: $(Join-Path $prefix 'SannyGit.exe')"
+    }
 }
 catch {
     Write-Error $_ -ErrorAction Continue

@@ -1,0 +1,75 @@
+name: Build DEB package
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-deb-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install build and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config python3 git curl dpkg-dev fakeroot desktop-file-utils \
+            libdbus-1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libx11-dev \
+            libxrandr-dev libxi-dev libxcursor-dev libgl1-mesa-dev libxcb1-dev libxcb-randr0-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/project-version
+        id: version
+      - name: Build and stage package root
+        run: ./build.sh --install="$GITHUB_WORKSPACE/target/deb-root/usr"
+      - name: Build and verify DEB
+        env:
+          DEB_VERSION: ${{ steps.version.outputs.deb_version }}
+        run: |
+          root="$GITHUB_WORKSPACE/target/deb-root"
+          work="$GITHUB_WORKSPACE/target/deb-work"
+          mkdir -p "$root/DEBIAN" "$work/debian" target/ci-dist
+          cat > "$work/debian/control" <<'CONTROL'
+          Source: sannygit
+          Section: devel
+          Priority: optional
+          Maintainer: Alexandr Ananev <mail@ananev.org>
+
+          Package: sannygit
+          Architecture: any
+          Description: Desktop Git client
+          CONTROL
+          dependencies="$(cd "$work" && dpkg-shlibdeps -O -e"$root/usr/bin/sannygit")"
+          [[ "$dependencies" == shlibs:Depends=* ]]
+          dependencies="${dependencies#shlibs:Depends=}"
+          arch="$(dpkg --print-architecture)"
+          sed -e "s|@VERSION@|$DEB_VERSION|g" -e "s|@ARCH@|$arch|g" \
+            -e "s|@DEPENDS@|$dependencies|g" .github/linux/deb/control.in > "$root/DEBIAN/control"
+          chmod 755 "$root/DEBIAN"
+          install -d "$root/usr/share/doc/sannygit"
+          install -m 644 LICENSE "$root/usr/share/doc/sannygit/copyright"
+          desktop-file-validate "$root/usr/share/applications/SannyGit.desktop"
+          output="target/ci-dist/sannygit_${DEB_VERSION}_${arch}.deb"
+          fakeroot dpkg-deb --root-owner-group --build "$root" "$output"
+          test "$(dpkg-deb -f "$output" Package)" = sannygit
+          test "$(dpkg-deb -f "$output" Version)" = "$DEB_VERSION"
+          dpkg-deb --contents "$output"
+          dpkg-deb --extract "$output" target/deb-verify
+          cmp "$root/usr/bin/sannygit" target/deb-verify/usr/bin/sannygit
+          test -f target/deb-verify/usr/share/licenses/sannygit/LICENSE
+          test -f target/deb-verify/usr/share/licenses/sannygit/SourceSans3-OFL.txt
+          (cd target/ci-dist && sha256sum ./*.deb > SHA256SUMS)
+      - uses: actions/upload-artifact@v6
+        with:
+          name: sannygit-linux-deb
+          path: target/ci-dist/*
+          if-no-files-found: error

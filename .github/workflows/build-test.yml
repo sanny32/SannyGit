@@ -14,11 +14,12 @@ on:
       - '.rustfmt.toml'
       - 'clippy.toml'
       - '.clippy.toml'
-      - 'build.sh'
-      - 'build.ps1'
-      - 'scripts/**/*.py'
-      - 'packaging/**'
-      - 'assets/**'
+      - 'assets/fonts/*.ttf'
+      - 'assets/icons/*.svg'
+      - 'assets/previews/*.png'
+      - 'assets/app/sannygit.png'
+      - 'assets/app/sannygit.svg'
+      - 'assets/app/sannygit.ico'
       - '.github/workflows/build-test.yml'
       - '!**/*.md'
   pull_request:
@@ -57,16 +58,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Check Unix build entry point
-        if: runner.os != 'Windows'
-        run: |
-          bash -n build.sh
-          ./build.sh --help
-      - name: Check Windows build entry point
-        if: runner.os == 'Windows'
-        run: .\build.ps1 -Help
-      - name: Test packaging helpers
-        run: python -B -m unittest discover -s scripts -p 'test_*.py'
       - name: Check formatting
         if: runner.os == 'Linux'
         run: cargo fmt --check
@@ -76,5 +67,3 @@ jobs:
         run: cargo test
       - name: Build
         run: cargo build
-      - name: Package debug build
-        run: python scripts/package.py --debug
