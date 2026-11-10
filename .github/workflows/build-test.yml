@@ -2,7 +2,7 @@ name: Build and Test
 
 on:
   push:
-    paths:
+    paths: &test_paths
       - 'src/**'
       - 'tests/**'
       - 'Cargo.toml'
@@ -22,25 +22,7 @@ on:
       - '.github/workflows/build-test.yml'
       - '!**/*.md'
   pull_request:
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'build.rs'
-      - '.cargo/**'
-      - 'rust-toolchain*'
-      - 'rustfmt.toml'
-      - '.rustfmt.toml'
-      - 'clippy.toml'
-      - '.clippy.toml'
-      - 'build.sh'
-      - 'build.ps1'
-      - 'scripts/**/*.py'
-      - 'packaging/**'
-      - 'assets/**'
-      - '.github/workflows/build-test.yml'
-      - '!**/*.md'
+    paths: *test_paths
   workflow_dispatch:
 
 permissions:
