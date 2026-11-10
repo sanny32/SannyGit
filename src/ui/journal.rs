@@ -12,8 +12,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let wide = ui.available_width() >= 580.0;
     super::header(ui, 28.0, palette, |ui| {
         ui.heading("Journal");
-        let search_width =
-            (ui.available_width() - if wide { 300.0 } else { 200.0 }).clamp(60.0, 240.0);
+        let search_width = (ui.available_width() - 300.0).clamp(60.0, 240.0);
         ui.add_enabled(
             !app.commits.is_empty(),
             eframe::egui::TextEdit::singleline(&mut app.journal_filter)
@@ -48,28 +47,38 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         {
             app.reload_history();
         }
-        if wide {
-            ui.label(
-                RichText::new(if app.history_loading {
-                    "Loading…".into()
-                } else if app.history_truncated {
+        let (status, help, color) = if let Some(error) = &app.history_error {
+            (
+                "History unavailable".into(),
+                format!("{error}\nReload to retry; displayed rows are from the previous load."),
+                palette.removed_text,
+            )
+        } else if app.history_loading {
+            (
+                "Loading…".into(),
+                "Loading history; existing rows remain available.".into(),
+                palette.muted,
+            )
+        } else {
+            (
+                if app.history_truncated {
                     format!("{} (limit)", app.commits.len())
                 } else {
                     format!("{} commits", app.commits.len())
-                })
-                .small()
-                .color(palette.muted),
+                },
+                "Up to 500 commits; search applies to loaded history only".into(),
+                palette.muted,
             )
-            .help_text("Up to 500 commits; search applies to loaded history only");
-        }
+        };
+        // One clipped status in the header keeps controls, rows and scroll IDs
+        // stationary during loading, errors and retries, including narrow panels.
+        ui.add_sized(
+            [ui.available_width().max(0.0), 20.0],
+            Label::new(RichText::new(status).small().color(color)).truncate(),
+        )
+        .help_text(help);
     });
-    if let Some(error) = &app.history_error {
-        ui.label(RichText::new(format!("History unavailable: {error} Reload to retry; any rows below are from the previous load.")).small().color(palette.removed_text));
-    }
     if app.commits.is_empty() {
-        if app.history_loading {
-            ui.label(RichText::new("Loading history…").color(palette.muted));
-        }
         return;
     }
     let filter = app.journal_filter.trim().to_lowercase();
@@ -100,6 +109,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     // Table row backgrounds expand into cell spacing; keep them inside the panel.
     ui.shrink_clip_rect(ui.available_rect_before_wrap());
     TableBuilder::new(ui)
+        .id_salt("journal.commits")
         .striped(true)
         .sense(Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
@@ -296,6 +306,133 @@ mod tests {
     use super::*;
     use crate::theme::{install_fonts, ThemeChoice};
     use eframe::egui::{self, Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect};
+
+    #[test]
+    fn history_status_preserves_rows_controls_scroll_and_selection() {
+        use crate::theme::InterfaceStyle;
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for style in [InterfaceStyle::Classic, InterfaceStyle::Modern] {
+                for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                    let context = Context::default();
+                    install_fonts(&context);
+                    egui_extras::install_image_loaders(&context);
+                    theme.apply(&context);
+                    let mut app = SannyGitApp::with_theme(theme);
+                    app.interface_style = style;
+                    app.repositories = crate::mock_data::repositories();
+                    app.selected_repository = 0;
+                    app.commits = crate::mock_data::long_history();
+                    app.selected_commit = Some(app.commits[10].hash.clone());
+                    let selected = app.selected_commit.clone();
+                    let mut time = 0.0;
+                    let mut render = |app: &mut SannyGitApp, events| {
+                        time += 0.1;
+                        let mut output = context.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                                time: Some(time),
+                                events,
+                                ..Default::default()
+                            },
+                            |ui| crate::ui::show(ui, app),
+                        );
+                        output.textures_delta.clear();
+                        output
+                    };
+                    for _ in 0..4 {
+                        render(&mut app, vec![]);
+                    }
+                    let positions = |output: &egui::FullOutput| {
+                        output
+                            .shapes
+                            .iter()
+                            .filter_map(|shape| match &shape.shape {
+                                egui::Shape::Text(text)
+                                    if (text.galley.job.text.starts_with("History ")
+                                        && text.galley.job.text.contains(':'))
+                                        || [
+                                            "Journal",
+                                            "Reload",
+                                            "Current branch",
+                                            "Message",
+                                            "Author",
+                                            "Date",
+                                            "Hash",
+                                        ]
+                                        .contains(&text.galley.job.text.as_str()) =>
+                                {
+                                    Some((text.galley.job.text.clone(), text.pos))
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    };
+                    let initial = render(&mut app, vec![]);
+                    let initial_positions = positions(&initial);
+                    let pointer = initial_positions
+                        .iter()
+                        .find(|(label, _)| label.starts_with("History "))
+                        .unwrap()
+                        .1;
+                    render(
+                        &mut app,
+                        vec![
+                            Event::PointerMoved(pointer),
+                            Event::MouseWheel {
+                                unit: egui::MouseWheelUnit::Point,
+                                phase: egui::TouchPhase::Move,
+                                source: egui::MouseWheelSource::Wheel,
+                                delta: egui::vec2(0.0, -240.0),
+                                modifiers: Modifiers::NONE,
+                            },
+                        ],
+                    );
+                    render(&mut app, vec![Event::PointerMoved(Pos2::ZERO)]);
+                    for _ in 0..12 {
+                        render(&mut app, vec![]);
+                    }
+                    let baseline = positions(&render(&mut app, vec![]));
+                    assert_ne!(
+                        baseline, initial_positions,
+                        "History did not scroll: {theme:?} {style:?} {size:?}"
+                    );
+                    assert!(baseline
+                        .iter()
+                        .any(|(label, _)| label.starts_with("History ")));
+                    for stage in 0..5 {
+                        match stage {
+                            0 => app.history_loading = true,
+                            1 => {
+                                app.history_loading = false;
+                                app.history_error = Some("Cannot read history. ".repeat(100));
+                            }
+                            2 => app.reload_history(),
+                            3 => {
+                                app.history_loading = false;
+                                app.history_error = Some("History reload cancelled".into());
+                            }
+                            _ => {
+                                app.history_error = None;
+                            }
+                        }
+                        for _ in 0..3 {
+                            let output = render(&mut app, vec![]);
+                            let after = positions(&output);
+                            assert_eq!(after.len(), baseline.len());
+                            for ((label, position), (before_label, before_position)) in
+                                after.iter().zip(&baseline)
+                            {
+                                assert_eq!(label, before_label);
+                                assert!((*position - *before_position).length() < 1.0,
+                                    "History moved at stage {stage}: {theme:?} {style:?} {size:?}: {label} {before_position:?} -> {position:?}");
+                            }
+                            assert_eq!(app.selected_commit, selected);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn clicking_commit_text_in_each_column_selects_the_commit() {

@@ -126,6 +126,18 @@ pub fn changes() -> Vec<ChangeFile> {
     ]
 }
 
+pub fn long_history() -> Vec<Commit> {
+    (0..20)
+        .flat_map(|batch| {
+            commits().into_iter().map(move |mut commit| {
+                commit.hash = format!("{batch:02}{}", commit.hash);
+                commit.message = format!("History {batch}: {}", commit.message);
+                commit
+            })
+        })
+        .collect()
+}
+
 pub fn commits() -> Vec<Commit> {
     vec![
         Commit {

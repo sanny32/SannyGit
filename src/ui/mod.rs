@@ -153,7 +153,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.spacing_mut().item_spacing.y = 0.0;
             dialog_style::section(ui, palette.panel, Margin::same(18), |ui| {
                 ui.label(
-                    eframe::egui::RichText::new("Operation failed")
+                    eframe::egui::RichText::new("Attention required")
                         .size(16.0)
                         .family(crate::theme::semibold_family()),
                 );
@@ -607,7 +607,7 @@ mod tests {
                 );
             }
             for label in [
-                "Operation failed",
+                "Attention required",
                 "LLM API returned HTTP 404. Check the endpoint, model, API key and provider limits.",
                 "OK",
             ] {

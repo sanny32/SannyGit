@@ -29,24 +29,36 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         super::controls::dialog_style::header(ui, palette, dialog.operation.label(), description);
         super::controls::dialog_style::section(ui, palette.header, egui::Margin::same(18), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            if let Some(state) = &dialog.state {
-                if state.remotes.is_empty() { ui.label("No configured remotes. Add one through Repository → Edit Git Config, then reopen this dialog."); }
-                ui.add_enabled_ui(!busy, |ui| {
-                    egui::Grid::new("remote.fields").min_col_width(110.0).spacing([12.0,6.0]).show(ui, |ui| {
-                        ui.label("Remote:");
-                        ComboBox::from_id_salt("remote.name").width(310.0).selected_text(&dialog.remote).show_ui(ui, |ui| {
-                            for remote in &state.remotes { ui.selectable_value(&mut dialog.remote, remote.clone(), remote); }
-                        }); ui.end_row();
-                        if dialog.operation != Operation::Fetch {
-                            ui.label("Local branch:"); ui.label(state.branch.as_deref().unwrap_or("No local branch with commits checked out")); ui.end_row();
-                            ui.label("Remote branch:"); ui.add_sized([310.0,28.0], TextEdit::singleline(&mut dialog.branch)); ui.end_row();
-                        }
-                    });
-                    if dialog.operation == Operation::Push { ui.checkbox(&mut dialog.set_upstream, "Set as upstream (track this remote branch)"); }
+            let loaded = dialog.state.is_some();
+            let state = dialog.state.clone().unwrap_or_default();
+            // Render the same fields while loading, running or reporting errors.
+            ui.add_enabled_ui(!busy && loaded, |ui| {
+                egui::Grid::new("remote.fields").min_col_width(110.0).spacing([12.0,6.0]).show(ui, |ui| {
+                    ui.label("Remote:");
+                    ComboBox::from_id_salt("remote.name").width(310.0).truncate().selected_text(&dialog.remote).show_ui(ui, |ui| {
+                        for remote in &state.remotes { ui.selectable_value(&mut dialog.remote, remote.clone(), remote); }
+                    }); ui.end_row();
+                    if dialog.operation == Operation::Pull {
+                        ui.label("Local branch:");
+                        let branch = state.branch.as_deref().unwrap_or(if loaded { "No local branch with commits checked out" } else { "—" });
+                        ui.add_sized([310.0, 26.0], egui::Label::new(branch).truncate()).help_text(branch);
+                        ui.end_row();
+                        ui.label("Remote branch:"); ui.add_sized([310.0,28.0], TextEdit::singleline(&mut dialog.branch)); ui.end_row();
+                    }
                 });
-            } else { ui.spinner(); ui.label("Loading remotes…"); }
-            if busy && dialog.state.is_some() { ui.horizontal(|ui| { ui.spinner(); ui.label(&app.status); }); }
-            if let Some(error) = &app.error { ui.add(egui::Label::new(RichText::new(error).color(palette.removed_text)).wrap()); }
+            });
+            let (message, color) = if let Some(error) = &app.error {
+                (error.as_str(), palette.removed_text)
+            } else if !loaded {
+                ("Loading remotes…", palette.muted)
+            } else if busy {
+                (app.status.as_str(), palette.muted)
+            } else if state.remotes.is_empty() {
+                ("No configured remotes. Add one through Repository → Edit Git Config, then reopen this dialog.", palette.muted)
+            } else {
+                ("Cancellation does not roll back local or remote changes.", palette.muted)
+            };
+            ui.add_sized([ui.available_width(), 26.0], egui::Label::new(RichText::new(message).color(color)).truncate()).help_text(message);
         });
         super::controls::dialog_style::section(ui, palette.header, egui::Margin::symmetric(18,12), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

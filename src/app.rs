@@ -1549,6 +1549,11 @@ impl SannyGitApp {
                 snapshot,
             } => {
                 let hidden_push = success == "Push complete" && self.push_dialog_hidden();
+                let cancellation_requested = self
+                    .manager
+                    .cancel
+                    .as_ref()
+                    .is_some_and(|cancel| cancel.load(Ordering::Relaxed));
                 if matches!(
                     success,
                     "Fetch complete" | "Pull complete" | "Push complete"
@@ -1600,30 +1605,50 @@ impl SannyGitApp {
                 if outcome.is_ok() && success == "Checkout complete" {
                     self.remote_checkout = None;
                 }
-                let refreshed = snapshot.is_ok();
-                match snapshot {
-                    Ok(snapshot) => self.apply_snapshot(snapshot),
+                let refresh_error = match snapshot {
+                    Ok(snapshot) => {
+                        self.apply_snapshot(snapshot);
+                        None
+                    }
                     Err(error) => {
                         self.state_current = false;
-                        self.error =
-                            Some(format!("Could not refresh after the operation: {error}"));
-                        self.status = "Refresh required before further operations".into();
+                        Some(format!("Could not refresh repository: {error}. Refresh before further operations."))
                     }
-                }
+                };
                 match outcome {
                     Ok(()) => {
-                        if refreshed {
-                            self.status = success.into();
-                        }
+                        self.status = success.into();
+                        self.error = refresh_error.map(|error| format!("{success}. {error}"));
                     }
                     Err(error) => {
-                        self.error = Some(error);
-                        self.status =
-                            "Operation failed; check the refreshed repository state".into();
+                        self.status = if cancellation_requested {
+                            "Cancellation requested; verify local and remote state before retrying"
+                        } else {
+                            "Operation failed"
+                        }
+                        .into();
+                        let error = if cancellation_requested {
+                            format!(
+                                "{error}\nCancellation does not roll back local or remote changes."
+                            )
+                        } else {
+                            error
+                        };
+                        self.error = Some(match refresh_error {
+                            Some(refresh) => format!("{error}\n{refresh}"),
+                            None => error,
+                        });
                     }
                 }
+                if !self.state_current {
+                    self.status
+                        .push_str("; refresh required before further operations");
+                }
                 if hidden_push {
-                    self.finish_hidden_push();
+                    self.network_dialog = None;
+                    if let Some(error) = self.error.take() {
+                        self.status = format!("{}: {error}", self.status);
+                    }
                 }
             }
             WorkerResult::Diff { index, result } => {
@@ -2220,6 +2245,10 @@ mod tests {
                     );
                     assert_eq!(app.network_dialog.is_some(), !skip && failed);
                     assert_eq!(app.error.is_some(), !skip && (failed || refresh_failed));
+                    if !failed {
+                        assert!(app.status.starts_with("Push complete"));
+                        assert!(!app.status.contains("Push failed"));
+                    }
                     if skip {
                         assert!(app.status.contains(if failed {
                             "Rejected"
@@ -2228,6 +2257,219 @@ mod tests {
                         } else {
                             "Push complete"
                         }));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn network_dialogs_keep_geometry_through_loading_errors_retry_and_cancellation() {
+        use eframe::egui::{Context, Id, Pos2, RawInput};
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for style in [InterfaceStyle::Classic, InterfaceStyle::Modern] {
+                for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                    for operation in [
+                        crate::remotes::Operation::Fetch,
+                        crate::remotes::Operation::Pull,
+                        crate::remotes::Operation::Push,
+                    ] {
+                        let ctx = Context::default();
+                        crate::theme::install_fonts(&ctx);
+                        egui_extras::install_image_loaders(&ctx);
+                        theme.apply(&ctx);
+                        let mut app = SannyGitApp::with_theme(theme);
+                        app.interface_style = style;
+                        app.network_dialog = Some(RemoteDialog {
+                            operation,
+                            state: None,
+                            remote: String::new(),
+                            branch: String::new(),
+                            set_upstream: false,
+                            dont_show_again: false,
+                        });
+                        let mut baseline = None;
+                        let mut button_positions = None;
+                        let (sender, receiver) = mpsc::channel();
+                        app.worker = Some(receiver);
+                        for stage in 0..6 {
+                            match stage {
+                                1 => {
+                                    app.worker = None;
+                                    let dialog = app.network_dialog.as_mut().unwrap();
+                                    dialog.remote = "origin".into();
+                                    dialog.branch = "main".into();
+                                    dialog.state = Some(crate::remotes::State {
+                                        remotes: vec!["origin".into()],
+                                        branch: Some("main".into()),
+                                        ..Default::default()
+                                    });
+                                }
+                                2 => {
+                                    app.error = Some("Network request failed. ".repeat(100));
+                                }
+                                3 => {
+                                    app.error = None;
+                                    let (_sender, receiver) = mpsc::channel();
+                                    app.worker = Some(receiver);
+                                    app.manager.cancel = Some(Arc::new(AtomicBool::new(false)));
+                                    app.status = "Network operation in progress…".into();
+                                }
+                                4 => {
+                                    app.cancel_repository_job();
+                                    assert!(app.busy());
+                                    assert!(!app.remote_allowed());
+                                    assert!(app
+                                        .manager
+                                        .cancel
+                                        .as_ref()
+                                        .unwrap()
+                                        .load(Ordering::Relaxed));
+                                }
+                                5 => {
+                                    app.worker = None;
+                                    app.manager.cancel = None;
+                                    app.error = Some("Operation cancelled; verify local and remote state before retrying".into());
+                                }
+                                _ => {}
+                            }
+                            for frame in 0..4 {
+                                let mut output = ctx.run_ui(
+                                    RawInput {
+                                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                                        ..Default::default()
+                                    },
+                                    |ui| ui::show(ui, &mut app),
+                                );
+                                output.textures_delta.clear();
+                                if frame < 3 {
+                                    continue;
+                                }
+                                let rect = ctx
+                                    .memory(|memory| {
+                                        memory.area_rect(Id::unique("remote.operation"))
+                                    })
+                                    .unwrap();
+                                assert!(Rect::from_min_size(Pos2::ZERO, size).contains_rect(rect));
+                                if let Some(before) = baseline {
+                                    assert_eq!(rect, before, "Dialog changed at stage {stage}: {operation:?} {theme:?} {style:?} {size:?}");
+                                } else {
+                                    baseline = Some(rect);
+                                }
+                                let buttons = output
+                                    .shapes
+                                    .iter()
+                                    .filter_map(|shape| match &shape.shape {
+                                        egui::Shape::Text(text)
+                                            if text.galley.job.text == "Cancel"
+                                                || text.galley.job.text == operation.label() =>
+                                        {
+                                            Some((text.galley.job.text.clone(), text.pos))
+                                        }
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>();
+                                if let Some(before) = &button_positions {
+                                    assert_eq!(
+                                        &buttons, before,
+                                        "Buttons moved at stage {stage}: {operation:?}"
+                                    );
+                                } else {
+                                    button_positions = Some(buttons);
+                                }
+                            }
+                        }
+                        drop(sender);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn operation_outcomes_remain_distinct_from_refresh_and_cancellation() {
+        for success in [
+            "Commit created",
+            "Commit amended",
+            "Fetch complete",
+            "Pull complete",
+            "Push complete",
+        ] {
+            for failed in [false, true] {
+                for refresh_failed in [false, true] {
+                    for cancelled in [false, true] {
+                        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+                        app.repositories = crate::mock_data::repositories();
+                        app.selected_repository = 0;
+                        app.changes = crate::mock_data::changes();
+                        app.selected_change = 2;
+                        app.commits = crate::mock_data::commits();
+                        app.selected_commit = Some(app.commits[1].hash.clone());
+                        let selected_commit = app.selected_commit.clone();
+                        let selected_path = app.changes[2].path.clone();
+                        app.commit_message = "Keep on failure".into();
+                        app.state_current = false;
+                        app.manager.cancel = Some(Arc::new(AtomicBool::new(false)));
+                        if cancelled {
+                            app.cancel_repository_job();
+                        }
+                        let snapshot = if refresh_failed {
+                            Err("Refresh diagnostic".into())
+                        } else {
+                            Ok(git::Snapshot {
+                                repository: Repository {
+                                    name: app.repositories[0].name.clone(),
+                                    path: app.repositories[0].path.clone(),
+                                },
+                                branch: "main".into(),
+                                changes: crate::mock_data::changes(),
+                            })
+                        };
+                        deliver(
+                            &mut app,
+                            WorkerResult::Operation {
+                                committed: !failed && success.starts_with("Commit"),
+                                success,
+                                outcome: if failed {
+                                    Err("Operation diagnostic".into())
+                                } else {
+                                    Ok(())
+                                },
+                                snapshot,
+                            },
+                        );
+                        assert_eq!(app.state_current, !refresh_failed);
+                        assert_eq!(app.selected_commit, selected_commit);
+                        assert_eq!(app.changes[app.selected_change].path, selected_path);
+                        assert_eq!(
+                            app.commit_message.is_empty(),
+                            !failed && success.starts_with("Commit")
+                        );
+                        if failed {
+                            assert!(app
+                                .error
+                                .as_deref()
+                                .unwrap()
+                                .contains("Operation diagnostic"));
+                            if cancelled {
+                                assert!(app.status.starts_with("Cancellation requested"));
+                                assert!(app
+                                    .error
+                                    .as_deref()
+                                    .unwrap()
+                                    .contains("does not roll back"));
+                            } else {
+                                assert!(app.status.starts_with("Operation failed"));
+                            }
+                        } else {
+                            assert!(app.status.starts_with(success));
+                        }
+                        if refresh_failed {
+                            assert!(app.error.as_deref().unwrap().contains("Refresh diagnostic"));
+                            assert!(app.status.contains("refresh required"));
+                        } else if !failed {
+                            assert!(app.error.is_none());
+                        }
                     }
                 }
             }
