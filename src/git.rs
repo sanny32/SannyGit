@@ -245,6 +245,7 @@ fn command_error(operation: &str) -> String {
 
 /// Stages or unstages the complete selected file; never changes working-tree bytes.
 pub fn set_staged(root: &Path, path: &str, staged: bool) -> Result<(), String> {
+    require_no_operation(root)?;
     let snapshot = load(root)?;
     let change = snapshot
         .changes
@@ -363,6 +364,7 @@ pub fn commit(root: &Path, message: &str, contents: CommitContents) -> Result<()
 
 /// Loads HEAD explicitly rather than relying on the filtered journal selection.
 pub fn amend_message(root: &Path) -> Result<(String, String), String> {
+    require_no_operation(root)?;
     let head = text(run(root, &["rev-parse", "--revs-only", "HEAD"])?)?;
     let head = head.trim();
     if head.is_empty() {
@@ -400,6 +402,12 @@ fn check_amend_head(root: &Path, expected_head: &str) -> Result<(), String> {
     if head.trim() != expected_head {
         return Err("HEAD has changed. Turn off Amend last commit and enable it again.".into());
     }
+    require_no_operation(root)
+}
+
+/// Resolve markers through Git so linked worktrees use their own operation state.
+/// SannyGit has no continue/abort workflow yet; leave unfinished operations to Git.
+pub(crate) fn require_no_operation(root: &Path) -> Result<(), String> {
     for marker in [
         "MERGE_HEAD",
         "CHERRY_PICK_HEAD",
@@ -409,8 +417,10 @@ fn check_amend_head(root: &Path, expected_head: &str) -> Result<(), String> {
         "sequencer",
     ] {
         let path = text(run(root, &["rev-parse", "--git-path", marker])?)?;
-        if root.join(path.strip_suffix('\n').unwrap_or(&path)).exists() {
-            return Err("Finish the merge, rebase, cherry-pick or revert before amending.".into());
+        match root.join(path.strip_suffix('\n').unwrap_or(&path)).try_exists() {
+            Ok(false) => {}
+            Ok(true) => return Err("Finish the in-progress merge, rebase, cherry-pick or revert outside SannyGit before retrying this action.".into()),
+            Err(error) => return Err(format!("Could not check unfinished Git operations: {error}")),
         }
     }
     Ok(())
@@ -423,6 +433,7 @@ fn commit_with_mode(
     contents: CommitContents,
 ) -> Result<(), String> {
     validate_message(message)?;
+    require_no_operation(root)?;
     let snapshot = load(root)?;
     if snapshot
         .changes
@@ -1272,6 +1283,73 @@ pub(crate) mod tests {
         assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), head);
         assert!(repo.git(&["diff", "--cached", "--name-only"]).is_empty());
         assert_eq!(repo.git(&["status", "--porcelain"]).trim(), "?? new");
+    }
+
+    #[test]
+    fn unfinished_operations_preserve_index_worktree_and_head_in_linked_worktrees() {
+        let repo = TempRepo::new();
+        repo.write("file", "base\n");
+        commit(&repo.0, "Base", CommitContents::All).unwrap();
+        repo.git(&["branch", "other"]);
+        let linked = repo.0.join("linked");
+        repo.git(&["worktree", "add", "--detach", linked.to_str().unwrap()]);
+        for root in [&repo.0, &linked] {
+            std::fs::write(root.join("file"), "staged\n").unwrap();
+            set_staged(root, "file", true).unwrap();
+            std::fs::write(root.join("file"), "unstaged\n").unwrap();
+            std::fs::write(root.join("new"), "untracked\n").unwrap();
+            let head = text(run(root, &["rev-parse", "HEAD"]).unwrap()).unwrap();
+            let index = run(root, &["ls-files", "--stage", "-z"]).unwrap();
+            for marker in [
+                "MERGE_HEAD",
+                "CHERRY_PICK_HEAD",
+                "REVERT_HEAD",
+                "rebase-merge",
+                "rebase-apply",
+                "sequencer",
+            ] {
+                let marker_path =
+                    text(run(root, &["rev-parse", "--git-path", marker]).unwrap()).unwrap();
+                let marker_path = root.join(marker_path.trim_end_matches('\n'));
+                let directory = matches!(marker, "rebase-merge" | "rebase-apply" | "sequencer");
+                if directory {
+                    std::fs::create_dir(&marker_path).unwrap();
+                } else {
+                    std::fs::write(&marker_path, &head).unwrap();
+                }
+                for mode in [CommitContents::All, CommitContents::Staged] {
+                    assert!(commit(root, "Blocked", mode)
+                        .unwrap_err()
+                        .contains("Finish"));
+                    assert!(amend_commit(root, "Blocked", head.trim(), mode)
+                        .unwrap_err()
+                        .contains("Finish"));
+                }
+                assert!(amend_message(root).unwrap_err().contains("Finish"));
+                assert!(set_staged(root, "file", true)
+                    .unwrap_err()
+                    .contains("Finish"));
+                assert!(set_staged(root, "file", false)
+                    .unwrap_err()
+                    .contains("Finish"));
+                assert!(crate::branches::switch(root, "refs/heads/other")
+                    .unwrap_err()
+                    .contains("Finish"));
+                assert_eq!(run(root, &["ls-files", "--stage", "-z"]).unwrap(), index);
+                assert_eq!(
+                    text(run(root, &["rev-parse", "HEAD"]).unwrap()).unwrap(),
+                    head
+                );
+                assert_eq!(std::fs::read(root.join("file")).unwrap(), b"unstaged\n");
+                assert_eq!(std::fs::read(root.join("new")).unwrap(), b"untracked\n");
+                if directory {
+                    std::fs::remove_dir(marker_path).unwrap();
+                } else {
+                    std::fs::remove_file(marker_path).unwrap();
+                }
+            }
+            require_no_operation(root).unwrap();
+        }
     }
 
     #[test]

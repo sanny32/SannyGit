@@ -144,7 +144,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 }
                 Dialog::Settings => {}
                 Dialog::CloseRepository => {
-                    ui.label("Close this repository and discard its unsaved commit message?");
+                    ui.label("Close this repository and discard its commit message drafts?");
                     ui.horizontal(|ui| {
                         if ui.button("Cancel").clicked() { app.manager.dialog = None; }
                         if ui.button("Close Repository").clicked() { app.close_repository(true); }

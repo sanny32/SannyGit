@@ -490,10 +490,22 @@ impl SannyGitApp {
         if self.busy() {
             return;
         }
-        if !discard_draft && !self.commit_message.is_empty() {
+        if !discard_draft
+            && (!self.commit_message.is_empty()
+                || self
+                    .amend_draft
+                    .as_ref()
+                    .is_some_and(|draft| !draft.is_empty()))
+        {
             self.manager.dialog = Some(Dialog::CloseRepository);
             return;
         }
+        if let Some(repository) = self.repositories.get(self.selected_repository) {
+            self.commit_drafts.remove(&repository.path);
+        }
+        self.amend = false;
+        self.amend_head = None;
+        self.amend_draft = None;
         self.open_dialog = false;
         self.selected_repository = usize::MAX;
         self.tracking.invalidate();
@@ -839,6 +851,106 @@ mod tests {
             .groups
             .iter()
             .all(|g| g.paths.is_empty()));
+    }
+
+    #[test]
+    fn drafts_survive_repository_switch_restart_amend_and_failed_open() {
+        let first = crate::git::tests::TempRepo::new();
+        first.write("file", "base\n");
+        crate::git::commit(&first.0, "Base", crate::git::CommitContents::All).unwrap();
+        let second = crate::git::tests::TempRepo::new();
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.apply_snapshot(crate::git::load(&first.0).unwrap());
+        app.commit_message = "Normal draft\n\nBody".into();
+        app.apply_snapshot(crate::git::load(&second.0).unwrap());
+        assert!(app.commit_message.is_empty());
+        app.commit_message = "Other repository".into();
+        app.apply_snapshot(crate::git::load(&first.0).unwrap());
+        assert_eq!(app.commit_message, "Normal draft\n\nBody");
+        let (head, _) = crate::git::amend_message(&first.0).unwrap();
+        app.amend = true;
+        app.amend_head = Some(head.clone());
+        app.amend_draft = Some(std::mem::replace(
+            &mut app.commit_message,
+            "Edited amend".into(),
+        ));
+        app.apply_snapshot(crate::git::load(&second.0).unwrap());
+        app.apply_snapshot(crate::git::load(&first.0).unwrap());
+        assert!(app.amend);
+        assert_eq!(app.commit_message, "Edited amend");
+        let mut storage = Storage::default();
+        eframe::App::save(&mut app, &mut storage);
+        let mut restored = SannyGitApp::with_theme(ThemeChoice::Dark);
+        restored.repositories = app.repositories;
+        restored.restore_commit_drafts(&storage);
+        restored.restore_active_repository(&storage);
+        finish_restore(&mut restored);
+        assert!(restored.amend);
+        assert_eq!(restored.amend_head.as_deref(), Some(head.as_str()));
+        assert_eq!(restored.commit_message, "Edited amend");
+        restored.open_repository(first.0.join("missing").to_string_lossy().into_owned());
+        finish_restore(&mut restored);
+        assert!(restored.error.is_some());
+        assert_eq!(restored.commit_message, "Edited amend");
+        restored.set_amend(false);
+        assert_eq!(restored.commit_message, "Normal draft\n\nBody");
+        restored.apply_snapshot(crate::git::load(&second.0).unwrap());
+        assert_eq!(restored.commit_message, "Other repository");
+        restored.close_repository(true);
+        restored.apply_snapshot(crate::git::load(&second.0).unwrap());
+        assert!(restored.commit_message.is_empty());
+        assert!(!restored.amend);
+        restored.apply_snapshot(crate::git::load(&first.0).unwrap());
+        assert_eq!(restored.commit_message, "Normal draft\n\nBody");
+    }
+
+    #[test]
+    fn restored_amend_rejects_changed_head_and_keeps_drafts_until_success() {
+        let repo = crate::git::tests::TempRepo::new();
+        repo.write("file", "base\n");
+        crate::git::commit(&repo.0, "Base", crate::git::CommitContents::All).unwrap();
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.apply_snapshot(crate::git::load(&repo.0).unwrap());
+        app.commit_message = "Amend draft".into();
+        app.amend = true;
+        app.amend_head = Some(crate::git::amend_message(&repo.0).unwrap().0);
+        app.amend_draft = Some("Normal draft".into());
+        let mut storage = Storage::default();
+        eframe::App::save(&mut app, &mut storage);
+        repo.write("file", "external commit\n");
+        crate::git::commit(&repo.0, "External", crate::git::CommitContents::All).unwrap();
+        repo.write("file", "keep unstaged\n");
+        let mut restored = SannyGitApp::with_theme(ThemeChoice::Dark);
+        restored.repositories = app.repositories;
+        restored.restore_commit_drafts(&storage);
+        restored.restore_active_repository(&storage);
+        finish_restore(&mut restored);
+        restored.create_commit();
+        finish_restore(&mut restored);
+        assert!(restored
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("HEAD has changed"));
+        assert_eq!(restored.commit_message, "Amend draft");
+        assert!(restored.amend);
+        assert!(repo.git(&["diff", "--cached", "--name-only"]).is_empty());
+        assert_eq!(repo.git(&["log", "-1", "--format=%s"]).trim(), "External");
+        restored.set_amend(false);
+        assert_eq!(restored.commit_message, "Normal draft");
+        restored.create_commit();
+        finish_restore(&mut restored);
+        assert!(restored.error.is_none());
+        assert!(restored.commit_message.is_empty());
+        eframe::App::save(&mut restored, &mut storage);
+        restored.restore_commit_drafts(&storage);
+        restored.load_commit_draft();
+        assert!(restored.commit_message.is_empty());
+        assert!(restored.commit_drafts.is_empty());
+        assert_eq!(
+            repo.git(&["log", "-1", "--format=%s"]).trim(),
+            "Normal draft"
+        );
     }
 
     #[test]

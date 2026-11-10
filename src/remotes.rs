@@ -89,20 +89,7 @@ fn require_pull_ready(root: &Path) -> Result<(), String> {
     if !git::load(root)?.changes.is_empty() {
         return Err("Commit or move aside local changes before pulling.".into());
     }
-    for marker in [
-        "MERGE_HEAD",
-        "CHERRY_PICK_HEAD",
-        "REVERT_HEAD",
-        "rebase-merge",
-        "rebase-apply",
-        "sequencer",
-    ] {
-        let path = git::text(git::run(root, &["rev-parse", "--git-path", marker])?)?;
-        if root.join(path.trim_end()).exists() {
-            return Err("Finish the in-progress Git operation before pulling.".into());
-        }
-    }
-    Ok(())
+    git::require_no_operation(root)
 }
 
 pub fn run(

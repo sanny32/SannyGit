@@ -111,6 +111,7 @@ pub fn name_hint(name: &str) -> Option<&'static str> {
 }
 
 fn require_clean(root: &Path) -> Result<(), String> {
+    git::require_no_operation(root)?;
     if !git::load(root)?.changes.is_empty() {
         return Err("Commit or move aside staged, unstaged and untracked changes before switching branches.".into());
     }

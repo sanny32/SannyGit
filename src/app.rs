@@ -148,6 +148,14 @@ pub struct RenameBranchDialog {
     pub name: String,
 }
 
+/// Only user-authored text and the expected amend target belong in draft storage.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+struct CommitDraft {
+    message: String,
+    amend_head: Option<String>,
+    normal_message: Option<String>,
+}
+
 pub struct SannyGitApp {
     pub manager: RepositoryManager,
     pub tracking: tracking::Monitor,
@@ -202,6 +210,7 @@ pub struct SannyGitApp {
     pub amend: bool,
     amend_head: Option<String>,
     amend_draft: Option<String>,
+    commit_drafts: BTreeMap<String, CommitDraft>,
     pub repository_path: String,
     pub open_dialog: bool,
     pub error: Option<String>,
@@ -283,6 +292,9 @@ impl SannyGitApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, llm_models::STORAGE_KEY))
             .unwrap_or_default();
+        if let Some(storage) = creation_context.storage {
+            app.restore_commit_drafts(storage);
+        }
         app.refresh_llm_models(&creation_context.egui_ctx);
         #[cfg(target_os = "macos")]
         {
@@ -315,6 +327,46 @@ impl SannyGitApp {
             app.restore_active_repository(storage);
         }
         app
+    }
+
+    fn restore_commit_drafts(&mut self, storage: &dyn eframe::Storage) {
+        self.commit_drafts =
+            eframe::get_value(storage, "sannygit.commit_drafts").unwrap_or_default();
+    }
+
+    fn remember_commit_draft(&mut self) {
+        let Some(repository) = self.repositories.get(self.selected_repository) else {
+            return;
+        };
+        let draft = CommitDraft {
+            message: self.commit_message.clone(),
+            amend_head: self.amend_head.clone().filter(|_| self.amend),
+            normal_message: self.amend_draft.clone().filter(|_| self.amend),
+        };
+        if draft.message.is_empty()
+            && draft
+                .normal_message
+                .as_deref()
+                .unwrap_or_default()
+                .is_empty()
+        {
+            self.commit_drafts.remove(&repository.path);
+        } else {
+            self.commit_drafts.insert(repository.path.clone(), draft);
+        }
+    }
+
+    fn load_commit_draft(&mut self) {
+        let draft = self
+            .repositories
+            .get(self.selected_repository)
+            .and_then(|repository| self.commit_drafts.get(&repository.path))
+            .cloned()
+            .unwrap_or_default();
+        self.commit_message = draft.message;
+        self.amend_head = draft.amend_head;
+        self.amend = self.amend_head.is_some();
+        self.amend_draft = draft.normal_message;
     }
 
     fn restore_active_repository(&mut self, storage: &dyn eframe::Storage) {
@@ -390,6 +442,7 @@ impl SannyGitApp {
             amend: false,
             amend_head: None,
             amend_draft: None,
+            commit_drafts: BTreeMap::new(),
             repository_path: String::new(),
             open_dialog: false,
             error: None,
@@ -664,6 +717,9 @@ impl SannyGitApp {
             self.repositories.len() - 1
         });
         let same_repository = self.selected_repository == index;
+        if !same_repository {
+            self.remember_commit_draft();
+        }
         self.selected_repository = index;
         if !same_repository {
             self.manager.highlighted_repository = Some(self.repositories[index].path.clone());
@@ -718,10 +774,7 @@ impl SannyGitApp {
             self.selected_commit = None;
             self.commit_details_open = false;
             self.commit_preview_error = None;
-            self.commit_message.clear();
-            self.amend = false;
-            self.amend_head = None;
-            self.amend_draft = None;
+            self.load_commit_draft();
             self.journal_filter.clear();
         }
         self.status = if self.changes.is_empty() {
@@ -1535,10 +1588,10 @@ impl SannyGitApp {
                     self.new_tag_message.clear();
                 }
                 if committed {
+                    self.commit_message = self.amend_draft.take().unwrap_or_default();
                     self.amend = false;
                     self.amend_head = None;
-                    self.amend_draft = None;
-                    self.commit_message.clear();
+                    self.remember_commit_draft();
                 }
                 if outcome.is_ok() && success.starts_with("Branch created") {
                     self.branch_dialog_open = false;
@@ -1738,6 +1791,8 @@ impl eframe::App for SannyGitApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.remember_commit_draft();
+        eframe::set_value(storage, "sannygit.commit_drafts", &self.commit_drafts);
         self.llm_models.update();
         eframe::set_value(storage, llm_models::STORAGE_KEY, &self.llm_models);
         eframe::set_value(
@@ -2180,7 +2235,7 @@ mod tests {
     }
 
     #[test]
-    fn operation_errors_keep_draft_and_success_clears_it_even_if_refresh_fails() {
+    fn operation_errors_keep_draft_and_success_restores_normal_draft_even_if_refresh_fails() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.commit_message = "Keep draft".into();
         app.amend = true;
@@ -2210,7 +2265,7 @@ mod tests {
                 snapshot: Err("Refresh failed".into()),
             },
         );
-        assert!(app.commit_message.is_empty());
+        assert_eq!(app.commit_message, "Original draft");
         assert!(!app.amend);
         assert!(app.amend_head.is_none());
         assert!(app.amend_draft.is_none());
