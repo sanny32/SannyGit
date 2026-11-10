@@ -643,18 +643,15 @@ impl SannyGitApp {
             .changes
             .get(self.selected_change)
             .map(|c| c.path.clone());
-        let new_repository = !self
+        let existing_repository = self
             .repositories
             .iter()
-            .any(|r| r.path == snapshot.repository.path);
-        let index = self
-            .repositories
-            .iter()
-            .position(|r| r.path == snapshot.repository.path)
-            .unwrap_or_else(|| {
-                self.repositories.push(snapshot.repository);
-                self.repositories.len() - 1
-            });
+            .position(|r| crate::repository::same_path(&r.path, &snapshot.repository.path));
+        let new_repository = existing_repository.is_none();
+        let index = existing_repository.unwrap_or_else(|| {
+            self.repositories.push(snapshot.repository);
+            self.repositories.len() - 1
+        });
         let same_repository = self.selected_repository == index;
         self.selected_repository = index;
         if !same_repository {

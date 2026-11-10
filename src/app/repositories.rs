@@ -737,6 +737,7 @@ mod tests {
             Path::new(&path).canonicalize().unwrap()
         );
         assert_eq!(restored.selected_repository, 0);
+        assert_eq!(restored.repositories.len(), 2);
         restored.close_repository(true);
         eframe::App::save(&mut restored, &mut storage);
         let saved: Option<String> =
@@ -745,6 +746,40 @@ mod tests {
         restored.restore_active_repository(&storage);
         assert!(!restored.busy());
         assert_eq!(restored.selected_repository, usize::MAX);
+    }
+
+    #[test]
+    fn opening_an_equivalent_path_reuses_the_bookmark_and_its_settings() {
+        let repo = crate::git::tests::TempRepo::new();
+        let stored_path = repo
+            .0
+            .canonicalize()
+            .unwrap()
+            .join(".")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories.push(crate::models::Repository {
+            name: "Saved name".into(),
+            path: stored_path.clone(),
+        });
+        app.repository_llm_configs
+            .insert(stored_path.clone(), crate::llm::Config::default());
+        app.manager
+            .preferences
+            .groups
+            .push(crate::repository::RepositoryGroup {
+                name: "Saved group".into(),
+                paths: vec![stored_path.clone()],
+            });
+        app.apply_snapshot(git::load(&repo.0).unwrap());
+        assert_eq!(app.repositories.len(), 1);
+        assert_eq!(app.selected_repository, 0);
+        assert_eq!(app.repositories[0].name, "Saved name");
+        assert_eq!(app.repositories[0].path, stored_path);
+        assert!(app.repository_llm_configs.contains_key(&stored_path));
+        assert_eq!(app.manager.preferences.groups[0].paths, [stored_path]);
     }
 
     #[test]

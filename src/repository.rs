@@ -42,6 +42,23 @@ pub struct SearchResult {
     pub skipped: usize,
 }
 
+/// Compare stored and Git-reported paths without filesystem work on the UI thread.
+pub fn same_path(left: &str, right: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    let (left, right) = (windows_path(left), windows_path(right));
+    Path::new(&left) == Path::new(&right)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_path(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    if let Some(unc) = path.strip_prefix("//?/UNC/") {
+        format!("//{unc}")
+    } else {
+        path.strip_prefix("//?/").unwrap_or(&path).to_owned()
+    }
+}
+
 /// Reads local Git configuration only; never connects to the hosting service.
 pub fn hosting_provider(root: &Path) -> Result<Option<crate::clone_source::Provider>, String> {
     let names = git::text(git::run(root, &["remote"])?)?;
@@ -742,6 +759,18 @@ mod tests {
 
     use super::*;
     use crate::git::tests::TempRepo;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn stored_windows_paths_match_git_paths_without_merging_distinct_repositories() {
+        assert!(same_path(r"\\?\C:\Work\repo", "C:/Work/repo"));
+        assert!(same_path(
+            r"\\?\UNC\server\share\repo",
+            "//server/share/repo"
+        ));
+        assert!(!same_path(r"\\?\C:\Work\repo", "D:/Work/repo"));
+        assert!(!same_path(r"\\?\C:\Work\repo", "C:/Work/other"));
+    }
 
     #[test]
     fn local_clone_source_is_an_encoded_file_url() {
