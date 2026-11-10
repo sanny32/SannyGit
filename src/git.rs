@@ -101,6 +101,23 @@ pub(crate) fn run_with_input(
     execute(path, args, input, TIMEOUT, None, CommandMode::Normal)
 }
 
+/// Read-only commands with bounded stdin and the same cancellation/timeout handling.
+pub(crate) fn run_with_input_controlled(
+    path: &Path,
+    args: &[&str],
+    input: &[u8],
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, String> {
+    execute(
+        path,
+        args,
+        Some(input),
+        TIMEOUT,
+        Some(cancel),
+        CommandMode::Normal,
+    )
+}
+
 /// Successful diagnostic output for an explicit preview (never error logging).
 pub(crate) fn run_diagnostic(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     execute(path, args, None, TIMEOUT, None, CommandMode::Diagnostic)
@@ -173,7 +190,7 @@ fn execute(
         let writer = scope.spawn(move || -> Result<(), String> {
             if let (Some(mut pipe), Some(bytes)) = (stdin, input) {
                 pipe.write_all(bytes)
-                    .map_err(|e| format!("Cannot send commit message to Git: {e}"))?;
+                    .map_err(|e| format!("Cannot send input to Git: {e}"))?;
             }
             Ok(())
         });

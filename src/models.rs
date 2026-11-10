@@ -67,6 +67,7 @@ pub struct RefSnapshot {
     pub has_head: bool,
 }
 
+#[derive(Clone)]
 pub struct Commit {
     pub message: String,
     pub author: String,

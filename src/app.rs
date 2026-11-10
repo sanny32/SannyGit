@@ -3,6 +3,7 @@ pub mod ref_management;
 mod remotes;
 pub mod stash;
 pub use remotes::RemoteDialog;
+mod history;
 mod llm_models;
 mod repositories;
 mod tracking;
@@ -46,7 +47,9 @@ enum WorkerResult {
     History {
         path: String,
         all: bool,
-        result: Result<crate::models::History, String>,
+        generation: u64,
+        append: bool,
+        result: Result<crate::history::Page, String>,
     },
     CommitPatch {
         hash: String,
@@ -246,6 +249,7 @@ pub struct SannyGitApp {
     pub history_loading: bool,
     pub history_error: Option<String>,
     history_pending: bool,
+    history_session: history::Session,
     pub selected_commit: Option<String>,
     pub commit_details_open: bool,
     pub commit_preview: Option<crate::models::DiffPreview>,
@@ -481,6 +485,7 @@ impl SannyGitApp {
             history_loading: false,
             history_error: None,
             history_pending: false,
+            history_session: history::Session::default(),
             selected_commit: None,
             commit_details_open: false,
             commit_preview: None,
@@ -777,9 +782,7 @@ impl SannyGitApp {
         self.refs_pending = true;
         self.refs_loading = true;
         self.refs_error = None;
-        self.history_pending = true;
-        self.history_loading = true;
-        self.history_error = None;
+        self.queue_history_reload();
         self.commit_preview = None;
         self.commit_preview_error = None;
         self.loaded_commit = None;
@@ -803,6 +806,7 @@ impl SannyGitApp {
             self.ref_dialog = None;
             self.new_branch_name.clear();
             self.commits.clear();
+            self.history_session.clear_view();
             self.history_edges.clear();
             self.history_max_lane = 0;
             self.history_truncated = false;
@@ -1106,15 +1110,6 @@ impl SannyGitApp {
         });
     }
 
-    pub fn reload_history(&mut self) {
-        if self.busy() || self.repositories.get(self.selected_repository).is_none() {
-            return;
-        }
-        self.history_pending = true;
-        self.history_loading = true;
-        self.history_error = None;
-    }
-
     pub fn select_commit(&mut self, hash: String) {
         if !self.commits.iter().any(|c| c.hash == hash) {
             return;
@@ -1134,26 +1129,6 @@ impl SannyGitApp {
         }
         self.loaded_commit = None;
         self.commit_preview_error = None;
-    }
-
-    fn load_history(&mut self) {
-        if self.busy() || !self.history_pending {
-            return;
-        }
-        let Some(repository) = self.repositories.get(self.selected_repository) else {
-            return;
-        };
-        let path = repository.path.clone();
-        let all = self.history_all_branches;
-        self.history_pending = false;
-        if !self.start_worker(move || WorkerResult::History {
-            result: crate::history::load(&PathBuf::from(&path), all),
-            path,
-            all,
-        }) {
-            self.history_loading = false;
-            self.history_error = self.error.clone();
-        }
     }
 
     fn load_commit_preview(&mut self) {
@@ -1437,6 +1412,7 @@ impl SannyGitApp {
                 }
                 if self.history_loading && !self.history_pending {
                     self.history_loading = false;
+                    self.history_session.cancel = None;
                     self.history_error = self.error.clone();
                 }
                 if self.commit_details_open
@@ -1510,36 +1486,13 @@ impl SannyGitApp {
                     }
                 }
             }
-            WorkerResult::History { path, all, result } => {
-                if self
-                    .repositories
-                    .get(self.selected_repository)
-                    .is_some_and(|r| r.path == path)
-                    && self.history_all_branches == all
-                {
-                    self.history_loading = false;
-                    match result {
-                        Ok(history) => {
-                            self.commits = history.commits;
-                            self.history_edges = history.edges;
-                            self.history_max_lane = history.max_lane;
-                            self.history_truncated = history.truncated;
-                            self.history_error = None;
-                            if !self
-                                .commits
-                                .iter()
-                                .any(|c| Some(&c.hash) == self.selected_commit.as_ref())
-                            {
-                                self.selected_commit = None;
-                                self.commit_details_open = false;
-                                self.commit_preview = None;
-                                self.loaded_commit = None;
-                            }
-                        }
-                        Err(error) => self.history_error = Some(error),
-                    }
-                }
-            }
+            WorkerResult::History {
+                path,
+                all,
+                generation,
+                append,
+                result,
+            } => self.apply_history(path, all, generation, append, result),
             WorkerResult::CommitPatch { hash, result } => {
                 if self.selected_commit.as_ref() == Some(&hash) {
                     match result {
@@ -1838,8 +1791,7 @@ impl eframe::App for SannyGitApp {
             self.refs_loading = true;
             self.refs_current = false;
             if self.history_all_branches {
-                self.history_pending = true;
-                self.history_loading = true;
+                self.queue_history_reload();
             }
         }
         ui.ctx()
@@ -1879,6 +1831,9 @@ impl eframe::App for SannyGitApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(cancel) = &self.generation_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(cancel) = &self.history_session.cancel {
             cancel.store(true, Ordering::Relaxed);
         }
         self.tracking.cancel();
@@ -2607,7 +2562,9 @@ mod tests {
             WorkerResult::History {
                 path: "other-repository".into(),
                 all: false,
-                result: Ok(crate::history::prepare(Vec::new(), false)),
+                generation: 0,
+                append: false,
+                result: Err("Late history result".into()),
             },
         );
         assert_eq!(app.commits.len(), count);
@@ -2616,6 +2573,8 @@ mod tests {
             WorkerResult::History {
                 path,
                 all: false,
+                generation: 0,
+                append: false,
                 result: Err("Cannot read history".into()),
             },
         );

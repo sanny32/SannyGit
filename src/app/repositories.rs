@@ -526,6 +526,7 @@ impl SannyGitApp {
         self.history_truncated = false;
         self.history_loading = false;
         self.history_pending = false;
+        self.history_session.clear_view();
         self.history_error = None;
         self.refs_current = false;
         self.refs_loading = false;

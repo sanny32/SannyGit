@@ -9,6 +9,8 @@ single-file discard, stash save/apply/pop/drop, commit/amend, history, branches
 and tags, merged-branch deletion, worktrees, remote URL management, fetch,
 fast-forward-only pull, and branch/tag push.
 
+History loads in pages of 500 commits, up to 10,000. Search covers loaded history.
+
 ## Build
 
 The build scripts install missing dependencies and build the Release executable:
