@@ -390,6 +390,58 @@ pub fn rename(root: &Path, full_name: &str, name: &str) -> Result<(), String> {
     git::run(root, &["branch", "-m", "--", &target.name, name]).map(|_| ())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeletePreview {
+    pub full_name: String,
+    pub name: String,
+    pub oid: String,
+    pub head: String,
+}
+
+pub fn preview_delete(root: &Path, full_name: &str) -> Result<DeletePreview, String> {
+    git::require_no_operation(root)?;
+    let refs = load(root)?;
+    let target = refs
+        .refs
+        .iter()
+        .find(|entry| entry.kind == RefKind::Local && entry.full_name == full_name)
+        .ok_or("Select an existing local branch, then reload details.")?;
+    if target.current {
+        return Err("The current branch cannot be deleted.".into());
+    }
+    if let Some(reason) = name_hint(&target.name) {
+        return Err(reason.into());
+    }
+    if crate::repository::worktrees(root)?
+        .iter()
+        .any(|tree| tree.branch.as_deref() == Some(&target.name))
+    {
+        return Err("This branch is checked out in a worktree and cannot be deleted.".into());
+    }
+    let head = git::text(git::run(root, &["rev-parse", "--verify", "HEAD^{commit}"])?)?
+        .trim()
+        .to_owned();
+    git::run(root, &["merge-base", "--is-ancestor", &target.hash, &head])
+        .map_err(|_| "The branch is not fully merged into the current HEAD, or its ancestry could not be verified. Force deletion is not available.".to_owned())?;
+    Ok(DeletePreview {
+        full_name: target.full_name.clone(),
+        name: target.name.clone(),
+        oid: target.hash.clone(),
+        head,
+    })
+}
+
+pub fn delete(root: &Path, expected: &DeletePreview) -> Result<(), String> {
+    if preview_delete(root, &expected.full_name)? != *expected {
+        return Err(
+            "The branch or HEAD changed after review. Reload details and confirm again.".into(),
+        );
+    }
+    git::run(root, &["branch", "-d", "--", &expected.name])
+        .map_err(|error| format!("Branch deletion did not complete: {error} Only merged branches can be deleted; no force option is used."))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,6 +453,87 @@ mod tests {
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "fixture"]);
         repo
+    }
+
+    #[test]
+    fn delete_removes_only_a_reviewed_merged_branch_and_preserves_dirty_index_and_files() {
+        let repo = committed_repo();
+        repo.git(&["branch", "merged"]);
+        repo.git(&["branch", "keep"]);
+        repo.write("file", "staged\n");
+        repo.git(&["add", "file"]);
+        repo.write("file", "unstaged\n");
+        repo.write("new", "keep new\n");
+        let index = repo.git(&["ls-files", "--stage"]);
+        let head = repo.git(&["rev-parse", "HEAD"]);
+        let preview = preview_delete(&repo.0, "refs/heads/merged").unwrap();
+        assert!(repo.git(&["branch", "--list", "merged"]).contains("merged"));
+        delete(&repo.0, &preview).unwrap();
+        assert!(repo.git(&["branch", "--list", "merged"]).is_empty());
+        assert!(repo.git(&["branch", "--list", "keep"]).contains("keep"));
+        assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
+        assert_eq!(repo.git(&["ls-files", "--stage"]), index);
+        assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"unstaged\n");
+        assert_eq!(std::fs::read(repo.0.join("new")).unwrap(), b"keep new\n");
+    }
+
+    #[test]
+    fn delete_rejects_current_unmerged_worktree_and_stale_branch_targets() {
+        let repo = committed_repo();
+        repo.git(&["branch", "other"]);
+        assert!(preview_delete(&repo.0, "refs/heads/main")
+            .unwrap_err()
+            .contains("current"));
+        let preview = preview_delete(&repo.0, "refs/heads/other").unwrap();
+        repo.git(&["commit", "--allow-empty", "-m", "HEAD advanced"]);
+        assert!(delete(&repo.0, &preview).unwrap_err().contains("changed"));
+        repo.git(&["switch", "other"]);
+        repo.write("file", "unmerged\n");
+        repo.git(&["add", "file"]);
+        repo.git(&["commit", "-m", "Unique"]);
+        repo.git(&["switch", "main"]);
+        assert!(preview_delete(&repo.0, "refs/heads/other")
+            .unwrap_err()
+            .contains("not fully merged"));
+        repo.git(&["branch", "worktree-branch"]);
+        let linked = repo.0.join("linked");
+        repo.git(&[
+            "worktree",
+            "add",
+            linked.to_str().unwrap(),
+            "worktree-branch",
+        ]);
+        assert!(preview_delete(&repo.0, "refs/heads/worktree-branch")
+            .unwrap_err()
+            .contains("worktree"));
+        repo.git(&["tag", "tag"]);
+        for name in [
+            "refs/tags/tag",
+            "refs/remotes/origin/main",
+            "other",
+            "--all",
+        ] {
+            assert!(preview_delete(&repo.0, name).is_err());
+        }
+        assert!(repo.git(&["branch", "--list", "other"]).contains("other"));
+    }
+
+    #[test]
+    fn delete_rechecks_tip_worktree_occupancy_and_unfinished_operations_after_review() {
+        let repo = committed_repo();
+        repo.git(&["commit", "--allow-empty", "-m", "Next"]);
+        repo.git(&["branch", "merged", "HEAD^"]);
+        let preview = preview_delete(&repo.0, "refs/heads/merged").unwrap();
+        repo.git(&["branch", "-f", "merged", "HEAD"]);
+        assert!(delete(&repo.0, &preview).unwrap_err().contains("changed"));
+        let preview = preview_delete(&repo.0, "refs/heads/merged").unwrap();
+        repo.write(".git/MERGE_HEAD", "busy");
+        assert!(delete(&repo.0, &preview).unwrap_err().contains("Finish"));
+        std::fs::remove_file(repo.0.join(".git/MERGE_HEAD")).unwrap();
+        let path = repo.0.join("linked");
+        repo.git(&["worktree", "add", path.to_str().unwrap(), "merged"]);
+        assert!(delete(&repo.0, &preview).unwrap_err().contains("worktree"));
+        assert!(repo.git(&["branch", "--list", "merged"]).contains("merged"));
     }
 
     #[test]

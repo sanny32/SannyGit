@@ -1,4 +1,4 @@
-//! Explicit remote operations. No credentials are read, stored or logged here.
+//! Explicit remote operations. Authentication stays with Git; diagnostics omit credentials.
 use crate::{branches, git, models::RefKind};
 use std::{path::Path, sync::atomic::AtomicBool, time::Duration};
 
@@ -209,6 +209,67 @@ pub fn set_upstream(root: &Path, local: &str, remote: &str, target: &str) -> Res
     .map(|_| ())
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct TagPushPreview {
+    pub full_name: String,
+    pub oid: String,
+    pub remote: String,
+    pub endpoint_display: String,
+    endpoint: String,
+    config: crate::remote_config::Snapshot,
+}
+
+pub fn preview_tag_push(
+    root: &Path,
+    full_name: &str,
+    remote: &str,
+) -> Result<TagPushPreview, String> {
+    let refs = branches::load(root)?;
+    let tag = refs
+        .refs
+        .iter()
+        .find(|entry| entry.kind == RefKind::Tag && entry.full_name == full_name)
+        .ok_or("Select an existing tag and reload details.")?;
+    if let Some(reason) = branches::tag_hint(&tag.name, "") {
+        return Err(reason.into());
+    }
+    let (endpoint, config) = crate::remote_config::push_endpoint(root, remote)?;
+    Ok(TagPushPreview {
+        full_name: tag.full_name.clone(),
+        oid: tag.hash.clone(),
+        remote: remote.into(),
+        endpoint_display: crate::remote_config::redact_url(&endpoint),
+        endpoint,
+        config,
+    })
+}
+
+pub fn push_tag(root: &Path, expected: &TagPushPreview, cancel: &AtomicBool) -> Result<(), String> {
+    if preview_tag_push(root, &expected.full_name, &expected.remote)? != *expected {
+        return Err(
+            "The tag or remote configuration changed after review. Reload and confirm again."
+                .into(),
+        );
+    }
+    git::run_controlled(
+        root,
+        &[
+            "push",
+            "--porcelain",
+            "--no-force",
+            "--no-mirror",
+            "--no-follow-tags",
+            "--recurse-submodules=no",
+            "--",
+            &expected.endpoint,
+            &format!("{}:{}", expected.oid, expected.full_name),
+        ],
+        Duration::from_secs(600),
+        Some(cancel),
+    )
+    .map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +339,108 @@ mod tests {
         );
         identity(&other);
         (temp, source, other)
+    }
+
+    #[test]
+    fn tag_push_targets_one_reviewed_object_and_ignores_unsafe_push_defaults() {
+        let (temp, source, _other) = fixture();
+        command(&source, &["tag", "-a", "chosen", "-m", "Chosen"]);
+        command(&source, &["tag", "-a", "private", "-m", "Private"]);
+        command(&source, &["branch", "private-branch"]);
+        command(&source, &["config", "remote.origin.push", "+refs/*:refs/*"]);
+        command(&source, &["config", "remote.origin.mirror", "true"]);
+        command(&source, &["config", "push.followTags", "true"]);
+        let before = command(&source, &["ls-files", "--stage"]);
+        fs::write(source.join("file"), "local edits\n").unwrap();
+        let preview = preview_tag_push(&source, "refs/tags/chosen", "origin").unwrap();
+        push_tag(&source, &preview, &AtomicBool::new(false)).unwrap();
+        let remote = temp.0.join("remote.git");
+        assert_eq!(
+            git::text(command(&remote, &["rev-parse", "refs/tags/chosen"]))
+                .unwrap()
+                .trim(),
+            preview.oid
+        );
+        assert_eq!(
+            git::text(command(&remote, &["tag", "--list"]))
+                .unwrap()
+                .trim(),
+            "chosen"
+        );
+        assert!(!git::text(command(&remote, &["branch", "--list"]))
+            .unwrap()
+            .contains("private-branch"));
+        assert_eq!(command(&source, &["ls-files", "--stage"]), before);
+        assert_eq!(fs::read(source.join("file")).unwrap(), b"local edits\n");
+        // An existing remote tag is never overwritten, even with forced refspec defaults.
+        command(&source, &["tag", "-f", "chosen", "HEAD"]);
+        let replacement = preview_tag_push(&source, "refs/tags/chosen", "origin").unwrap();
+        assert!(push_tag(&source, &replacement, &AtomicBool::new(false)).is_err());
+        assert_eq!(
+            git::text(command(&remote, &["rev-parse", "refs/tags/chosen"]))
+                .unwrap()
+                .trim(),
+            preview.oid
+        );
+    }
+
+    #[test]
+    fn tag_push_rejects_stale_refs_endpoints_fanout_and_cancellation() {
+        let (temp, source, _) = fixture();
+        command(&source, &["tag", "chosen"]);
+        let preview = preview_tag_push(&source, "refs/tags/chosen", "origin").unwrap();
+        assert!(push_tag(&source, &preview, &AtomicBool::new(true)).is_err());
+        command(
+            &source,
+            &[
+                "config",
+                "remote.origin.pushurl",
+                "https://example.invalid/new.git",
+            ],
+        );
+        assert!(push_tag(&source, &preview, &AtomicBool::new(false))
+            .unwrap_err()
+            .contains("changed"));
+        command(
+            &source,
+            &[
+                "config",
+                "--add",
+                "remote.origin.pushurl",
+                "https://example.invalid/second.git",
+            ],
+        );
+        assert!(preview_tag_push(&source, "refs/tags/chosen", "origin")
+            .err()
+            .unwrap()
+            .contains("exactly one"));
+        command(&source, &["config", "--unset-all", "remote.origin.pushurl"]);
+        command(&source, &["tag", "-d", "chosen"]);
+        assert!(push_tag(&source, &preview, &AtomicBool::new(false)).is_err());
+        assert!(command(&temp.0.join("remote.git"), &["tag", "--list"]).is_empty());
+    }
+
+    #[test]
+    fn tag_push_local_path_cannot_be_reinterpreted_as_another_configured_remote() {
+        let (_temp, source, _) = fixture();
+        let destination = source.join("destination");
+        let victim = source.join("victim");
+        for path in [&destination, &victim] {
+            command(&source, &["init", "--bare", path.to_str().unwrap()]);
+        }
+        command(&source, &["remote", "set-url", "origin", "destination"]);
+        command(
+            &source,
+            &["remote", "add", "destination", victim.to_str().unwrap()],
+        );
+        command(&source, &["tag", "chosen"]);
+        let preview = preview_tag_push(&source, "refs/tags/chosen", "origin").unwrap();
+        assert!(preview.endpoint_display.starts_with("file:"));
+        push_tag(&source, &preview, &AtomicBool::new(false)).unwrap();
+        assert!(git::text(command(&destination, &["tag", "--list"]))
+            .unwrap()
+            .contains("chosen"));
+        assert!(command(&victim, &["tag", "--list"]).is_empty());
     }
 
     #[test]

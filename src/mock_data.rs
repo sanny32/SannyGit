@@ -323,3 +323,67 @@ pub fn discard_dialog(
     };
     (repo, dialog)
 }
+
+#[derive(Clone, Copy, Debug)]
+pub enum RefDialogFixture {
+    Delete,
+    Tag,
+    Remotes,
+}
+
+pub fn ref_dialog(
+    fixture: RefDialogFixture,
+) -> (
+    crate::git::tests::TempRepo,
+    crate::app::ref_management::Dialog,
+) {
+    use crate::app::ref_management::{Dialog, Kind, RemoteEditor};
+    let repo = crate::git::tests::TempRepo::new();
+    repo.write("file", "base\n");
+    crate::git::commit(&repo.0, "Base", crate::git::CommitContents::All).unwrap();
+    repo.git(&["branch", "merged"]);
+    repo.git(&["tag", "chosen"]);
+    let root = crate::git::load(&repo.0).unwrap().repository.path;
+    let kind = match fixture {
+        RefDialogFixture::Delete => Kind::Delete {
+            source: "refs/heads/merged".into(),
+            prepared: Some(crate::branches::preview_delete(&repo.0, "refs/heads/merged").unwrap()),
+        },
+        RefDialogFixture::Tag => {
+            let remote = repo.0.join("remote.git");
+            repo.git(&["init", "--bare", remote.to_str().unwrap()]);
+            repo.git(&["remote", "add", "origin", remote.to_str().unwrap()]);
+            Kind::Tag {
+                source: "refs/tags/chosen".into(),
+                names: vec!["origin".into()],
+                remote: "origin".into(),
+                prepared: Some(
+                    crate::remotes::preview_tag_push(&repo.0, "refs/tags/chosen", "origin")
+                        .unwrap(),
+                ),
+            }
+        }
+        RefDialogFixture::Remotes => {
+            repo.git(&["remote", "add", "origin", "https://dummy-user:dummy-password@example.test/repo?private-query#private-fragment"]);
+            let mut editor = RemoteEditor {
+                snapshot: Some(crate::remote_config::load(&repo.0).unwrap()),
+                current: true,
+                ..Default::default()
+            };
+            editor.select(Some("origin".into()));
+            Kind::Remotes(editor)
+        }
+    };
+    (
+        repo,
+        Dialog {
+            root,
+            kind,
+            confirmed: false,
+            running: false,
+            reload_pending: false,
+            error: None,
+            status: "Review details before acting.".into(),
+        },
+    )
+}

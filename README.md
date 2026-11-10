@@ -6,7 +6,8 @@ Requires Rust 1.95+ and Git 2.36+ on `PATH`.
 
 Supports repository creation and cloning, status and diff, staging/unstaging,
 single-file discard, stash save/apply/pop/drop, commit/amend, history, branches
-and tags, worktrees, fetch, fast-forward-only pull, and push.
+and tags, merged-branch deletion, worktrees, remote URL management, fetch,
+fast-forward-only pull, and branch/tag push.
 
 ## Build
 

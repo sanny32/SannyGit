@@ -6,6 +6,7 @@ mod controls;
 mod diff_view;
 mod discard;
 mod journal;
+mod ref_management;
 mod remote_dialog;
 mod repositories;
 mod repository_dialogs;
@@ -135,6 +136,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     repository_dialogs::show(ui, app);
     stash::show(ui.ctx(), app);
     discard::show(ui.ctx(), app);
+    ref_management::show(ui.ctx(), app);
     welcome(ui, app);
     eframe::egui::Window::new("About SannyGit")
         .anchor(

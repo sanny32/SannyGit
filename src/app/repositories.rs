@@ -144,6 +144,13 @@ pub enum ResultMessage {
 }
 
 impl SannyGitApp {
+    pub(super) fn invalidate_repository_hosting(&mut self) {
+        self.manager.hosting_receiver = None;
+        if let Some(repository) = self.repositories.get(self.selected_repository) {
+            self.manager.hosting_checked.remove(&repository.path);
+        }
+    }
+
     pub(super) fn update_repository_hosting(&mut self, context: &eframe::egui::Context) {
         if let Some(receiver) = &self.manager.hosting_receiver {
             match receiver.try_recv() {
@@ -534,6 +541,7 @@ impl SannyGitApp {
         self.network_dialog = None;
         self.stash_dialog = None;
         self.discard_dialog = None;
+        self.ref_dialog = None;
         self.selected_branch.clear();
         self.selected_ref_group = None;
         self.loaded_diff = None;

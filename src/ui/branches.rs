@@ -13,6 +13,8 @@ use eframe::egui::{
 enum BranchRequest {
     Switch(String),
     Rename(String),
+    Delete(String),
+    PushTag(String),
 }
 
 #[derive(Default)]
@@ -88,6 +90,14 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 } else {
                     app.switch_branch();
                 }
+            }
+            BranchRequest::Delete(target) => {
+                app.selected_branch = target;
+                app.open_delete_branch();
+            }
+            BranchRequest::PushTag(target) => {
+                app.selected_branch = target;
+                app.open_push_tag();
             }
             BranchRequest::Rename(target) => {
                 app.selected_branch = target;
@@ -215,6 +225,15 @@ fn branch_group(
                         requested.action = Some(BranchRequest::Rename(branch.full_name.clone()));
                         ui.close();
                     }
+                    if ui.add_enabled(requested.rename_allowed && !branch.current, Button::new("Delete…"))
+                        .disabled_help_text("Select a non-current local branch after refreshing; worktree and merge safety are checked before deletion")
+                        .clicked() { requested.action = Some(BranchRequest::Delete(branch.full_name.clone())); ui.close(); }
+                });
+            } else if kind == RefKind::Tag {
+                response.context_menu(|ui| {
+                    if ui.add_enabled(requested.rename_allowed, Button::new("Push Tag…"))
+                        .disabled_help_text("Refresh branches and wait for the current operation")
+                        .clicked() { requested.action = Some(BranchRequest::PushTag(branch.full_name.clone())); ui.close(); }
                 });
             }
             if response.clicked() {

@@ -15,6 +15,7 @@ mod models;
 #[cfg(target_os = "macos")]
 mod native_menu;
 mod preferences;
+mod remote_config;
 mod remotes;
 mod repository;
 mod stash;

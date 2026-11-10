@@ -54,7 +54,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             } else if busy {
                 (app.status.as_str(), palette.muted)
             } else if state.remotes.is_empty() {
-                ("No configured remotes. Add one through Repository → Edit Git Config, then reopen this dialog.", palette.muted)
+                ("No configured remotes. Add one through Remote → Manage Remotes, then reopen this dialog.", palette.muted)
             } else {
                 ("Cancellation does not roll back local or remote changes.", palette.muted)
             };

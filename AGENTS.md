@@ -58,7 +58,8 @@ Windows, Linux, and macOS. The UI language is English. The license is MIT.
 | `src/discard.rs`, `src/app/discard.rs`, `src/ui/discard.rs` | Reviewed single-file restore/deletion, worker actions and confirmation dialog |
 | `src/stash.rs`, `src/app/stash.rs`, `src/ui/stash.rs` | Stash backend, background actions, previews and management dialog |
 | `src/branches.rs`, `src/history.rs` | Branch/tag operations and commit history |
-| `src/remotes.rs`, `src/tracking.rs` | Fetch/pull/push and upstream tracking |
+| `src/remotes.rs`, `src/tracking.rs` | Fetch/pull/push, selected-tag push and upstream tracking |
+| `src/remote_config.rs`, `src/app/ref_management.rs`, `src/ui/ref_management.rs` | Local remote configuration, reviewed branch deletion and tag-push dialogs |
 | `src/preferences.rs`, `src/llm.rs` | Persisted preferences, commit-message generation and credential access |
 | `src/diff.rs` | Unified diff parser and its unit tests |
 | `src/theme.rs` | Light and dark themes, palettes, typography, theme storage key |
