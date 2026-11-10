@@ -289,3 +289,37 @@ pub fn stash_dialog() -> crate::app::stash::Dialog {
         status: "Preview changes or select a saved stash.".into(),
     }
 }
+
+pub fn discard_dialog(
+    action: crate::discard::Action,
+) -> (crate::git::tests::TempRepo, crate::app::discard::Dialog) {
+    let repo = crate::git::tests::TempRepo::new();
+    repo.write("file", "base\n");
+    crate::git::commit(&repo.0, "Base", crate::git::CommitContents::All).unwrap();
+    let path = match action {
+        crate::discard::Action::Restore => {
+            repo.write("file", "unstaged\n");
+            "file"
+        }
+        crate::discard::Action::DeleteUntracked => {
+            repo.write("new", "untracked\n");
+            "new"
+        }
+    };
+    let prepared = crate::discard::prepare(&repo.0, path).unwrap();
+    let dialog = crate::app::discard::Dialog {
+        root: repo
+            .0
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        path: path.into(),
+        action,
+        prepared: Some(prepared),
+        confirmed: false,
+        running: false,
+        error: None,
+    };
+    (repo, dialog)
+}

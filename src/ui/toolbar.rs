@@ -231,6 +231,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 {
                                     app.open_remote(operation);
                                 }
+                            } else if label == "Discard" {
+                                let blocker = app.discard_blocker();
+                                if action_button(ui, icon, label, blocker.is_none(), palette, action_width)
+                                    .help_text("Review restoring the selected file from the index, or deleting one untracked file")
+                                    .disabled_help_text(blocker.unwrap_or(""))
+                                    .clicked() { app.open_discard(); }
                             } else if label == "Save Stash" {
                                 if action_button(ui, icon, label, app.stash_allowed(), palette, action_width)
                                     .help_text("Preview and save local changes, or manage saved stashes")

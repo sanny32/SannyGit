@@ -4,9 +4,9 @@ A desktop Git client for Windows, Linux and macOS, built with Rust and egui and 
 
 Requires Rust 1.95+ and Git 2.36+ on `PATH`.
 
-Supports repository creation and cloning, status and diff, staging/unstaging, stash save/apply/pop/drop,
-commit/amend, history, branches and tags, worktrees, fetch, fast-forward-only
-pull, and push.
+Supports repository creation and cloning, status and diff, staging/unstaging,
+single-file discard, stash save/apply/pop/drop, commit/amend, history, branches
+and tags, worktrees, fetch, fast-forward-only pull, and push.
 
 ## Build
 

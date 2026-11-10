@@ -533,6 +533,7 @@ impl SannyGitApp {
         self.remote_checkout = None;
         self.network_dialog = None;
         self.stash_dialog = None;
+        self.discard_dialog = None;
         self.selected_branch.clear();
         self.selected_ref_group = None;
         self.loaded_diff = None;

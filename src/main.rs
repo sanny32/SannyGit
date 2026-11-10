@@ -4,6 +4,7 @@ mod app;
 mod branches;
 mod clone_source;
 mod diff;
+mod discard;
 mod git;
 mod history;
 mod llm;

@@ -1,3 +1,4 @@
+pub mod discard;
 mod remotes;
 pub mod stash;
 pub use remotes::RemoteDialog;
@@ -19,6 +20,11 @@ use std::{
 };
 
 enum WorkerResult {
+    DiscardPrepared {
+        root: String,
+        path: String,
+        result: Result<crate::discard::Prepared, String>,
+    },
     Stash {
         path: String,
         result: Box<stash::ResultMessage>,
@@ -193,6 +199,7 @@ pub struct SannyGitApp {
     pub remote_checkout: Option<RemoteCheckoutDialog>,
     pub network_dialog: Option<remotes::RemoteDialog>,
     pub stash_dialog: Option<stash::Dialog>,
+    pub discard_dialog: Option<discard::Dialog>,
     pub skip_push_confirmation: bool,
     pub new_branch_name: String,
     pub new_tag_name: String,
@@ -426,6 +433,7 @@ impl SannyGitApp {
             remote_checkout: None,
             network_dialog: None,
             stash_dialog: None,
+            discard_dialog: None,
             skip_push_confirmation: false,
             new_branch_name: String::new(),
             new_tag_name: String::new(),
@@ -569,6 +577,7 @@ impl SannyGitApp {
             MenuAction::RenameBranch => self
                 .rename_branch_target_blocker(&self.selected_branch)
                 .is_none(),
+            MenuAction::Discard => self.discard_blocker().is_none(),
             MenuAction::Stashes => self.stash_allowed(),
             MenuAction::Fetch | MenuAction::Pull | MenuAction::Push => self.remote_allowed(),
         }
@@ -618,6 +627,7 @@ impl SannyGitApp {
             MenuAction::Stage => self.set_staged(self.selected_change, true),
             MenuAction::Unstage => self.set_staged(self.selected_change, false),
             MenuAction::Commit => self.create_commit(),
+            MenuAction::Discard => self.open_discard(),
             MenuAction::Stashes => self.open_stashes(),
             MenuAction::CreateBranch => self.branch_dialog_open = true,
             MenuAction::SwitchBranch => self.switch_branch(),
@@ -776,6 +786,7 @@ impl SannyGitApp {
             self.remote_checkout = None;
             self.network_dialog = None;
             self.stash_dialog = None;
+            self.discard_dialog = None;
             self.new_branch_name.clear();
             self.commits.clear();
             self.history_edges.clear();
@@ -1425,6 +1436,7 @@ impl SannyGitApp {
                         Some(Err("Background worker stopped unexpectedly".into()));
                 }
                 self.status = "Operation failed".into();
+                self.finish_discard(false);
                 if self.push_dialog_hidden() {
                     self.finish_hidden_push();
                 }
@@ -1433,6 +1445,9 @@ impl SannyGitApp {
         };
         self.worker = None;
         match result {
+            WorkerResult::DiscardPrepared { root, path, result } => {
+                self.apply_discard_prepared(root, path, result)
+            }
             WorkerResult::Stash { path, result } => self.apply_stash_result(path, *result),
             WorkerResult::ContentsPreview(result) => self.contents_preview = Some(result),
             WorkerResult::RemoteInfo { operation, result } => {
@@ -1559,6 +1574,11 @@ impl SannyGitApp {
                 outcome,
                 snapshot,
             } => {
+                let discarding = matches!(
+                    success,
+                    "File restored from index" | "Untracked file deleted"
+                );
+                let operation_succeeded = outcome.is_ok();
                 if success.starts_with("Stash ") {
                     if let Some(dialog) = &mut self.stash_dialog {
                         dialog.invalidate_preview();
@@ -1662,6 +1682,9 @@ impl SannyGitApp {
                     self.status
                         .push_str("; refresh required before further operations");
                 }
+                if discarding {
+                    self.finish_discard(operation_succeeded);
+                }
                 if hidden_push {
                     self.network_dialog = None;
                     if let Some(error) = self.error.take() {
@@ -1719,6 +1742,8 @@ impl SannyGitApp {
                 self.status.as_str(),
                 "Commit created"
                     | "Index updated"
+                    | "File restored from index"
+                    | "Untracked file deleted"
                     | "Branch switched"
                     | "Branch renamed"
                     | "Branch created"
@@ -1772,6 +1797,7 @@ impl eframe::App for SannyGitApp {
             && self.manager.dialog.is_none()
             && self.network_dialog.is_none()
             && self.stash_dialog.is_none()
+            && self.discard_dialog.is_none()
             && self.remote_checkout.is_none();
         self.tracking.update(
             root,

@@ -12,7 +12,8 @@ Windows, Linux, and macOS. The UI language is English. The license is MIT.
 - GUI: `eframe` 0.37 and `egui` through `eframe::egui`.
 - `egui_extras` 0.37 provides tables and SVG support; `serde` handles serialization.
 - The application has a Git CLI backend: repositories, clone, status/diff,
-  staging, commit/amend, stash, history, branches/tags, worktrees, and remotes.
+  staging, single-file discard, commit/amend, stash, history, branches/tags,
+  worktrees, and remotes.
   Mock data is compiled only for tests. Commit and Amend default to all changes;
   an explicit Staged only mode preserves unstaged changes. The selected mode
   also controls the contents preview and commit-message generation.
@@ -54,6 +55,7 @@ Windows, Linux, and macOS. The UI language is English. The license is MIT.
 | `src/mock_data.rs` | Test-only mock data kept separate from the UI |
 | `src/git.rs` | Git execution, status, diff, staging, commit/amend, shared test fixtures |
 | `src/repository.rs`, `src/clone_source.rs` | Repository discovery, creation, clone, worktrees, external opening |
+| `src/discard.rs`, `src/app/discard.rs`, `src/ui/discard.rs` | Reviewed single-file restore/deletion, worker actions and confirmation dialog |
 | `src/stash.rs`, `src/app/stash.rs`, `src/ui/stash.rs` | Stash backend, background actions, previews and management dialog |
 | `src/branches.rs`, `src/history.rs` | Branch/tag operations and commit history |
 | `src/remotes.rs`, `src/tracking.rs` | Fetch/pull/push and upstream tracking |
