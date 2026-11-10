@@ -20,6 +20,8 @@ use eframe::egui::{
     Align, CentralPanel, Frame, InnerResponse, Layout, Margin, Panel, Sense, Ui, UiBuilder, Vec2,
 };
 
+const PANEL_GAP: i8 = 2;
+
 fn sync_badge(text: &str, palette: Palette, size: f32) -> eframe::egui::text::LayoutJob {
     use eframe::egui::{text::LayoutJob, FontId, TextFormat};
     let mut job = LayoutJob::default();
@@ -107,7 +109,7 @@ fn sidebar_contents(ui: &mut Ui, app: &mut SannyGitApp) -> eframe::egui::Rect {
         )
         .size_range(130.0..=(ui.available_height() - 120.0).max(130.0))
         .frame(panel_frame(palette).inner_margin(8).outer_margin(Margin {
-            top: 4,
+            top: PANEL_GAP,
             ..Margin::ZERO
         }))
         .show(ui, |ui| {
@@ -191,13 +193,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             Frame::new()
                 .fill(palette.background)
                 .inner_margin(Margin {
-                    left: 4,
+                    left: PANEL_GAP,
                     right: 0,
-                    top: 4,
-                    bottom: 4,
+                    top: PANEL_GAP,
+                    bottom: PANEL_GAP,
                 })
                 .outer_margin(Margin {
-                    right: 4,
+                    right: PANEL_GAP,
                     ..Margin::ZERO
                 }),
         )
@@ -214,9 +216,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     CentralPanel::default()
         .frame(Frame::new().fill(palette.background).inner_margin(Margin {
             left: 0,
-            right: 4,
-            top: 4,
-            bottom: 4,
+            right: PANEL_GAP,
+            top: PANEL_GAP,
+            bottom: PANEL_GAP,
         }))
         .show(ui, |ui| {
             Panel::bottom("working_tree.v3.journal")
@@ -235,7 +237,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 .default_size((context.content_rect().height() * 0.38).max(300.0))
                 .size_range(180.0..=(ui.available_height() - 160.0).max(180.0))
                 .frame(Frame::new().fill(palette.background).inner_margin(Margin {
-                    bottom: 4,
+                    bottom: PANEL_GAP,
                     ..Margin::ZERO
                 }))
                 .show(ui, |ui| {
@@ -246,7 +248,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         .default_size(ui.available_width() * 0.29)
                         .size_range(260.0..=(ui.available_width() - 310.0).max(260.0))
                         .frame(panel_frame(palette).outer_margin(Margin {
-                            left: 4,
+                            left: PANEL_GAP,
                             ..Margin::ZERO
                         }))
                         .show(ui, |ui| {
@@ -259,7 +261,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
             CentralPanel::default()
                 .frame(panel_frame(palette).outer_margin(Margin {
-                    bottom: 4,
+                    bottom: PANEL_GAP,
                     ..Margin::ZERO
                 }))
                 .show(ui, |ui| diff_view::show(ui, app));
@@ -318,9 +320,9 @@ fn modern_workspace(ui: &mut Ui, app: &mut SannyGitApp) {
     CentralPanel::default()
         .frame(Frame::new().fill(palette.background).inner_margin(Margin {
             left: 0,
-            right: 6,
-            top: 4,
-            bottom: 4,
+            right: PANEL_GAP,
+            top: PANEL_GAP,
+            bottom: PANEL_GAP,
         }))
         .show(ui, |ui| {
             workspace::show(ui, app);
@@ -374,7 +376,7 @@ mod tests {
                     output.shapes.iter().any(|shape| {
                         matches!(&shape.shape, eframe::egui::Shape::LineSegment { points, .. }
                             if points[0].x == points[1].x
-                                && points[0].x > rect.right() - 4.0
+                                && points[0].x > rect.right() - f32::from(PANEL_GAP)
                                 && points[0].x < rect.right()
                                 && points[0].y == rect.top()
                                 && points[1].y == rect.bottom())
@@ -382,7 +384,10 @@ mod tests {
                 };
                 // The gutter must have the theme background even with no hover
                 // highlight; transparent outer margins otherwise expose black.
-                let gutter = pos2(before.right() - 2.0, before.center().y);
+                let gutter = pos2(
+                    before.right() - f32::from(PANEL_GAP) / 2.0,
+                    before.center().y,
+                );
                 let background = idle.shapes.iter().rev().find_map(|shape| {
                     if !shape.clip_rect.contains(gutter) {
                         return None;
@@ -402,7 +407,10 @@ mod tests {
                     "Unpainted sidebar gutter {theme:?} {size:?}"
                 );
                 assert!(!has_highlight(&idle, before));
-                let pointer = pos2(before.right() - 2.0, before.center().y);
+                let pointer = pos2(
+                    before.right() - f32::from(PANEL_GAP) / 2.0,
+                    before.center().y,
+                );
                 render(&mut app, vec![Event::PointerMoved(pointer)]);
                 let (hovered, output) = render(&mut app, vec![Event::PointerMoved(pointer)]);
                 assert_eq!(before, hovered);

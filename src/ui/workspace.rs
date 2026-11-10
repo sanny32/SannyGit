@@ -2,6 +2,8 @@ use eframe::egui::{CentralPanel, Frame, Margin, Panel, Rect, Ui};
 
 use crate::app::SannyGitApp;
 
+use super::PANEL_GAP;
+
 pub(super) fn show(ui: &mut Ui, app: &mut SannyGitApp) -> [Rect; 4] {
     let palette = app.palette();
     let mut rects = [Rect::NOTHING; 4];
@@ -13,7 +15,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SannyGitApp) -> [Rect; 4] {
         .default_size(230.0)
         .size_range(170.0..=(ui.available_height() - 180.0).max(170.0))
         .frame(Frame::new().fill(palette.background).outer_margin(Margin {
-            top: 6,
+            top: PANEL_GAP,
             ..Margin::ZERO
         }))
         .show(ui, |ui| {
@@ -24,7 +26,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SannyGitApp) -> [Rect; 4] {
                 .default_size(ui.available_width() * 0.42)
                 .size_range(310.0..=(ui.available_width() - 420.0).max(310.0))
                 .frame(super::panel_frame(palette).outer_margin(Margin {
-                    right: 6,
+                    right: PANEL_GAP,
                     ..Margin::ZERO
                 }))
                 .show(ui, |ui| {
@@ -44,7 +46,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SannyGitApp) -> [Rect; 4] {
         .default_size(ui.available_width() * 0.48)
         .size_range(310.0..=(ui.available_width() - 320.0).max(310.0))
         .frame(super::panel_frame(palette).outer_margin(Margin {
-            right: 6,
+            right: PANEL_GAP,
             ..Margin::ZERO
         }))
         .show(ui, |ui| {
@@ -85,7 +87,7 @@ mod tests {
             );
             assert!(rect.width() > 300.0 && rect.height() >= 160.0);
         }
-        // Only the fixed six-point divider gutters may remain between panels.
+        // Only the fixed two-point divider gutters may remain between panels.
         assert!((files.left() - bounds.left()).abs() < 1.0);
         assert!((commit.left() - bounds.left()).abs() < 1.0);
         assert!((diff.right() - bounds.right()).abs() < 1.0);
@@ -97,7 +99,7 @@ mod tests {
         assert!((files.bottom() - diff.bottom()).abs() < 1.0);
         assert!((commit.top() - journal.top()).abs() < 1.0);
         assert!(
-            (commit.top() - files.bottom() - 6.0).abs() < 1.0,
+            (commit.top() - files.bottom() - f32::from(PANEL_GAP)).abs() < 1.0,
             "{rects:?} bounds={bounds:?}"
         );
         assert!((commit.bottom() - bounds.bottom()).abs() < 1.0);

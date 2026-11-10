@@ -97,6 +97,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .size()
         .x
         + 8.0;
+    // Table row backgrounds expand into cell spacing; keep them inside the panel.
+    ui.shrink_clip_rect(ui.available_rect_before_wrap());
     TableBuilder::new(ui)
         .striped(true)
         .sense(Sense::click())
@@ -110,6 +112,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .header(24.0, |mut header| {
             for title in ["Graph", "Message", "Author", "Date", "Hash"] {
                 header.col(|ui| {
+                    if title == "Graph" {
+                        ui.add_space(6.0);
+                    }
                     ui.label(RichText::new(title).size(12.0));
                 });
             }
@@ -120,7 +125,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             body.rows(20.0, visible.len(), |mut row| {
                 let (original, commit) = visible[row.index()];
                 row.set_selected(app.selected_commit.as_ref() == Some(&commit.hash));
-                row.col(|ui| graph(ui, app, original, filter.is_empty(), palette));
+                row.col(|ui| {
+                    ui.add_space(6.0);
+                    graph(ui, app, original, filter.is_empty(), palette);
+                });
                 row.col(|ui| {
                     ui.label(commit.subject()).help_text(&commit.message);
                 });

@@ -48,6 +48,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .collect::<Vec<_>>();
     let row_height = 23.0;
     let table_clip = ui.clip_rect().intersect(ui.available_rect_before_wrap());
+    // Table row backgrounds expand into cell spacing; keep them inside the panel.
+    ui.shrink_clip_rect(table_clip);
     ui.spacing_mut().item_spacing.x = 4.0;
     let widths_id = eframe::egui::Id::unique("files.header_column_widths");
     let [mut index_width, mut status_width] = ui
