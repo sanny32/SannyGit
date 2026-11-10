@@ -59,11 +59,8 @@ cargo test
 cargo build
 ```
 
-GitHub Actions runs clippy, tests, and builds on Windows, Linux, and macOS;
-formatting and a separate `cargo check --all-targets` with Rust 1.95.0 run on Linux.
-Since `Cargo.lock` is not
-tracked, fresh checkouts resolve compatible dependencies. Tests use temporary Git
-repositories and loopback HTTP servers; no external service or credentials are
+Since `Cargo.lock` is not tracked, fresh checkouts resolve compatible dependencies.
+Tests use temporary Git repositories and loopback HTTP servers; no external service or credentials are
 required. A sandbox must allow local sockets to run the complete test suite.
 
 ## License
