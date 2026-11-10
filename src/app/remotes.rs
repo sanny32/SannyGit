@@ -16,7 +16,7 @@ pub struct RemoteDialog {
 
 impl RemoteDialog {
     pub fn can_skip_confirmation(&self) -> bool {
-        self.operation == Operation::Push
+        matches!(self.operation, Operation::Push | Operation::Sync)
             && self.state.as_ref().is_some_and(|state| {
                 state.branch.is_some()
                     && state.remotes.contains(&self.remote)
@@ -28,18 +28,28 @@ impl RemoteDialog {
 }
 
 impl SannyGitApp {
-    pub fn push_dialog_hidden(&self) -> bool {
-        self.skip_push_confirmation
-            && self.network_dialog.as_ref().is_some_and(|dialog| {
-                dialog.operation == Operation::Push
-                    && (dialog.state.is_none() || dialog.can_skip_confirmation())
-            })
+    pub fn remote_confirmation_hidden(&self) -> bool {
+        self.network_dialog.as_ref().is_some_and(|dialog| {
+            self.skip_remote_confirmation(dialog.operation)
+                && (dialog.state.is_none() || dialog.can_skip_confirmation())
+        })
     }
 
-    pub(super) fn finish_hidden_push(&mut self) {
-        self.network_dialog = None;
+    fn skip_remote_confirmation(&self, operation: Operation) -> bool {
+        match operation {
+            Operation::Push => self.skip_push_confirmation,
+            Operation::Sync => self.preferences.skip_sync_confirmation,
+            _ => false,
+        }
+    }
+
+    pub(super) fn finish_hidden_remote(&mut self) {
+        let operation = self.network_dialog.take().map(|dialog| dialog.operation);
         if let Some(error) = self.error.take() {
-            self.status = format!("Push failed: {error}");
+            self.status = format!(
+                "{} failed: {error}",
+                operation.map_or("Operation", Operation::label)
+            );
         }
     }
 
@@ -67,9 +77,9 @@ impl SannyGitApp {
         if !self.start_worker(move || WorkerResult::RemoteInfo {
             operation,
             result: remotes::load(&root),
-        }) && self.push_dialog_hidden()
+        }) && self.remote_confirmation_hidden()
         {
-            self.finish_hidden_push();
+            self.finish_hidden_remote();
         }
     }
 
@@ -79,6 +89,7 @@ impl SannyGitApp {
         result: Result<State, String>,
     ) {
         self.status = "Ready".into();
+        let skip = self.skip_remote_confirmation(operation);
         match result {
             Ok(state) => {
                 if let Some(dialog) = self
@@ -108,15 +119,15 @@ impl SannyGitApp {
                     dialog.set_upstream =
                         operation == Operation::Push && state.upstream_remote.is_none();
                     dialog.state = Some(state);
-                    if self.skip_push_confirmation && dialog.can_skip_confirmation() {
+                    if skip && dialog.can_skip_confirmation() {
                         self.run_remote();
                     }
                 }
             }
             Err(error) => {
                 self.error = Some(error);
-                if self.push_dialog_hidden() {
-                    self.finish_hidden_push();
+                if self.remote_confirmation_hidden() {
+                    self.finish_hidden_remote();
                 }
             }
         }
@@ -141,7 +152,11 @@ impl SannyGitApp {
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
         let cancel = Arc::new(AtomicBool::new(false));
         if skip_confirmation {
-            self.skip_push_confirmation = true;
+            match operation {
+                Operation::Push => self.skip_push_confirmation = true,
+                Operation::Sync => self.preferences.skip_sync_confirmation = true,
+                _ => {}
+            }
         }
         self.manager.cancel = Some(cancel.clone());
         self.error = None;
@@ -180,8 +195,8 @@ impl SannyGitApp {
             }
         }) {
             self.manager.cancel = None;
-            if self.push_dialog_hidden() {
-                self.finish_hidden_push();
+            if self.remote_confirmation_hidden() {
+                self.finish_hidden_remote();
             }
         }
     }
@@ -235,11 +250,43 @@ mod tests {
             set_upstream: false,
             dont_show_again: false,
         });
-        assert!(app.push_dialog_hidden());
+        assert!(app.remote_confirmation_hidden());
         app.apply_remote_info(Operation::Push, Err("Cannot read configuration".into()));
         assert!(app.network_dialog.is_none());
         assert!(app.error.is_none());
         assert!(app.status.contains("Cannot read configuration"));
+    }
+
+    #[test]
+    fn sync_skip_is_independent_and_requires_upstream() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
+        app.skip_push_confirmation = true;
+        app.network_dialog = Some(RemoteDialog {
+            operation: Operation::Sync,
+            state: None,
+            remote: String::new(),
+            branch: String::new(),
+            set_upstream: false,
+            dont_show_again: false,
+        });
+        assert!(!app.remote_confirmation_hidden());
+        app.preferences.skip_sync_confirmation = true;
+        assert!(app.remote_confirmation_hidden());
+        app.apply_remote_info(
+            Operation::Sync,
+            Ok(State {
+                remotes: vec!["origin".into()],
+                branch: Some("main".into()),
+                ..Default::default()
+            }),
+        );
+        assert!(!app.remote_confirmation_hidden());
+        assert!(!app.network_dialog.as_ref().unwrap().can_skip_confirmation());
+        app.network_dialog.as_mut().unwrap().state = None;
+        app.apply_remote_info(Operation::Sync, Err("Cannot read configuration".into()));
+        assert!(app.network_dialog.is_none());
+        assert!(app.status.starts_with("Sync failed:"));
+        assert!(app.error.is_none());
     }
 
     #[test]

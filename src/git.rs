@@ -93,6 +93,44 @@ pub(crate) fn run_controlled(
     execute(path, args, None, timeout, cancel, CommandMode::Normal)
 }
 
+/// Return whether Sync needs to pull after a non-fast-forward push rejection.
+/// Other failures retain the normal sanitized errors.
+pub(crate) fn run_sync_push(
+    path: &Path,
+    args: &[&str],
+    cancel: &AtomicBool,
+) -> Result<bool, String> {
+    execute(
+        path,
+        args,
+        None,
+        Duration::from_secs(600),
+        Some(cancel),
+        CommandMode::SyncPush,
+    )
+    .map(|output| push_needs_pull(&output))
+}
+
+fn push_needs_pull(output: &[u8]) -> bool {
+    let Ok(output) = std::str::from_utf8(output) else {
+        return false;
+    };
+    let mut statuses = output.lines().filter_map(|line| {
+        let mut fields = line.split('\t');
+        let flag = fields.next()?;
+        let refs = fields.next()?;
+        let summary = fields.next()?;
+        (flag.len() == 1 && refs.contains(":refs/heads/")).then_some((flag, summary))
+    });
+    matches!(
+        statuses.next(),
+        Some((
+            "!",
+            "[rejected] (fetch first)" | "[rejected] (non-fast-forward)"
+        ))
+    ) && statuses.next().is_none()
+}
+
 pub(crate) fn run_with_input(
     path: &Path,
     args: &[&str],
@@ -134,6 +172,7 @@ pub(crate) fn run_stash(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
 enum CommandMode {
     Normal,
     Diagnostic,
+    SyncPush,
     Stash,
 }
 
@@ -170,6 +209,10 @@ fn execute(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if matches!(mode, CommandMode::SyncPush) {
+        // Porcelain rejection summaries must be stable across Git locales.
+        command.env("LC_ALL", "C");
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -241,7 +284,9 @@ fn execute(
         let mut output = out.join().map_err(|_| "Git output reader failed")??;
         let errors = err.join().map_err(|_| "Git error reader failed")??;
         let written = writer.join().map_err(|_| "Git input writer failed")?;
-        if !status?.success() {
+        if !status?.success()
+            && !(matches!(mode, CommandMode::SyncPush) && push_needs_pull(&output))
+        {
             return Err(command_error(if matches!(mode, CommandMode::Stash) {
                 "stash"
             } else {
@@ -713,6 +758,24 @@ pub(crate) fn limit_diff(patch: String) -> Result<String, String> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn sync_accepts_only_a_single_non_fast_forward_porcelain_rejection() {
+        for reason in ["fetch first", "non-fast-forward"] {
+            assert!(push_needs_pull(
+                format!("To hidden\n!\t123:refs/heads/main\t[rejected] ({reason})\nDone\n")
+                    .as_bytes()
+            ));
+        }
+        for output in [
+            "!\t123:refs/heads/main\t[remote rejected] (pre-receive hook declined)\n",
+            "!\t123:refs/heads/main\t[rejected] (stale info)\n",
+            "!\t123:refs/heads/main\t[rejected] (fetch first)\n!\t456:refs/heads/other\t[rejected] (fetch first)\n",
+            "fatal: authentication failed", "", "=\t123:refs/heads/main\t[up to date]\n",
+        ] {
+            assert!(!push_needs_pull(output.as_bytes()), "{output}");
+        }
+    }
+
     #[test]
     fn path_discovery_returns_the_first_executable_as_an_absolute_path() {
         let repo = TempRepo::new();

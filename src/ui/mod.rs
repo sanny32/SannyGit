@@ -1,3 +1,4 @@
+use self::controls::dialog_style::DialogResponse;
 mod branches;
 mod changes;
 mod clone_dialog;
@@ -173,7 +174,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             });
             dialog_style::section(ui, palette.header, Margin::symmetric(18, 12), |ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add(dialog_style::primary("OK", palette)).clicked() {
+                    if ui.add(dialog_style::primary("OK", palette)).dialog_close() {
                         dismiss = true;
                     }
                 });
@@ -312,7 +313,7 @@ fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
         });
         dialog_style::section(ui, palette.header, Margin::symmetric(18, 12), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(dialog_style::button("Close")).clicked() {
+                if ui.add(dialog_style::button("Close")).dialog_close() {
                     app.welcome_open = false;
                 }
             });

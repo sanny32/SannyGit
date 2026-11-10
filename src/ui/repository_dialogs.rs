@@ -1,3 +1,4 @@
+use super::controls::dialog_style::DialogResponse;
 use crate::app::{RepositoryDialog as Dialog, RepositoryJob as Job, SannyGitApp};
 use eframe::egui::{self, Button, ComboBox, RichText, ScrollArea, TextEdit, Ui, Window};
 
@@ -314,13 +315,13 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                 !busy && settings.is_some(),
                                 super::controls::dialog_style::primary("OK", palette),
                             )
-                            .clicked()
+                            .dialog_accept()
                         {
                             if let Some(settings) = settings {
                                 job = Some(Job::SaveSettings(settings));
                             }
                         }
-                        if ui.add(super::controls::dialog_style::button("Cancel")).clicked() {
+                        if ui.add(super::controls::dialog_style::button("Cancel")).dialog_cancel() {
                             close = true;
                         }
                     },

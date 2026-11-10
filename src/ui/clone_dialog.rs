@@ -1,3 +1,4 @@
+use super::controls::dialog_style::DialogResponse;
 use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
 use crate::{
@@ -124,7 +125,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                         ui.horizontal(|ui| {
                             if ui
                                 .add(super::controls::dialog_style::button("Cancel"))
-                                .clicked()
+                                .dialog_cancel()
                             {
                                 if busy {
                                     app.cancel_repository_job();
@@ -154,7 +155,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                                             palette,
                                         ),
                                     )
-                                    .clicked()
+                                    .dialog_accept()
                                 {
                                     match step {
                                         0 => match app.manager.clone_form.resolve() {

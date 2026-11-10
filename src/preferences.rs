@@ -85,6 +85,7 @@ pub struct Preferences {
     pub date_format: DateFormat,
     pub time_format: TimeFormat,
     pub verbose_dates: bool,
+    pub skip_sync_confirmation: bool,
 }
 
 impl Default for Preferences {
@@ -98,6 +99,7 @@ impl Default for Preferences {
             date_format: DateFormat::default(),
             time_format: TimeFormat::default(),
             verbose_dates: false,
+            skip_sync_confirmation: false,
         }
     }
 }
@@ -182,6 +184,7 @@ mod tests {
         let preferences = Preferences {
             file_double_click: FileDoubleClick::ToggleStage,
             verbose_dates: true,
+            skip_sync_confirmation: true,
             git_executable: "/Applications/Git Tools/git".into(),
             ..Default::default()
         };

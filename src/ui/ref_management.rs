@@ -1,3 +1,4 @@
+use super::controls::dialog_style::DialogResponse;
 use super::controls::{dialog_style, icons::Icon, tooltips::TooltipResponse};
 use crate::{
     app::{
@@ -162,7 +163,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                                 palette,
                             ),
                         )
-                        .clicked()
+                        .dialog_accept()
                 {
                     submit = true;
                 }
@@ -175,7 +176,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                             "Cancel"
                         }),
                     )
-                    .clicked()
+                    .dialog_cancel()
                 {
                     if dialog.running && matches!(dialog.kind, Kind::Tag { .. }) {
                         app.cancel_repository_job();
@@ -340,8 +341,8 @@ fn remote_editor(
         });
     ui.horizontal(|ui| {
         let valid = can_edit && current && validation.is_none();
-        if ui.add_enabled(valid && editor.selected.is_none(), Button::new("Add Remote")).disabled_help_text(validation.unwrap_or("Choose New Remote to add an entry")).clicked() { change = Some(false); }
-        if ui.add_enabled(valid && editor.selected.is_some(), Button::new("Save URLs")).disabled_help_text(validation.unwrap_or("Select an editable repository-local remote")).clicked() { change = Some(false); }
+        if ui.add_enabled(valid && editor.selected.is_none(), Button::new("Add Remote")).disabled_help_text(validation.unwrap_or("Choose New Remote to add an entry")).dialog_accept() { change = Some(false); }
+        if ui.add_enabled(valid && editor.selected.is_some(), Button::new("Save URLs")).disabled_help_text(validation.unwrap_or("Select an editable repository-local remote")).dialog_accept() { change = Some(false); }
         if ui.add_enabled(can_remove && current && editor.confirm_remove, Button::new("Remove Remote")).disabled_help_text("Select a repository-local remote with standard fetch destinations and confirm removal below").clicked() { change = Some(true); }
     });
     ui.scope(|ui| {

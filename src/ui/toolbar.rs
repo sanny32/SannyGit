@@ -284,7 +284,7 @@ fn remote_help(operation: crate::remotes::Operation, remote: Option<&str>) -> St
     );
     match operation {
         crate::remotes::Operation::Sync => format!(
-            "Fetch, fast-forward the current branch, then push local commits to the {repository}."
+            "Push local commits to the {repository}, then pull possible remote changes (fast-forward only)."
         ),
         crate::remotes::Operation::Fetch => {
             format!("Fetch branches and tags from the {repository}.")

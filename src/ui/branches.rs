@@ -1,3 +1,4 @@
+use super::controls::dialog_style::DialogResponse;
 use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
 use crate::{
@@ -306,10 +307,11 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                         );
                     });
                 ui.label("Annotated Tag Message:");
-                ui.add_sized(
+                let message = ui.add_sized(
                     [ui.available_width(), 120.0],
                     TextEdit::multiline(&mut app.new_tag_message),
                 );
+                super::controls::dialog_style::preserve_multiline_enter(&message);
                 });
             },
         );
@@ -323,10 +325,10 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                         .disabled_help_text("Pushing tags is not implemented yet");
                     let blocker = app.create_tag_blocker();
                     if ui.add_enabled(blocker.is_none(), super::controls::dialog_style::primary("Add Tag", palette))
-                        .disabled_help_text(blocker.unwrap_or("")).clicked() {
+                        .disabled_help_text(blocker.unwrap_or("")).dialog_accept() {
                         app.create_tag();
                     }
-                    if ui.add_enabled(!busy, super::controls::dialog_style::button("Cancel")).clicked() {
+                    if ui.add_enabled(!busy, super::controls::dialog_style::button("Cancel")).dialog_cancel() {
                         keep = false;
                     }
                 });
@@ -379,11 +381,11 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                     1 => crate::branches::name_hint(&dialog.new_name).is_none() && !app.refs.iter().any(|r| r.full_name == format!("refs/heads/{}", dialog.new_name)),
                     _ => true,
                 };
-                if ui.add_enabled(valid && !app.busy(), super::controls::dialog_style::primary("Checkout", palette)).clicked() {
+                if ui.add_enabled(valid && !app.busy(), super::controls::dialog_style::primary("Checkout", palette)).dialog_accept() {
                     let choice = match dialog.mode { 0 => crate::branches::RemoteChoice::Local(dialog.local.clone()), 1 => crate::branches::RemoteChoice::Create(dialog.new_name.clone()), _ => crate::branches::RemoteChoice::Detached };
                     app.checkout_remote(dialog.remote.clone(), choice);
                 }
-                if ui.add_enabled(!app.busy(), super::controls::dialog_style::button("Cancel")).clicked() { keep = false; }
+                if ui.add_enabled(!app.busy(), super::controls::dialog_style::button("Cancel")).dialog_cancel() { keep = false; }
             });
         });
     });
@@ -459,13 +461,13 @@ fn rename_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                             super::controls::dialog_style::primary("Rename", palette),
                         )
                         .disabled_help_text(blocker.unwrap_or(""))
-                        .clicked()
+                        .dialog_accept()
                     {
                         app.rename_branch();
                     }
                     if ui
                         .add_enabled(!busy, super::controls::dialog_style::button("Cancel"))
-                        .clicked()
+                        .dialog_cancel()
                     {
                         cancel = true;
                     }
@@ -540,13 +542,13 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                             super::controls::dialog_style::primary("Create", palette),
                         )
                         .disabled_help_text(blocker.unwrap_or(""))
-                        .clicked()
+                        .dialog_accept()
                     {
                         app.create_branch();
                     }
                     if ui
                         .add_enabled(!busy, super::controls::dialog_style::button("Cancel"))
-                        .clicked()
+                        .dialog_cancel()
                     {
                         cancel = true;
                     }

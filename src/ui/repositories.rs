@@ -1,3 +1,4 @@
+use super::controls::dialog_style::DialogResponse;
 use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
 use crate::{
@@ -32,10 +33,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             });
             super::controls::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add_enabled(!busy && !app.repository_path.trim().is_empty(), super::controls::dialog_style::primary("OK", palette)).clicked() {
+                    if ui.add_enabled(!busy && !app.repository_path.trim().is_empty(), super::controls::dialog_style::primary("OK", palette)).dialog_accept() {
                         app.run_repository_job(RepositoryJob::AddOrCreate(app.repository_path.clone()));
                     }
-                    if ui.add_enabled(!busy, super::controls::dialog_style::button("Cancel")).clicked() { app.open_dialog = false; }
+                    if ui.add_enabled(!busy, super::controls::dialog_style::button("Cancel")).dialog_cancel() { app.open_dialog = false; }
                 });
             });
         });

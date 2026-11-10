@@ -1,3 +1,4 @@
+use super::controls::dialog_style::DialogResponse;
 use super::controls::tooltips::TooltipResponse;
 use crate::{
     app::{SannyGitApp, SettingsPage},
@@ -33,7 +34,8 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         #[cfg(target_os = "macos")]
         ui.input_mut(|input| input.events.append(&mut app.pending_native_edit_events));
         let close_requested = ui.ctx().input(|input| input.viewport().close_requested());
-        let escape = ui.input(|input| input.key_pressed(Key::Escape));
+        let escape = !egui::Popup::is_any_open(ui.ctx())
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape));
         if close_requested || escape {
             app.settings_window.open = false;
             ui.ctx().send_viewport_cmd(ViewportCommand::Close);
@@ -46,6 +48,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
 
 fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
+    super::controls::dialog_style::prepare_keyboard(ui);
     ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
     footer(ui, app, palette);
     if app.settings_window.llm_repository.is_none() {
@@ -83,7 +86,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui
                     .add(super::controls::dialog_style::primary("OK", palette))
-                    .clicked()
+                    .dialog_accept()
                 {
                     match apply_settings(app) {
                         Ok(()) => {
@@ -104,7 +107,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 }
                 if ui
                     .add(super::controls::dialog_style::button("Cancel"))
-                    .clicked()
+                    .dialog_cancel()
                 {
                     app.settings_window.open = false;
                     ui.ctx().send_viewport_cmd(ViewportCommand::Close);
@@ -210,25 +213,31 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             });
             ui.add_space(4.0);
             group(ui, palette, "Confirmations", |ui| {
-                ui.checkbox(
-                    &mut app.settings_window.skip_push_confirmation,
-                    "Skip confirmation when pushing to upstream",
-                );
+                ui.horizontal(|ui| {
+                    ui.label("Skip upstream confirmations:");
+                    ui.checkbox(&mut app.settings_window.skip_push_confirmation, "Push");
+                    ui.checkbox(
+                        &mut app.settings_window.preferences.skip_sync_confirmation,
+                        "Sync",
+                    );
+                });
                 ui.label(
-                    RichText::new("Push results and errors appear in the status bar without opening a dialog.")
+                    RichText::new("Skipped operations report results in the status bar.")
                         .small()
                         .color(palette.muted),
                 );
                 if ui
                     .add_enabled(
-                        app.settings_window.skip_push_confirmation,
+                        app.settings_window.skip_push_confirmation
+                            || app.settings_window.preferences.skip_sync_confirmation,
                         egui::Button::new("Restore confirmation dialogs"),
                     )
-                    .help_text("Re-enable the upstream push confirmation")
+                    .help_text("Re-enable upstream push and sync confirmations")
                     .disabled_help_text("All confirmation dialogs are already enabled")
                     .clicked()
                 {
                     app.settings_window.skip_push_confirmation = false;
+                    app.settings_window.preferences.skip_sync_confirmation = false;
                 }
             });
         }
@@ -666,10 +675,11 @@ fn llm_form(
                 .min_scrolled_height(0.0)
                 .max_height(editor_height)
                 .show(ui, |ui| {
-                    ui.add_sized(
+                    let instructions = ui.add_sized(
                         [ui.available_width(), editor_height],
                         egui::TextEdit::multiline(&mut draft.config.instructions).desired_rows(1),
                     );
+                    super::controls::dialog_style::preserve_multiline_enter(&instructions);
                 });
         });
     });

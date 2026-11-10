@@ -1,3 +1,4 @@
+use super::controls::dialog_style::DialogResponse;
 use super::controls::{dialog_style, tooltips::TooltipResponse};
 use crate::{
     app::{stash::Action, SannyGitApp},
@@ -95,7 +96,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         });
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add_enabled(!busy, dialog_style::button("Close")).disabled_help_text("Wait for the current operation to finish.").clicked() { close = true; }
+                if ui.add_enabled(!busy, dialog_style::button("Close")).disabled_help_text("Wait for the current operation to finish.").dialog_close() { close = true; }
             });
         });
     });

@@ -130,6 +130,27 @@ pub fn run(
     let destination = format!("refs/heads/{target}");
     git::run(root, &["check-ref-format", &destination])?;
     let original = head(root)?;
+    if operation == Operation::Sync {
+        require_pull_ready(root)?;
+        // Only a non-fast-forward rejection permits continuing after a failed push.
+        let rejected = git::run_sync_push(
+            root,
+            &push_arguments(remote, &destination, &original)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            cancel,
+        )?;
+        if rejected {
+            // Pulling from a different endpoint cannot resolve a rejected push.
+            // Compare URLs internally; never expose credentials in diagnostics.
+            let fetch_urls = git::run(root, &["remote", "get-url", "--all", remote])?;
+            let push_urls = git::run(root, &["remote", "get-url", "--push", "--all", remote])?;
+            if fetch_urls != push_urls {
+                return Err("Sync push was rejected and the fetch and push URLs differ. Pull and push separately.".into());
+            }
+        }
+    }
     match operation {
         Operation::Fetch => unreachable!(),
         Operation::Push => {
@@ -179,20 +200,6 @@ pub fn run(
                 git::run_controlled(root, &["-c", "submodule.recurse=false", "merge", "--ff-only", "--no-edit", "--no-autostash", "--no-overwrite-ignore", "--", fetched.trim()], timeout, Some(cancel))
                     .map_err(|error| format!("Could not fast-forward: {error} Check ignored-file conflicts, Git hooks, repository locks and permissions; refresh before retrying."))?;
             }
-            if operation == Operation::Sync {
-                let tip = if remote_is_ahead {
-                    fetched.trim()
-                } else {
-                    &original
-                };
-                if load(root)?.branch.as_deref() != Some(branch) || head(root)? != tip {
-                    return Err(
-                        "The local branch changed during sync. Refresh before retrying.".into(),
-                    );
-                }
-                push_tip(root, remote, &destination, tip, cancel)
-                    .map_err(|error| format!("Sync fetched and updated the local branch, but push failed: {error} Local updates have been kept; refresh before retrying."))?;
-            }
         }
     }
     Ok(())
@@ -205,24 +212,34 @@ fn push_tip(
     original: &str,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
-    // Push only the reviewed branch tip, never configured mirror/force/tag refspecs.
     git::run_controlled(
         root,
-        &[
-            "push",
-            "--porcelain",
-            "--no-force",
-            "--no-mirror",
-            "--no-follow-tags",
-            "--recurse-submodules=no",
-            "--",
-            remote,
-            &format!("{original}:{destination}"),
-        ],
+        &push_arguments(remote, destination, original)
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
         Duration::from_secs(600),
         Some(cancel),
     )?;
     Ok(())
+}
+
+fn push_arguments(remote: &str, destination: &str, original: &str) -> Vec<String> {
+    // Push only the reviewed branch tip, never configured mirror/force/tag refspecs.
+    [
+        "push",
+        "--porcelain",
+        "--no-force",
+        "--no-mirror",
+        "--no-follow-tags",
+        "--recurse-submodules=no",
+        "--",
+        remote,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .chain([format!("{original}:{destination}")])
+    .collect()
 }
 
 pub fn set_upstream(root: &Path, local: &str, remote: &str, target: &str) -> Result<(), String> {
@@ -552,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_downloads_then_uploads_only_the_selected_branch_and_is_repeatable() {
+    fn sync_pushes_then_pulls_only_the_selected_branch_and_is_repeatable() {
         let (temp, source, other) = fixture();
         let cancel = AtomicBool::new(false);
         commit(&source, "remote update\n");
@@ -685,7 +702,105 @@ mod tests {
     }
 
     #[test]
-    fn sync_reports_push_failure_and_keeps_downloaded_commits() {
+    fn sync_pushes_before_fetch_and_keeps_published_commits_on_fetch_failure() {
+        let (temp, _, other) = fixture();
+        commit(&other, "local update\n");
+        command(&other, &["config", "remote.origin.uploadpack", "false"]);
+        assert!(run(
+            &other,
+            Operation::Sync,
+            "origin",
+            "main",
+            Some("main"),
+            &AtomicBool::new(false)
+        )
+        .is_err());
+        assert_eq!(
+            head(&temp.0.join("remote.git")).unwrap(),
+            head(&other).unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_does_not_pull_after_a_hook_rejects_push() {
+        use std::os::unix::fs::PermissionsExt;
+        let (temp, source, other) = fixture();
+        commit(&source, "remote update\n");
+        push_tip(
+            &source,
+            "origin",
+            "refs/heads/main",
+            &head(&source).unwrap(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let original = head(&other).unwrap();
+        let hook = other.join(".git/hooks/pre-push");
+        fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(run(
+            &other,
+            Operation::Sync,
+            "origin",
+            "main",
+            Some("main"),
+            &AtomicBool::new(false)
+        )
+        .is_err());
+        assert_eq!(head(&other).unwrap(), original);
+        assert_eq!(
+            head(&temp.0.join("remote.git")).unwrap(),
+            head(&source).unwrap()
+        );
+    }
+
+    #[test]
+    fn sync_does_not_hide_rejection_from_a_different_push_endpoint() {
+        let (temp, source, other) = fixture();
+        let destination = temp.0.join("push.git");
+        command(
+            &temp.0,
+            &[
+                "clone",
+                "--bare",
+                source.to_str().unwrap(),
+                destination.to_str().unwrap(),
+            ],
+        );
+        commit(&source, "push endpoint update\n");
+        command(
+            &source,
+            &[
+                "push",
+                destination.to_str().unwrap(),
+                "HEAD:refs/heads/main",
+            ],
+        );
+        command(
+            &other,
+            &[
+                "config",
+                "remote.origin.pushurl",
+                destination.to_str().unwrap(),
+            ],
+        );
+        let original = head(&other).unwrap();
+        let error = run(
+            &other,
+            Operation::Sync,
+            "origin",
+            "main",
+            Some("main"),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        assert!(error.contains("URLs differ"));
+        assert_eq!(head(&other).unwrap(), original);
+    }
+
+    #[test]
+    fn sync_stops_on_transport_failure_before_pulling() {
         let (_temp, source, other) = fixture();
         let cancel = AtomicBool::new(false);
         commit(&source, "remote update\n");
@@ -698,7 +813,8 @@ mod tests {
             &cancel,
         )
         .unwrap();
-        // A separate push URL fails after the fetch and fast-forward have succeeded.
+        let original = head(&other).unwrap();
+        // A broken push endpoint must stop Sync before fetch or local updates.
         command(
             &other,
             &[
@@ -717,8 +833,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("push failed"));
-        assert!(error.contains("Local updates have been kept"));
-        assert_eq!(head(&other).unwrap(), head(&source).unwrap());
+        assert_eq!(head(&other).unwrap(), original);
     }
 
     #[test]

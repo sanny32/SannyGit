@@ -1,3 +1,4 @@
+use super::controls::dialog_style::DialogResponse;
 use super::controls::{dialog_style, icons::Icon, tooltips::TooltipResponse};
 use crate::app::SannyGitApp;
 use eframe::egui::{self, Align, Label, Layout, RichText};
@@ -41,8 +42,8 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.add_enabled(!busy && current && dialog.prepared.is_some() && dialog.confirmed,
-                    dialog_style::primary(dialog.action.label(), palette)).disabled_help_text("Review the file and confirm the action. Reload details if the file, index or HEAD changed.").clicked() { submit = true; }
-                if ui.add_enabled(!dialog.running, dialog_style::button("Cancel")).clicked() { cancel = true; }
+                    dialog_style::primary(dialog.action.label(), palette)).disabled_help_text("Review the file and confirm the action. Reload details if the file, index or HEAD changed.").dialog_accept() { submit = true; }
+                if ui.add_enabled(!dialog.running, dialog_style::button("Cancel")).dialog_cancel() { cancel = true; }
                 if ui.add_enabled(!busy && !dialog.running, dialog_style::button("Reload details")).clicked() { reload = true; }
             });
         });
