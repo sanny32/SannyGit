@@ -22,6 +22,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             return;
         }
         let description = match dialog.operation {
+            Operation::Sync => "Fetch the remote branch, fast-forward the local branch, then push local commits. Requires a clean working tree; diverged branches must be resolved separately.",
             Operation::Fetch => "Download remote branches and tags without changing your working tree.",
             Operation::Pull => "Fetch a remote branch and fast-forward the current local branch. Local changes must be committed or moved aside.",
             Operation::Push => "Push the current local branch to the selected remote branch. Force pushes and tag pushes are not used.",
@@ -38,7 +39,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     ComboBox::from_id_salt("remote.name").width(310.0).truncate().selected_text(&dialog.remote).show_ui(ui, |ui| {
                         for remote in &state.remotes { ui.selectable_value(&mut dialog.remote, remote.clone(), remote); }
                     }); ui.end_row();
-                    if dialog.operation == Operation::Pull {
+                    if matches!(dialog.operation, Operation::Pull | Operation::Sync) {
                         ui.label("Local branch:");
                         let branch = state.branch.as_deref().unwrap_or(if loaded { "No local branch with commits checked out" } else { "—" });
                         ui.add_sized([310.0, 26.0], egui::Label::new(branch).truncate()).help_text(branch);

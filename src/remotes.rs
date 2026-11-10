@@ -5,6 +5,7 @@ use std::{path::Path, sync::atomic::AtomicBool, time::Duration};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operation {
     Fetch,
+    Sync,
     Pull,
     Push,
 }
@@ -12,6 +13,7 @@ impl Operation {
     pub fn label(self) -> &'static str {
         match self {
             Self::Fetch => "Fetch",
+            Self::Sync => "Sync",
             Self::Pull => "Pull",
             Self::Push => "Push",
         }
@@ -19,6 +21,7 @@ impl Operation {
     pub fn success(self) -> &'static str {
         match self {
             Self::Fetch => "Fetch complete",
+            Self::Sync => "Sync complete",
             Self::Pull => "Pull complete",
             Self::Push => "Push complete",
         }
@@ -130,25 +133,9 @@ pub fn run(
     match operation {
         Operation::Fetch => unreachable!(),
         Operation::Push => {
-            // Push only the reviewed branch tip, never configured mirror/force/tag refspecs.
-            git::run_controlled(
-                root,
-                &[
-                    "push",
-                    "--porcelain",
-                    "--no-force",
-                    "--no-mirror",
-                    "--no-follow-tags",
-                    "--recurse-submodules=no",
-                    "--",
-                    remote,
-                    &format!("{original}:{destination}"),
-                ],
-                timeout,
-                Some(cancel),
-            )?;
+            push_tip(root, remote, &destination, &original, cancel)?;
         }
-        Operation::Pull => {
+        Operation::Pull | Operation::Sync => {
             require_pull_ready(root)?;
             git::run_controlled(
                 root,
@@ -174,18 +161,67 @@ pub fn run(
                 );
             }
             require_pull_ready(root)?;
-            if git::run(
+            let remote_is_ahead = git::run(
                 root,
                 &["merge-base", "--is-ancestor", &original, fetched.trim()],
             )
-            .is_err()
-            {
-                return Err("Pull requires a fast-forward. The branches diverged; merge or rebase them separately.".into());
+            .is_ok();
+            let local_is_ahead = operation == Operation::Sync
+                && git::run(
+                    root,
+                    &["merge-base", "--is-ancestor", fetched.trim(), &original],
+                )
+                .is_ok();
+            if !remote_is_ahead && !local_is_ahead {
+                return Err(format!("{} requires a fast-forward. The branches diverged; merge or rebase them separately.", operation.label()));
             }
-            git::run_controlled(root, &["-c", "submodule.recurse=false", "merge", "--ff-only", "--no-edit", "--no-autostash", "--no-overwrite-ignore", "--", fetched.trim()], timeout, Some(cancel))
-                .map_err(|error| format!("Could not fast-forward: {error} Check ignored-file conflicts, Git hooks, repository locks and permissions; refresh before retrying."))?;
+            if remote_is_ahead {
+                git::run_controlled(root, &["-c", "submodule.recurse=false", "merge", "--ff-only", "--no-edit", "--no-autostash", "--no-overwrite-ignore", "--", fetched.trim()], timeout, Some(cancel))
+                    .map_err(|error| format!("Could not fast-forward: {error} Check ignored-file conflicts, Git hooks, repository locks and permissions; refresh before retrying."))?;
+            }
+            if operation == Operation::Sync {
+                let tip = if remote_is_ahead {
+                    fetched.trim()
+                } else {
+                    &original
+                };
+                if load(root)?.branch.as_deref() != Some(branch) || head(root)? != tip {
+                    return Err(
+                        "The local branch changed during sync. Refresh before retrying.".into(),
+                    );
+                }
+                push_tip(root, remote, &destination, tip, cancel)
+                    .map_err(|error| format!("Sync fetched and updated the local branch, but push failed: {error} Local updates have been kept; refresh before retrying."))?;
+            }
         }
     }
+    Ok(())
+}
+
+fn push_tip(
+    root: &Path,
+    remote: &str,
+    destination: &str,
+    original: &str,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    // Push only the reviewed branch tip, never configured mirror/force/tag refspecs.
+    git::run_controlled(
+        root,
+        &[
+            "push",
+            "--porcelain",
+            "--no-force",
+            "--no-mirror",
+            "--no-follow-tags",
+            "--recurse-submodules=no",
+            "--",
+            remote,
+            &format!("{original}:{destination}"),
+        ],
+        Duration::from_secs(600),
+        Some(cancel),
+    )?;
     Ok(())
 }
 
@@ -513,6 +549,176 @@ mod tests {
             &AtomicBool::new(true)
         )
         .is_err());
+    }
+
+    #[test]
+    fn sync_downloads_then_uploads_only_the_selected_branch_and_is_repeatable() {
+        let (temp, source, other) = fixture();
+        let cancel = AtomicBool::new(false);
+        commit(&source, "remote update\n");
+        run(
+            &source,
+            Operation::Push,
+            "origin",
+            "main",
+            Some("main"),
+            &cancel,
+        )
+        .unwrap();
+        run(
+            &other,
+            Operation::Sync,
+            "origin",
+            "main",
+            Some("main"),
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(head(&other).unwrap(), head(&source).unwrap());
+        assert_eq!(
+            fs::read_to_string(other.join("file")).unwrap(),
+            "remote update\n"
+        );
+        commit(&other, "local update\n");
+        command(&other, &["branch", "private"]);
+        command(&other, &["tag", "-a", "private-tag", "-m", "private"]);
+        command(&other, &["config", "push.followTags", "true"]);
+        command(
+            &other,
+            &["config", "remote.origin.push", "+refs/heads/*:refs/heads/*"],
+        );
+        for _ in 0..2 {
+            run(
+                &other,
+                Operation::Sync,
+                "origin",
+                "main",
+                Some("main"),
+                &cancel,
+            )
+            .unwrap();
+            assert_eq!(
+                head(&temp.0.join("remote.git")).unwrap(),
+                head(&other).unwrap()
+            );
+        }
+        assert_eq!(
+            git::text(command(
+                &temp.0.join("remote.git"),
+                &[
+                    "for-each-ref",
+                    "--format=%(refname)",
+                    "refs/heads",
+                    "refs/tags"
+                ]
+            ))
+            .unwrap()
+            .trim(),
+            "refs/heads/main"
+        );
+    }
+
+    #[test]
+    fn sync_refuses_dirty_diverged_stale_and_cancelled_operations_without_pushing() {
+        let (temp, source, other) = fixture();
+        let cancel = AtomicBool::new(false);
+        let remote = temp.0.join("remote.git");
+        let base = head(&remote).unwrap();
+        fs::write(other.join("file"), "keep local edits\n").unwrap();
+        assert!(run(
+            &other,
+            Operation::Sync,
+            "origin",
+            "main",
+            Some("main"),
+            &cancel
+        )
+        .is_err());
+        assert_eq!(
+            fs::read_to_string(other.join("file")).unwrap(),
+            "keep local edits\n"
+        );
+        fs::write(other.join("file"), "base\n").unwrap();
+        commit(&other, "local commit\n");
+        let local = head(&other).unwrap();
+        assert!(run(
+            &other,
+            Operation::Sync,
+            "origin",
+            "main",
+            Some("other"),
+            &cancel
+        )
+        .is_err());
+        assert!(run(
+            &other,
+            Operation::Sync,
+            "origin",
+            "main",
+            Some("main"),
+            &AtomicBool::new(true)
+        )
+        .is_err());
+        assert_eq!(head(&remote).unwrap(), base);
+        commit(&source, "remote commit\n");
+        run(
+            &source,
+            Operation::Push,
+            "origin",
+            "main",
+            Some("main"),
+            &cancel,
+        )
+        .unwrap();
+        let error = run(
+            &other,
+            Operation::Sync,
+            "origin",
+            "main",
+            Some("main"),
+            &cancel,
+        )
+        .unwrap_err();
+        assert!(error.contains("Sync requires a fast-forward"));
+        assert_eq!(head(&other).unwrap(), local);
+        assert_eq!(head(&remote).unwrap(), head(&source).unwrap());
+    }
+
+    #[test]
+    fn sync_reports_push_failure_and_keeps_downloaded_commits() {
+        let (_temp, source, other) = fixture();
+        let cancel = AtomicBool::new(false);
+        commit(&source, "remote update\n");
+        run(
+            &source,
+            Operation::Push,
+            "origin",
+            "main",
+            Some("main"),
+            &cancel,
+        )
+        .unwrap();
+        // A separate push URL fails after the fetch and fast-forward have succeeded.
+        command(
+            &other,
+            &[
+                "config",
+                "remote.origin.pushurl",
+                other.join("missing.git").to_str().unwrap(),
+            ],
+        );
+        let error = run(
+            &other,
+            Operation::Sync,
+            "origin",
+            "main",
+            Some("main"),
+            &cancel,
+        )
+        .unwrap_err();
+        assert!(error.contains("push failed"));
+        assert!(error.contains("Local updates have been kept"));
+        assert_eq!(head(&other).unwrap(), head(&source).unwrap());
     }
 
     #[test]

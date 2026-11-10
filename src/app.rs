@@ -1567,7 +1567,7 @@ impl SannyGitApp {
                     .is_some_and(|cancel| cancel.load(Ordering::Relaxed));
                 if matches!(
                     success,
-                    "Fetch complete" | "Pull complete" | "Push complete"
+                    "Fetch complete" | "Pull complete" | "Push complete" | "Sync complete"
                 ) {
                     self.manager.cancel = None;
                     if outcome.is_ok() {
@@ -2300,6 +2300,7 @@ mod tests {
             for style in [InterfaceStyle::Classic, InterfaceStyle::Modern] {
                 for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
                     for operation in [
+                        crate::remotes::Operation::Sync,
                         crate::remotes::Operation::Fetch,
                         crate::remotes::Operation::Pull,
                         crate::remotes::Operation::Push,
@@ -3175,6 +3176,7 @@ mod tests {
                 }
                 app.remote_checkout = None;
                 for operation in [
+                    crate::remotes::Operation::Sync,
                     crate::remotes::Operation::Fetch,
                     crate::remotes::Operation::Pull,
                     crate::remotes::Operation::Push,

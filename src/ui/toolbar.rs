@@ -220,7 +220,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             ui.set_min_width(action_width);
                             if matches!(label, "Sync" | "Pull" | "Push") {
                                 let operation = match label {
-                                    "Sync" => crate::remotes::Operation::Fetch,
+                                    "Sync" => crate::remotes::Operation::Sync,
                                     "Pull" => crate::remotes::Operation::Pull,
                                     _ => crate::remotes::Operation::Push,
                                 };
@@ -283,6 +283,9 @@ fn remote_help(operation: crate::remotes::Operation, remote: Option<&str>) -> St
         |name| format!("remote {name} repository"),
     );
     match operation {
+        crate::remotes::Operation::Sync => format!(
+            "Fetch, fast-forward the current branch, then push local commits to the {repository}."
+        ),
         crate::remotes::Operation::Fetch => {
             format!("Fetch branches and tags from the {repository}.")
         }
