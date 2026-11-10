@@ -1,4 +1,5 @@
 mod remotes;
+pub mod stash;
 pub use remotes::RemoteDialog;
 mod llm_models;
 mod repositories;
@@ -18,6 +19,10 @@ use std::{
 };
 
 enum WorkerResult {
+    Stash {
+        path: String,
+        result: Box<stash::ResultMessage>,
+    },
     RemoteInfo {
         operation: crate::remotes::Operation,
         result: Result<crate::remotes::State, String>,
@@ -187,6 +192,7 @@ pub struct SannyGitApp {
     pub tag_dialog_open: bool,
     pub remote_checkout: Option<RemoteCheckoutDialog>,
     pub network_dialog: Option<remotes::RemoteDialog>,
+    pub stash_dialog: Option<stash::Dialog>,
     pub skip_push_confirmation: bool,
     pub new_branch_name: String,
     pub new_tag_name: String,
@@ -419,6 +425,7 @@ impl SannyGitApp {
             tag_dialog_open: false,
             remote_checkout: None,
             network_dialog: None,
+            stash_dialog: None,
             skip_push_confirmation: false,
             new_branch_name: String::new(),
             new_tag_name: String::new(),
@@ -562,6 +569,7 @@ impl SannyGitApp {
             MenuAction::RenameBranch => self
                 .rename_branch_target_blocker(&self.selected_branch)
                 .is_none(),
+            MenuAction::Stashes => self.stash_allowed(),
             MenuAction::Fetch | MenuAction::Pull | MenuAction::Push => self.remote_allowed(),
         }
     }
@@ -610,6 +618,7 @@ impl SannyGitApp {
             MenuAction::Stage => self.set_staged(self.selected_change, true),
             MenuAction::Unstage => self.set_staged(self.selected_change, false),
             MenuAction::Commit => self.create_commit(),
+            MenuAction::Stashes => self.open_stashes(),
             MenuAction::CreateBranch => self.branch_dialog_open = true,
             MenuAction::SwitchBranch => self.switch_branch(),
             MenuAction::RenameBranch => self.open_rename_branch(),
@@ -766,6 +775,7 @@ impl SannyGitApp {
             self.new_tag_message.clear();
             self.remote_checkout = None;
             self.network_dialog = None;
+            self.stash_dialog = None;
             self.new_branch_name.clear();
             self.commits.clear();
             self.history_edges.clear();
@@ -1423,6 +1433,7 @@ impl SannyGitApp {
         };
         self.worker = None;
         match result {
+            WorkerResult::Stash { path, result } => self.apply_stash_result(path, *result),
             WorkerResult::ContentsPreview(result) => self.contents_preview = Some(result),
             WorkerResult::RemoteInfo { operation, result } => {
                 self.apply_remote_info(operation, result)
@@ -1548,6 +1559,13 @@ impl SannyGitApp {
                 outcome,
                 snapshot,
             } => {
+                if success.starts_with("Stash ") {
+                    if let Some(dialog) = &mut self.stash_dialog {
+                        dialog.invalidate_preview();
+                        dialog.entries_current = false;
+                        dialog.reload_pending = true;
+                    }
+                }
                 let hidden_push = success == "Push complete" && self.push_dialog_hidden();
                 let cancellation_requested = self
                     .manager
@@ -1696,6 +1714,7 @@ impl SannyGitApp {
         self.loaded_diff = Some(index);
         if self.error.is_none()
             && !self.status.starts_with("Push ")
+            && !self.status.starts_with("Stash ")
             && !matches!(
                 self.status.as_str(),
                 "Commit created"
@@ -1752,6 +1771,7 @@ impl eframe::App for SannyGitApp {
             && !self.welcome_open
             && self.manager.dialog.is_none()
             && self.network_dialog.is_none()
+            && self.stash_dialog.is_none()
             && self.remote_checkout.is_none();
         self.tracking.update(
             root,
@@ -1787,6 +1807,7 @@ impl eframe::App for SannyGitApp {
             }
         }
         ui::show(ui, self);
+        self.load_pending_stashes();
         self.load_selected_diff();
         self.load_refs();
         self.load_history();

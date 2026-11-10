@@ -90,7 +90,7 @@ pub(crate) fn run_controlled(
     timeout: Duration,
     cancel: Option<&AtomicBool>,
 ) -> Result<Vec<u8>, String> {
-    execute(path, args, None, timeout, cancel, false)
+    execute(path, args, None, timeout, cancel, CommandMode::Normal)
 }
 
 pub(crate) fn run_with_input(
@@ -98,12 +98,26 @@ pub(crate) fn run_with_input(
     args: &[&str],
     input: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
-    execute(path, args, input, TIMEOUT, None, false)
+    execute(path, args, input, TIMEOUT, None, CommandMode::Normal)
 }
 
 /// Successful diagnostic output for an explicit preview (never error logging).
 pub(crate) fn run_diagnostic(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    execute(path, args, None, TIMEOUT, None, true)
+    execute(path, args, None, TIMEOUT, None, CommandMode::Diagnostic)
+}
+
+/// Whole-repository stash operations have no user pathspecs. Git's stash cleanup
+/// internally uses :/; inheriting literal pathspecs leaves untracked files behind.
+pub(crate) fn run_stash(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let mut command = vec!["-c", "submodule.recurse=false", "stash"];
+    command.extend_from_slice(args);
+    execute(path, &command, None, TIMEOUT, None, CommandMode::Stash)
+}
+
+enum CommandMode {
+    Normal,
+    Diagnostic,
+    Stash,
 }
 
 fn execute(
@@ -112,7 +126,7 @@ fn execute(
     input: Option<&[u8]>,
     timeout: Duration,
     cancel: Option<&AtomicBool>,
-    diagnostics: bool,
+    mode: CommandMode,
 ) -> Result<Vec<u8>, String> {
     if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
         return Err("Operation cancelled".into());
@@ -124,7 +138,14 @@ fn execute(
         .args(["--no-pager", "--no-optional-locks", "-c", "color.ui=false"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_LITERAL_PATHSPECS", "1")
+        .env(
+            "GIT_LITERAL_PATHSPECS",
+            if matches!(mode, CommandMode::Stash) {
+                "0"
+            } else {
+                "1"
+            },
+        )
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
@@ -204,10 +225,14 @@ fn execute(
         let errors = err.join().map_err(|_| "Git error reader failed")??;
         let written = writer.join().map_err(|_| "Git input writer failed")?;
         if !status?.success() {
-            return Err(command_error(args.first().copied().unwrap_or("command")));
+            return Err(command_error(if matches!(mode, CommandMode::Stash) {
+                "stash"
+            } else {
+                args.first().copied().unwrap_or("command")
+            }));
         }
         written?;
-        if diagnostics {
+        if matches!(mode, CommandMode::Diagnostic) {
             output.extend_from_slice(&errors);
         }
         if output.len() > OUTPUT_LIMIT {
@@ -229,6 +254,8 @@ fn command_error(operation: &str) -> String {
         "Check network access, Git credential helpers, SSH configuration and remote permissions. Push may also be rejected because the remote branch advanced, a hook refused it, or the remote is configured as a mirror. Refresh before retrying."
     } else if operation == "worktree" {
         "Check branch availability, worktree locks, local files and destination permissions. Refresh before retrying."
+    } else if operation == "stash" {
+        "Check for conflicts, index/ref locks, file permissions and Git identity. Inspect the working tree and stash list before retrying."
     } else if operation == "config" {
         "Check Git config file permissions and configuration syntax."
     } else if operation == "switch" {

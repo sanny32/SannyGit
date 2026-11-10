@@ -9,6 +9,7 @@ mod remote_dialog;
 mod repositories;
 mod repository_dialogs;
 mod settings;
+mod stash;
 mod status_bar;
 mod toolbar;
 mod workspace;
@@ -131,6 +132,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     toolbar::show(ui, app);
     settings::show(ui.ctx(), app);
     repository_dialogs::show(ui, app);
+    stash::show(ui.ctx(), app);
     welcome(ui, app);
     eframe::egui::Window::new("About SannyGit")
         .anchor(

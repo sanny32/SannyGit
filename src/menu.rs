@@ -20,6 +20,7 @@ pub enum MenuAction {
     Stage,
     Unstage,
     Commit,
+    Stashes,
     CreateBranch,
     SwitchBranch,
     RenameBranch,
@@ -151,7 +152,7 @@ pub const MENUS: &[Menu] = &[
             action("Unstage", MenuAction::Unstage),
             action("Commit", MenuAction::Commit),
             pending("Discard…"),
-            pending("Save Stash…"),
+            action("Stashes…", MenuAction::Stashes),
         ],
     },
     Menu {

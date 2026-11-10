@@ -16,6 +16,7 @@ mod native_menu;
 mod preferences;
 mod remotes;
 mod repository;
+mod stash;
 mod theme;
 mod tracking;
 mod ui;

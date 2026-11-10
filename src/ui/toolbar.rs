@@ -231,6 +231,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 {
                                     app.open_remote(operation);
                                 }
+                            } else if label == "Save Stash" {
+                                if action_button(ui, icon, label, app.stash_allowed(), palette, action_width)
+                                    .help_text("Preview and save local changes, or manage saved stashes")
+                                    .disabled_help_text("Open and refresh a repository; wait for the current operation")
+                                    .clicked() { app.open_stashes(); }
                             } else if label == "Stage" || label == "Unstage" {
                                 let staged = label == "Stage";
                                 let enabled = app.staging_allowed(app.selected_change, staged);

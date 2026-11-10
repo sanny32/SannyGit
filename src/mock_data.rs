@@ -261,3 +261,31 @@ const README_DIFF: &str = r#"@@ -1,3 +0,0 @@
 -
 -A simple, no-nonsense Git client.
 "#;
+
+pub fn stash_entries() -> Vec<crate::stash::Entry> {
+    (0..12)
+        .map(|index| crate::stash::Entry {
+            oid: format!("{index:040x}"),
+            message: format!("On main: Work in progress {index}"),
+        })
+        .collect()
+}
+
+pub fn stash_dialog() -> crate::app::stash::Dialog {
+    crate::app::stash::Dialog {
+        path: "/test/repository".into(),
+        entries: stash_entries(),
+        selected: Some(0),
+        entries_current: true,
+        reload_pending: false,
+        message: String::new(),
+        include_untracked: false,
+        restore_index: true,
+        confirm_drop: false,
+        prepared_save: None,
+        previewed_entry: None,
+        preview: None,
+        error: None,
+        status: "Preview changes or select a saved stash.".into(),
+    }
+}
