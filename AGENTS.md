@@ -11,9 +11,13 @@ Windows, Linux, and macOS. The UI language is English. The license is MIT.
 - Rust edition 2021; minimum supported Rust version: 1.95.
 - GUI: `eframe` 0.37 and `egui` through `eframe::egui`.
 - `egui_extras` 0.37 provides tables and SVG support; `serde` handles serialization.
-- The current implementation is a UI foundation with mock data and persisted
-  theme selection. Real repository integration and Git command execution are
-  not implemented yet.
+- The application has a Git CLI backend: repositories, clone, status/diff,
+  staging, commit/amend, history, branches/tags, worktrees, and remotes.
+  Mock data is compiled only for tests. Commit and Amend currently stage and
+  include all changes; staged-only commits are not implemented yet.
+- Commit-message generation uses an explicitly configured OpenAI-compatible
+  service or local server. Preserve this existing feature; credentials use
+  system credential storage.
 - `README.md` documents running the application and verification commands.
   `SannyGit-Project.txt`, when available locally, contains detailed requirements.
   It and `reference-1.png` / `reference-2.png` are excluded from Git; do not assume
@@ -44,15 +48,23 @@ Windows, Linux, and macOS. The UI language is English. The license is MIT.
 | Path | Purpose |
 | --- | --- |
 | `src/main.rs` | Entry point, native window options, module declarations |
-| `src/app.rs` | `SannyGitApp`, state, initialization, UI loop, theme persistence |
+| `src/app.rs`, `src/app/*.rs` | Application state, background workers, repository/network actions, UI loop |
 | `src/models.rs` | Models for repositories, changes, commits, and diff lines |
-| `src/mock_data.rs` | Mock data kept separate from the UI |
+| `src/mock_data.rs` | Test-only mock data kept separate from the UI |
+| `src/git.rs` | Git execution, status, diff, staging, commit/amend, shared test fixtures |
+| `src/repository.rs`, `src/clone_source.rs` | Repository discovery, creation, clone, worktrees, external opening |
+| `src/branches.rs`, `src/history.rs` | Branch/tag operations and commit history |
+| `src/remotes.rs`, `src/tracking.rs` | Fetch/pull/push and upstream tracking |
+| `src/preferences.rs`, `src/llm.rs` | Persisted preferences, commit-message generation and credential access |
 | `src/diff.rs` | Unified diff parser and its unit tests |
 | `src/theme.rs` | Light and dark themes, palettes, typography, theme storage key |
 | `src/ui/mod.rs` | Panel layout and sizing |
 | `src/ui/*.rs` | Individual panels: toolbar, repositories, branches, changes, diff, commit, journal, status bar |
-| `src/ui/icons.rs` | Loading and rendering embedded SVG icons |
+| `src/ui/controls/` | Shared controls, dialog styles, tooltips, and embedded SVG icons |
+| `src/menu.rs`, `src/native_menu.rs` | Application menu actions and macOS native menus |
 | `assets/icons/` | Existing SVG icon set |
+| `scripts/package.py`, `build.rs`, `packaging/` | Native packaging and application resources |
+| `.github/workflows/build-test.yml` | Windows/Linux/macOS checks and a separate Rust 1.95 check |
 
 Create new modules only when needed. Do not create empty architectural scaffolding
 or mix Git logic with panel rendering.
@@ -68,8 +80,7 @@ or mix Git logic with panel rendering.
   libraries unless the current task requires them.
 - Handle errors explicitly. Do not use `unwrap()` or `expect()` for recoverable
   runtime errors.
-- Keep mock data in `src/mock_data.rs`. Do not present it as real Git results;
-  update the status description in README when connecting a real backend.
+- Keep test mock data in `src/mock_data.rs`. Do not present it as real Git results.
 - Keep `README.md` concise. Add only important project information, such as
   setup, build and run instructions, major capabilities, and significant
   limitations. Do not document minor behavior changes, routine fixes, or
@@ -96,7 +107,7 @@ or mix Git logic with panel rendering.
   a tooltip). Do not stabilize dialog sizes by adding large empty areas.
 - Support both themes. Define colors through the palette in `src/theme.rs`
   rather than arbitrary constants inside components.
-- Use the existing SVG icons and `src/ui/icons.rs`.
+- Use the existing SVG icons and `src/ui/controls/icons.rs`.
 - Disable unimplemented actions with a clear tooltip, or hide them. Do not create
   controls that appear functional but do nothing.
 - Commits and other repository operations must be initiated by an explicit
@@ -104,9 +115,9 @@ or mix Git logic with panel rendering.
 - Check the layout in both themes at the normal window size and the minimum
   size of 1100 x 700. Do not display the compiler version in the status bar.
 
-## Future Git Integration
+## Git Backend
 
-These rules apply when a task requires backend implementation:
+These rules apply when extending the existing backend:
 
 - Start with the installed Git executable through `std::process::Command`.
   Pass arguments separately; do not construct shell commands from user input.
