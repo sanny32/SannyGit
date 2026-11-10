@@ -8,48 +8,39 @@ Supports repository creation and cloning, status and diff, staging/unstaging,
 commit/amend, history, branches and tags, worktrees, fetch, fast-forward-only
 pull, and push.
 
-## Run
+## Build
 
-Install Rust through [rustup](https://rustup.rs/) and a native build toolchain
-(Xcode Command Line Tools on macOS, MSVC Build Tools with the Windows SDK on
-Windows, or a C/C++ toolchain on Linux).
-
-On Ubuntu 24.04, install the Linux build dependencies:
+The build scripts install missing dependencies and produce a Release package:
 
 ```sh
-sudo apt-get update
-sudo apt-get install -y build-essential pkg-config libdbus-1-dev libwayland-dev libxkbcommon-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libgl1-mesa-dev libxcb1-dev libxcb-randr0-dev
+./build.sh                       # Linux / macOS
+./build.sh --tests               # Include tests
+./build.sh --install             # Build and install
+./build.sh --install=/path       # Use a custom install prefix
 ```
 
-From the repository directory:
+On Windows:
 
-```sh
-cargo run
+```powershell
+.\build.ps1
+.\build.ps1 -Tests -Install
+.\build.ps1 -InstallPrefix "C:\Apps\SannyGit"
 ```
 
-Optional commit-message generation through an OpenAI-compatible API or local
-Ollama/LM Studio server is configured under **Preferences → AI → Commit messages**.
+Linux dependency setup uses apt, dnf, zypper or pacman and may require sudo.
+macOS requires Xcode Command Line Tools; missing tools use Homebrew or rustup.
+Windows dependency setup requires winget and may request elevation.
 
-## Package
+Packages are written to Cargo's target directory under `package/`. Default install
+locations are `~/Applications` on macOS, `~/.local` on Linux and
+`%LOCALAPPDATA%\Programs\SannyGit` on Windows. Add `~/.local/bin` to `PATH` on Linux.
 
-To build an app bundle/package with its icon:
+## MIT License
 
-```sh
-python3 scripts/package.py
-```
+Copyright 2026 Alexandr Ananev [mail@ananev.org]
 
-## Check
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
-```sh
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-cargo build
-```
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
-Tests use temporary Git repositories and local HTTP servers. No external service
-or credentials are required; local sockets must be allowed.
-
-## License
-
-[MIT](LICENSE)
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

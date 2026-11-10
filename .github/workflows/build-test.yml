@@ -37,6 +37,16 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Check Unix build entry point
+        if: runner.os != 'Windows'
+        run: |
+          bash -n build.sh
+          ./build.sh --help
+      - name: Check Windows build entry point
+        if: runner.os == 'Windows'
+        run: .\build.ps1 -Help
+      - name: Test packaging helpers
+        run: python -B -m unittest discover -s scripts -p 'test_*.py'
       - name: Check formatting
         if: runner.os == 'Linux'
         run: cargo fmt --check
@@ -46,3 +56,5 @@ jobs:
         run: cargo test
       - name: Build
         run: cargo build
+      - name: Package debug build
+        run: python scripts/package.py --debug
