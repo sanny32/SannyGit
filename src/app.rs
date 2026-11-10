@@ -35,6 +35,7 @@ enum WorkerResult {
         result: Result<crate::models::DiffPreview, String>,
     },
     CommitMessage(Result<String, String>),
+    AmendMessage(Result<(String, String), String>),
     Repository(Result<crate::git::Snapshot, String>),
     Operation {
         committed: bool,
@@ -191,6 +192,8 @@ pub struct SannyGitApp {
     pub generating_commit_message: bool,
     generation_cancel: Option<Arc<AtomicBool>>,
     pub amend: bool,
+    amend_head: Option<String>,
+    amend_draft: Option<String>,
     pub repository_path: String,
     pub open_dialog: bool,
     pub error: Option<String>,
@@ -368,6 +371,8 @@ impl SannyGitApp {
             generating_commit_message: false,
             generation_cancel: None,
             amend: false,
+            amend_head: None,
+            amend_draft: None,
             repository_path: String::new(),
             open_dialog: false,
             error: None,
@@ -674,6 +679,9 @@ impl SannyGitApp {
             self.commit_details_open = false;
             self.commit_preview_error = None;
             self.commit_message.clear();
+            self.amend = false;
+            self.amend_head = None;
+            self.amend_draft = None;
             self.journal_filter.clear();
         }
         self.status = if self.changes.is_empty() {
@@ -1085,6 +1093,40 @@ impl SannyGitApp {
         });
     }
 
+    pub fn amend_blocker(&self) -> Option<&'static str> {
+        if self.busy() {
+            Some("Wait for the current operation to finish")
+        } else if self.repositories.get(self.selected_repository).is_none() {
+            Some("Open a repository first")
+        } else if self.amend {
+            None
+        } else if !self.state_current || !self.refs_current {
+            Some("Refresh the repository before amending")
+        } else if !self.branch_head_exists {
+            Some("There is no commit to amend")
+        } else {
+            None
+        }
+    }
+
+    pub fn set_amend(&mut self, enabled: bool) {
+        if self.amend_blocker().is_some() || enabled == self.amend {
+            return;
+        }
+        if !enabled {
+            self.amend = false;
+            self.amend_head = None;
+            if let Some(draft) = self.amend_draft.take() {
+                self.commit_message = draft;
+            }
+            return;
+        }
+        let root = PathBuf::from(&self.repositories[self.selected_repository].path);
+        self.error = None;
+        self.status = "Loading last commit message…".into();
+        self.start_worker(move || WorkerResult::AmendMessage(git::amend_message(&root)));
+    }
+
     pub fn commit_blocker(&self) -> Option<&'static str> {
         if self.busy() {
             Some("Wait for the current operation to finish")
@@ -1098,7 +1140,9 @@ impl SannyGitApp {
             .any(|c| c.kind == crate::models::ChangeKind::Conflicted)
         {
             Some("Resolve all conflicts before committing")
-        } else if self.changes.is_empty() {
+        } else if self.amend && self.amend_head.is_none() {
+            Some("Load the last commit before amending")
+        } else if self.changes.is_empty() && !self.amend {
             Some("There are no changes to commit")
         } else if self.commit_message.trim().is_empty() {
             Some("Enter a commit message")
@@ -1117,14 +1161,28 @@ impl SannyGitApp {
         let message = self.commit_message.clone();
         self.state_current = false;
         self.error = None;
-        self.status = "Creating commit…".into();
+        let amend_head = self.amend_head.clone().filter(|_| self.amend);
+        self.status = if self.amend {
+            "Amending last commit…"
+        } else {
+            "Creating commit…"
+        }
+        .into();
         self.start_worker(move || {
-            let outcome = git::commit(&root, &message);
+            let outcome = if let Some(head) = &amend_head {
+                git::amend_commit(&root, &message, head)
+            } else {
+                git::commit(&root, &message)
+            };
             let committed = outcome.is_ok();
             let snapshot = git::load(&root);
             WorkerResult::Operation {
                 committed,
-                success: "Commit created",
+                success: if amend_head.is_some() {
+                    "Commit amended"
+                } else {
+                    "Commit created"
+                },
                 outcome,
                 snapshot,
             }
@@ -1316,6 +1374,18 @@ impl SannyGitApp {
                     }
                 }
             }
+            WorkerResult::AmendMessage(result) => match result {
+                Ok((head, message)) => {
+                    self.amend_draft = Some(std::mem::replace(&mut self.commit_message, message));
+                    self.amend_head = Some(head);
+                    self.amend = true;
+                    self.status = "Ready to amend last commit".into();
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    self.status = "Could not load last commit".into();
+                }
+            },
             WorkerResult::CommitMessage(result) => {
                 self.generating_commit_message = false;
                 self.generation_cancel = None;
@@ -1383,6 +1453,9 @@ impl SannyGitApp {
                     self.new_tag_message.clear();
                 }
                 if committed {
+                    self.amend = false;
+                    self.amend_head = None;
+                    self.amend_draft = None;
                     self.commit_message.clear();
                 }
                 if outcome.is_ok() && success.starts_with("Branch created") {
@@ -1779,6 +1852,40 @@ mod tests {
     }
 
     #[test]
+    fn amend_loads_head_message_restores_draft_and_allows_rewording() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        assert!(app.amend_blocker().is_some());
+        app.repositories = crate::mock_data::repositories();
+        app.selected_repository = 0;
+        app.state_current = true;
+        app.refs_current = true;
+        assert!(app.amend_blocker().unwrap().contains("no commit"));
+        app.branch_head_exists = true;
+        assert!(app.amend_blocker().is_none());
+        app.commit_message = "Draft".into();
+        deliver(
+            &mut app,
+            WorkerResult::AmendMessage(Err("Cannot read HEAD".into())),
+        );
+        assert_eq!(app.commit_message, "Draft");
+        assert!(!app.amend);
+        deliver(
+            &mut app,
+            WorkerResult::AmendMessage(Ok(("a".repeat(40), "Last message\n\nBody".into()))),
+        );
+        assert!(app.amend);
+        assert_eq!(app.commit_message, "Last message\n\nBody");
+        assert!(app.changes.is_empty());
+        assert!(app.commit_blocker().is_none());
+        app.commit_message = "Edited message".into();
+        app.set_amend(false);
+        assert_eq!(app.commit_message, "Draft");
+        assert!(!app.amend);
+        assert!(app.amend_head.is_none());
+        assert!(app.commit_blocker().unwrap().contains("no changes"));
+    }
+
+    #[test]
     fn skipped_push_reports_results_without_dialogs() {
         for skip in [false, true] {
             for failed in [false, true] {
@@ -1848,6 +1955,9 @@ mod tests {
     fn operation_errors_keep_draft_and_success_clears_it_even_if_refresh_fails() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.commit_message = "Keep draft".into();
+        app.amend = true;
+        app.amend_head = Some("a".repeat(40));
+        app.amend_draft = Some("Original draft".into());
         app.state_current = false;
         deliver(
             &mut app,
@@ -1859,6 +1969,8 @@ mod tests {
             },
         );
         assert_eq!(app.commit_message, "Keep draft");
+        assert!(app.amend);
+        assert!(app.amend_head.is_some());
         assert!(app.error.as_deref().unwrap().contains("Hook"));
         assert!(!app.state_current);
         deliver(
@@ -1871,6 +1983,9 @@ mod tests {
             },
         );
         assert!(app.commit_message.is_empty());
+        assert!(!app.amend);
+        assert!(app.amend_head.is_none());
+        assert!(app.amend_draft.is_none());
         assert!(app.error.as_deref().unwrap().contains("refresh"));
         assert!(!app.state_current);
         assert!(app.commit_blocker().is_some());

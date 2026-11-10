@@ -118,23 +118,37 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             });
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                ui.add_enabled(
-                    false,
-                    eframe::egui::Checkbox::new(&mut app.amend, "Amend last commit"),
+                let blocker = app.amend_blocker();
+                let mut amend = app.amend;
+                if ui.add_enabled(
+                    blocker.is_none(),
+                    eframe::egui::Checkbox::new(&mut amend, "Amend last commit"),
                 )
-                .disabled_help_text("Amending commits is not implemented yet");
+                .help_text("Replace the last commit with this message and all changes. Rewrites commit history.")
+                .disabled_help_text(blocker.unwrap_or(""))
+                .changed() {
+                    app.set_amend(amend);
+                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let blocker = app.commit_blocker();
+                    let label = if app.amend { "Amend" } else { "Commit" };
                     if ui
                         .add_enabled(
                             blocker.is_none(),
                             if app.interface_style == crate::theme::InterfaceStyle::Modern {
-                                super::controls::dialog_style::primary("✓  Commit", palette)
+                                super::controls::dialog_style::primary(
+                                    if app.amend { "✓  Amend" } else { "✓  Commit" },
+                                    palette,
+                                )
                             } else {
-                                Button::new("Commit").min_size(Vec2::new(72.0, 24.0))
+                                Button::new(label).min_size(Vec2::new(72.0, 24.0))
                             },
                         )
-                        .help_text("Commit all changes, including new files")
+                        .help_text(if app.amend {
+                            "Replace the last commit with this message and all changes, including new files"
+                        } else {
+                            "Commit all changes, including new files"
+                        })
                         .disabled_help_text(blocker.unwrap_or(""))
                         .clicked()
                     {
@@ -239,7 +253,7 @@ mod tests {
     use eframe::egui::{self, Pos2};
 
     #[test]
-    fn generation_preserves_layout_and_draft_in_both_themes() {
+    fn commit_modes_and_generation_preserve_layout_and_draft_in_both_themes() {
         for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
             for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
                 let context = egui::Context::default();
@@ -251,6 +265,7 @@ mod tests {
                 let mut idle_layout = None;
                 for (frame, generating) in [false, true, true, false].into_iter().enumerate() {
                     app.generating_commit_message = generating;
+                    app.amend = generating;
                     let input = egui::RawInput {
                         screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
                         time: Some(frame as f64 * 0.75),
