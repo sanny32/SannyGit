@@ -380,33 +380,116 @@ fn vacant_lane(lanes: &mut Vec<String>) -> usize {
     })
 }
 
-pub fn patch(root: &Path, hash: &str, first_parent: Option<&str>) -> Result<String, String> {
+/// One entry in a bounded, NUL-delimited commit file list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommitFile {
+    pub status: String,
+    pub path: String,
+    pub original_path: Option<String>,
+}
+
+pub fn files(
+    root: &Path,
+    hash: &str,
+    first_parent: Option<&str>,
+) -> Result<Vec<CommitFile>, String> {
+    let mut args = commit_diff_args(hash, first_parent)?;
+    args.extend(["--name-status", "-z", "--find-renames", "--"]);
+    parse_files(&git::run(root, &args)?)
+}
+
+fn parse_files(bytes: &[u8]) -> Result<Vec<CommitFile>, String> {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    if bytes.last() != Some(&0) {
+        return Err("Truncated commit file list".into());
+    }
+    let fields =
+        std::str::from_utf8(bytes).map_err(|_| "Non-UTF-8 file names are not supported yet")?;
+    let mut fields = fields[..fields.len() - 1].split('\0');
+    let mut files = Vec::new();
+    while let Some(status) = fields.next() {
+        let rename = status.starts_with('R');
+        if !(matches!(status, "A" | "D" | "M" | "T")
+            || rename && status[1..].parse::<u8>().is_ok_and(|score| score <= 100))
+        {
+            return Err("Malformed commit file status".into());
+        }
+        let source = fields
+            .next()
+            .filter(|p| !p.is_empty())
+            .ok_or("Missing commit file path")?;
+        let (path, original_path) = if rename {
+            (
+                fields
+                    .next()
+                    .filter(|p| !p.is_empty())
+                    .ok_or("Missing renamed file path")?,
+                Some(source.to_owned()),
+            )
+        } else {
+            (source, None)
+        };
+        files.push(CommitFile {
+            status: status.to_owned(),
+            path: path.to_owned(),
+            original_path,
+        });
+        if files.len() > 5_000 {
+            return Err("Commit exceeds the 5,000 file display limit".into());
+        }
+    }
+    Ok(files)
+}
+
+fn commit_diff_args<'a>(
+    hash: &'a str,
+    first_parent: Option<&'a str>,
+) -> Result<Vec<&'a str>, String> {
     if !valid_hash(hash) || first_parent.is_some_and(|p| !valid_hash(p)) {
         return Err("Invalid commit ID".into());
     }
-    let args = if let Some(parent) = first_parent {
-        vec![
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-color",
-            parent,
-            hash,
-            "--",
-        ]
+    let mut args = vec![
+        "diff-tree",
+        "--no-commit-id",
+        "-r",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+    ];
+    if let Some(parent) = first_parent {
+        args.extend([parent, hash]);
     } else {
-        vec![
-            "show",
-            "--format=",
-            "--no-notes",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-color",
-            "--root",
-            hash,
-            "--",
-        ]
-    };
+        args.extend(["--root", hash]);
+    }
+    Ok(args)
+}
+
+pub fn file_patch(
+    root: &Path,
+    hash: &str,
+    first_parent: Option<&str>,
+    file: &CommitFile,
+) -> Result<String, String> {
+    let mut args = commit_diff_args(hash, first_parent)?;
+    args.extend(["-p", "--find-renames", "--"]);
+    if let Some(source) = &file.original_path {
+        args.push(source);
+    }
+    args.push(&file.path);
+    let output = git::text(git::run(root, &args)?)?;
+    git::limit_diff(if output.is_empty() {
+        "This file has no text changes against the first parent.".into()
+    } else {
+        output
+    })
+}
+
+#[cfg(test)]
+pub fn patch(root: &Path, hash: &str, first_parent: Option<&str>) -> Result<String, String> {
+    let mut args = commit_diff_args(hash, first_parent)?;
+    args.extend(["-p", "--find-renames", "--"]);
     let output = git::text(git::run(root, &args)?)?;
     git::limit_diff(if output.is_empty() {
         "This commit has no text changes against its first parent.".into()

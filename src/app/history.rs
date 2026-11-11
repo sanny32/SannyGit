@@ -209,8 +209,7 @@ impl SannyGitApp {
                 {
                     self.selected_commit = None;
                     self.commit_details_open = false;
-                    self.commit_preview = None;
-                    self.loaded_commit = None;
+                    self.clear_commit_preview();
                 }
             }
             Err(error) => self.history_error = Some(error),

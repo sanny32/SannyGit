@@ -301,6 +301,7 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     let mut open = true;
     let mut retry = false;
+    let mut select_file = None;
     Window::new("Commit details")
         .anchor(
             eframe::egui::Align2::CENTER_CENTER,
@@ -319,54 +320,143 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
                 }
             });
             let metadata_height = (ui.available_height() * 0.35).clamp(48.0, 190.0);
-            ScrollArea::vertical()
-                .id_salt(("commit.metadata", &commit.hash))
-                .min_scrolled_height(24.0)
-                .max_height(metadata_height)
-                .show(ui, |ui| {
-                    ui.add(
-                        Label::new(format!("Author: {} <{}>", commit.author, commit.email))
-                            .wrap()
-                            .selectable(true),
-                    );
-                    ui.add(
-                        Label::new(format!(
-                            "Date: {}",
-                            app.preferences.commit_date(&commit.date)
-                        ))
-                        .wrap()
-                        .selectable(true),
-                    )
-                    .help_text(&commit.date);
-                    ui.add(
-                        Label::new(if commit.parents.is_empty() {
-                            "Parents: none in available history (root or shallow boundary)".into()
-                        } else {
-                            format!("Parents: {}", commit.parents.join(", "))
-                        })
-                        .wrap()
-                        .selectable(true),
-                    );
-                    ui.add(Label::new(&commit.message).wrap().selectable(true));
-                });
+            ui.allocate_ui_with_layout(
+                Vec2::new(ui.available_width(), metadata_height),
+                Layout::top_down(Align::Min),
+                |ui| {
+                    ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .id_salt(("commit.metadata", &commit.hash))
+                        .min_scrolled_height(24.0)
+                        .max_height(metadata_height)
+                        .show(ui, |ui| {
+                            ui.add(
+                                Label::new(format!("Author: {} <{}>", commit.author, commit.email))
+                                    .wrap()
+                                    .selectable(true),
+                            );
+                            ui.add(
+                                Label::new(format!(
+                                    "Date: {}",
+                                    app.preferences.commit_date(&commit.date)
+                                ))
+                                .wrap()
+                                .selectable(true),
+                            )
+                            .help_text(&commit.date);
+                            ui.add(
+                                Label::new(if commit.parents.is_empty() {
+                                    "Parents: none in available history (root or shallow boundary)"
+                                        .into()
+                                } else {
+                                    format!("Parents: {}", commit.parents.join(", "))
+                                })
+                                .wrap()
+                                .selectable(true),
+                            );
+                            ui.add(Label::new(&commit.message).wrap().selectable(true));
+                        });
+                },
+            );
             ui.separator();
-            ui.label(if commit.parents.len() > 1 {
-                "Merge changes against first parent"
-            } else {
-                "Commit changes"
-            });
-            if app.commit_preview_error.is_some() {
-                ui.label("Commit diff unavailable.");
+            ui.horizontal(|ui| {
+                ui.label(if commit.parents.len() > 1 {
+                    "Merge changes against first parent"
+                } else {
+                    "Commit changes"
+                });
                 retry = ui
-                    .add_enabled(!app.busy(), Button::new("Retry diff"))
+                    .add_enabled(
+                        app.commit_preview_error.is_some() && !app.busy(),
+                        Button::new("Retry"),
+                    )
                     .clicked();
-            } else if let Some(preview) = &app.commit_preview {
-                super::diff_view::render_preview(ui, preview, palette, &commit.hash);
-            } else {
-                ui.label(RichText::new("Loading commit diff…").color(palette.muted));
-            }
+                ui.label(
+                    RichText::new(if app.commit_preview_error.is_some() {
+                        "Preview unavailable"
+                    } else if let Some(files) = &app.commit_files {
+                        if files.is_empty() {
+                            "No changed files"
+                        } else if app.commit_preview.is_none() {
+                            "Loading file diff…"
+                        } else {
+                            ""
+                        }
+                    } else {
+                        "Loading files…"
+                    })
+                    .color(palette.muted),
+                );
+            });
+            let height = ui.available_height().max(100.0);
+            let file_width = (ui.available_width() * 0.32).clamp(120.0, 280.0);
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(
+                    Vec2::new(file_width, height),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        ui.set_min_size(Vec2::new(file_width, height));
+                        ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+                        ScrollArea::both()
+                            .id_salt(("commit.files", &commit.hash))
+                            .auto_shrink([false, false])
+                            .show_rows(
+                                ui,
+                                20.0,
+                                app.commit_files.as_ref().map_or(0, Vec::len),
+                                |ui, rows| {
+                                    let Some(files) = &app.commit_files else {
+                                        return;
+                                    };
+                                    for file in &files[rows] {
+                                        let label = format!(
+                                            "{}  {}",
+                                            file.status,
+                                            file.path.escape_debug()
+                                        );
+                                        let response = ui.selectable_label(
+                                            app.selected_commit_file.as_ref() == Some(&file.path),
+                                            label,
+                                        );
+                                        let clicked = response.clicked();
+                                        response.help_text(
+                                            if let Some(source) = &file.original_path {
+                                                format!(
+                                                    "{} → {}",
+                                                    source.escape_debug(),
+                                                    file.path.escape_debug()
+                                                )
+                                            } else {
+                                                file.path.escape_debug().to_string()
+                                            },
+                                        );
+                                        if clicked {
+                                            select_file = Some(file.path.clone());
+                                        }
+                                    }
+                                },
+                            );
+                    },
+                );
+                ui.separator();
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), height),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        ui.set_min_height(height);
+                        ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+                        if let Some(preview) = &app.commit_preview {
+                            let id = format!("{}:{:?}", commit.hash, app.selected_commit_file);
+                            super::diff_view::render_preview(ui, preview, palette, &id);
+                        }
+                    },
+                );
+            });
         });
     app.commit_details_open = open;
+    if let Some(path) = select_file {
+        app.select_commit_file(path);
+    }
     if retry {
         app.retry_commit_preview();
     }
@@ -377,6 +467,79 @@ mod tests {
     use super::*;
     use crate::theme::{install_fonts, ThemeChoice};
     use eframe::egui::{self, Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect};
+
+    #[test]
+    fn commit_details_geometry_is_stable_across_file_loading_errors_and_retry() {
+        use crate::theme::InterfaceStyle;
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for style in [InterfaceStyle::Classic, InterfaceStyle::Modern] {
+                for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                    let ctx = Context::default();
+                    install_fonts(&ctx);
+                    theme.apply(&ctx);
+                    let mut app = SannyGitApp::with_theme(theme);
+                    app.interface_style = style;
+                    app.commits = crate::mock_data::commits();
+                    app.select_commit(app.commits[0].hash.clone());
+                    let render = |app: &mut SannyGitApp| {
+                        let mut output = ctx.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                                ..Default::default()
+                            },
+                            |ui| details(ui, app),
+                        );
+                        output.textures_delta.clear();
+                        output
+                    };
+                    let mut baseline = None;
+                    for stage in 0..6 {
+                        match stage {
+                            1 => app.commit_preview_error = Some("Long diagnostic ".repeat(100)),
+                            2 => {
+                                app.retry_commit_preview();
+                                app.commit_files = Some(vec![crate::history::CommitFile {
+                                    status: "A".into(),
+                                    path: "file.txt".into(),
+                                    original_path: None,
+                                }]);
+                                app.selected_commit_file = Some("file.txt".into());
+                            }
+                            3 => {
+                                app.commit_preview = Some(crate::models::DiffPreview::new(
+                                    &"+preview line\n".repeat(500),
+                                ))
+                            }
+                            4 => {
+                                app.commit_preview = None;
+                                app.commit_preview_error = Some("File diff limit ".repeat(100));
+                            }
+                            5 => app.retry_commit_preview(),
+                            _ => {}
+                        }
+                        for _ in 0..5 {
+                            render(&mut app);
+                        }
+                        let output = render(&mut app);
+                        let rect = egui::AreaState::load(&ctx, egui::Id::unique("journal.details"))
+                            .unwrap()
+                            .rect();
+                        if let Some(before) = baseline {
+                            assert_eq!(rect, before, "stage {stage}: {theme:?} {style:?} {size:?}");
+                        } else {
+                            baseline = Some(rect);
+                        }
+                        assert!(rect.width() <= size.x && rect.height() <= size.y);
+                        assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("Long diagnostic") || text.galley.job.text.contains("File diff limit"))));
+                        if stage >= 2 {
+                            assert_eq!(app.selected_commit_file.as_deref(), Some("file.txt"));
+                            assert_eq!(app.commit_files.as_ref().unwrap().len(), 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn appending_and_cancelling_keep_scrolled_rows_graph_nodes_and_selection_stationary() {

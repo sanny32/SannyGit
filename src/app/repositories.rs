@@ -549,9 +549,7 @@ impl SannyGitApp {
         self.diff_preview = None;
         self.selected_commit = None;
         self.commit_details_open = false;
-        self.commit_preview = None;
-        self.commit_preview_error = None;
-        self.loaded_commit = None;
+        self.clear_commit_preview();
         self.state_current = false;
         self.commit_message.clear();
         self.contents_preview_open = false;

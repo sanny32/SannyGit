@@ -413,3 +413,113 @@ fn handles_empty_patch_unborn_head_with_other_refs_and_invalid_objects() {
     assert!(load(&repo.0, false).unwrap().commits.is_empty());
     assert_eq!(load(&repo.0, true).unwrap().commits.len(), 1);
 }
+
+#[test]
+fn commit_file_list_survives_large_patches_and_limits_each_file_independently() {
+    let repo = TempRepo::new();
+    let medium = format!("{}\n", "x".repeat(160)).repeat(7_000);
+    repo.write("medium-a", &medium);
+    repo.write("medium-b", &medium);
+    repo.write("oversized", &"large\n".repeat(11_000));
+    repo.write("small", "small patch\n");
+    std::fs::write(repo.0.join("binary"), b"\0binary\xff").unwrap();
+    repo.git(&["add", "."]);
+    repo.git(&["commit", "-m", "Large root"]);
+    let hash = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    let index = std::fs::read(repo.0.join(".git/index")).unwrap();
+    assert!(patch(&repo.0, &hash, None).is_err());
+    let list = files(&repo.0, &hash, None).unwrap();
+    assert_eq!(list.len(), 5);
+    for file in &list {
+        let result = file_patch(&repo.0, &hash, None, file);
+        if file.path == "oversized" {
+            assert!(result.is_err());
+        } else {
+            let diff = result.unwrap();
+            assert!(diff.contains(&file.path));
+            if file.path == "small" {
+                assert!(diff.contains("+small patch"));
+            }
+            if file.path == "binary" {
+                assert!(diff.contains("Binary files"));
+            }
+        }
+    }
+    assert_eq!(files(&repo.0, &hash, None).unwrap(), list);
+    assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
+    assert_eq!(
+        std::fs::read_to_string(repo.0.join("small")).unwrap(),
+        "small patch\n"
+    );
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), hash);
+}
+
+#[test]
+fn commit_files_handle_renames_deletions_literal_paths_and_first_parent_merges() {
+    let repo = TempRepo::new();
+    repo.write("old name", "rename contents\n");
+    repo.write("delete", "deleted contents\n");
+    repo.git(&["add", "."]);
+    repo.git(&["commit", "-m", "Root"]);
+    let root = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    repo.git(&["mv", "old name", "new name"]);
+    repo.git(&["rm", "delete"]);
+    repo.write("[literal] ü.txt", "literal patch\n");
+    repo.write("l.txt", "unrelated patch\n");
+    repo.git(&["add", "."]);
+    repo.git(&["commit", "-m", "Files"]);
+    let hash = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    let list = files(&repo.0, &hash, Some(&root)).unwrap();
+    let renamed = list.iter().find(|f| f.path == "new name").unwrap();
+    assert_eq!(renamed.original_path.as_deref(), Some("old name"));
+    assert!(file_patch(&repo.0, &hash, Some(&root), renamed)
+        .unwrap()
+        .contains("rename from old name"));
+    let deleted = list.iter().find(|f| f.path == "delete").unwrap();
+    assert_eq!(deleted.status, "D");
+    assert!(file_patch(&repo.0, &hash, Some(&root), deleted)
+        .unwrap()
+        .contains("-deleted contents"));
+    let literal = list.iter().find(|f| f.path == "[literal] ü.txt").unwrap();
+    let diff = file_patch(&repo.0, &hash, Some(&root), literal).unwrap();
+    assert!(diff.contains("+literal patch"));
+    assert!(!diff.contains("unrelated patch"));
+    repo.git(&["checkout", "-b", "topic", &root]);
+    repo.write("topic", "topic contents\n");
+    repo.git(&["add", "."]);
+    repo.git(&["commit", "-m", "Topic"]);
+    repo.git(&["checkout", "main"]);
+    repo.git(&["merge", "--no-ff", "topic", "-m", "Merge"]);
+    let merge = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    let list = files(&repo.0, &merge, Some(&hash)).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].path, "topic");
+    assert!(file_patch(&repo.0, &merge, Some(&hash), &list[0])
+        .unwrap()
+        .contains("+topic contents"));
+    repo.git(&["commit", "--allow-empty", "-m", "Empty"]);
+    let empty = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    assert!(files(&repo.0, &empty, Some(&merge)).unwrap().is_empty());
+    assert!(files(&repo.0, "--help", None).is_err());
+    assert!(files(&repo.0, &"f".repeat(40), None).is_err());
+}
+
+#[test]
+fn commit_file_parser_rejects_invalid_records_and_bounds_file_counts() {
+    for bytes in [
+        b"M\0path".as_slice(),
+        b"R100\0old\0",
+        b"R101\0a\0b\0",
+        b"X\0path\0",
+        b"A\0\0",
+        b"M\0\xff\0",
+    ] {
+        assert!(parse_files(bytes).is_err(), "{bytes:?}");
+    }
+    let list = parse_files(b"R100\0old\tname\0new\nname\0T\0link\0").unwrap();
+    assert_eq!(list[0].original_path.as_deref(), Some("old\tname"));
+    assert_eq!(list[0].path, "new\nname");
+    assert_eq!(list[1].status, "T");
+    assert!(parse_files(&b"M\0file\0".repeat(5_000)).is_ok());
+    assert!(parse_files(&b"M\0file\0".repeat(5_001)).is_err());
+}

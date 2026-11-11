@@ -52,7 +52,16 @@ enum WorkerResult {
         append: bool,
         result: Result<crate::history::Page, String>,
     },
+    CommitFiles {
+        path: String,
+        hash: String,
+        generation: u64,
+        result: Result<Vec<crate::history::CommitFile>, String>,
+    },
     CommitPatch {
+        path: String,
+        file: String,
+        generation: u64,
         hash: String,
         result: Result<crate::models::DiffPreview, String>,
     },
@@ -263,6 +272,10 @@ pub struct SannyGitApp {
     pub commit_preview: Option<crate::models::DiffPreview>,
     pub commit_preview_error: Option<String>,
     loaded_commit: Option<String>,
+    pub commit_files: Option<Vec<crate::history::CommitFile>>,
+    pub selected_commit_file: Option<String>,
+    loaded_commit_file: Option<String>,
+    commit_preview_generation: u64,
 }
 
 impl SannyGitApp {
@@ -500,6 +513,10 @@ impl SannyGitApp {
             commit_preview: None,
             commit_preview_error: None,
             loaded_commit: None,
+            commit_files: None,
+            selected_commit_file: None,
+            loaded_commit_file: None,
+            commit_preview_generation: 0,
         }
     }
     pub fn selected_diff(&self) -> Option<&crate::models::DiffPreview> {
@@ -792,10 +809,8 @@ impl SannyGitApp {
         self.refs_loading = true;
         self.refs_error = None;
         self.queue_history_reload();
-        self.commit_preview = None;
-        self.commit_preview_error = None;
-        self.loaded_commit = None;
         if !same_repository {
+            self.clear_commit_preview();
             self.manager.dialog = None;
             self.manager.worktrees.clear();
             self.manager.settings = None;
@@ -1119,25 +1134,53 @@ impl SannyGitApp {
         });
     }
 
+    fn clear_commit_preview(&mut self) {
+        self.commit_preview = None;
+        self.commit_preview_error = None;
+        self.loaded_commit = None;
+        self.commit_files = None;
+        self.selected_commit_file = None;
+        self.loaded_commit_file = None;
+        self.commit_preview_generation = self.commit_preview_generation.wrapping_add(1);
+    }
+
     pub fn select_commit(&mut self, hash: String) {
         if !self.commits.iter().any(|c| c.hash == hash) {
             return;
         }
         if self.selected_commit.as_ref() != Some(&hash) {
-            self.commit_preview = None;
-            self.commit_preview_error = None;
-            self.loaded_commit = None;
+            self.clear_commit_preview();
         }
         self.selected_commit = Some(hash);
         self.commit_details_open = true;
+    }
+
+    pub fn select_commit_file(&mut self, path: String) {
+        if !self
+            .commit_files
+            .as_ref()
+            .is_some_and(|files| files.iter().any(|f| f.path == path))
+            || self.selected_commit_file.as_ref() == Some(&path)
+        {
+            return;
+        }
+        self.selected_commit_file = Some(path);
+        self.commit_preview = None;
+        self.commit_preview_error = None;
+        self.loaded_commit_file = None;
+        self.commit_preview_generation = self.commit_preview_generation.wrapping_add(1);
     }
 
     pub fn retry_commit_preview(&mut self) {
         if self.busy() {
             return;
         }
-        self.loaded_commit = None;
+        if self.commit_files.is_none() {
+            self.loaded_commit = None;
+        }
+        self.loaded_commit_file = None;
         self.commit_preview_error = None;
+        self.commit_preview_generation = self.commit_preview_generation.wrapping_add(1);
     }
 
     fn load_commit_preview(&mut self) {
@@ -1147,9 +1190,6 @@ impl SannyGitApp {
         let Some(hash) = self.selected_commit.clone() else {
             return;
         };
-        if self.loaded_commit.as_ref() == Some(&hash) {
-            return;
-        }
         let Some(commit) = self.commits.iter().find(|c| c.hash == hash) else {
             return;
         };
@@ -1157,16 +1197,55 @@ impl SannyGitApp {
         let Some(repository) = self.repositories.get(self.selected_repository) else {
             return;
         };
-        let root = PathBuf::from(&repository.path);
-        self.commit_preview = None;
-        self.loaded_commit = Some(hash.clone());
+        let path = repository.path.clone();
+        let root = PathBuf::from(&path);
+        let generation = self.commit_preview_generation;
+        if self.loaded_commit.as_ref() != Some(&hash) {
+            self.loaded_commit = Some(hash.clone());
+            if !self.start_worker(move || WorkerResult::CommitFiles {
+                result: crate::history::files(&root, &hash, parent.as_deref()),
+                path,
+                hash,
+                generation,
+            }) {
+                self.commit_preview_error = self.error.clone();
+            }
+            return;
+        }
+        let Some(file) = self
+            .commit_files
+            .as_ref()
+            .and_then(|files| {
+                files
+                    .iter()
+                    .find(|file| Some(&file.path) == self.selected_commit_file.as_ref())
+            })
+            .cloned()
+        else {
+            return;
+        };
+        if self.loaded_commit_file.as_ref() == Some(&file.path) {
+            return;
+        }
+        self.loaded_commit_file = Some(file.path.clone());
         if !self.start_worker(move || WorkerResult::CommitPatch {
-            result: crate::history::patch(&root, &hash, parent.as_deref())
+            result: crate::history::file_patch(&root, &hash, parent.as_deref(), &file)
                 .map(|patch| crate::models::DiffPreview::new(&patch)),
+            path,
+            file: file.path,
             hash,
+            generation,
         }) {
             self.commit_preview_error = self.error.clone();
         }
+    }
+
+    fn commit_preview_matches(&self, path: &str, hash: &str, generation: u64) -> bool {
+        self.repositories
+            .get(self.selected_repository)
+            .is_some_and(|repo| repo.path == path)
+            && self.selected_commit.as_deref() == Some(hash)
+            && self.commit_preview_generation == generation
     }
 
     pub fn staging_allowed(&self, index: usize, staged: bool) -> bool {
@@ -1516,8 +1595,33 @@ impl SannyGitApp {
                 append,
                 result,
             } => self.apply_history(path, all, generation, append, result),
-            WorkerResult::CommitPatch { hash, result } => {
-                if self.selected_commit.as_ref() == Some(&hash) {
+            WorkerResult::CommitFiles {
+                path,
+                hash,
+                generation,
+                result,
+            } => {
+                if self.commit_preview_matches(&path, &hash, generation) {
+                    match result {
+                        Ok(files) => {
+                            self.selected_commit_file = files.first().map(|file| file.path.clone());
+                            self.commit_files = Some(files);
+                            self.commit_preview_error = None;
+                        }
+                        Err(error) => self.commit_preview_error = Some(error),
+                    }
+                }
+            }
+            WorkerResult::CommitPatch {
+                path,
+                file,
+                hash,
+                generation,
+                result,
+            } => {
+                if self.commit_preview_matches(&path, &hash, generation)
+                    && self.selected_commit_file.as_ref() == Some(&file)
+                {
                     match result {
                         Ok(preview) => {
                             self.commit_preview = Some(preview);

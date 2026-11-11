@@ -701,6 +701,9 @@ fn history_errors_retain_rows_and_late_commit_previews_are_discarded() {
     app.select_commit(selected.clone());
     let path = app.repositories[0].path.clone();
     let count = app.commits.len();
+    let preview_path = app.repositories[0].path.clone();
+    let preview_generation = app.commit_preview_generation;
+    app.selected_commit_file = Some("root".into());
     deliver(
         &mut app,
         WorkerResult::History {
@@ -728,6 +731,9 @@ fn history_errors_retain_rows_and_late_commit_previews_are_discarded() {
     deliver(
         &mut app,
         WorkerResult::CommitPatch {
+            path: preview_path.clone(),
+            file: "root".into(),
+            generation: preview_generation,
             hash: "old selection".into(),
             result: Err("Stale preview".into()),
         },
@@ -737,6 +743,9 @@ fn history_errors_retain_rows_and_late_commit_previews_are_discarded() {
     deliver(
         &mut app,
         WorkerResult::CommitPatch {
+            path: preview_path.clone(),
+            file: "root".into(),
+            generation: preview_generation,
             hash: selected,
             result: Ok(crate::models::DiffPreview::new(
                 "@@ -0,0 +1 @@\n+commit preview",
@@ -1440,4 +1449,100 @@ fn settings_preserve_unloaded_keys_and_only_write_explicit_secret_changes() {
     assert!(draft.secret_changed(&previous));
     draft.config.api_key.clear();
     assert!(draft.secret_changed(&previous));
+}
+
+#[test]
+fn commit_file_selection_retains_list_after_errors_and_rejects_stale_results() {
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.repositories = crate::mock_data::repositories();
+    app.selected_repository = 0;
+    app.commits = crate::mock_data::commits();
+    let hash = app.commits[0].hash.clone();
+    app.select_commit(hash.clone());
+    let path = app.repositories[0].path.clone();
+    let generation = app.commit_preview_generation;
+    let list = vec![
+        crate::history::CommitFile {
+            status: "A".into(),
+            path: "large".into(),
+            original_path: None,
+        },
+        crate::history::CommitFile {
+            status: "M".into(),
+            path: "small".into(),
+            original_path: None,
+        },
+    ];
+    deliver(
+        &mut app,
+        WorkerResult::CommitFiles {
+            path: path.clone(),
+            hash: hash.clone(),
+            generation,
+            result: Ok(list.clone()),
+        },
+    );
+    assert_eq!(app.selected_commit_file.as_deref(), Some("large"));
+    deliver(
+        &mut app,
+        WorkerResult::CommitPatch {
+            path: path.clone(),
+            hash: hash.clone(),
+            generation,
+            file: "large".into(),
+            result: Err("Diff exceeds limit".into()),
+        },
+    );
+    app.collect_errors();
+    assert_eq!(
+        app.error_dialogs.pending.back().unwrap(),
+        "Diff exceeds limit"
+    );
+    app.select_commit_file("small".into());
+    assert_eq!(app.commit_files.as_ref().unwrap(), &list);
+    assert!(app.commit_preview_error.is_none());
+    let current = app.commit_preview_generation;
+    for (worker_path, worker_generation, file) in [
+        (path.clone(), generation, "large"),
+        ("other repository".into(), current, "small"),
+        (path.clone(), current, "large"),
+    ] {
+        deliver(
+            &mut app,
+            WorkerResult::CommitPatch {
+                path: worker_path,
+                hash: hash.clone(),
+                generation: worker_generation,
+                file: file.into(),
+                result: Err("Stale diff".into()),
+            },
+        );
+        assert!(app.commit_preview_error.is_none());
+    }
+    deliver(
+        &mut app,
+        WorkerResult::CommitPatch {
+            path: path.clone(),
+            hash: hash.clone(),
+            generation: current,
+            file: "small".into(),
+            result: Ok(crate::models::DiffPreview::new("@@ -0,0 +1 @@\n+small")),
+        },
+    );
+    assert_eq!(app.commit_preview.as_ref().unwrap().added, 1);
+    app.retry_commit_preview();
+    assert_eq!(app.commit_files.as_ref().unwrap(), &list);
+    assert!(app.commit_preview.is_some());
+    app.select_commit(app.commits[1].hash.clone());
+    deliver(
+        &mut app,
+        WorkerResult::CommitFiles {
+            path,
+            hash,
+            generation: current,
+            result: Ok(list),
+        },
+    );
+    assert!(app.commit_files.is_none());
+    assert!(app.commit_preview.is_none());
 }
