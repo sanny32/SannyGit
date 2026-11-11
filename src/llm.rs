@@ -159,7 +159,6 @@ mod macos_credentials {
         delete_generic_password_options, generic_password, set_generic_password_options,
         AccessControlOptions, PasswordOptions,
     };
-    use std::process::{Command, Output};
 
     use super::{
         with_keychain_fallback, ProtectedKeychainError, KEYRING_SERVICE, LEGACY_KEYRING_USER,
@@ -168,38 +167,11 @@ mod macos_credentials {
 
     const ITEM_NOT_FOUND: i32 = -25_300;
     const MISSING_ENTITLEMENT: i32 = -34_018;
-    const SECURITY_ITEM_NOT_FOUND: i32 = 44;
 
     fn options(user: &str) -> PasswordOptions {
         let mut options = PasswordOptions::new_generic_password(PROTECTED_KEYRING_SERVICE, user);
         options.use_protected_keychain();
         options
-    }
-
-    fn security(arguments: &[&str]) -> Result<Output, String> {
-        Command::new("/usr/bin/security")
-            .args(arguments)
-            .output()
-            .map_err(|error| format!("Cannot access the macOS Keychain: {error}"))
-    }
-
-    fn legacy_security_tool_owned() -> Result<Option<bool>, String> {
-        let output = security(&[
-            "find-generic-password",
-            "-s",
-            KEYRING_SERVICE,
-            "-a",
-            LEGACY_KEYRING_USER,
-        ])?;
-        if output.status.code() == Some(SECURITY_ITEM_NOT_FOUND) {
-            return Ok(None);
-        }
-        if !output.status.success() {
-            return Err("Cannot inspect the legacy LLM API key in the macOS Keychain".into());
-        }
-        let metadata = String::from_utf8(output.stdout)
-            .map_err(|_| "Cannot inspect the legacy LLM API key metadata".to_owned())?;
-        Ok(Some(metadata.contains("\"crtr\"<uint32>=\"aapl\"")))
     }
 
     pub fn load_unprotected(user: &str) -> Result<Option<String>, String> {
@@ -215,35 +187,11 @@ mod macos_credentials {
     }
 
     pub fn load_legacy() -> Result<Option<String>, String> {
-        let Some(security_tool_owned) = legacy_security_tool_owned()? else {
-            return Ok(None);
-        };
-        if !security_tool_owned {
-            return load_unprotected(LEGACY_KEYRING_USER);
-        }
-        let output = security(&[
-            "find-generic-password",
-            "-s",
-            KEYRING_SERVICE,
-            "-a",
-            LEGACY_KEYRING_USER,
-            "-w",
-        ])?;
-        if output.status.code() == Some(SECURITY_ITEM_NOT_FOUND) {
-            return Ok(None);
-        }
-        if !output.status.success() {
-            return Err("Cannot read the legacy LLM API key from the macOS Keychain".into());
-        }
-        let mut secret = String::from_utf8(output.stdout)
-            .map_err(|_| "The saved LLM API key is not valid UTF-8".to_owned())?;
-        if secret.ends_with('\n') {
-            secret.pop();
-            if secret.ends_with('\r') {
-                secret.pop();
-            }
-        }
-        Ok(Some(secret))
+        // Creator metadata does not determine which process may read an item.
+        // Let Keychain authorize this single native read, including entries
+        // originally created by /usr/bin/security. Do not inspect them through
+        // a separate process before asking for the secret.
+        load_unprotected(LEGACY_KEYRING_USER)
     }
 
     pub fn delete_legacy() -> Result<(), String> {

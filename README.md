@@ -34,6 +34,12 @@ Linux dependency setup uses apt, dnf, zypper or pacman and may require sudo.
 macOS requires Xcode Command Line Tools; missing tools use Homebrew or rustup.
 Windows dependency setup requires winget and may request elevation.
 
+For macOS Keychain access across updates, sign each build with the same certificate:
+`./build.sh --sign="Certificate name or SHA-1 identity" --install`. The certificate
+must already be installed in Keychain. Ad-hoc builds, including `cargo run`, may
+trigger two Keychain authorization dialogs even for a single API-key read. An
+existing key may need authorization again when changing the signing identity.
+
 Default install locations are `~/Applications` on macOS, `~/.local` on Linux and
 `%LOCALAPPDATA%\Programs\SannyGit` on Windows. Add `~/.local/bin` to `PATH` on Linux.
 

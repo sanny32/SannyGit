@@ -497,6 +497,28 @@ fn missing_or_cancelled_scoped_read_only_falls_back_when_absent() {
 }
 
 #[test]
+fn legacy_lookup_reads_once_and_returns_authentication_errors_without_retrying() {
+    for result in [
+        Ok(Some("legacy-key".into())),
+        Ok(None),
+        Err("authentication cancelled".into()),
+    ] {
+        let reads = std::cell::Cell::new(0);
+        let expected = result.clone();
+        let actual = load_api_key_from_stores(
+            || Ok(None),
+            || Ok(None),
+            || {
+                reads.set(reads.get() + 1);
+                result
+            },
+        );
+        assert_eq!(actual, expected);
+        assert_eq!(reads.get(), 1);
+    }
+}
+
+#[test]
 fn saved_credentials_restore_the_model_when_no_model_is_configured() {
     let secret = serde_json::to_string(&SavedCredential {
         model: "custom-model".into(),

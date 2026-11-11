@@ -5,13 +5,14 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
     cat <<'HELP'
-Usage: ./build.sh [--tests] [--install[=PREFIX]]
+Usage: ./build.sh [--tests] [--install[=PREFIX]] [--sign=IDENTITY]
 
 Build SannyGit in Release mode on Linux or macOS.
 Missing build dependencies are installed automatically (sudo may be required).
 
   --tests             Run the Rust test suite after building
   --install[=PREFIX]  Install after building, optionally into PREFIX
+  --sign=IDENTITY    Sign macOS builds with an existing code-signing certificate
   -h, --help          Show this help without installing or building anything
 
 Default install location: ~/Applications on macOS, ~/.local on Linux.
@@ -22,10 +23,18 @@ HELP
 run_tests=0
 run_install=0
 install_prefix=""
+signing_identity=""
 for argument in "$@"; do
     case "$argument" in
         -h|--help) usage; exit 0 ;;
         --tests) run_tests=1 ;;
+        --sign=*)
+            signing_identity="${argument#--sign=}"
+            if [ -z "$signing_identity" ] || [ "$signing_identity" = - ]; then
+                echo 'Error: --sign requires a certificate name or SHA-1 identity, not an ad-hoc signature.' >&2
+                exit 1
+            fi
+            ;;
         --install) run_install=1 ;;
         --install=*)
             run_install=1
@@ -38,6 +47,11 @@ for argument in "$@"; do
         *) echo "Error: unknown argument: $argument" >&2; usage >&2; exit 1 ;;
     esac
 done
+
+if [ -n "$signing_identity" ] && [ "$(uname -s)" != Darwin ]; then
+    echo 'Error: --sign is supported only on macOS.' >&2
+    exit 1
+fi
 
 run_as_root() {
     if [ "$EUID" -eq 0 ]; then
@@ -178,6 +192,13 @@ if not executables:
     sys.exit("Cargo did not report the SannyGit executable.")
 print(executables[-1])
 ')"
+if [ -n "$signing_identity" ]; then
+    # Keep both the signer and identifier stable across builds so Keychain can
+    # recognize the executable after an update. Never substitute an ad-hoc
+    # signature if certificate signing fails.
+    codesign --force --sign "$signing_identity" --identifier org.sannygit.SannyGit "$binary"
+    codesign --verify --strict "$binary"
+fi
 if [ "$run_tests" -eq 1 ]; then
     (cd "$PROJECT_DIR" && cargo test --release)
 fi
@@ -198,7 +219,7 @@ case "$(uname -s)" in
         install -m 644 "$PROJECT_DIR/assets/fonts/OFL.txt" "$bundle/Contents/Resources/SourceSans3-OFL.txt"
         base_version="${version%%[-+]*}"
         sed "s|@VERSION@|$base_version|g" "$PROJECT_DIR/.github/macos/Info.plist.in" > "$bundle/Contents/Info.plist"
-        codesign --force --sign - "$bundle"
+        codesign --force --sign "${signing_identity:--}" "$bundle"
         codesign --verify --strict "$bundle"
         echo "Installed: $bundle"
         ;;
