@@ -40,6 +40,12 @@ must already be installed in Keychain. Ad-hoc builds, including `cargo run`, may
 trigger two Keychain authorization dialogs even for a single API-key read. An
 existing key may need authorization again when changing the signing identity.
 
+For Touch ID, also pass `--keychain-profile=/path/SannyGit.provisionprofile`
+with a matching macOS provisioning profile for `io.github.sanny32.SannyGit`
+that permits Keychain access. Re-enter and save an existing API key once in
+this signed build. Unlocked keys stay in memory until the app closes.
+Use `--debug` for a development bundle that supports debugger attachment.
+
 Default install locations are `~/Applications` on macOS, `~/.local` on Linux and
 `%LOCALAPPDATA%\Programs\SannyGit` on Windows. Add `~/.local/bin` to `PATH` on Linux.
 
