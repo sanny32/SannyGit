@@ -105,7 +105,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 row.col(|ui| {
                     icons::paint(ui, Icon::for_file(&change.path), status_color(change.kind, palette), 16.0);
                     ui.add_space(4.0);
-                    ui.add(eframe::egui::Label::new(RichText::new(&change.path).color(palette.text)).truncate().show_tooltip_when_elided(false))
+                    let mut name = RichText::new(&change.path).color(palette.text);
+                    if change.kind == ChangeKind::Deleted {
+                        name = name.strikethrough();
+                    }
+                    ui.add(eframe::egui::Label::new(name).truncate().show_tooltip_when_elided(false))
                         .help_text(if let Some(source) = &change.original_path {
                             format!("{source} → {}", change.path)
                         } else {
