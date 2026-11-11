@@ -65,10 +65,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 app.load_more_history();
             }
         }
-        let (status, help, color) = if let Some(error) = &app.history_error {
+        let (status, help, color) = if app.history_error.is_some() {
             (
                 "History unavailable".into(),
-                format!("{error}\nReload to retry; displayed rows are from the previous load."),
+                String::from("Reload to retry; displayed rows are from the previous load."),
                 palette.removed_text,
             )
         } else if app.history_loading {
@@ -355,8 +355,8 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
             } else {
                 "Commit changes"
             });
-            if let Some(error) = &app.commit_preview_error {
-                ui.label(RichText::new(error).color(palette.removed_text));
+            if app.commit_preview_error.is_some() {
+                ui.label("Commit diff unavailable.");
                 retry = ui
                     .add_enabled(!app.busy(), Button::new("Retry diff"))
                     .clicked();

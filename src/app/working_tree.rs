@@ -53,7 +53,7 @@ impl Update {
 pub(super) struct Monitor {
     receiver: Option<Receiver<Update>>,
     next_read: Instant,
-    error: Option<String>,
+    pub(super) error: Option<String>,
 }
 
 impl Default for Monitor {

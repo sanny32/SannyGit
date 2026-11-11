@@ -44,13 +44,7 @@ impl SannyGitApp {
     }
 
     pub(super) fn finish_hidden_remote(&mut self) {
-        let operation = self.network_dialog.take().map(|dialog| dialog.operation);
-        if let Some(error) = self.error.take() {
-            self.status = format!(
-                "{} failed: {error}",
-                operation.map_or("Operation", Operation::label)
-            );
-        }
+        self.network_dialog = None;
     }
 
     pub fn remote_allowed(&self) -> bool {
@@ -239,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn skipped_push_hides_loading_and_reports_configuration_errors_in_status() {
+    fn skipped_push_hides_loading_and_preserves_configuration_error_for_modal() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.skip_push_confirmation = true;
         app.network_dialog = Some(RemoteDialog {
@@ -253,8 +247,7 @@ mod tests {
         assert!(app.remote_confirmation_hidden());
         app.apply_remote_info(Operation::Push, Err("Cannot read configuration".into()));
         assert!(app.network_dialog.is_none());
-        assert!(app.error.is_none());
-        assert!(app.status.contains("Cannot read configuration"));
+        assert_eq!(app.error.as_deref(), Some("Cannot read configuration"));
     }
 
     #[test]
@@ -285,8 +278,7 @@ mod tests {
         app.network_dialog.as_mut().unwrap().state = None;
         app.apply_remote_info(Operation::Sync, Err("Cannot read configuration".into()));
         assert!(app.network_dialog.is_none());
-        assert!(app.status.starts_with("Sync failed:"));
-        assert!(app.error.is_none());
+        assert_eq!(app.error.as_deref(), Some("Cannot read configuration"));
     }
 
     #[test]

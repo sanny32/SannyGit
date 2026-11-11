@@ -108,15 +108,6 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                                             .show_tooltip_when_elided(false),
                                     )
                                     .help_text(&app.status);
-                                } else if let Some(error) = &app.error {
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(error).color(palette.removed_text),
-                                        )
-                                        .truncate()
-                                        .show_tooltip_when_elided(false),
-                                    )
-                                    .help_text(error);
                                 }
                             },
                         );

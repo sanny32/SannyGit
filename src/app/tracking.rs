@@ -89,10 +89,8 @@ impl Monitor {
             .as_ref()
             .map(Status::description)
             .unwrap_or_else(|| "Checking upstream status…".into());
-        if let Some(error) = &self.error {
-            text.push_str(&format!(
-                "\nRemote check failed: {error}\nCounts use the last fetched refs."
-            ));
+        if self.error.is_some() {
+            text.push_str("\nCounts use the last fetched refs; retry with Fetch.");
         } else if !self.checked {
             text.push_str("\nRemote not checked yet. Counts use cached refs; use Fetch or enable automatic fetch.");
         }

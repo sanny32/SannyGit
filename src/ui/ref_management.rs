@@ -128,20 +128,12 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     config_change = remote_editor(ui, editor, busy, current, palette);
                 }
             }
-            let message = dialog.error.as_deref().unwrap_or(if dialog.running {
+            let message = if dialog.running {
                 app.status.as_str()
             } else {
                 dialog.status.as_str()
-            });
-            line(
-                ui,
-                message.into(),
-                if dialog.error.is_some() {
-                    palette.removed_text
-                } else {
-                    palette.muted
-                },
-            );
+            };
+            line(ui, message.into(), palette.muted);
         });
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

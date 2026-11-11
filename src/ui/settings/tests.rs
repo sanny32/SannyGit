@@ -703,7 +703,7 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
 }
 
 #[test]
-fn truncated_llm_error_shows_one_tooltip_in_both_themes() {
+fn llm_error_shows_once_in_a_modal_in_both_themes() {
     let error = "Touch ID key storage requires a signed SannyGit application with Keychain entitlements. This build cannot access the data protection keychain. Use a properly signed build, or turn off secure storage and enter the API key for this session.";
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
         for size in [Vec2::new(740.0, 420.0), Vec2::new(680.0, 380.0)] {
@@ -727,25 +727,14 @@ fn truncated_llm_error_shows_one_tooltip_in_both_themes() {
                 output.textures_delta.clear();
                 output
             };
-            let output = render(&mut app, 0.0, vec![]);
-            let target = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text)
-                        if text.galley.job.text == error && text.galley.elided =>
-                    {
-                        Some(text.pos + Vec2::splat(4.0))
-                    }
-                    _ => None,
-                })
-                .expect("The error should be truncated in its reserved status row");
-            // Let hover detection, the tooltip delay, and popup sizing settle.
-            render(&mut app, 0.1, vec![Event::PointerMoved(target)]);
-            for time in [1.0, 1.1, 1.2] {
+            for time in [0.0, 0.1, 0.2] {
                 render(&mut app, time, vec![]);
             }
-            let output = render(&mut app, 1.3, vec![]);
+            let output = render(&mut app, 0.3, vec![]);
+            assert!(output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Text(text)
+                    if text.galley.job.text == "Attention required")
+            }));
             let full_text_count = output
                 .shapes
                 .iter()
@@ -756,7 +745,7 @@ fn truncated_llm_error_shows_one_tooltip_in_both_themes() {
                 .count();
             assert_eq!(
                 full_text_count, 1,
-                "Expected one complete error tooltip ({theme:?}, {size:?})"
+                "Expected one complete modal error message ({theme:?}, {size:?})"
             );
         }
     }

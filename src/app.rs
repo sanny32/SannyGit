@@ -1,4 +1,5 @@
 pub mod discard;
+mod errors;
 pub mod ref_management;
 mod remotes;
 pub mod stash;
@@ -236,6 +237,7 @@ pub struct SannyGitApp {
     pub repository_path: String,
     pub open_dialog: bool,
     pub error: Option<String>,
+    pub error_dialogs: errors::ErrorDialogs,
     pub status: String,
     worker: Option<Receiver<WorkerResult>>,
     working_tree: working_tree::Monitor,
@@ -472,6 +474,7 @@ impl SannyGitApp {
             repository_path: String::new(),
             open_dialog: false,
             error: None,
+            error_dialogs: Default::default(),
             status: "Ready".into(),
             worker: None,
             working_tree: working_tree::Monitor::default(),
@@ -1664,9 +1667,6 @@ impl SannyGitApp {
                 }
                 if hidden_remote {
                     self.network_dialog = None;
-                    if let Some(error) = self.error.take() {
-                        self.status = format!("{}: {error}", self.status);
-                    }
                 }
             }
             WorkerResult::Diff { index, result } => {

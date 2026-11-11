@@ -211,13 +211,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         None => {
                             ui.label("Loading preview…");
                         }
-                        Some(Err(error)) => {
-                            ui.add(
-                                eframe::egui::Label::new(error)
-                                    .truncate()
-                                    .show_tooltip_when_elided(false),
-                            )
-                            .help_text(error);
+                        Some(Err(_)) => {
+                            ui.label("Preview unavailable.");
                         }
                         Some(Ok(preview)) if preview.lines.is_empty() => {
                             ui.label("No content changes.");

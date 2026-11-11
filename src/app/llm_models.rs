@@ -35,6 +35,12 @@ impl ModelCatalog {
         self.entries.entry(key).or_default()
     }
 
+    pub(super) fn errors(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.entries
+            .iter()
+            .filter_map(|(key, models)| models.error.as_deref().map(|error| (key.as_str(), error)))
+    }
+
     pub fn update(&mut self) {
         for models in self.entries.values_mut() {
             models.update();

@@ -49,8 +49,8 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     }
                 });
             });
-            let (message, color) = if let Some(error) = &app.error {
-                (error.as_str(), palette.removed_text)
+            let (message, color) = if app.error.is_some() {
+                ("Review the options and retry.", palette.muted)
             } else if !loaded {
                 ("Loading remotes…", palette.muted)
             } else if busy {
@@ -131,8 +131,8 @@ fn branch_confirmation(
                 }
                 // Reuse one compact line for all operation states. Neither a spinner
                 // nor a long error may add rows or move the options and buttons.
-                let (message, color, spinning) = if let Some(error) = &app.error {
-                    (error.clone(), palette.removed_text, false)
+                let (message, color, spinning) = if app.error.is_some() {
+                    ("Review the options and retry.".into(), palette.text, false)
                 } else if !loaded {
                     ("Loading remotes…".into(), palette.text, true)
                 } else if busy {
@@ -453,7 +453,7 @@ mod tests {
                     let expected = match stage {
                         0 => "Loading remotes…",
                         1 => "1 branch will be pushed to 'origin'.",
-                        _ => "Cannot read remotes",
+                        _ => "Review the options and retry.",
                     };
                     assert!(texts.iter().any(|text| text.galley.job.text == expected));
                     assert!(texts.iter().any(|text| text.galley.job.text == "Cancel"));

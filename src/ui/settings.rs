@@ -34,7 +34,8 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         #[cfg(target_os = "macos")]
         ui.input_mut(|input| input.events.append(&mut app.pending_native_edit_events));
         let close_requested = ui.ctx().input(|input| input.viewport().close_requested());
-        let escape = !egui::Popup::is_any_open(ui.ctx())
+        let escape = app.error_dialogs.pending.is_empty()
+            && !egui::Popup::is_any_open(ui.ctx())
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape));
         if close_requested || escape {
             app.settings_window.open = false;
@@ -72,6 +73,7 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
                     });
             }
         });
+    super::show_errors(ui, app);
 }
 
 fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
@@ -652,23 +654,18 @@ fn llm_form(
                 "Save the API key and model in the OS credential manager"
             });
             let models = catalog.entry(&draft.config, repository);
-            let error = draft.secret_error.as_deref().or(models.error.as_deref());
-            let status = error.unwrap_or(if models.loading() {
+            let status = if models.loading() {
                 "Loading models…"
             } else {
                 ""
-            });
+            };
             if models.loading() {
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_millis(50));
             }
             ui.add_sized(
                 [ui.available_width(), 20.0],
-                egui::Label::new(RichText::new(status).small().color(if error.is_some() {
-                    palette.removed_text
-                } else {
-                    palette.muted
-                }))
+                egui::Label::new(RichText::new(status).small().color(palette.muted))
                 .truncate()
                 .show_tooltip_when_elided(false),
             )

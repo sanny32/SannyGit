@@ -111,6 +111,10 @@ or mix Git logic with panel rendering.
   progress, errors, and action button clicks must not resize dialogs; reserve
   compact, stable space and keep overflowing text accessible (for example, in
   a tooltip). Do not stabilize dialog sizes by adding large empty areas.
+- Display all user-facing error messages in modal dialogs, including errors from
+  background tasks, settings, previews, and repository operations. Do not show
+  error details inline in panels, status bars, tooltips, or operation dialogs.
+  Keep the underlying layout stable and preserve drafts and retry controls.
 - Support both themes. Define colors through the palette in `src/theme.rs`
   rather than arbitrary constants inside components.
 - Use the existing SVG icons and `src/ui/controls/icons.rs`.

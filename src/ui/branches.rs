@@ -39,8 +39,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 palette.text
             }),
         );
-        if let Some(error) = &app.refs_error {
-            heading.help_text(format!("Branches unavailable; reload to retry\n{error}"));
+        if app.refs_error.is_some() {
+            heading.help_text("Reload branches to retry.");
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.add_enabled_ui(
@@ -373,7 +373,6 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
                 ui.radio_value(&mut dialog.mode, 2, "Don't create local branch (detached HEAD)");
             });
-            if let Some(error) = &app.error { ui.add(eframe::egui::Label::new(RichText::new(error).color(palette.removed_text)).wrap()); }
         });
         super::controls::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -438,11 +437,7 @@ fn rename_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                     );
                 }
                 let blocker = app.rename_branch_blocker();
-                let status = app
-                    .error
-                    .as_deref()
-                    .or(blocker)
-                    .unwrap_or("Ready to rename");
+                let status = blocker.unwrap_or("Ready to rename");
                 ui.add(
                     eframe::egui::Label::new(RichText::new(status).small().color(palette.muted))
                         .truncate()
@@ -524,11 +519,7 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                     ui.checkbox(&mut app.switch_to_new_branch, "Switch to the new branch");
                 });
                 let blocker = app.create_branch_blocker();
-                let status = app
-                    .error
-                    .as_deref()
-                    .or(blocker)
-                    .unwrap_or("Ready to create");
+                let status = blocker.unwrap_or("Ready to create");
                 ui.add(
                     eframe::egui::Label::new(RichText::new(status).small().color(palette.muted))
                         .truncate()

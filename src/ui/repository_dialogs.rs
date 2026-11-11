@@ -152,7 +152,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     });
                 }
             });
-            if let Some(error) = &app.error { ui.label(RichText::new(error).color(app.palette().removed_text)); }
         });
     if !open {
         app.manager.dialog = None;
@@ -297,9 +296,6 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                     }
                         });
                 });
-            if let Some(error) = &app.error {
-                ui.add(egui::Label::new(RichText::new(error).color(palette.removed_text)).wrap());
-            }
         });
         super::controls::dialog_style::section(
             ui,

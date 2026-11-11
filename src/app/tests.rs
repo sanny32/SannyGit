@@ -340,7 +340,7 @@ fn amend_loads_head_message_restores_draft_and_allows_rewording() {
 }
 
 #[test]
-fn skipped_push_and_sync_report_results_without_dialogs() {
+fn skipped_push_and_sync_preserve_errors_for_modal_reporting() {
     for operation in [
         crate::remotes::Operation::Push,
         crate::remotes::Operation::Sync,
@@ -397,19 +397,10 @@ fn skipped_push_and_sync_report_results_without_dialogs() {
                         },
                     );
                     assert_eq!(app.network_dialog.is_some(), !skip && failed);
-                    assert_eq!(app.error.is_some(), !skip && (failed || refresh_failed));
+                    assert_eq!(app.error.is_some(), failed || refresh_failed);
                     if !failed {
                         assert!(app.status.starts_with(operation.success()));
                         assert!(!app.status.contains("Push failed"));
-                    }
-                    if skip {
-                        assert!(app.status.contains(if failed {
-                            "Rejected"
-                        } else if refresh_failed {
-                            "Refresh failed"
-                        } else {
-                            operation.success()
-                        }));
                     }
                 }
             }

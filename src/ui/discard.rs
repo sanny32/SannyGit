@@ -28,8 +28,8 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 ui.add_enabled(!busy && dialog.prepared.is_some(), egui::Checkbox::new(&mut dialog.confirmed, "I confirm this action on the reviewed file."));
             });
-            let (message, color) = if let Some(error) = &dialog.error {
-                (error.as_str(), palette.removed_text)
+            let (message, color) = if dialog.error.is_some() {
+                ("Reload details to retry.", palette.muted)
             } else if dialog.running {
                 ("Operation in progress…", palette.muted)
             } else if let Some(prepared) = &dialog.prepared {

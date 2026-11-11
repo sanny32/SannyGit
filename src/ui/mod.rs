@@ -152,38 +152,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.label("A desktop Git client built with Rust and egui.");
             ui.label("MIT License");
         });
-    if let Some(error) = app.error.clone() {
-        let mut dismiss = false;
-        dialog_style::modal(ui.ctx(), palette, "application.error").show(ui.ctx(), |ui| {
-            ui.set_width(460.0);
-            dialog_style::setup(ui);
-            ui.spacing_mut().item_spacing.y = 0.0;
-            dialog_style::section(ui, palette.panel, Margin::same(18), |ui| {
-                ui.label(
-                    eframe::egui::RichText::new("Attention required")
-                        .size(16.0)
-                        .family(crate::theme::semibold_family()),
-                );
-                ui.add_space(12.0);
-                eframe::egui::ScrollArea::vertical()
-                    .id_salt("application.error.message")
-                    .max_height(240.0)
-                    .show(ui, |ui| {
-                        ui.add(eframe::egui::Label::new(error).wrap());
-                    });
-            });
-            dialog_style::section(ui, palette.header, Margin::symmetric(18, 12), |ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add(dialog_style::primary("OK", palette)).dialog_close() {
-                        dismiss = true;
-                    }
-                });
-            });
-        });
-        if dismiss {
-            app.error = None;
-        }
-    }
     status_bar::show(ui, app);
 
     // Outer margins are transparent. Paint the complete workspace first so
@@ -217,6 +185,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
 
     if app.interface_style == crate::theme::InterfaceStyle::Modern {
         modern_workspace(ui, app);
+        if !app.settings_window.open {
+            show_errors(ui, app);
+        }
         return;
     }
 
@@ -273,6 +244,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 }))
                 .show(ui, |ui| diff_view::show(ui, app));
         });
+    if !app.settings_window.open {
+        show_errors(ui, app);
+    }
 }
 
 fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -334,6 +308,44 @@ fn modern_workspace(ui: &mut Ui, app: &mut SannyGitApp) {
         .show(ui, |ui| {
             workspace::show(ui, app);
         });
+}
+
+/// Show errors above every other dialog in the active viewport.
+fn show_errors(ui: &mut Ui, app: &mut SannyGitApp) {
+    app.collect_errors();
+    let palette = app.palette();
+    if let Some(error) = app.error_dialogs.pending.front().cloned() {
+        let mut dismiss = false;
+        dialog_style::modal(ui.ctx(), palette, "application.error").show(ui.ctx(), |ui| {
+            ui.set_width(460.0);
+            dialog_style::setup(ui);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            dialog_style::section(ui, palette.panel, Margin::same(18), |ui| {
+                ui.label(
+                    eframe::egui::RichText::new("Attention required")
+                        .size(16.0)
+                        .family(crate::theme::semibold_family()),
+                );
+                ui.add_space(12.0);
+                eframe::egui::ScrollArea::vertical()
+                    .id_salt("application.error.message")
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        ui.add(eframe::egui::Label::new(error).wrap());
+                    });
+            });
+            dialog_style::section(ui, palette.header, Margin::symmetric(18, 12), |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.add(dialog_style::primary("OK", palette)).dialog_close() {
+                        dismiss = true;
+                    }
+                });
+            });
+        });
+        if dismiss {
+            app.dismiss_error();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -565,96 +577,101 @@ mod tests {
     #[test]
     fn error_dialog_does_not_move_panels_and_can_be_dismissed() {
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
-            let ctx = Context::default();
-            crate::theme::install_fonts(&ctx);
-            theme.apply(&ctx);
-            let mut app = SannyGitApp::with_theme(theme);
-            let render = |app: &mut SannyGitApp, events| {
-                let mut output = ctx.run_ui(
-                    RawInput {
-                        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1100.0, 700.0))),
-                        events,
-                        ..Default::default()
-                    },
-                    |ui| show(ui, app),
+            for size in [vec2(1100.0, 700.0), vec2(1536.0, 1024.0)] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                let render = |app: &mut SannyGitApp, events| {
+                    let mut output = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| show(ui, app),
+                    );
+                    output.textures_delta.clear();
+                    let mut panels = ctx.data(|data| {
+                        data.iter_temp_by_type::<eframe::egui::PanelState>()
+                            .map(|state| state.outer_rect)
+                            .collect::<Vec<_>>()
+                    });
+                    panels.sort_by(|a, b| {
+                        a.min
+                            .x
+                            .total_cmp(&b.min.x)
+                            .then(a.min.y.total_cmp(&b.min.y))
+                            .then(a.max.x.total_cmp(&b.max.x))
+                    });
+                    (panels, output)
+                };
+                for _ in 0..3 {
+                    render(&mut app, vec![]);
+                }
+                let (before, _) = render(&mut app, vec![]);
+                let error = concat!(
+                    "LLM API returned HTTP 404. ",
+                    "Check the endpoint, model, API key and provider limits."
                 );
-                output.textures_delta.clear();
-                let mut panels = ctx.data(|data| {
-                    data.iter_temp_by_type::<eframe::egui::PanelState>()
-                        .map(|state| state.outer_rect)
-                        .collect::<Vec<_>>()
-                });
-                panels.sort_by(|a, b| {
-                    a.min
-                        .x
-                        .total_cmp(&b.min.x)
-                        .then(a.min.y.total_cmp(&b.min.y))
-                        .then(a.max.x.total_cmp(&b.max.x))
-                });
-                (panels, output)
-            };
-            for _ in 0..3 {
-                render(&mut app, vec![]);
-            }
-            let (before, _) = render(&mut app, vec![]);
-            app.error = Some(
-                "LLM API returned HTTP 404. Check the endpoint, model, API key and provider limits."
-                    .into(),
-            );
-            for _ in 0..3 {
-                render(&mut app, vec![]);
-            }
-            let (after, output) = render(&mut app, vec![]);
-            assert_eq!(before.len(), after.len());
-            for (before, after) in before.iter().zip(&after) {
-                assert!(
-                    (before.min - after.min).length() < 1.0
-                        && (before.max - after.max).length() < 1.0,
-                    "Error moved a panel in {theme:?}: {before:?} -> {after:?}"
+                app.error = Some(error.into());
+                for _ in 0..3 {
+                    render(&mut app, vec![]);
+                }
+                let (after, output) = render(&mut app, vec![]);
+                assert_eq!(before.len(), after.len());
+                for (before, after) in before.iter().zip(&after) {
+                    assert!(
+                        (before.min - after.min).length() < 1.0
+                            && (before.max - after.max).length() < 1.0,
+                        "Error moved a panel in {theme:?}: {before:?} -> {after:?}"
+                    );
+                }
+                for label in ["Attention required", error, "OK"] {
+                    assert!(
+                        output.shapes.iter().any(|shape| {
+                            matches!(&shape.shape, eframe::egui::Shape::Text(text)
+                                if text.galley.job.text == label)
+                        }),
+                        "Missing error dialog text {label} in {theme:?}"
+                    );
+                }
+                let ok = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        eframe::egui::Shape::Text(text) if text.galley.job.text == "OK" => {
+                            Some(text.pos)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                render(&mut app, vec![Event::PointerMoved(ok)]);
+                render(
+                    &mut app,
+                    vec![Event::PointerButton {
+                        pos: ok,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    }],
                 );
-            }
-            for label in [
-                "Attention required",
-                "LLM API returned HTTP 404. Check the endpoint, model, API key and provider limits.",
-                "OK",
-            ] {
-                assert!(
-                    output.shapes.iter().any(|shape| {
-                        matches!(&shape.shape, eframe::egui::Shape::Text(text) if text.galley.job.text == label)
-                    }),
-                    "Missing error dialog text {label} in {theme:?}"
+                render(
+                    &mut app,
+                    vec![Event::PointerButton {
+                        pos: ok,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    }],
                 );
+                assert!(app.error.is_none(), "OK did not dismiss the error dialog");
+                let (_, output) = render(&mut app, vec![]);
+                assert!(!output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, eframe::egui::Shape::Text(text)
+                    if text.galley.job.text == "Attention required")
+                }));
             }
-            let ok = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    eframe::egui::Shape::Text(text) if text.galley.job.text == "OK" => {
-                        Some(text.pos)
-                    }
-                    _ => None,
-                })
-                .unwrap();
-            render(&mut app, vec![Event::PointerMoved(ok)]);
-            render(
-                &mut app,
-                vec![Event::PointerButton {
-                    pos: ok,
-                    button: PointerButton::Primary,
-                    pressed: true,
-                    modifiers: Modifiers::NONE,
-                }],
-            );
-            render(
-                &mut app,
-                vec![Event::PointerButton {
-                    pos: ok,
-                    button: PointerButton::Primary,
-                    pressed: false,
-                    modifiers: Modifiers::NONE,
-                }],
-            );
-            assert!(app.error.is_none(), "OK did not dismiss the error dialog");
         }
     }
 
