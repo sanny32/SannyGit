@@ -12,7 +12,7 @@ Missing build dependencies are installed automatically (sudo may be required).
 
   --tests             Run the Rust test suite after building
   --install[=PREFIX]  Install after building, optionally into PREFIX
-  --sign=IDENTITY    Sign macOS builds with an existing code-signing certificate
+  --sign=IDENTITY     Sign macOS builds with an existing code-signing certificate
   -h, --help          Show this help without installing or building anything
 
 Default install location: ~/Applications on macOS, ~/.local on Linux.
