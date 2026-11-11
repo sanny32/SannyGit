@@ -54,10 +54,10 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             } else {
                 ("", palette.muted)
             };
-            ui.add_sized([ui.available_width(), 26.0], egui::Label::new(RichText::new(message).color(color)).truncate().show_tooltip_when_elided(false)).help_text(message);
+            super::controls::dialog_style::text_line(ui, RichText::new(message).color(color), 26.0).help_text(message);
         });
         super::controls::dialog_style::section(ui, palette.header, egui::Margin::symmetric(18,12), |ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            super::controls::dialog_style::button_row(ui, |ui| {
                 let valid = dialog.state.as_ref().is_some_and(|state| state.remotes.contains(&dialog.remote)
                     && (dialog.operation == Operation::Fetch || (state.branch.is_some() && crate::branches::name_hint(&dialog.branch).is_none())));
                 if ui.add_enabled(!busy && valid && app.state_current, super::controls::dialog_style::primary(dialog.operation.label(), palette)).dialog_accept() { submit = true; }
@@ -122,9 +122,10 @@ fn pull_confirmation(
                     .response
                     .help_text(selected_label);
             });
-            ui.checkbox(&mut dialog.pull.more_options, "More Options");
-            if dialog.pull.more_options {
-                ui.indent("pull.options", |ui| {
+            let options = egui::CollapsingHeader::new("Options")
+                .id_salt("pull.options")
+                .open(Some(dialog.pull.more_options))
+                .show(ui, |ui| {
                     ui.radio(true, "Merge fetched remote changes").help_text(
                         "Fast-forward only. Diverged branches must be merged separately.",
                     );
@@ -142,36 +143,27 @@ fn pull_confirmation(
                         "Remember as default for repository",
                     );
                 });
+            if options.header_response.clicked() {
+                dialog.pull.more_options = !dialog.pull.more_options;
             }
         });
-        let message = if app.error.is_some() {
-            "Review the options and retry."
-        } else if !loaded {
-            "Loading remotes…"
-        } else if busy {
-            app.status.as_str()
-        } else if dialog
-            .state
-            .as_ref()
-            .is_some_and(|state| state.remotes.is_empty())
-        {
-            "No configured remotes."
-        } else {
-            ""
-        };
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), 26.0),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                ui.add(
-                    egui::Label::new(RichText::new(message).color(palette.muted))
-                        .truncate()
-                        .show_tooltip_when_elided(false),
-                )
-                .help_text(message);
-            },
-        );
     });
+    let message = if app.error.is_some() {
+        "Review the options and retry."
+    } else if !loaded {
+        "Loading remotes…"
+    } else if busy {
+        app.status.as_str()
+    } else if dialog
+        .state
+        .as_ref()
+        .is_some_and(|state| state.remotes.is_empty())
+    {
+        "No configured remotes."
+    } else {
+        ""
+    }
+    .to_owned();
     dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
         let valid_remote = dialog
             .state
@@ -182,7 +174,7 @@ fn pull_confirmation(
             .as_ref()
             .is_some_and(|state| state.branch.is_some())
             && crate::branches::name_hint(&dialog.branch).is_none();
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        dialog_style::button_row(ui, |ui| {
             *fetch_only = ui
                 .add_enabled(
                     !busy && valid_remote && app.state_current,
@@ -202,6 +194,8 @@ fn pull_confirmation(
                     *keep = false;
                 }
             }
+            dialog_style::text_line(ui, RichText::new(&message).color(palette.muted), 28.0)
+                .help_text(&message);
         });
     });
 }
@@ -385,6 +379,7 @@ mod tests {
                 install_fonts(&ctx);
                 egui_extras::install_image_loaders(&ctx);
                 theme.apply(&ctx);
+                let mut time = 0.0;
                 let mut app = SannyGitApp::with_theme(theme);
                 app.state_current = true;
                 app.network_dialog = Some(RemoteDialog {
@@ -397,7 +392,7 @@ mod tests {
                     pull: Default::default(),
                 });
                 let mut collapsed_height = 0.0;
-                for expanded in [false, true] {
+                for expanded in [false, true, false] {
                     let mut baseline = None;
                     for stage in 0..3 {
                         let dialog = app.network_dialog.as_mut().unwrap();
@@ -413,9 +408,11 @@ mod tests {
                             ..Default::default()
                         });
                         app.error = (stage == 2).then(|| "Remote unavailable".repeat(50));
-                        for frame in 0..4 {
+                        for frame in 0..10 {
+                            time += 0.1;
                             let mut output = ctx.run_ui(
                                 egui::RawInput {
+                                    time: Some(time),
                                     screen_rect: Some(egui::Rect::from_min_size(
                                         egui::Pos2::ZERO,
                                         size,
@@ -425,7 +422,7 @@ mod tests {
                                 |ui| show(ui.ctx(), &mut app),
                             );
                             output.textures_delta.clear();
-                            if frame < 3 {
+                            if frame < 9 {
                                 continue;
                             }
                             let rect = ctx
@@ -434,7 +431,7 @@ mod tests {
                             assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size)
                                 .contains_rect(rect));
                             assert!(
-                                rect.height() < if expanded { 410.0 } else { 280.0 },
+                                rect.height() < if expanded { 376.0 } else { 246.0 },
                                 "Oversized Pull dialog: {rect:?}, expanded: {expanded}"
                             );
                             if let Some(before) = baseline {
@@ -445,6 +442,13 @@ mod tests {
                             if expanded {
                                 assert!(rect.height() > collapsed_height + 80.0);
                             } else {
+                                if collapsed_height > 0.0 {
+                                    assert_eq!(
+                                        rect.height(),
+                                        collapsed_height,
+                                        "Pull did not return to its collapsed height"
+                                    );
+                                }
                                 collapsed_height = rect.height();
                             }
                             let labels = output
@@ -455,13 +459,8 @@ mod tests {
                                     _ => None,
                                 })
                                 .collect::<Vec<_>>();
-                            for label in [
-                                "Fetch From:",
-                                "More Options",
-                                "Cancel",
-                                "Pull",
-                                "Fetch Only",
-                            ] {
+                            for label in ["Fetch From:", "Options", "Cancel", "Pull", "Fetch Only"]
+                            {
                                 assert!(labels.contains(&label), "Missing {label}");
                             }
                             for label in [

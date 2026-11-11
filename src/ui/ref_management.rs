@@ -7,7 +7,7 @@ use crate::{
     },
     remote_config,
 };
-use eframe::egui::{self, Align, Button, ComboBox, Label, Layout, RichText, TextEdit};
+use eframe::egui::{self, Button, ComboBox, RichText, TextEdit};
 
 pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let busy = app.busy();
@@ -153,7 +153,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             line(ui, message.into(), palette.muted);
         });
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            dialog_style::button_row(ui, |ui| {
                 let ready = match &dialog.kind {
                     Kind::Delete { prepared, .. } => prepared.is_some(),
                     Kind::Tag { prepared, .. } => prepared.is_some(),
@@ -217,18 +217,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
 }
 
 fn line(ui: &mut egui::Ui, text: String, color: egui::Color32) {
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), 26.0),
-        Layout::left_to_right(Align::Center),
-        |ui| {
-            ui.add(
-                Label::new(RichText::new(&text).color(color))
-                    .truncate()
-                    .show_tooltip_when_elided(false),
-            )
-            .help_text(text);
-        },
-    );
+    dialog_style::text_line(ui, RichText::new(&text).color(color), 26.0).help_text(text);
 }
 
 fn remote_editor(

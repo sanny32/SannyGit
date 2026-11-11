@@ -321,7 +321,7 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             palette.header,
             eframe::egui::Margin::symmetric(18, 12),
             |ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                super::controls::dialog_style::button_row(ui, |ui| {
                     ui.add_enabled(false, super::controls::dialog_style::button("Add Tag & Push"))
                         .disabled_help_text("Pushing tags is not implemented yet");
                     let blocker = app.create_tag_blocker();
@@ -375,7 +375,7 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             });
         });
         super::controls::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            super::controls::dialog_style::button_row(ui, |ui| {
                 let valid = match dialog.mode {
                     0 => app.refs.iter().any(|r| r.kind == RefKind::Local && r.full_name == dialog.local),
                     1 => crate::branches::name_hint(&dialog.new_name).is_none() && !app.refs.iter().any(|r| r.full_name == format!("refs/heads/{}", dialog.new_name)),
@@ -451,7 +451,7 @@ fn rename_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             palette.header,
             eframe::egui::Margin::symmetric(18, 12),
             |ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                super::controls::dialog_style::button_row(ui, |ui| {
                     let blocker = app.rename_branch_blocker();
                     if ui
                         .add_enabled(
@@ -533,7 +533,7 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             palette.header,
             eframe::egui::Margin::symmetric(18, 12),
             |ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                super::controls::dialog_style::button_row(ui, |ui| {
                     let blocker = app.create_branch_blocker();
                     if ui
                         .add_enabled(

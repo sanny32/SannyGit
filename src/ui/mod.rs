@@ -145,6 +145,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             eframe::egui::Vec2::ZERO,
         )
         .open(&mut app.about_dialog)
+        .collapsible(false)
+        .frame(dialog_style::frame(ui.ctx(), palette).inner_margin(18))
         .resizable(false)
         .show(ui.ctx(), |ui| {
             ui.heading("SannyGit");
@@ -259,6 +261,7 @@ fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
         dialog_style::setup(ui);
         ui.spacing_mut().item_spacing.y = 0.0;
         dialog_style::section(ui, palette.panel, Margin::same(18), |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
             ui.heading("Welcome to SannyGit");
             ui.add_space(8.0);
             ui.label("Open a local repository or clone one to get started.");
@@ -286,7 +289,7 @@ fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
             }
         });
         dialog_style::section(ui, palette.header, Margin::symmetric(18, 12), |ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            dialog_style::button_row(ui, |ui| {
                 if ui.add(dialog_style::button("Close")).dialog_close() {
                     app.welcome_open = false;
                 }
@@ -321,6 +324,7 @@ fn show_errors(ui: &mut Ui, app: &mut SannyGitApp) {
             dialog_style::setup(ui);
             ui.spacing_mut().item_spacing.y = 0.0;
             dialog_style::section(ui, palette.panel, Margin::same(18), |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
                 ui.label(
                     eframe::egui::RichText::new("Attention required")
                         .size(16.0)
@@ -335,7 +339,7 @@ fn show_errors(ui: &mut Ui, app: &mut SannyGitApp) {
                     });
             });
             dialog_style::section(ui, palette.header, Margin::symmetric(18, 12), |ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                dialog_style::button_row(ui, |ui| {
                     if ui.add(dialog_style::primary("OK", palette)).dialog_close() {
                         dismiss = true;
                     }

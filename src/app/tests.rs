@@ -535,7 +535,7 @@ fn network_dialogs_keep_geometry_through_loading_errors_retry_and_cancellation()
                                 for expected in [
                                     "Pull commits from a remote repository",
                                     "Fetch From:",
-                                    "More Options",
+                                    "Options",
                                     "Fetch Only",
                                 ] {
                                     assert!(
@@ -1398,7 +1398,7 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
                 }
                 if operation == crate::remotes::Operation::Pull {
                     assert!(visible_text(&output.shapes, "Fetch Only"));
-                    assert!(visible_text(&output.shapes, "More Options"));
+                    assert!(visible_text(&output.shapes, "Options"));
                 }
                 assert!(app.worker.is_none());
             }

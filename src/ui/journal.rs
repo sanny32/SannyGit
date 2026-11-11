@@ -308,6 +308,7 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
             eframe::egui::Vec2::ZERO,
         )
         .id(eframe::egui::Id::unique("journal.details"))
+        .collapsible(false)
         .open(&mut open)
         .default_size([850.0, 570.0])
         .min_size([480.0, 320.0])

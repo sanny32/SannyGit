@@ -111,8 +111,21 @@ pub fn section(ui: &mut Ui, fill: egui::Color32, margin: Margin, contents: impl 
         .inner_margin(margin)
         .show(ui, |ui| {
             ui.set_width(width - margin.sum().x);
-            ui.with_layout(egui::Layout::top_down(egui::Align::Min), contents);
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                // Section spacing must not inherit the gapless outer dialog layout.
+                ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                contents(ui);
+            });
         });
+}
+
+/// Keep action rows compact when the preceding dialog content shrinks.
+pub fn button_row(ui: &mut Ui, contents: impl FnOnce(&mut Ui)) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), 28.0),
+        egui::Layout::right_to_left(egui::Align::Center),
+        contents,
+    );
 }
 
 pub fn header(ui: &mut Ui, palette: Palette, title: &str, description: &str) -> egui::Rect {
@@ -164,6 +177,22 @@ pub fn header_with_icon(
         .rect
 }
 
+/// Reserve a stable row while keeping short or truncated text left-aligned.
+pub fn text_line(ui: &mut Ui, text: impl Into<egui::WidgetText>, height: f32) -> egui::Response {
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), height),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.add(
+                egui::Label::new(text)
+                    .truncate()
+                    .show_tooltip_when_elided(false),
+            )
+        },
+    )
+    .inner
+}
+
 pub fn button(label: &str) -> Button<'_> {
     Button::new(label).min_size(egui::vec2(82.0, 28.0))
 }
@@ -187,6 +216,112 @@ mod tests {
             pressed: true,
             repeat,
             modifiers,
+        }
+    }
+
+    #[test]
+    fn sections_restore_control_gaps_and_shrink_with_their_content() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                let ctx = egui::Context::default();
+                install_fonts(&ctx);
+                theme.apply(&ctx);
+                let mut text = String::new();
+                let mut compact_height = None;
+                for expanded in [false, true, false] {
+                    let mut controls = [egui::Rect::NOTHING; 3];
+                    let mut actions = egui::Rect::NOTHING;
+                    for _ in 0..4 {
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    size,
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                modal(ui.ctx(), theme.palette(), "spacing.dialog").show(
+                                    ui.ctx(),
+                                    |ui| {
+                                        ui.set_width(540.0);
+                                        setup(ui);
+                                        ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                                        section(
+                                            ui,
+                                            theme.palette().header,
+                                            Margin::same(18),
+                                            |ui| {
+                                                controls[0] = ui.label("Group name").rect;
+                                                controls[1] = ui
+                                                    .add(egui::TextEdit::singleline(&mut text))
+                                                    .rect;
+                                                controls[2] = ui.add(button("Add Group")).rect;
+                                                if expanded {
+                                                    ui.add_space(100.0);
+                                                }
+                                            },
+                                        );
+                                        section(
+                                            ui,
+                                            theme.palette().header,
+                                            Margin::symmetric(18, 10),
+                                            |ui| {
+                                                button_row(ui, |ui| {
+                                                    actions = ui.add(button("Close")).rect;
+                                                });
+                                            },
+                                        );
+                                    },
+                                );
+                            },
+                        );
+                        output.textures_delta.clear();
+                    }
+                    for pair in controls.windows(2) {
+                        assert!((pair[1].top() - pair[0].bottom() - 8.0).abs() < 0.1);
+                    }
+                    assert!((actions.height() - 28.0).abs() < 0.1);
+                    let rect = ctx
+                        .memory(|memory| memory.area_rect(Id::unique("spacing.dialog")))
+                        .unwrap();
+                    assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect));
+                    if expanded {
+                        assert!(rect.height() >= compact_height.unwrap() + 100.0);
+                    } else if let Some(height) = compact_height {
+                        assert_eq!(
+                            rect.height(),
+                            height,
+                            "Dialog retained empty space after shrinking"
+                        );
+                    } else {
+                        compact_height = Some(rect.height());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn text_lines_keep_short_and_long_messages_left_aligned_in_a_fixed_row() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let ctx = egui::Context::default();
+            install_fonts(&ctx);
+            theme.apply(&ctx);
+            let mut rows = Vec::new();
+            for message in ["", "Loading…", &"Long status ".repeat(100)] {
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    ui.set_width(400.0);
+                    let origin = ui.cursor().min;
+                    let response = text_line(ui, message, 26.0);
+                    if !message.is_empty() {
+                        assert!((response.rect.left() - origin.x).abs() < 0.1);
+                    }
+                    rows.push(ui.cursor().min.y - origin.y);
+                });
+                output.textures_delta.clear();
+            }
+            assert!(rows.windows(2).all(|pair| (pair[0] - pair[1]).abs() < 0.1));
         }
     }
 

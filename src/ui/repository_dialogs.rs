@@ -29,7 +29,7 @@ fn remove_repository_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
             palette.header,
             egui::Margin::symmetric(18, 12),
             |ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                super::controls::dialog_style::button_row(ui, |ui| {
                     remove = ui
                         .add_enabled(!app.busy(), super::controls::dialog_style::button("Remove"))
                         .clicked();
@@ -125,19 +125,32 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         Dialog::CloseRepository => "Close Repository",
         Dialog::RemoveRepository => "Remove Repository",
     };
-    let mut open = true;
+    let mut close = false;
     let mut job = None;
-    Window::new(title).anchor(eframe::egui::Align2::CENTER_CENTER, eframe::egui::Vec2::ZERO).id(egui::Id::unique(title)).open(&mut open).default_width(540.0)
-        .collapsible(false)
-        .frame(super::controls::dialog_style::frame(ui.ctx(), app.palette()).inner_margin(18))
-        .max_size(ui.ctx().content_rect().size() - egui::vec2(40.0,40.0))
+    let palette = app.palette();
+    super::controls::dialog_style::modal(ui.ctx(), palette, "repository.management")
         .show(ui.ctx(), |ui| {
+            ui.set_width(540.0);
             super::controls::dialog_style::setup(ui);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let description = match dialog {
+                Dialog::Group => "Organize repositories into a named group.",
+                Dialog::Search => "Find Git repositories in a local directory.",
+                Dialog::Worktrees => "Manage working directories attached to this repository.",
+                Dialog::Prune => "Review obsolete worktree metadata before pruning.",
+                Dialog::CloseRepository => "Close the active repository.",
+                _ => "Manage your local repositories.",
+            };
+            super::controls::dialog_style::header(ui, palette, title, description);
+            super::controls::dialog_style::section(ui, palette.header, egui::Margin::same(18), |ui| {
+            ScrollArea::vertical()
+                .id_salt(("repository.management.content", title))
+                .max_height((ui.ctx().content_rect().height() - 210.0).max(120.0))
+                .show(ui, |ui| {
             let busy = app.busy();
             ui.add_enabled_ui(!busy, |ui| match dialog {
                 Dialog::Group => {
                     ui.label("Group name"); ui.add(TextEdit::singleline(&mut app.manager.group_name).desired_width(f32::INFINITY));
-                    if ui.add_enabled(!app.manager.group_name.trim().is_empty(), Button::new("Add Group")).clicked() { app.add_group(); }
                 }
                 Dialog::Clone => {},
                 Dialog::Search => {
@@ -203,8 +216,23 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     });
                 }
             });
+            });
+            });
+            super::controls::dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
+                super::controls::dialog_style::button_row(ui, |ui| {
+                    if matches!(dialog, Dialog::Group)
+                        && ui.add_enabled(
+                            !app.busy() && !app.manager.group_name.trim().is_empty(),
+                            super::controls::dialog_style::primary("Add Group", palette),
+                        ).dialog_accept()
+                    {
+                        app.add_group();
+                    }
+                    close = ui.add(super::controls::dialog_style::button("Close")).dialog_cancel();
+                });
+            });
         });
-    if !open {
+    if close {
         app.manager.dialog = None;
     }
     if let Some(job) = job {
@@ -260,6 +288,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                             ui.add_enabled_ui(!busy, |ui| {
                                 egui::Grid::new("repository.settings.identity")
                                     .num_columns(2)
+                                    .min_col_width(110.0)
                                     .spacing([8.0, 4.0])
                                     .show(ui, |ui| {
                                         ui.label("Full Name:");
@@ -312,6 +341,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                     let mut key = String::new();
                                     egui::Grid::new("repository.settings.signing")
                                         .num_columns(2)
+                                        .min_col_width(110.0)
                                         .spacing([8.0, 4.0])
                                         .show(ui, |ui| {
                                             ui.label("GPG Program:");
@@ -353,9 +383,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
             palette.header,
             egui::Margin::symmetric(12, 8),
             |ui| {
-                ui.with_layout(
-                    egui::Layout::right_to_left(egui::Align::Center),
-                    |ui| {
+                super::controls::dialog_style::button_row(ui, |ui| {
                         let settings = app.manager.settings.clone();
                         if ui
                             .add_enabled(
@@ -436,6 +464,68 @@ mod removal_tests {
                 assert!(app.manager.dialog.is_none());
                 assert!(app.manager.repository_to_remove.is_none());
                 assert_eq!(app.repositories.len(), 4);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{install_fonts, ThemeChoice};
+
+    #[test]
+    fn settings_labels_fit_one_line_in_both_themes_and_window_sizes() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                for (tab, labels) in [
+                    (0usize, ["Full Name:", "Git Email:"]),
+                    (3, ["GPG Program:", "Signing Key:"]),
+                ] {
+                    let ctx = egui::Context::default();
+                    install_fonts(&ctx);
+                    egui_extras::install_image_loaders(&ctx);
+                    theme.apply(&ctx);
+                    ctx.data_mut(|data| {
+                        data.insert_temp(egui::Id::unique("repository.settings.tab"), tab);
+                    });
+                    let mut app = SannyGitApp::with_theme(theme);
+                    app.manager.settings = Some(crate::repository::Settings::default());
+                    for frame in 0..4 {
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    size,
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| settings_dialog(ui.ctx(), &mut app),
+                        );
+                        output.textures_delta.clear();
+                        if frame == 3 {
+                            for label in labels {
+                                let text = output
+                                    .shapes
+                                    .iter()
+                                    .find_map(|shape| match &shape.shape {
+                                        egui::Shape::Text(text)
+                                            if text.galley.job.text == label =>
+                                        {
+                                            Some(text)
+                                        }
+                                        _ => None,
+                                    })
+                                    .unwrap_or_else(|| panic!("Missing {label}"));
+                                assert_eq!(
+                                    text.galley.rows.len(),
+                                    1,
+                                    "Wrapped {label}: {theme:?} {size:?}"
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
     }

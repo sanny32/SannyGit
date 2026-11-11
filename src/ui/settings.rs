@@ -656,11 +656,10 @@ fn llm_form(
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_millis(50));
             }
-            ui.add_sized(
-                [ui.available_width(), 20.0],
-                egui::Label::new(RichText::new(status).small().color(palette.muted))
-                .truncate()
-                .show_tooltip_when_elided(false),
+            super::controls::dialog_style::text_line(
+                ui,
+                RichText::new(status).small().color(palette.muted),
+                20.0,
             )
             .help_text(status);
             ui.add_space(6.0);

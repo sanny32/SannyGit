@@ -4,7 +4,7 @@ use crate::{
     app::{stash::Action, SannyGitApp},
     models::DiffPreview,
 };
-use eframe::egui::{self, Align, Button, Label, Layout, RichText, ScrollArea, TextEdit};
+use eframe::egui::{self, Align, Button, Layout, RichText, ScrollArea, TextEdit};
 
 pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let allowed = app.stash_allowed();
@@ -92,10 +92,10 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             });
             let message = &dialog.status;
             let color = palette.muted;
-            ui.add_sized([ui.available_width(), 26.0], Label::new(RichText::new(message).color(color)).truncate().show_tooltip_when_elided(false)).help_text(message);
+            super::controls::dialog_style::text_line(ui, RichText::new(message).color(color), 26.0).help_text(message);
         });
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            dialog_style::button_row(ui, |ui| {
                 if ui.add_enabled(!busy, dialog_style::button("Close")).disabled_help_text("Wait for the current operation to finish.").dialog_close() { close = true; }
             });
         });

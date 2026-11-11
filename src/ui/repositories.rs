@@ -31,7 +31,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 if busy { ui.horizontal(|ui| { ui.spinner(); ui.label(&app.status); }); }
             });
             super::controls::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                super::controls::dialog_style::button_row(ui, |ui| {
                     if ui.add_enabled(!busy && !app.repository_path.trim().is_empty(), super::controls::dialog_style::primary("OK", palette)).dialog_accept() {
                         app.run_repository_job(RepositoryJob::AddOrCreate(app.repository_path.clone()));
                     }
