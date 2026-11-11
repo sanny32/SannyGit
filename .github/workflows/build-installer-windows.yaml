@@ -44,7 +44,7 @@ jobs:
             "/DSTAGE_DIR=$env:GITHUB_WORKSPACE\target\ci-stage" `
             "/DSRC_DIR=$env:GITHUB_WORKSPACE" `
             "/DAPP_VERSION=$env:APP_VERSION" "/DFILE_VERSION=$env:FILE_VERSION" `
-            "/DOUT_FILE=$setup" packaging\windows\sannygit.nsi
+            "/DOUT_FILE=$setup" .github\windows\sannygit.nsi
           if ($LASTEXITCODE -ne 0) { throw "Installer build failed." }
           $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $(Split-Path $setup -Leaf)" | Set-Content target\ci-dist\SHA256SUMS -Encoding ascii

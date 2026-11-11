@@ -8,6 +8,10 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'build.rs'
+      - 'build.sh'
+      - 'build.ps1'
+      - 'scripts/test_build_scripts.py'
+      - 'LICENSE'
       - '.cargo/**'
       - 'rust-toolchain*'
       - 'rustfmt.toml'
@@ -15,12 +19,18 @@ on:
       - 'clippy.toml'
       - '.clippy.toml'
       - 'assets/fonts/*.ttf'
+      - 'assets/fonts/OFL.txt'
       - 'assets/icons/*.svg'
       - 'assets/previews/*.png'
       - 'assets/app/sannygit.png'
       - 'assets/app/sannygit.svg'
       - 'assets/app/sannygit.ico'
-      - '.github/workflows/build-test.yml'
+      - 'assets/app/sannygit.icns'
+      - '.github/workflows/build*'
+      - '.github/actions/project-version/**'
+      - '.github/macos/**'
+      - '.github/windows/**'
+      - '.github/linux/**'
       - '!**/*.md'
   pull_request:
     paths: *test_paths
@@ -61,6 +71,12 @@ jobs:
       - name: Check formatting
         if: runner.os == 'Linux'
         run: cargo fmt --check
+      - name: Check build scripts and macOS entitlements
+        if: runner.os == 'macOS'
+        run: |
+          bash -n build.sh
+          python3 scripts/test_build_scripts.py
+          python3 .github/macos/test_keychain_entitlements.py
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
