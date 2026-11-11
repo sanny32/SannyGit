@@ -460,7 +460,8 @@ fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                                         egui::Label::new(
                                             RichText::new(name).family(semibold_family()),
                                         )
-                                        .truncate(),
+                                        .truncate()
+                                        .show_tooltip_when_elided(false),
                                     )
                                     .help_text(name);
                                 let path_response = ui
@@ -468,7 +469,8 @@ fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                                         egui::Label::new(
                                             RichText::new(path).small().color(palette.muted),
                                         )
-                                        .truncate(),
+                                        .truncate()
+                                        .show_tooltip_when_elided(false),
                                     )
                                     .help_text(path);
                                 name_response.rect.union(path_response.rect)
@@ -643,7 +645,12 @@ fn llm_form(
             ui.checkbox(
                 &mut draft.config.store_api_key,
                 "Store API key and model securely",
-            );
+            )
+            .help_text(if cfg!(target_os = "macos") {
+                "Builds with Keychain entitlements use Touch ID. Other builds use the login Keychain and may ask for your macOS password."
+            } else {
+                "Save the API key and model in the OS credential manager"
+            });
             let models = catalog.entry(&draft.config, repository);
             let error = draft.secret_error.as_deref().or(models.error.as_deref());
             let status = error.unwrap_or(if models.loading() {
@@ -662,7 +669,8 @@ fn llm_form(
                 } else {
                     palette.muted
                 }))
-                .truncate(),
+                .truncate()
+                .show_tooltip_when_elided(false),
             )
             .help_text(status);
             ui.add_space(6.0);

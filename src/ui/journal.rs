@@ -92,7 +92,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         // stationary during loading, errors and retries, including narrow panels.
         ui.add_sized(
             [ui.available_width().max(0.0), 20.0],
-            Label::new(RichText::new(status).small().color(color)).truncate(),
+            Label::new(RichText::new(status).small().color(color))
+                .truncate()
+                .show_tooltip_when_elided(false),
         )
         .help_text(help);
     });
@@ -182,22 +184,32 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     graph(ui, app, original, filter.is_empty(), palette);
                 });
                 row.col(|ui| {
-                    ui.label(commit.subject()).help_text(&commit.message);
+                    ui.add(Label::new(commit.subject()).show_tooltip_when_elided(false))
+                        .help_text(&commit.message);
                 });
                 row.col(|ui| {
-                    ui.label(RichText::new(&commit.author).color(palette.muted))
-                        .help_text(&commit.email);
+                    ui.add(
+                        Label::new(RichText::new(&commit.author).color(palette.muted))
+                            .show_tooltip_when_elided(false),
+                    )
+                    .help_text(&commit.email);
                 });
                 row.col(|ui| {
                     let date = app.preferences.commit_date(&commit.date);
-                    ui.label(RichText::new(date).color(palette.muted))
-                        .help_text(&commit.date);
+                    ui.add(
+                        Label::new(RichText::new(date).color(palette.muted))
+                            .show_tooltip_when_elided(false),
+                    )
+                    .help_text(&commit.date);
                 });
                 row.col(|ui| {
-                    ui.label(
-                        RichText::new(commit.hash.get(..8).unwrap_or(&commit.hash))
-                            .monospace()
-                            .color(palette.muted),
+                    ui.add(
+                        Label::new(
+                            RichText::new(commit.hash.get(..8).unwrap_or(&commit.hash))
+                                .monospace()
+                                .color(palette.muted),
+                        )
+                        .show_tooltip_when_elided(false),
                     )
                     .help_text(&commit.hash);
                 });

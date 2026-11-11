@@ -37,7 +37,8 @@ pub fn show(ui: &mut Ui, app: &SannyGitApp) {
                     eframe::egui::Label::new(
                         RichText::new(&app.status).size(12.0).color(palette.muted),
                     )
-                    .truncate(),
+                    .truncate()
+                    .show_tooltip_when_elided(false),
                 )
                 .help_text(&app.status);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

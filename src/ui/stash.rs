@@ -92,7 +92,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             });
             let message = dialog.error.as_deref().or(app.error.as_deref()).unwrap_or(&dialog.status);
             let color = if dialog.error.is_some() || app.error.is_some() { palette.removed_text } else { palette.muted };
-            ui.add_sized([ui.available_width(), 26.0], Label::new(RichText::new(message).color(color)).truncate()).help_text(message);
+            ui.add_sized([ui.available_width(), 26.0], Label::new(RichText::new(message).color(color)).truncate().show_tooltip_when_elided(false)).help_text(message);
         });
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

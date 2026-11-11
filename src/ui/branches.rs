@@ -189,6 +189,7 @@ fn branch_group(
                         } else {
                             RichText::new(&branch.name).text_style(eframe::egui::TextStyle::Body)
                         })
+                        .show_tooltip_when_elided(false)
                         .sense(eframe::egui::Sense::hover()),
                     );
                     if branch.current {
@@ -427,7 +428,8 @@ fn rename_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                                 .strip_prefix("refs/heads/")
                                 .unwrap_or(&dialog.source),
                         )
-                        .truncate(),
+                        .truncate()
+                        .show_tooltip_when_elided(false),
                     )
                     .help_text(&dialog.source);
                     ui.add_enabled(
@@ -443,7 +445,8 @@ fn rename_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                     .unwrap_or("Ready to rename");
                 ui.add(
                     eframe::egui::Label::new(RichText::new(status).small().color(palette.muted))
-                        .truncate(),
+                        .truncate()
+                        .show_tooltip_when_elided(false),
                 )
                 .help_text(status);
             },
@@ -506,8 +509,12 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
                 let source = format!("Create from HEAD ({})", app.current_branch);
-                ui.add(eframe::egui::Label::new(&source).truncate())
-                    .help_text(&source);
+                ui.add(
+                    eframe::egui::Label::new(&source)
+                        .truncate()
+                        .show_tooltip_when_elided(false),
+                )
+                .help_text(&source);
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.add(
                         TextEdit::singleline(&mut app.new_branch_name)
@@ -524,7 +531,8 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                     .unwrap_or("Ready to create");
                 ui.add(
                     eframe::egui::Label::new(RichText::new(status).small().color(palette.muted))
-                        .truncate(),
+                        .truncate()
+                        .show_tooltip_when_elided(false),
                 )
                 .help_text(status);
             },

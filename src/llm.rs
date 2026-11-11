@@ -130,6 +130,24 @@ fn credential_entry(user: &str) -> Result<keyring::Entry, String> {
         .map_err(|error| format!("Cannot access the OS credential manager: {error}"))
 }
 
+#[cfg(any(target_os = "macos", test))]
+enum ProtectedKeychainError {
+    Unavailable,
+    Failed(String),
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn with_keychain_fallback<T>(
+    protected: impl FnOnce() -> Result<T, ProtectedKeychainError>,
+    fallback: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    match protected() {
+        Ok(value) => Ok(value),
+        Err(ProtectedKeychainError::Unavailable) => fallback(),
+        Err(ProtectedKeychainError::Failed(error)) => Err(error),
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod macos_credentials {
     use security_framework::access_control::{ProtectionMode, SecAccessControl};
@@ -140,7 +158,8 @@ mod macos_credentials {
     use std::process::{Command, Output};
 
     use super::{
-        credential_entry, KEYRING_SERVICE, LEGACY_KEYRING_USER, PROTECTED_KEYRING_SERVICE,
+        credential_entry, with_keychain_fallback, ProtectedKeychainError, KEYRING_SERVICE,
+        LEGACY_KEYRING_USER, PROTECTED_KEYRING_SERVICE,
     };
 
     const ITEM_NOT_FOUND: i32 = -25_300;
@@ -184,7 +203,7 @@ mod macos_credentials {
             Ok(secret) => Ok(Some(secret)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(format!(
-                "Cannot read the legacy LLM API key from the OS credential manager: {error}"
+                "Cannot read the LLM API key from the OS credential manager: {error}"
             )),
         }
     }
@@ -232,42 +251,77 @@ mod macos_credentials {
     }
 
     pub fn save(user: &str, secret: &str) -> Result<(), String> {
-        let mut options = options(user);
-        // Keychain itself authenticates the read; a separate LAContext policy
-        // evaluation cannot authorize access to a legacy login-keychain ACL.
-        let access = SecAccessControl::create_with_protection(
-            Some(ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly),
-            AccessControlOptions::BIOMETRY_CURRENT_SET.bits(),
+        with_keychain_fallback(
+            || {
+                let mut options = options(user);
+                // Keychain itself authenticates the read; a separate LAContext policy
+                // evaluation cannot authorize access to a login-keychain ACL.
+                let access = SecAccessControl::create_with_protection(
+                    Some(ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly),
+                    AccessControlOptions::BIOMETRY_CURRENT_SET.bits(),
+                )
+                .map_err(|error| {
+                    ProtectedKeychainError::Failed(format!(
+                        "Cannot configure Touch ID protection: {error}"
+                    ))
+                })?;
+                options.set_access_control(access);
+                options.set_label("SannyGit LLM API key");
+                set_generic_password_options(secret.as_bytes(), options)
+                    .map_err(|error| protected_error(error, "save"))?;
+                // Retire the scoped login entry only after a successful promotion.
+                delete_unprotected(user).map_err(ProtectedKeychainError::Failed)
+            },
+            || {
+                // Ad-hoc builds cannot use the data protection keychain. Keep
+                // their credentials in the OS login keychain instead.
+                credential_entry(user)?
+                    .set_password(secret)
+                    .map_err(|error| {
+                        format!("Cannot save the LLM API key in the macOS Keychain: {error}")
+                    })
+            },
         )
-        .map_err(|error| format!("Cannot configure Touch ID protection: {error}"))?;
-        options.set_access_control(access);
-        options.set_label("SannyGit LLM API key");
-        set_generic_password_options(secret.as_bytes(), options).map_err(|error| {
-            if error.code() == MISSING_ENTITLEMENT {
-                signing_error()
-            } else {
-                format!("Cannot save the LLM API key with Touch ID protection: {error}")
-            }
-        })
     }
 
-    fn signing_error() -> String {
-        "Touch ID key storage requires a signed SannyGit application with Keychain entitlements. This build cannot access the data protection keychain. Use a properly signed build, or turn off secure storage and enter the API key for this session.".into()
+    fn protected_error(
+        error: security_framework::base::Error,
+        action: &str,
+    ) -> ProtectedKeychainError {
+        if error.code() == MISSING_ENTITLEMENT {
+            ProtectedKeychainError::Unavailable
+        } else {
+            ProtectedKeychainError::Failed(format!(
+                "Cannot {action} the LLM API key with Touch ID protection: {error}"
+            ))
+        }
     }
 
     pub fn load(user: &str) -> Result<Option<String>, String> {
-        match generic_password(options(user)) {
-            Ok(secret) => String::from_utf8(secret)
-                .map(Some)
-                .map_err(|_| "The saved LLM API key is not valid UTF-8".into()),
-            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(None),
-            // Do not fall back to the login keychain after a protected read
-            // fails: it can prompt for a password after a Touch ID attempt.
-            Err(error) if error.code() == MISSING_ENTITLEMENT => Err(signing_error()),
-            Err(error) => Err(format!(
-                "Cannot unlock the LLM API key with Touch ID: {error}"
-            )),
-        }
+        with_keychain_fallback(
+            || match generic_password(options(user)) {
+                Ok(secret) => String::from_utf8(secret).map(Some).map_err(|_| {
+                    ProtectedKeychainError::Failed(
+                        "The saved LLM API key is not valid UTF-8".into(),
+                    )
+                }),
+                Err(error) if error.code() == ITEM_NOT_FOUND => Ok(None),
+                Err(error) => Err(protected_error(error, "unlock")),
+            },
+            // Only missing entitlements permit reading the login keychain.
+            // Cancellation and authentication errors remain errors.
+            || load_unprotected(user),
+        )
+    }
+
+    pub fn load_scoped(user: &str) -> Result<Option<String>, String> {
+        let Some(secret) = load_unprotected(user)? else {
+            return Ok(None);
+        };
+        // save handles promotion cleanup itself. In an ad-hoc build it keeps
+        // this same login entry, so deleting it here would lose the credential.
+        save(user, &secret)?;
+        Ok(Some(secret))
     }
 
     pub fn delete(user: &str) -> Result<(), String> {
@@ -279,6 +333,78 @@ mod macos_credentials {
             Ok(()) => Ok(()),
             Err(error) if matches!(error.code(), ITEM_NOT_FOUND | MISSING_ENTITLEMENT) => Ok(()),
             Err(error) => Err(format!("Cannot remove the saved LLM API key: {error}")),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        #[ignore = "requires an unlocked macOS login keychain"]
+        fn native_keychain_round_trip_uses_an_isolated_test_account() {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let mut config = crate::llm::Config {
+                endpoint: format!(
+                    "https://keychain-test-{}-{nonce}.invalid/v1",
+                    std::process::id()
+                ),
+                model: "test-model".into(),
+                api_key: "sannygit-dummy-test-key".into(),
+                ..Default::default()
+            };
+            let user = crate::llm::credential_user(&config.endpoint, None);
+            let result = (|| -> Result<_, String> {
+                crate::llm::save_api_key(&config, None)?;
+                let mut restored = config.clone();
+                restored.api_key.clear();
+                restored.model.clear();
+                crate::llm::load_api_key_if_needed(&mut restored, None)?;
+                config.api_key = "sannygit-updated-dummy-test-key".into();
+                config.model = "updated-test-model".into();
+                crate::llm::save_api_key(&config, None)?;
+                let mut updated = config.clone();
+                updated.api_key.clear();
+                updated.model.clear();
+                crate::llm::load_api_key_if_needed(&mut updated, None)?;
+                config.store_api_key = false;
+                crate::llm::save_api_key(&config, None)?;
+                config.store_api_key = true;
+                let removed = crate::llm::load_api_key(&config, None)?;
+                Ok((restored, updated, removed))
+            })();
+            // Clean up only this generated account, including on a failed read.
+            let protected_cleanup = delete(&user);
+            let login_cleanup = delete_unprotected(&user);
+            protected_cleanup.unwrap();
+            login_cleanup.unwrap();
+            let (restored, updated, removed) = result.unwrap();
+            assert_eq!(restored.api_key, "sannygit-dummy-test-key");
+            assert_eq!(restored.model, "test-model");
+            assert_eq!(updated.api_key, "sannygit-updated-dummy-test-key");
+            assert_eq!(updated.model, "updated-test-model");
+            assert_eq!(removed, None);
+        }
+
+        #[test]
+        fn only_missing_entitlements_mark_protected_keychain_unavailable() {
+            assert!(matches!(
+                protected_error(
+                    security_framework::base::Error::from_code(MISSING_ENTITLEMENT),
+                    "save"
+                ),
+                ProtectedKeychainError::Unavailable
+            ));
+            // errSecUserCanceled, errSecAuthFailed, errSecInteractionNotAllowed.
+            for code in [-128, -25_293, -25_308] {
+                assert!(matches!(
+                    protected_error(security_framework::base::Error::from_code(code), "unlock"),
+                    ProtectedKeychainError::Failed(_)
+                ));
+            }
         }
     }
 }
@@ -324,13 +450,7 @@ fn load_api_key(config: &Config, repository: Option<&str>) -> Result<Option<Stri
     {
         load_api_key_from_stores(
             || macos_credentials::load(&user),
-            || {
-                load_and_migrate_legacy_api_key(
-                    || macos_credentials::load_unprotected(&user),
-                    |secret| macos_credentials::save(&user, secret),
-                    || macos_credentials::delete_unprotected(&user),
-                )
-            },
+            || macos_credentials::load_scoped(&user),
             || {
                 if repository.is_none() && endpoint == DEFAULT_ENDPOINT {
                     load_and_migrate_legacy_api_key(
@@ -391,7 +511,6 @@ pub fn save_api_key(config: &Config, repository: Option<&str>) -> Result<(), Str
         #[cfg(target_os = "macos")]
         {
             macos_credentials::save(&user, &secret)?;
-            macos_credentials::delete_unprotected(&user)?;
         }
         #[cfg(not(target_os = "macos"))]
         entry

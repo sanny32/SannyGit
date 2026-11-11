@@ -105,7 +105,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 row.col(|ui| {
                     icons::paint(ui, Icon::for_file(&change.path), status_color(change.kind, palette), 16.0);
                     ui.add_space(4.0);
-                    ui.add(eframe::egui::Label::new(RichText::new(&change.path).color(palette.text)).truncate())
+                    ui.add(eframe::egui::Label::new(RichText::new(&change.path).color(palette.text)).truncate().show_tooltip_when_elided(false))
                         .help_text(if let Some(source) = &change.original_path {
                             format!("{source} → {}", change.path)
                         } else {

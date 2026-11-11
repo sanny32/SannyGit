@@ -266,6 +266,7 @@ fn repository_row(
                     })
                     .halign(Align::Min)
                     .truncate()
+                    .show_tooltip_when_elided(false)
                     .sense(eframe::egui::Sense::hover()),
                 );
                 if palette.panel_radius > 0 {
@@ -273,7 +274,8 @@ fn repository_row(
                         eframe::egui::Label::new(
                             RichText::new(&repository.path).small().color(palette.muted),
                         )
-                        .truncate(),
+                        .truncate()
+                        .show_tooltip_when_elided(false),
                     );
                 }
             },

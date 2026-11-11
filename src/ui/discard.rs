@@ -21,9 +21,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             let repository = format!("Repository: {:?}", dialog.root);
-            ui.add_sized([ui.available_width(), 26.0], Label::new(RichText::new(&repository).color(palette.muted)).truncate()).help_text(repository);
+            ui.add_sized([ui.available_width(), 26.0], Label::new(RichText::new(&repository).color(palette.muted)).truncate().show_tooltip_when_elided(false)).help_text(repository);
             let path = format!("File: {:?}", dialog.path);
-            ui.add_sized([ui.available_width(), 26.0], Label::new(RichText::new(&path).monospace()).truncate()).help_text(path);
+            ui.add_sized([ui.available_width(), 26.0], Label::new(RichText::new(&path).monospace()).truncate().show_tooltip_when_elided(false)).help_text(path);
             ui.scope(|ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 ui.add_enabled(!busy && dialog.prepared.is_some(), egui::Checkbox::new(&mut dialog.confirmed, "I confirm this action on the reviewed file."));
@@ -37,7 +37,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             } else {
                 ("Checking file, index and repository state…", palette.muted)
             };
-            ui.add_sized([ui.available_width(), 26.0], Label::new(RichText::new(message).color(color)).truncate()).help_text(message);
+            ui.add_sized([ui.available_width(), 26.0], Label::new(RichText::new(message).color(color)).truncate().show_tooltip_when_elided(false)).help_text(message);
         });
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

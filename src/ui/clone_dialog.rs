@@ -102,14 +102,19 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                                 ui.set_min_height(20.0);
                                 if busy {
                                     ui.spinner();
-                                    ui.add(egui::Label::new(&app.status).truncate())
-                                        .help_text(&app.status);
+                                    ui.add(
+                                        egui::Label::new(&app.status)
+                                            .truncate()
+                                            .show_tooltip_when_elided(false),
+                                    )
+                                    .help_text(&app.status);
                                 } else if let Some(error) = &app.error {
                                     ui.add(
                                         egui::Label::new(
                                             RichText::new(error).color(palette.removed_text),
                                         )
-                                        .truncate(),
+                                        .truncate()
+                                        .show_tooltip_when_elided(false),
                                     )
                                     .help_text(error);
                                 }

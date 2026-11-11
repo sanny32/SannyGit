@@ -611,3 +611,67 @@ fn validates_configuration_without_exposing_key() {
     assert!(saved.get("api_key").is_none());
     assert_eq!(saved.get("store_api_key"), Some(&Value::Bool(true)));
 }
+
+#[test]
+fn keychain_fallback_is_only_used_when_protected_storage_is_unavailable() {
+    assert_eq!(
+        with_keychain_fallback(
+            || Ok("protected-key"),
+            || panic!("must not read the login keychain after protected access"),
+        ),
+        Ok("protected-key"),
+    );
+    assert_eq!(
+        with_keychain_fallback(
+            || Err(ProtectedKeychainError::Unavailable),
+            || Ok("login-key"),
+        ),
+        Ok("login-key"),
+    );
+    for error in [
+        "Touch ID cancelled",
+        "authentication failed",
+        "invalid UTF-8",
+    ] {
+        assert_eq!(
+            with_keychain_fallback(
+                || Err::<(), _>(ProtectedKeychainError::Failed(error.into())),
+                || panic!("must not fall back after a protected access failure"),
+            ),
+            Err(error.into()),
+        );
+    }
+}
+
+#[test]
+fn keychain_fallback_reports_login_storage_failures() {
+    let result = with_keychain_fallback(
+        || Err::<(), _>(ProtectedKeychainError::Unavailable),
+        || Err("login keychain locked".into()),
+    );
+    assert_eq!(result, Err("login keychain locked".into()));
+}
+
+#[test]
+fn legacy_migration_can_use_login_keychain_when_entitlements_are_missing() {
+    let calls = std::cell::RefCell::new(Vec::new());
+    let result = load_and_migrate_legacy_api_key(
+        || Ok(Some("legacy-key".into())),
+        |secret| {
+            with_keychain_fallback(
+                || Err(ProtectedKeychainError::Unavailable),
+                || {
+                    assert_eq!(secret, "legacy-key");
+                    calls.borrow_mut().push("save login");
+                    Ok(())
+                },
+            )
+        },
+        || {
+            calls.borrow_mut().push("delete legacy");
+            Ok(())
+        },
+    );
+    assert_eq!(result, Ok(Some("legacy-key".into())));
+    assert_eq!(*calls.borrow(), ["save login", "delete legacy"]);
+}

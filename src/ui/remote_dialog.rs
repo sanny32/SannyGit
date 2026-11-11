@@ -43,7 +43,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     if matches!(dialog.operation, Operation::Pull | Operation::Sync) {
                         ui.label("Local branch:");
                         let branch = state.branch.as_deref().unwrap_or(if loaded { "No local branch with commits checked out" } else { "—" });
-                        ui.add_sized([310.0, 26.0], egui::Label::new(branch).truncate()).help_text(branch);
+                        ui.add_sized([310.0, 26.0], egui::Label::new(branch).truncate().show_tooltip_when_elided(false)).help_text(branch);
                         ui.end_row();
                         ui.label("Remote branch:"); ui.add_sized([310.0,28.0], TextEdit::singleline(&mut dialog.branch)); ui.end_row();
                     }
@@ -60,7 +60,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             } else {
                 ("Cancellation does not roll back local or remote changes.", palette.muted)
             };
-            ui.add_sized([ui.available_width(), 26.0], egui::Label::new(RichText::new(message).color(color)).truncate()).help_text(message);
+            ui.add_sized([ui.available_width(), 26.0], egui::Label::new(RichText::new(message).color(color)).truncate().show_tooltip_when_elided(false)).help_text(message);
         });
         super::controls::dialog_style::section(ui, palette.header, egui::Margin::symmetric(18,12), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -122,7 +122,7 @@ fn branch_confirmation(
                             .size(16.0)
                             .family(crate::theme::semibold_family()),
                     )
-                    .truncate(),
+                    .truncate().show_tooltip_when_elided(false),
                 )
                 .help_text(title);
                 ui.add_space(6.0);
@@ -155,7 +155,7 @@ fn branch_confirmation(
                     if spinning {
                         ui.add(egui::Spinner::new().size(18.0));
                     }
-                    ui.add(egui::Label::new(RichText::new(&message).color(color)).truncate())
+                    ui.add(egui::Label::new(RichText::new(&message).color(color)).truncate().show_tooltip_when_elided(false))
                         .help_text(message);
                 });
                 ui.add_enabled_ui(!busy && loaded, |ui| {

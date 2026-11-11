@@ -59,8 +59,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     Layout::left_to_right(Align::Center),
                     |ui| {
                         ui.set_min_width(path_width);
-                        ui.label(RichText::new(&change.path).size(12.0).color(palette.muted))
-                            .help_text(&change.path);
+                        ui.add(
+                            eframe::egui::Label::new(
+                                RichText::new(&change.path).size(12.0).color(palette.muted),
+                            )
+                            .show_tooltip_when_elided(false),
+                        )
+                        .help_text(&change.path);
                     },
                 );
                 ui.label(

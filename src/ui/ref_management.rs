@@ -210,7 +210,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
 fn line(ui: &mut egui::Ui, text: String, color: egui::Color32) {
     ui.add_sized(
         [ui.available_width(), 26.0],
-        Label::new(RichText::new(&text).color(color)).truncate(),
+        Label::new(RichText::new(&text).color(color))
+            .truncate()
+            .show_tooltip_when_elided(false),
     )
     .help_text(text);
 }
