@@ -60,7 +60,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         app.cancel_commit_message_generation();
                         ui.close();
                     }
-                    let blocker = app.generate_commit_message_blocker();
+                    let blocker = app.commit_contents_preview_blocker();
                     if ui
                         .add_enabled(blocker.is_none(), Button::new("Preview commit contents…"))
                         .disabled_help_text(blocker.unwrap_or(""))

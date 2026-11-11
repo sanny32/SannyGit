@@ -1310,6 +1310,20 @@ impl SannyGitApp {
     }
 
     pub fn generate_commit_message_blocker(&self) -> Option<&'static str> {
+        self.commit_contents_preview_blocker().or_else(|| {
+            if self.commit_contents == git::CommitContents::Staged
+                && !self.changes.iter().any(|c| c.staged)
+            {
+                Some("There are no staged changes to describe")
+            } else if self.changes.is_empty() {
+                Some("There are no changes to describe")
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn commit_contents_preview_blocker(&self) -> Option<&'static str> {
         if self.busy() {
             Some("Wait for the current operation to finish")
         } else if self.repositories.get(self.selected_repository).is_none() {
@@ -1331,7 +1345,7 @@ impl SannyGitApp {
     }
 
     pub fn preview_commit_contents(&mut self) {
-        if self.generate_commit_message_blocker().is_some() {
+        if self.commit_contents_preview_blocker().is_some() {
             return;
         }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);

@@ -161,6 +161,14 @@ Use `cargo fmt` to fix formatting. For manual UI verification, run `cargo run`
 when a graphical environment is available. Builds and tests are optional for
 changes limited to documentation.
 
+In the Codex sandbox used for this workspace, the full test suite needs local
+TCP listeners for its HTTP-server tests. Sandboxed runs have repeatedly failed
+with `PermissionDenied` / `Operation not permitted` when binding these listeners.
+Run `cargo test` with `sandbox_permissions: "require_escalated"` from the outset
+when this restriction applies, using the normal approval mechanism. Do not
+repeat a known-failing sandboxed run just to rediscover this limitation. Treat
+other test failures separately; do not assume they are sandbox restrictions.
+
 Add meaningful tests when changing diff parsing, Git output parsing, status
 handling, branches, or error handling. Keep unit tests next to the code and
 place integration tests in `tests/` when needed.

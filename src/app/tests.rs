@@ -262,8 +262,42 @@ fn staged_mode_gates_commit_preview_and_generation_but_allows_message_only_amend
     app.amend = true;
     app.amend_head = Some("a".repeat(40));
     assert!(app.commit_blocker().is_none());
-    assert!(app.generate_commit_message_blocker().is_none());
+    assert!(app.commit_contents_preview_blocker().is_none());
+    assert!(app.generate_commit_message_blocker().is_some());
     assert_eq!(app.commit_message, "Draft");
+}
+
+#[test]
+fn generation_requires_files_in_the_selected_mode_even_when_amending() {
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.repositories = crate::mock_data::repositories();
+    app.selected_repository = 0;
+    app.state_current = true;
+    app.commit_message = "Draft".into();
+    for amend in [false, true] {
+        app.amend = amend;
+        app.amend_head = amend.then(|| "a".repeat(40));
+        for mode in [git::CommitContents::All, git::CommitContents::Staged] {
+            app.commit_contents = mode;
+            app.changes.clear();
+            assert!(app.generate_commit_message_blocker().is_some());
+            app.generate_commit_message();
+            assert!(!app.busy());
+            assert!(!app.generating_commit_message);
+            assert_eq!(app.commit_message, "Draft");
+
+            app.changes = crate::mock_data::changes();
+            for change in &mut app.changes {
+                change.staged = false;
+            }
+            assert_eq!(
+                app.generate_commit_message_blocker().is_none(),
+                mode == git::CommitContents::All
+            );
+            app.changes[0].staged = true;
+            assert!(app.generate_commit_message_blocker().is_none());
+        }
+    }
 }
 
 #[test]
