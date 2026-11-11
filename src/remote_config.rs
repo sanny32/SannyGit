@@ -414,7 +414,7 @@ pub fn push_endpoint(root: &Path, name: &str) -> Result<(String, Snapshot), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::tests::TempRepo;
+    use crate::test_support::TempRepo;
 
     #[test]
     fn url_validation_and_redaction_never_return_embedded_credentials() {

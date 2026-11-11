@@ -154,7 +154,7 @@ impl SannyGitApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{git::tests::TempRepo, theme::ThemeChoice};
+    use crate::{test_support::TempRepo, theme::ThemeChoice};
     use std::time::{Duration, Instant};
 
     fn wait(app: &mut SannyGitApp) {

@@ -573,7 +573,7 @@ mod tests {
 
     #[test]
     fn hosting_updates_inactive_repositories_and_retains_icons_on_errors() {
-        let repo = crate::git::tests::TempRepo::new();
+        let repo = crate::test_support::TempRepo::new();
         repo.git(&["remote", "add", "origin", "git@github.com:owner/repo.git"]);
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         let path = repo.0.to_string_lossy().into_owned();
@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn clone_form_inspects_branches_and_opens_the_finished_clone() {
-        let repo = crate::git::tests::TempRepo::new();
+        let repo = crate::test_support::TempRepo::new();
         repo.write("file", "clone fixture\n");
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "fixture"]);
@@ -727,7 +727,7 @@ mod tests {
 
     #[test]
     fn active_repository_restores_by_path_and_explicit_close_clears_it() {
-        let repo = crate::git::tests::TempRepo::new();
+        let repo = crate::test_support::TempRepo::new();
         let path = repo.0.canonicalize().unwrap().to_str().unwrap().to_owned();
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.repositories = vec![
@@ -775,7 +775,7 @@ mod tests {
 
     #[test]
     fn opening_an_equivalent_path_reuses_the_bookmark_and_its_settings() {
-        let repo = crate::git::tests::TempRepo::new();
+        let repo = crate::test_support::TempRepo::new();
         let stored_path = repo
             .0
             .canonicalize()
@@ -809,7 +809,7 @@ mod tests {
 
     #[test]
     fn restore_missing_repository_reports_error_without_removing_bookmark() {
-        let repo = crate::git::tests::TempRepo::new();
+        let repo = crate::test_support::TempRepo::new();
         let path = repo.0.join("missing").to_str().unwrap().to_owned();
         let mut storage = Storage::default();
         eframe::set_value(&mut storage, "sannygit.active_repository", &Some(&path));
@@ -866,10 +866,10 @@ mod tests {
 
     #[test]
     fn drafts_survive_repository_switch_restart_amend_and_failed_open() {
-        let first = crate::git::tests::TempRepo::new();
+        let first = crate::test_support::TempRepo::new();
         first.write("file", "base\n");
         crate::git::commit(&first.0, "Base", crate::git::CommitContents::All).unwrap();
-        let second = crate::git::tests::TempRepo::new();
+        let second = crate::test_support::TempRepo::new();
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.apply_snapshot(crate::git::load(&first.0).unwrap());
         app.commit_message = "Normal draft\n\nBody".into();
@@ -917,7 +917,7 @@ mod tests {
 
     #[test]
     fn restored_amend_rejects_changed_head_and_keeps_drafts_until_success() {
-        let repo = crate::git::tests::TempRepo::new();
+        let repo = crate::test_support::TempRepo::new();
         repo.write("file", "base\n");
         crate::git::commit(&repo.0, "Base", crate::git::CommitContents::All).unwrap();
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);

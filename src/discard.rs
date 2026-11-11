@@ -281,7 +281,7 @@ pub fn execute(root: &Path, expected: &Prepared) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::{tests::TempRepo, CommitContents};
+    use crate::{git::CommitContents, test_support::TempRepo};
 
     fn base() -> TempRepo {
         let repo = TempRepo::new();

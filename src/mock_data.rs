@@ -292,8 +292,8 @@ pub fn stash_dialog() -> crate::app::stash::Dialog {
 
 pub fn discard_dialog(
     action: crate::discard::Action,
-) -> (crate::git::tests::TempRepo, crate::app::discard::Dialog) {
-    let repo = crate::git::tests::TempRepo::new();
+) -> (crate::test_support::TempRepo, crate::app::discard::Dialog) {
+    let repo = crate::test_support::TempRepo::new();
     repo.write("file", "base\n");
     crate::git::commit(&repo.0, "Base", crate::git::CommitContents::All).unwrap();
     let path = match action {
@@ -334,11 +334,11 @@ pub enum RefDialogFixture {
 pub fn ref_dialog(
     fixture: RefDialogFixture,
 ) -> (
-    crate::git::tests::TempRepo,
+    crate::test_support::TempRepo,
     crate::app::ref_management::Dialog,
 ) {
     use crate::app::ref_management::{Dialog, Kind, RemoteEditor};
-    let repo = crate::git::tests::TempRepo::new();
+    let repo = crate::test_support::TempRepo::new();
     repo.write("file", "base\n");
     crate::git::commit(&repo.0, "Base", crate::git::CommitContents::All).unwrap();
     repo.git(&["branch", "merged"]);

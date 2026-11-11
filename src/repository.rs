@@ -725,7 +725,7 @@ fn spawn_window(path: Option<&Path>) -> Result<(), String> {
 mod tests {
     #[test]
     fn hosting_uses_origin_resolves_aliases_and_handles_removed_remotes() {
-        use crate::{clone_source::Provider, git::tests::TempRepo};
+        use crate::{clone_source::Provider, test_support::TempRepo};
         let repo = TempRepo::new();
         assert_eq!(super::hosting_provider(&repo.0).unwrap(), None);
         repo.git(&["remote", "add", "upstream", "git@gitlab.com:group/repo.git"]);
@@ -758,7 +758,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::git::tests::TempRepo;
+    use crate::test_support::TempRepo;
 
     #[cfg(target_os = "windows")]
     #[test]

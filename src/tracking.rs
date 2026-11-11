@@ -136,7 +136,7 @@ pub fn fetch_upstream(root: &Path, status: &Status, cancel: &AtomicBool) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::tests::TempRepo;
+    use crate::test_support::TempRepo;
     use std::{fs, path::PathBuf};
 
     fn command(path: &Path, args: &[&str]) -> Vec<u8> {

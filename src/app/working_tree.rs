@@ -210,7 +210,7 @@ impl SannyGitApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{git::tests::TempRepo, models::ChangeKind, theme::ThemeChoice};
+    use crate::{models::ChangeKind, test_support::TempRepo, theme::ThemeChoice};
 
     fn opened(repo: &TempRepo) -> SannyGitApp {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);

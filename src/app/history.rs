@@ -237,7 +237,7 @@ impl SannyGitApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{history::tests::linear_repo, models::DiffPreview, theme::ThemeChoice};
+    use crate::{models::DiffPreview, test_support::linear_repo, theme::ThemeChoice};
     use std::time::{Duration, Instant};
 
     fn wait(app: &mut SannyGitApp) {
@@ -250,7 +250,7 @@ mod tests {
         }
     }
 
-    fn opened() -> (crate::git::tests::TempRepo, SannyGitApp) {
+    fn opened() -> (crate::test_support::TempRepo, SannyGitApp) {
         let repo = linear_repo(620);
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.apply_snapshot(crate::git::load(&repo.0).unwrap());
