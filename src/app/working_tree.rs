@@ -9,6 +9,10 @@ use std::{
 
 const CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
+#[cfg(test)]
+#[path = "working_tree_performance.rs"]
+mod performance;
+
 struct Update {
     path: String,
     snapshot: Result<git::Snapshot, String>,

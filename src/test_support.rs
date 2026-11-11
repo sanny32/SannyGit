@@ -1,12 +1,45 @@
 //! Shared fixtures for tests that use isolated temporary Git repositories.
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+        Arc, Mutex, Weak,
+    },
 };
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
+
+// Opt-in, repository-scoped counters also observe background workers without
+// counting other tests' temporary repositories. Never compiled into the app.
+static COMMAND_COUNTS: Mutex<Vec<(PathBuf, Weak<AtomicUsize>)>> = Mutex::new(Vec::new());
+
+pub(crate) struct GitCommandCount(Arc<AtomicUsize>);
+
+impl GitCommandCount {
+    pub(crate) fn new(root: &Path) -> Self {
+        let counter = Self(Arc::new(AtomicUsize::new(0)));
+        let mut counters = COMMAND_COUNTS.lock().unwrap();
+        counters.retain(|(_, count)| count.strong_count() > 0);
+        counters.push((root.to_owned(), Arc::downgrade(&counter.0)));
+        counter
+    }
+
+    pub(crate) fn get(&self) -> usize {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+pub(crate) fn record_git_command(root: &Path) {
+    for (path, counter) in COMMAND_COUNTS.lock().unwrap().iter() {
+        if path == root {
+            if let Some(counter) = counter.upgrade() {
+                counter.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+}
 
 pub(crate) struct TempRepo(pub(crate) PathBuf);
 impl TempRepo {

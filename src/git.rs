@@ -226,6 +226,8 @@ fn execute(
     let mut child = command
         .spawn()
         .map_err(|e| format!("Cannot start Git executable \"{executable}\": {e}. Check Preferences > Git > Executable."))?;
+    #[cfg(test)]
+    crate::test_support::record_git_command(path);
     let stdout = child.stdout.take().ok_or("Cannot read Git output")?;
     let stderr = child.stderr.take().ok_or("Cannot read Git errors")?;
     let stdin = child.stdin.take();

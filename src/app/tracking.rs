@@ -41,6 +41,11 @@ impl Default for Monitor {
     }
 }
 impl Monitor {
+    #[cfg(test)]
+    pub(super) fn has_pending_read(&self) -> bool {
+        self.receiver.is_some()
+    }
+
     pub fn cancel(&mut self) {
         if self.checking {
             self.next_fetch = Instant::now();
