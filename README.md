@@ -4,10 +4,22 @@ A desktop Git client for Windows, Linux and macOS, built with Rust and egui and 
 
 Requires Rust 1.95+ and Git 2.36+ on `PATH`.
 
-Supports repository creation and cloning, status and diff, staging/unstaging,
-single-file discard, stash save/apply/pop/drop, commit/amend, history, branches
-and tags, merged-branch deletion, worktrees, remote URL management, fetch,
-fast-forward-only pull, and branch/tag push.
+Supports:
+
+- Repository creation and cloning
+- Status and diff
+- Staging/unstaging
+- Single-file discard
+- Stash save/apply/pop/drop
+- Commit/amend
+- History
+- Branches and tags
+- Merged-branch deletion
+- Worktrees
+- Remote URL management
+- Fetch
+- Fast-forward-only pull
+- Branch/tag push
 
 History loads in pages of 500 commits, up to 10,000. Search covers loaded history.
 
