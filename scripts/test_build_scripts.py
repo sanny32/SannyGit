@@ -81,6 +81,12 @@ class BuildScriptTests(unittest.TestCase):
         self.assertFalse(self.prefix.exists())
         self.assertFalse(any(command[:2] == ['cargo', 'test'] for command in self.commands()))
 
+    def test_debug_build_and_tests_use_the_development_profile(self):
+        result = self.run_build('--debug', '--tests')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(['cargo', 'build', '--message-format=json-render-diagnostics'], self.commands())
+        self.assertIn(['cargo', 'test'], self.commands())
+
     def test_linux_install_preserves_existing_files_and_directory_permissions(self):
         self.prefix.mkdir(mode=0o700)
         (self.prefix / 'bin').mkdir(mode=0o700)
@@ -92,7 +98,7 @@ class BuildScriptTests(unittest.TestCase):
         self.assertTrue((self.prefix / 'bin/sannygit').stat().st_mode & stat.S_IXUSR)
         self.assertEqual(stat.S_IMODE((self.prefix / 'bin').stat().st_mode), 0o700)
         self.assertEqual((self.prefix / 'unrelated').read_text(), 'keep')
-        for path in ['share/applications/SannyGit.desktop',
+        for path in ['share/applications/io.github.sanny32.SannyGit.desktop',
                      'share/icons/hicolor/256x256/apps/sannygit.png',
                      'share/icons/hicolor/scalable/apps/sannygit.svg',
                      'share/licenses/sannygit/LICENSE', 'share/licenses/sannygit/SourceSans3-OFL.txt']:
@@ -113,11 +119,12 @@ class BuildScriptTests(unittest.TestCase):
         bundle = self.prefix / 'SannyGit.app'
         with (bundle / 'Contents/Info.plist').open('rb') as file:
             info = plistlib.load(file)
-        self.assertEqual(info['CFBundleIdentifier'], 'org.sannygit.SannyGit')
+        self.assertEqual(info['CFBundleIdentifier'], 'io.github.sanny32.SannyGit')
         self.assertEqual((bundle / 'Contents/MacOS' / info['CFBundleExecutable']).read_bytes(), self.binary.read_bytes())
         for name in ['sannygit.icns', 'LICENSE', 'SourceSans3-OFL.txt']:
             self.assertTrue((bundle / 'Contents/Resources' / name).is_file())
-        self.assertIn(['codesign', '--force', '--sign', '-', str(bundle)], self.commands())
+        built_bundle = self.binary.parent / 'SannyGit.app'
+        self.assertIn(['codesign', '--force', '--sign', '-', str(built_bundle)], self.commands())
         self.assertIn(['codesign', '--verify', '--strict', str(bundle)], self.commands())
 
     def run_version(self, version, tag=None):

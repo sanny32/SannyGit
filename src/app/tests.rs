@@ -177,9 +177,7 @@ fn cancelling_generation_preserves_draft_and_discards_late_results() {
     let (sender, receiver) = mpsc::channel();
     app.worker = Some(receiver);
     sender
-        .send(WorkerResult::CommitMessage(Ok(
-            "Already queued response".into()
-        )))
+        .send(commit_message_result(Ok("Already queued response".into())))
         .unwrap();
     app.cancel_commit_message_generation();
     assert!(cancel.load(Ordering::Relaxed));
@@ -190,15 +188,12 @@ fn cancelling_generation_preserves_draft_and_discards_late_results() {
     assert!(app.error.is_none());
     assert_eq!(app.status, "Commit message generation cancelled");
     assert!(sender
-        .send(WorkerResult::CommitMessage(Ok("Late response".into())))
+        .send(commit_message_result(Ok("Late response".into())))
         .is_err());
 
     // A new generation can finish normally; the old sender is isolated.
     app.generating_commit_message = true;
-    deliver(
-        &mut app,
-        WorkerResult::CommitMessage(Ok("New response".into())),
-    );
+    deliver(&mut app, commit_message_result(Ok("New response".into())));
     assert_eq!(app.commit_message, "New response");
 }
 
@@ -220,7 +215,7 @@ fn generated_commit_message_updates_draft_and_errors_preserve_it() {
     app.generating_commit_message = true;
     deliver(
         &mut app,
-        WorkerResult::CommitMessage(Ok("Generated message".into())),
+        commit_message_result(Ok("Generated message".into())),
     );
     assert_eq!(app.commit_message, "Generated message");
     assert_eq!(app.status, "Commit message generated");
@@ -229,7 +224,7 @@ fn generated_commit_message_updates_draft_and_errors_preserve_it() {
     app.generating_commit_message = true;
     deliver(
         &mut app,
-        WorkerResult::CommitMessage(Err("Provider unavailable".into())),
+        commit_message_result(Err("Provider unavailable".into())),
     );
     assert_eq!(app.commit_message, "Generated message");
     assert_eq!(app.error.as_deref(), Some("Provider unavailable"));
@@ -1545,4 +1540,116 @@ fn commit_file_selection_retains_list_after_errors_and_rejects_stale_results() {
     );
     assert!(app.commit_files.is_none());
     assert!(app.commit_preview.is_none());
+}
+
+fn commit_message_result(result: Result<String, String>) -> WorkerResult {
+    WorkerResult::CommitMessage {
+        result,
+        config: crate::llm::Config::default(),
+        repository: None,
+    }
+}
+
+#[test]
+fn unlocked_generation_key_is_reused_after_success_and_network_failure_without_persisting_it() {
+    for result in [
+        Ok("Generated message".into()),
+        Err("Provider unavailable".into()),
+    ] {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        let config = crate::llm::Config {
+            api_key: "unlocked-dummy-key".into(),
+            ..app.llm_config.clone()
+        };
+        deliver(
+            &mut app,
+            WorkerResult::CommitMessage {
+                result,
+                config,
+                repository: None,
+            },
+        );
+        let mut next = app.effective_llm_config("/repo").clone();
+        assert_eq!(next.api_key, "unlocked-dummy-key");
+        crate::llm::CREDENTIAL_READS.with(|reads| reads.set(0));
+        crate::llm::load_api_key_if_needed(&mut next, None).unwrap();
+        crate::llm::load_api_key_if_needed(&mut next, None).unwrap();
+        crate::llm::CREDENTIAL_READS.with(|reads| assert_eq!(reads.get(), 0));
+        let saved = serde_json::to_string(&app.llm_config).unwrap();
+        assert!(!saved.contains("unlocked-dummy-key"));
+        let restored: crate::llm::Config = serde_json::from_str(&saved).unwrap();
+        assert!(restored.api_key.is_empty());
+    }
+}
+
+#[test]
+fn unlocked_repository_key_stays_in_its_original_scope_after_selection_changes() {
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.repository_llm_configs
+        .insert("/first".into(), app.llm_config.clone());
+    app.repository_llm_configs
+        .insert("/second".into(), app.llm_config.clone());
+    let config = crate::llm::Config {
+        api_key: "first-repository-dummy-key".into(),
+        ..app.llm_config.clone()
+    };
+    deliver(
+        &mut app,
+        WorkerResult::CommitMessage {
+            result: Err("Provider unavailable".into()),
+            config,
+            repository: Some("/first".into()),
+        },
+    );
+    assert_eq!(
+        app.effective_llm_config("/first").api_key,
+        "first-repository-dummy-key"
+    );
+    assert!(app.effective_llm_config("/second").api_key.is_empty());
+    assert!(app.llm_config.api_key.is_empty());
+}
+
+#[test]
+fn late_unlock_does_not_restore_removed_or_changed_credentials() {
+    for change in 0..4 {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        let config = crate::llm::Config {
+            api_key: "old-unlocked-dummy-key".into(),
+            ..app.llm_config.clone()
+        };
+        app.repository_llm_configs
+            .insert("/repo".into(), app.llm_config.clone());
+        match change {
+            0 => {
+                app.repository_llm_configs.remove("/repo");
+            }
+            1 => {
+                app.repository_llm_configs
+                    .get_mut("/repo")
+                    .unwrap()
+                    .endpoint = "https://other.invalid/v1".into()
+            }
+            2 => {
+                app.repository_llm_configs
+                    .get_mut("/repo")
+                    .unwrap()
+                    .store_api_key = false
+            }
+            _ => {
+                app.repository_llm_configs.get_mut("/repo").unwrap().api_key =
+                    "new-dummy-key".into()
+            }
+        }
+        let expected = app.repository_llm_configs.clone();
+        deliver(
+            &mut app,
+            WorkerResult::CommitMessage {
+                result: Ok("Generated message".into()),
+                config,
+                repository: Some("/repo".into()),
+            },
+        );
+        assert_eq!(app.repository_llm_configs, expected);
+        assert!(app.llm_config.api_key.is_empty());
+    }
 }

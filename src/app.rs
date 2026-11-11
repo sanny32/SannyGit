@@ -66,7 +66,11 @@ enum WorkerResult {
         result: Result<crate::models::DiffPreview, String>,
     },
     ContentsPreview(Result<crate::models::DiffPreview, String>),
-    CommitMessage(Result<String, String>),
+    CommitMessage {
+        result: Result<String, String>,
+        config: crate::llm::Config,
+        repository: Option<String>,
+    },
     AmendMessage(Result<(String, String), String>),
     Repository(Result<crate::git::Snapshot, String>),
     Operation {
@@ -1465,15 +1469,18 @@ impl SannyGitApp {
         let contents = self.commit_contents;
         let head = self.amend_head.clone().filter(|_| self.amend);
         self.generating_commit_message = self.start_worker(move || {
-            WorkerResult::CommitMessage(
-                git::commit_patch(&root, contents, head.as_deref()).and_then(|patch| {
-                    if cancel.load(Ordering::Relaxed) {
-                        return Err("Commit message generation cancelled".into());
-                    }
-                    crate::llm::load_api_key_if_needed(&mut config, repository_scope.as_deref())?;
-                    crate::llm::generate(&config, &patch, &cancel)
-                }),
-            )
+            let result = git::commit_patch(&root, contents, head.as_deref()).and_then(|patch| {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err("Commit message generation cancelled".into());
+                }
+                crate::llm::load_api_key_if_needed(&mut config, repository_scope.as_deref())?;
+                crate::llm::generate(&config, &patch, &cancel)
+            });
+            WorkerResult::CommitMessage {
+                result,
+                config,
+                repository: repository_scope,
+            }
         });
         if !self.generating_commit_message {
             self.generation_cancel = None;
@@ -1643,9 +1650,31 @@ impl SannyGitApp {
                     self.status = "Could not load last commit".into();
                 }
             },
-            WorkerResult::CommitMessage(result) => {
+            WorkerResult::CommitMessage {
+                result,
+                config,
+                repository,
+            } => {
                 self.generating_commit_message = false;
                 self.generation_cancel = None;
+                let current = match repository.as_deref() {
+                    Some(path) => self.repository_llm_configs.get_mut(path),
+                    None => Some(&mut self.llm_config),
+                };
+                if let Some(current) = current {
+                    // Keep an unlocked key for this session, including after network
+                    // errors. Never overwrite a newer key or a different endpoint.
+                    if current.endpoint == config.endpoint
+                        && current.store_api_key
+                        && current.api_key.is_empty()
+                        && !config.api_key.is_empty()
+                    {
+                        current.api_key = config.api_key;
+                        if current.model.trim().is_empty() {
+                            current.model = config.model;
+                        }
+                    }
+                }
                 match result {
                     Ok(message) => {
                         self.commit_message = message;

@@ -40,7 +40,7 @@ jobs:
           RPM_VERSION: ${{ steps.version.outputs.rpm_version }}
           RPM_RELEASE: ${{ steps.version.outputs.rpm_release }}
         run: |
-          desktop-file-validate target/rpm-root/usr/share/applications/SannyGit.desktop
+          desktop-file-validate target/rpm-root/usr/share/applications/io.github.sanny32.SannyGit.desktop
           rpmbuild -bb .github/linux/rpm/sannygit.spec.in \
             --define "_topdir $GITHUB_WORKSPACE/target/rpmbuild" \
             --define "app_version $RPM_VERSION" --define "app_release $RPM_RELEASE" \

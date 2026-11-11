@@ -57,7 +57,7 @@ jobs:
           chmod 755 "$root/DEBIAN"
           install -d "$root/usr/share/doc/sannygit"
           install -m 644 LICENSE "$root/usr/share/doc/sannygit/copyright"
-          desktop-file-validate "$root/usr/share/applications/SannyGit.desktop"
+          desktop-file-validate "$root/usr/share/applications/io.github.sanny32.SannyGit.desktop"
           output="target/ci-dist/sannygit_${DEB_VERSION}_${arch}.deb"
           fakeroot dpkg-deb --root-owner-group --build "$root" "$output"
           test "$(dpkg-deb -f "$output" Package)" = sannygit

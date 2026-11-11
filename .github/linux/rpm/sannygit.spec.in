@@ -26,7 +26,7 @@ cp -a %{stage_root}/usr %{buildroot}/
 
 %files
 /usr/bin/sannygit
-/usr/share/applications/SannyGit.desktop
+/usr/share/applications/io.github.sanny32.SannyGit.desktop
 /usr/share/icons/hicolor/256x256/apps/sannygit.png
 /usr/share/icons/hicolor/scalable/apps/sannygit.svg
 %dir /usr/share/licenses/sannygit

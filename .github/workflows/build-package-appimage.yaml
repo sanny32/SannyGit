@@ -44,7 +44,7 @@ jobs:
             "https://github.com/linuxdeploy/linuxdeploy/releases/download/$LINUXDEPLOY_VERSION/linuxdeploy-x86_64.AppImage" -o "$tool"
           chmod +x "$tool"
           appdir="$GITHUB_WORKSPACE/target/AppDir"
-          desktop-file-validate "$appdir/usr/share/applications/SannyGit.desktop"
+          desktop-file-validate "$appdir/usr/share/applications/io.github.sanny32.SannyGit.desktop"
           libraries=()
           # winit loads these at runtime, so ELF dependency scanning cannot find them.
           for name in libxkbcommon.so.0 libxkbcommon-x11.so.0 libwayland-client.so.0 libwayland-cursor.so.0; do
@@ -55,7 +55,7 @@ jobs:
           export ARCH=x86_64 VERSION="$APP_VERSION"
           export LDAI_OUTPUT="$GITHUB_WORKSPACE/target/ci-dist/SannyGit-$APP_VERSION-x86_64.AppImage"
           "$tool" --appdir "$appdir" --executable "$appdir/usr/bin/sannygit" \
-            --desktop-file "$appdir/usr/share/applications/SannyGit.desktop" \
+            --desktop-file "$appdir/usr/share/applications/io.github.sanny32.SannyGit.desktop" \
             --icon-file "$appdir/usr/share/icons/hicolor/256x256/apps/sannygit.png" \
             "${libraries[@]}" --output appimage
           test -x "$LDAI_OUTPUT"

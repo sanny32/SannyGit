@@ -3,7 +3,7 @@
 <plist version="1.0"><dict>
 <key>CFBundleName</key><string>SannyGit</string>
 <key>CFBundleDisplayName</key><string>SannyGit</string>
-<key>CFBundleIdentifier</key><string>org.sannygit.SannyGit</string>
+<key>CFBundleIdentifier</key><string>io.github.sanny32.SannyGit</string>
 <key>CFBundleExecutable</key><string>sannygit</string>
 <key>CFBundleIconFile</key><string>sannygit.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>

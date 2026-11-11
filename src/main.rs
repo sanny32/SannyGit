@@ -34,7 +34,7 @@ fn main() -> eframe::Result<()> {
     let window_size = egui::vec2(1536.0, 1024.0);
     let viewport = egui::ViewportBuilder::default()
         .with_title("SannyGit")
-        .with_app_id("SannyGit")
+        .with_app_id("io.github.sanny32.SannyGit")
         .with_icon(std::sync::Arc::new(icon))
         .with_decorations(true)
         .with_inner_size(window_size)
@@ -44,16 +44,19 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport,
         persist_window: true,
-        persistence_path: std::env::var_os("SANNYGIT_SECONDARY_WINDOW").map(|_| {
-            std::env::temp_dir().join(format!(
+        persistence_path: if std::env::var_os("SANNYGIT_SECONDARY_WINDOW").is_some() {
+            Some(std::env::temp_dir().join(format!(
                 "sannygit-window-{}-{}.ron",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_nanos()
-            ))
-        }),
+            )))
+        } else {
+            // Keep existing preferences when changing the native application ID.
+            eframe::storage_dir("SannyGit").map(|directory| directory.join("app.ron"))
+        },
         // The event loop has initialized native DPI handling by this point.
         // Place the window before eframe renders and reveals its first frame.
         window_builder: Some(Box::new(move |viewport| {

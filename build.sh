@@ -5,14 +5,17 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
     cat <<'HELP'
-Usage: ./build.sh [--tests] [--install[=PREFIX]] [--sign=IDENTITY]
+Usage: ./build.sh [--debug] [--tests] [--install[=PREFIX]] [--sign=IDENTITY] [--keychain-profile=PATH]
 
-Build SannyGit in Release mode on Linux or macOS.
+Build SannyGit on Linux or macOS (Release mode by default).
 Missing build dependencies are installed automatically (sudo may be required).
 
   --tests             Run the Rust test suite after building
+  --debug             Build a development bundle with debug symbols
   --install[=PREFIX]  Install after building, optionally into PREFIX
   --sign=IDENTITY     Sign macOS builds with an existing code-signing certificate
+  --keychain-profile=PATH
+                      Embed a matching macOS provisioning profile for Touch ID
   -h, --help          Show this help without installing or building anything
 
 Default install location: ~/Applications on macOS, ~/.local on Linux.
@@ -24,14 +27,24 @@ run_tests=0
 run_install=0
 install_prefix=""
 signing_identity=""
+keychain_profile=""
+debug_build=0
 for argument in "$@"; do
     case "$argument" in
         -h|--help) usage; exit 0 ;;
         --tests) run_tests=1 ;;
+        --debug) debug_build=1 ;;
         --sign=*)
             signing_identity="${argument#--sign=}"
             if [ -z "$signing_identity" ] || [ "$signing_identity" = - ]; then
                 echo 'Error: --sign requires a certificate name or SHA-1 identity, not an ad-hoc signature.' >&2
+                exit 1
+            fi
+            ;;
+        --keychain-profile=*)
+            keychain_profile="${argument#--keychain-profile=}"
+            if [ -z "$keychain_profile" ] || [ ! -f "$keychain_profile" ]; then
+                echo 'Error: --keychain-profile requires an existing provisioning profile.' >&2
                 exit 1
             fi
             ;;
@@ -50,6 +63,10 @@ done
 
 if [ -n "$signing_identity" ] && [ "$(uname -s)" != Darwin ]; then
     echo 'Error: --sign is supported only on macOS.' >&2
+    exit 1
+fi
+if [ -n "$keychain_profile" ] && [ -z "$signing_identity" ]; then
+    echo 'Error: --keychain-profile requires --sign with the certificate authorized by the profile.' >&2
     exit 1
 fi
 
@@ -182,7 +199,11 @@ then
     export RUSTUP_TOOLCHAIN=stable
 fi
 
-binary="$(cd "$PROJECT_DIR" && cargo build --release --message-format=json-render-diagnostics | "$PYTHON_BIN" -c '
+cargo_profile_options=()
+if [ "$debug_build" -eq 0 ]; then
+    cargo_profile_options=(--release)
+fi
+binary="$(cd "$PROJECT_DIR" && cargo build ${cargo_profile_options[@]+"${cargo_profile_options[@]}"} --message-format=json-render-diagnostics | "$PYTHON_BIN" -c '
 import json, sys
 executables = [message["executable"] for line in sys.stdin
                if (message := json.loads(line)).get("reason") == "compiler-artifact"
@@ -193,7 +214,7 @@ if not executables:
 print(executables[-1])
 ')"
 if [ "$run_tests" -eq 1 ]; then
-    (cd "$PROJECT_DIR" && cargo test --release)
+    (cd "$PROJECT_DIR" && cargo test ${cargo_profile_options[@]+"${cargo_profile_options[@]}"})
 fi
 artifact="$binary"
 if [ "$(uname -s)" = Darwin ]; then
@@ -206,8 +227,27 @@ if [ "$(uname -s)" = Darwin ]; then
     install -m 644 "$PROJECT_DIR/assets/fonts/OFL.txt" "$bundle/Contents/Resources/SourceSans3-OFL.txt"
     base_version="${version%%[-+]*}"
     sed "s|@VERSION@|$base_version|g" "$PROJECT_DIR/.github/macos/Info.plist.in" > "$bundle/Contents/Info.plist"
-    codesign --force --sign "${signing_identity:--}" "$bundle"
+    signing_options=()
+    if [ -n "$keychain_profile" ]; then
+        entitlements="$(dirname "$binary")/sannygit-keychain.entitlements"
+        entitlement_options=()
+        if [ "$debug_build" -eq 1 ]; then
+            entitlement_options=(--debug)
+        fi
+        "$PYTHON_BIN" "$PROJECT_DIR/.github/macos/keychain-entitlements.py" \
+            "$keychain_profile" "$bundle/Contents/Info.plist" "$entitlements" \
+            ${entitlement_options[@]+"${entitlement_options[@]}"}
+        install -m 644 "$keychain_profile" "$bundle/Contents/embedded.provisionprofile"
+        signing_options=(--entitlements "$entitlements")
+    elif [ -f "$bundle/Contents/embedded.provisionprofile" ]; then
+        # Do not carry a previous build's profile into a build without entitlements.
+        rm "$bundle/Contents/embedded.provisionprofile"
+    fi
+    codesign --force --sign "${signing_identity:--}" ${signing_options[@]+"${signing_options[@]}"} "$bundle"
     codesign --verify --strict "$bundle"
+    if [ -z "$keychain_profile" ]; then
+        echo 'Touch ID storage is unavailable without --keychain-profile; this build uses the login Keychain.'
+    fi
     artifact="$bundle"
 fi
 echo "Built: $artifact"
@@ -233,7 +273,7 @@ case "$(uname -s)" in
             "$install_prefix/share/icons/hicolor/scalable/apps" \
             "$install_prefix/share/licenses/sannygit"
         install -m 755 "$binary" "$install_prefix/bin/sannygit"
-        install -m 644 "$PROJECT_DIR/.github/linux/usr/share/applications/SannyGit.desktop" "$install_prefix/share/applications/SannyGit.desktop"
+        install -m 644 "$PROJECT_DIR/.github/linux/usr/share/applications/io.github.sanny32.SannyGit.desktop" "$install_prefix/share/applications/io.github.sanny32.SannyGit.desktop"
         install -m 644 "$PROJECT_DIR/assets/app/sannygit.png" "$install_prefix/share/icons/hicolor/256x256/apps/sannygit.png"
         install -m 644 "$PROJECT_DIR/assets/app/sannygit.svg" "$install_prefix/share/icons/hicolor/scalable/apps/sannygit.svg"
         install -m 644 "$PROJECT_DIR/LICENSE" "$install_prefix/share/licenses/sannygit/LICENSE"
