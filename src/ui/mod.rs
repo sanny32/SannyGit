@@ -577,100 +577,136 @@ mod tests {
     #[test]
     fn error_dialog_does_not_move_panels_and_can_be_dismissed() {
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
-            for size in [vec2(1100.0, 700.0), vec2(1536.0, 1024.0)] {
-                let ctx = Context::default();
-                crate::theme::install_fonts(&ctx);
-                theme.apply(&ctx);
-                let mut app = SannyGitApp::with_theme(theme);
-                let render = |app: &mut SannyGitApp, events| {
-                    let mut output = ctx.run_ui(
-                        RawInput {
-                            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
-                            events,
-                            ..Default::default()
-                        },
-                        |ui| show(ui, app),
+            for style in [
+                crate::theme::InterfaceStyle::Classic,
+                crate::theme::InterfaceStyle::Modern,
+            ] {
+                for size in [vec2(1100.0, 700.0), vec2(1536.0, 1024.0)] {
+                    let ctx = Context::default();
+                    crate::theme::install_fonts(&ctx);
+                    theme.apply_style(&ctx, style);
+                    let mut app = SannyGitApp::with_theme(theme);
+                    app.interface_style = style;
+                    let render = |app: &mut SannyGitApp, events| {
+                        let mut output = ctx.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                                events,
+                                ..Default::default()
+                            },
+                            |ui| show(ui, app),
+                        );
+                        output.textures_delta.clear();
+                        let mut panels = ctx.data(|data| {
+                            data.iter_temp_by_type::<eframe::egui::PanelState>()
+                                .map(|state| state.outer_rect)
+                                .collect::<Vec<_>>()
+                        });
+                        panels.sort_by(|a, b| {
+                            a.min
+                                .x
+                                .total_cmp(&b.min.x)
+                                .then(a.min.y.total_cmp(&b.min.y))
+                                .then(a.max.x.total_cmp(&b.max.x))
+                        });
+                        (panels, output)
+                    };
+                    for _ in 0..3 {
+                        render(&mut app, vec![]);
+                    }
+                    let (before, _) = render(&mut app, vec![]);
+                    let error = concat!(
+                        "LLM API returned HTTP 404. ",
+                        "Check the endpoint, model, API key and provider limits."
                     );
-                    output.textures_delta.clear();
-                    let mut panels = ctx.data(|data| {
-                        data.iter_temp_by_type::<eframe::egui::PanelState>()
-                            .map(|state| state.outer_rect)
-                            .collect::<Vec<_>>()
-                    });
-                    panels.sort_by(|a, b| {
-                        a.min
-                            .x
-                            .total_cmp(&b.min.x)
-                            .then(a.min.y.total_cmp(&b.min.y))
-                            .then(a.max.x.total_cmp(&b.max.x))
-                    });
-                    (panels, output)
-                };
-                for _ in 0..3 {
-                    render(&mut app, vec![]);
-                }
-                let (before, _) = render(&mut app, vec![]);
-                let error = concat!(
-                    "LLM API returned HTTP 404. ",
-                    "Check the endpoint, model, API key and provider limits."
-                );
-                app.error = Some(error.into());
-                for _ in 0..3 {
-                    render(&mut app, vec![]);
-                }
-                let (after, output) = render(&mut app, vec![]);
-                assert_eq!(before.len(), after.len());
-                for (before, after) in before.iter().zip(&after) {
-                    assert!(
-                        (before.min - after.min).length() < 1.0
-                            && (before.max - after.max).length() < 1.0,
-                        "Error moved a panel in {theme:?}: {before:?} -> {after:?}"
-                    );
-                }
-                for label in ["Attention required", error, "OK"] {
-                    assert!(
-                        output.shapes.iter().any(|shape| {
-                            matches!(&shape.shape, eframe::egui::Shape::Text(text)
+                    app.error = Some(error.into());
+                    for _ in 0..3 {
+                        render(&mut app, vec![]);
+                    }
+                    let (after, output) = render(&mut app, vec![]);
+                    assert_eq!(before.len(), after.len());
+                    for (before, after) in before.iter().zip(&after) {
+                        assert!(
+                            (before.min - after.min).length() < 1.0
+                                && (before.max - after.max).length() < 1.0,
+                            "Error moved a panel in {theme:?}: {before:?} -> {after:?}"
+                        );
+                    }
+                    for label in ["Attention required", error, "OK"] {
+                        assert!(
+                            output.shapes.iter().any(|shape| {
+                                matches!(&shape.shape, eframe::egui::Shape::Text(text)
                                 if text.galley.job.text == label)
-                        }),
-                        "Missing error dialog text {label} in {theme:?}"
+                            }),
+                            "Missing error dialog text {label} in {theme:?}"
+                        );
+                    }
+                    let ok = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            eframe::egui::Shape::Text(text) if text.galley.job.text == "OK" => {
+                                Some(text.pos)
+                            }
+                            _ => None,
+                        })
+                        .unwrap();
+                    render(&mut app, vec![Event::PointerMoved(ok)]);
+                    render(
+                        &mut app,
+                        vec![Event::PointerButton {
+                            pos: ok,
+                            button: PointerButton::Primary,
+                            pressed: true,
+                            modifiers: Modifiers::NONE,
+                        }],
                     );
-                }
-                let ok = output
-                    .shapes
-                    .iter()
-                    .find_map(|shape| match &shape.shape {
-                        eframe::egui::Shape::Text(text) if text.galley.job.text == "OK" => {
-                            Some(text.pos)
-                        }
-                        _ => None,
-                    })
-                    .unwrap();
-                render(&mut app, vec![Event::PointerMoved(ok)]);
-                render(
-                    &mut app,
-                    vec![Event::PointerButton {
-                        pos: ok,
-                        button: PointerButton::Primary,
-                        pressed: true,
-                        modifiers: Modifiers::NONE,
-                    }],
-                );
-                render(
-                    &mut app,
-                    vec![Event::PointerButton {
-                        pos: ok,
-                        button: PointerButton::Primary,
-                        pressed: false,
-                        modifiers: Modifiers::NONE,
-                    }],
-                );
-                assert!(app.error.is_none(), "OK did not dismiss the error dialog");
-                let (_, output) = render(&mut app, vec![]);
-                assert!(!output.shapes.iter().any(|shape| {
-                    matches!(&shape.shape, eframe::egui::Shape::Text(text)
+                    render(
+                        &mut app,
+                        vec![Event::PointerButton {
+                            pos: ok,
+                            button: PointerButton::Primary,
+                            pressed: false,
+                            modifiers: Modifiers::NONE,
+                        }],
+                    );
+                    assert!(app.error.is_none(), "OK did not dismiss the error dialog");
+                    let (_, output) = render(&mut app, vec![]);
+                    assert!(!output.shapes.iter().any(|shape| {
+                        matches!(&shape.shape, eframe::egui::Shape::Text(text)
                     if text.galley.job.text == "Attention required")
-                }));
+                    }));
+                    app.commit_message = "Keep this draft".into();
+                    for diagnostic in [
+                    "fatal: unable to access 'https://alice:hunter2@example.invalid/repo?auth=abc123': connection refused".to_owned(),
+                    format!("{}\nAPI-Key: unlabelled-value", "ordinary text ".repeat(5_000)),
+                ] {
+                    let error = crate::git::diagnostics::CommandError::exited(
+                        "status", Some(128), diagnostic.as_bytes(),
+                    ).to_string();
+                    app.error = Some(error.clone());
+                    for _ in 0..3 {
+                        render(&mut app, vec![]);
+                    }
+                    let (panels, output) = render(&mut app, vec![]);
+                    assert_eq!(panels, before);
+                    assert_eq!(app.commit_message, "Keep this draft");
+                    let shown = output.shapes.iter().filter_map(|shape| match &shape.shape {
+                        eframe::egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                        _ => None,
+                    }).collect::<Vec<_>>();
+                    assert!(shown.contains(&"Attention required"));
+                    assert!(shown.contains(&error.as_str()));
+                    assert!(error.contains("exit code: 128"));
+                    for text in shown {
+                        for hidden in ["alice", "hunter2", "abc123", "unlabelled-value"] {
+                            assert!(!text.contains(hidden));
+                        }
+                    }
+                    app.dismiss_error();
+                    render(&mut app, vec![]);
+                }
+                }
             }
         }
     }

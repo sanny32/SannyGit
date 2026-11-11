@@ -15,6 +15,25 @@ const OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
 const FILE_LIMIT: usize = 5_000;
 const TIMEOUT: Duration = Duration::from_secs(15);
 
+pub(crate) mod diagnostics;
+use diagnostics::{CommandError, FailureKind};
+
+/// A completed command, kept separate from user-facing diagnostics. In Sync
+/// mode a reviewed porcelain rejection can have a non-success status.
+struct CommandOutput {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+}
+
+impl std::fmt::Debug for CommandOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandOutput")
+            .field("status", &self.status)
+            .field("stdout_bytes", &self.stdout.len())
+            .finish()
+    }
+}
+
 thread_local! {
     static EXECUTABLE: RefCell<String> = const { RefCell::new(String::new()) };
 }
@@ -91,6 +110,8 @@ pub(crate) fn run_controlled(
     cancel: Option<&AtomicBool>,
 ) -> Result<Vec<u8>, String> {
     execute(path, args, None, timeout, cancel, CommandMode::Normal)
+        .map(|output| output.stdout)
+        .map_err(|error| error.to_string())
 }
 
 /// Return whether Sync needs to pull after a non-fast-forward push rejection.
@@ -108,7 +129,8 @@ pub(crate) fn run_sync_push(
         Some(cancel),
         CommandMode::SyncPush,
     )
-    .map(|output| push_needs_pull(&output))
+    .map(|output| push_needs_pull(&output.stdout))
+    .map_err(|error| error.to_string())
 }
 
 fn push_needs_pull(output: &[u8]) -> bool {
@@ -137,6 +159,8 @@ pub(crate) fn run_with_input(
     input: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
     execute(path, args, input, TIMEOUT, None, CommandMode::Normal)
+        .map(|output| output.stdout)
+        .map_err(|error| error.to_string())
 }
 
 /// Read-only commands with bounded stdin and the same cancellation/timeout handling.
@@ -154,11 +178,15 @@ pub(crate) fn run_with_input_controlled(
         Some(cancel),
         CommandMode::Normal,
     )
+    .map(|output| output.stdout)
+    .map_err(|error| error.to_string())
 }
 
 /// Successful diagnostic output for an explicit preview (never error logging).
 pub(crate) fn run_diagnostic(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     execute(path, args, None, TIMEOUT, None, CommandMode::Diagnostic)
+        .map(|output| output.stdout)
+        .map_err(|error| error.to_string())
 }
 
 /// Whole-repository stash operations have no user pathspecs. Git's stash cleanup
@@ -167,6 +195,8 @@ pub(crate) fn run_stash(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let mut command = vec!["-c", "submodule.recurse=false", "stash"];
     command.extend_from_slice(args);
     execute(path, &command, None, TIMEOUT, None, CommandMode::Stash)
+        .map(|output| output.stdout)
+        .map_err(|error| error.to_string())
 }
 
 enum CommandMode {
@@ -183,9 +213,15 @@ fn execute(
     timeout: Duration,
     cancel: Option<&AtomicBool>,
     mode: CommandMode,
-) -> Result<Vec<u8>, String> {
+) -> Result<CommandOutput, CommandError> {
+    let operation = if matches!(mode, CommandMode::Stash) {
+        "stash"
+    } else {
+        diagnostics::operation(args)
+    };
+    let fail = |kind, message: String| CommandError::new(operation, kind, message);
     if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-        return Err("Operation cancelled".into());
+        return Err(fail(FailureKind::Cancelled, "Operation cancelled".into()));
     }
     let executable = executable();
     let mut command = Command::new(&executable);
@@ -225,11 +261,17 @@ fn execute(
     }
     let mut child = command
         .spawn()
-        .map_err(|e| format!("Cannot start Git executable \"{executable}\": {e}. Check Preferences > Git > Executable."))?;
+        .map_err(|e| fail(FailureKind::Start, format!("Cannot start Git executable \"{executable}\": {e}. Check Preferences > Git > Executable.")))?;
     #[cfg(test)]
     crate::test_support::record_git_command(path);
-    let stdout = child.stdout.take().ok_or("Cannot read Git output")?;
-    let stderr = child.stderr.take().ok_or("Cannot read Git errors")?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| fail(FailureKind::Io, "Cannot read Git output".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| fail(FailureKind::Io, "Cannot read Git errors".into()))?;
     let stdin = child.stdin.take();
     let result = thread::scope(|scope| {
         let writer = scope.spawn(move || -> Result<(), String> {
@@ -270,40 +312,55 @@ fn execute(
                     let _ = child.kill();
                     let _ = child.wait();
                     break Err(match result {
-                        Err(e) => format!("Cannot wait for Git: {e}"),
-                        _ if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) => {
+                        Err(e) => fail(FailureKind::Io, format!("Cannot wait for Git: {e}")),
+                        _ if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) => fail(
+                            FailureKind::Cancelled,
                             "Operation cancelled; refresh local and remote state before retrying"
-                                .into()
-                        }
-                        _ => format!(
-                            "Git operation timed out after {} seconds",
-                            timeout.as_secs()
+                                .into(),
+                        ),
+                        _ => fail(
+                            FailureKind::TimedOut,
+                            format!(
+                                "Git operation timed out after {} seconds",
+                                timeout.as_secs()
+                            ),
                         ),
                     });
                 }
             }
         };
-        let mut output = out.join().map_err(|_| "Git output reader failed")??;
-        let errors = err.join().map_err(|_| "Git error reader failed")??;
-        let written = writer.join().map_err(|_| "Git input writer failed")?;
-        if !status?.success()
-            && !(matches!(mode, CommandMode::SyncPush) && push_needs_pull(&output))
+        let mut output = out
+            .join()
+            .map_err(|_| fail(FailureKind::Worker, "Git output reader failed".into()))?
+            .map_err(|error| fail(FailureKind::Io, error))?;
+        let errors = err
+            .join()
+            .map_err(|_| fail(FailureKind::Worker, "Git error reader failed".into()))?
+            .map_err(|error| fail(FailureKind::Io, error))?;
+        let written = writer
+            .join()
+            .map_err(|_| fail(FailureKind::Worker, "Git input writer failed".into()))?;
+        let status = status?;
+        if !status.success() && !(matches!(mode, CommandMode::SyncPush) && push_needs_pull(&output))
         {
-            return Err(command_error(if matches!(mode, CommandMode::Stash) {
-                "stash"
-            } else {
-                args.first().copied().unwrap_or("command")
-            }));
+            return Err(CommandError::exited(operation, status.code(), &errors));
         }
-        written?;
+        written.map_err(|error| fail(FailureKind::Io, error).with_exit_code(status.code()))?;
         if matches!(mode, CommandMode::Diagnostic) {
             output.extend_from_slice(&errors);
         }
         if output.len() > OUTPUT_LIMIT {
-            return Err("Git output exceeds the 2 MiB display limit".into());
+            return Err(fail(
+                FailureKind::OutputLimit,
+                "Git output exceeds the 2 MiB display limit".into(),
+            )
+            .with_exit_code(status.code()));
         }
         drop(errors);
-        Ok(output)
+        Ok(CommandOutput {
+            status,
+            stdout: output,
+        })
     });
     result
 }
@@ -560,18 +617,26 @@ pub fn load(path: &Path) -> Result<Snapshot, String> {
     // Git appends exactly one line ending; preserve whitespace in directory names.
     let root = root.strip_suffix('\n').unwrap_or(&root);
     let path = PathBuf::from(root);
-    let branch = match run(&path, &["symbolic-ref", "--quiet", "HEAD"]) {
+    let branch = match execute(
+        &path,
+        &["symbolic-ref", "--quiet", "HEAD"],
+        None,
+        TIMEOUT,
+        None,
+        CommandMode::Normal,
+    ) {
         Ok(output) => {
-            let name = text(output)?;
+            let name = text(output.stdout)?;
             name.trim_end_matches('\n')
                 .strip_prefix("refs/heads/")
                 .ok_or("Unexpected HEAD reference")?
                 .to_owned()
         }
-        Err(_) => format!(
+        Err(error) if error.kind == FailureKind::Exit && error.exit_code == Some(1) => format!(
             "Detached at {}",
             text(run(&path, &["rev-parse", "--short", "HEAD"])?)?.trim()
         ),
+        Err(error) => return Err(error.to_string()),
     };
     let changes = parse_status(&run(
         &path,

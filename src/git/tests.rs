@@ -2,6 +2,99 @@ use super::*;
 use crate::test_support::TempRepo;
 
 #[test]
+fn command_results_keep_exit_codes_and_distinguish_cancellation_from_git_failure() {
+    let repo = TempRepo::new();
+    let output = execute(
+        &repo.0,
+        &["--version"],
+        None,
+        TIMEOUT,
+        None,
+        CommandMode::Normal,
+    )
+    .unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.starts_with(b"git version"));
+    assert!(!format!("{output:?}").contains("git version"));
+    for (args, expected) in [
+        (vec!["config", "--local", "--get", "sannygit.missing"], 1),
+        (vec!["rev-parse", "--verify", "HEAD"], 128),
+    ] {
+        let error = execute(&repo.0, &args, None, TIMEOUT, None, CommandMode::Normal).unwrap_err();
+        assert_eq!(error.kind, FailureKind::Exit);
+        assert_eq!(error.exit_code, Some(expected));
+        assert!(error
+            .to_string()
+            .contains(&format!("exit code: {expected}")));
+    }
+    let cancelled = AtomicBool::new(true);
+    let error = execute(
+        &repo.0,
+        &["status"],
+        None,
+        TIMEOUT,
+        Some(&cancelled),
+        CommandMode::Normal,
+    )
+    .unwrap_err();
+    assert_eq!(error.kind, FailureKind::Cancelled);
+    assert_eq!(error.exit_code, None);
+}
+
+#[cfg(unix)]
+#[test]
+fn structured_timeouts_output_limits_and_failed_symbolic_refs_keep_their_meaning() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = TempRepo::new();
+    let timeout = execute(
+        &repo.0,
+        &["-c", "alias.wait=!sleep 30", "wait"],
+        None,
+        Duration::from_millis(100),
+        None,
+        CommandMode::Normal,
+    )
+    .unwrap_err();
+    assert_eq!(timeout.kind, FailureKind::TimedOut);
+    assert_eq!(timeout.exit_code, None);
+    let executable = repo.0.join("mock-git");
+    std::fs::write(&executable, "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\ncase \"$1\" in\nrev-parse) pwd; exit 0;;\nsymbolic-ref) echo 'fatal: dépôt introuvable' >&2; exit 128;;\nesac\nshift\ndone\nexit 1\n").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // Thread-local configuration cannot affect other tests.
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            set_executable(executable.to_string_lossy().into_owned());
+            let error = load(&repo.0).err().unwrap();
+            assert!(error.contains("symbolic-ref exit code: 128"));
+            assert!(!error.contains("Detached at"));
+            // Failed stdout and arbitrary stderr from hook-capable operations
+            // must not enter either Display or Debug diagnostics.
+            std::fs::write(&executable, "#!/bin/sh\necho 'raw-stdout-private-value'\necho 'raw-stderr-private-value' >&2\nexit 7\n").unwrap();
+            let error = execute(&repo.0, &["push"], None, TIMEOUT, None, CommandMode::Normal).unwrap_err();
+            assert_eq!(error.exit_code, Some(7));
+            assert!(!format!("{error:?} {error}").contains("private-value"));
+            std::fs::write(&executable, "#!/bin/sh\nhead -c 2097153 /dev/zero\n").unwrap();
+            let error = execute(&repo.0, &["status"], None, TIMEOUT, None, CommandMode::Normal).unwrap_err();
+            assert_eq!(error.kind, FailureKind::OutputLimit);
+            assert_eq!(error.exit_code, Some(0));
+            assert!(error.to_string().contains("2 MiB"));
+            std::fs::write(&executable, "#!/bin/sh\necho 'partial private-value' >&2\nsleep 30\n").unwrap();
+            let cancel = AtomicBool::new(false);
+            thread::scope(|scope| {
+                scope.spawn(|| {
+                    thread::sleep(Duration::from_millis(50));
+                    cancel.store(true, Ordering::Relaxed);
+                });
+                let error = execute(&repo.0, &["status"], None, TIMEOUT, Some(&cancel), CommandMode::Normal).unwrap_err();
+                assert_eq!(error.kind, FailureKind::Cancelled);
+                assert_eq!(error.exit_code, None);
+                assert!(!error.to_string().contains("private-value"));
+            });
+        }).join().unwrap();
+    });
+}
+
+#[test]
 fn sync_accepts_only_a_single_non_fast_forward_porcelain_rejection() {
     for reason in ["fetch first", "non-fast-forward"] {
         assert!(push_needs_pull(
@@ -48,6 +141,17 @@ fn configured_executable_reports_missing_file_without_falling_back() {
         let directory = std::env::temp_dir();
         let missing = directory.join(format!("missing Git executable {}", std::process::id()));
         set_executable(missing.to_string_lossy().into_owned());
+        let typed = execute(
+            &directory,
+            &["--version"],
+            None,
+            TIMEOUT,
+            None,
+            CommandMode::Normal,
+        )
+        .unwrap_err();
+        assert_eq!(typed.kind, FailureKind::Start);
+        assert_eq!(typed.exit_code, None);
         let error = run(&directory, &["--version"]).unwrap_err();
         assert!(error.contains(&*missing.to_string_lossy()));
         assert!(error.contains("Preferences > Git > Executable"));
@@ -709,7 +813,11 @@ fn commit_respects_rejecting_hook_and_keeps_index() {
     let hooks = repo.0.join("test-hooks");
     std::fs::create_dir(&hooks).unwrap();
     let hook = hooks.join("pre-commit");
-    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\necho 'unlabelled-hook-content' >&2\necho 'unlabelled-hook-stdout'\nexit 1\n",
+    )
+    .unwrap();
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     repo.git(&[
         "config",
@@ -720,7 +828,9 @@ fn commit_respects_rejecting_hook_and_keeps_index() {
     repo.write("file", "unstaged after selection\n");
     repo.write("untracked", "not selected\n");
     let index = repo.git(&["ls-files", "--stage", "-z"]);
-    assert!(commit(&repo.0, "Rejected staged", CommitContents::Staged).is_err());
+    let error = commit(&repo.0, "Rejected staged", CommitContents::Staged).unwrap_err();
+    assert!(error.contains("exit code: 1"));
+    assert!(!error.contains("unlabelled-hook"));
     assert!(amend_commit(
         &repo.0,
         "Rejected staged amend",

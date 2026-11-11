@@ -53,7 +53,7 @@ Windows, Linux, and macOS. The UI language is English. The license is MIT.
 | `src/app.rs`, `src/app/*.rs` | Application state, background workers, repository/network actions, UI loop |
 | `src/models.rs` | Models for repositories, changes, commits, and diff lines |
 | `src/mock_data.rs` | Test-only mock data kept separate from the UI |
-| `src/git.rs` | Git execution, status, diff, staging, commit/amend, shared test fixtures |
+| `src/git.rs`, `src/git/diagnostics.rs` | Git execution, safe command diagnostics, status, diff, staging and commit/amend |
 | `src/repository.rs`, `src/clone_source.rs` | Repository discovery, creation, clone, worktrees, external opening |
 | `src/discard.rs`, `src/app/discard.rs`, `src/ui/discard.rs` | Reviewed single-file restore/deletion, worker actions and confirmation dialog |
 | `src/stash.rs`, `src/app/stash.rs`, `src/ui/stash.rs` | Stash backend, background actions, previews and management dialog |
