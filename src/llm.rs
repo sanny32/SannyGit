@@ -128,6 +128,7 @@ fn credential_user(endpoint: &str, repository: Option<&str>) -> String {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn credential_entry(user: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYRING_SERVICE, user)
         .map_err(|error| format!("Cannot access the OS credential manager: {error}"))
@@ -161,8 +162,8 @@ mod macos_credentials {
     use std::process::{Command, Output};
 
     use super::{
-        credential_entry, with_keychain_fallback, ProtectedKeychainError, KEYRING_SERVICE,
-        LEGACY_KEYRING_USER, PROTECTED_KEYRING_SERVICE,
+        with_keychain_fallback, ProtectedKeychainError, KEYRING_SERVICE, LEGACY_KEYRING_USER,
+        PROTECTED_KEYRING_SERVICE,
     };
 
     const ITEM_NOT_FOUND: i32 = -25_300;
@@ -202,9 +203,11 @@ mod macos_credentials {
     }
 
     pub fn load_unprotected(user: &str) -> Result<Option<String>, String> {
-        match credential_entry(user)?.get_password() {
-            Ok(secret) => Ok(Some(secret)),
-            Err(keyring::Error::NoEntry) => Ok(None),
+        match generic_password(PasswordOptions::new_generic_password(KEYRING_SERVICE, user)) {
+            Ok(secret) => String::from_utf8(secret)
+                .map(Some)
+                .map_err(|_| "The saved LLM API key is not valid UTF-8".to_owned()),
+            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(None),
             Err(error) => Err(format!(
                 "Cannot read the LLM API key from the OS credential manager: {error}"
             )),
@@ -278,11 +281,13 @@ mod macos_credentials {
             || {
                 // Ad-hoc builds cannot use the data protection keychain. Keep
                 // their credentials in the OS login keychain instead.
-                credential_entry(user)?
-                    .set_password(secret)
-                    .map_err(|error| {
-                        format!("Cannot save the LLM API key in the macOS Keychain: {error}")
-                    })
+                set_generic_password_options(
+                    secret.as_bytes(),
+                    PasswordOptions::new_generic_password(KEYRING_SERVICE, user),
+                )
+                .map_err(|error| {
+                    format!("Cannot save the LLM API key in the macOS Keychain: {error}")
+                })
             },
         )
     }
@@ -311,20 +316,11 @@ mod macos_credentials {
                 Err(error) if error.code() == ITEM_NOT_FOUND => Ok(None),
                 Err(error) => Err(protected_error(error, "unlock")),
             },
-            // Only missing entitlements permit reading the login keychain.
-            // Cancellation and authentication errors remain errors.
-            || load_unprotected(user),
+            // Let the caller try the login entry exactly once. Reading here as
+            // well would duplicate access when the entry is absent. Cancellation
+            // and authentication errors must stop the lookup.
+            || Ok(None),
         )
-    }
-
-    pub fn load_scoped(user: &str) -> Result<Option<String>, String> {
-        let Some(secret) = load_unprotected(user)? else {
-            return Ok(None);
-        };
-        // save handles promotion cleanup itself. In an ad-hoc build it keeps
-        // this same login entry, so deleting it here would lose the credential.
-        save(user, &secret)?;
-        Ok(Some(secret))
     }
 
     pub fn delete(user: &str) -> Result<(), String> {
@@ -418,6 +414,8 @@ fn load_api_key_from_stores(
     scoped: impl FnOnce() -> Result<Option<String>, String>,
     legacy: impl FnOnce() -> Result<Option<String>, String>,
 ) -> Result<Option<String>, String> {
+    // Generation only reads credentials. Migrating or rewriting a login item
+    // here can require additional authorization dialogs for the same key.
     if let Some(secret) = protected()? {
         return Ok(Some(secret));
     }
@@ -425,22 +423,6 @@ fn load_api_key_from_stores(
         return Ok(Some(secret));
     }
     legacy()
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn load_and_migrate_legacy_api_key(
-    load: impl FnOnce() -> Result<Option<String>, String>,
-    save: impl FnOnce(&str) -> Result<(), String>,
-    delete: impl FnOnce() -> Result<(), String>,
-) -> Result<Option<String>, String> {
-    let Some(secret) = load()? else {
-        return Ok(None);
-    };
-    // Keep the source until the destination is safely written, then return
-    // the value already read instead of querying either entry again.
-    save(&secret)?;
-    delete()?;
-    Ok(Some(secret))
 }
 
 #[cfg(test)]
@@ -460,14 +442,10 @@ fn load_api_key(config: &Config, repository: Option<&str>) -> Result<Option<Stri
     {
         load_api_key_from_stores(
             || macos_credentials::load(&user),
-            || macos_credentials::load_scoped(&user),
+            || macos_credentials::load_unprotected(&user),
             || {
                 if repository.is_none() && endpoint == DEFAULT_ENDPOINT {
-                    load_and_migrate_legacy_api_key(
-                        macos_credentials::load_legacy,
-                        |secret| macos_credentials::save(&user, secret),
-                        macos_credentials::delete_legacy,
-                    )
+                    macos_credentials::load_legacy()
                 } else {
                     Ok(None)
                 }

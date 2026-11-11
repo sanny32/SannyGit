@@ -759,6 +759,7 @@ fn opening_and_applying_llm_settings_never_reads_saved_credentials() {
                 name: "Project".into(),
                 path: path.clone(),
             }];
+            app.selected_repository = 0;
             app.repository_llm_configs
                 .insert(path.clone(), app.llm_config.clone());
             let reads_before = crate::llm::CREDENTIAL_READS.with(|reads| reads.get());

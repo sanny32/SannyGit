@@ -423,7 +423,7 @@ fn protected_read_failures_never_fall_back_to_password_authentication() {
 }
 
 #[test]
-fn migration_only_runs_when_the_protected_key_is_absent() {
+fn storage_lookup_stops_at_the_first_existing_key() {
     let calls = std::cell::RefCell::new(Vec::new());
     let result = load_api_key_from_stores(
         || {
@@ -444,17 +444,17 @@ fn migration_only_runs_when_the_protected_key_is_absent() {
 }
 
 #[test]
-fn scoped_migration_success_or_failure_does_not_read_an_unrelated_key() {
+fn scoped_read_success_or_failure_does_not_read_an_unrelated_key() {
     for result in [
         Ok(Some("scoped-key".into())),
-        Err("migration cancelled".into()),
+        Err("authentication cancelled".into()),
     ] {
         let expected = result.clone();
         assert_eq!(
             load_api_key_from_stores(
                 || Ok(None),
                 || result,
-                || panic!("must not read a different key after scoped migration"),
+                || panic!("must not read a different key after scoped read"),
             ),
             expected,
         );
@@ -462,61 +462,38 @@ fn scoped_migration_success_or_failure_does_not_read_an_unrelated_key() {
 }
 
 #[test]
-fn migration_reads_once_and_saves_before_deleting() {
-    let calls = std::cell::RefCell::new(Vec::new());
-    let secret = load_and_migrate_legacy_api_key(
+fn scoped_key_is_read_once_without_accessing_legacy_storage() {
+    let reads = std::cell::Cell::new(0);
+    let result = load_api_key_from_stores(
+        || with_keychain_fallback(|| Err(ProtectedKeychainError::Unavailable), || Ok(None)),
         || {
-            calls.borrow_mut().push("read");
-            Ok(Some("legacy-key".into()))
+            reads.set(reads.get() + 1);
+            Ok(Some("scoped-key".into()))
         },
-        |secret| {
-            assert_eq!(secret, "legacy-key");
-            calls.borrow_mut().push("save");
-            Ok(())
-        },
-        || {
-            calls.borrow_mut().push("delete");
-            Ok(())
-        },
-    )
-    .unwrap();
-    assert_eq!(secret.as_deref(), Some("legacy-key"));
-    assert_eq!(*calls.borrow(), ["read", "save", "delete"]);
+        || panic!("must stop after reading the scoped key"),
+    );
+    assert_eq!(result, Ok(Some("scoped-key".into())));
+    assert_eq!(reads.get(), 1);
 }
 
 #[test]
-fn missing_or_cancelled_legacy_read_does_not_migrate() {
+fn missing_or_cancelled_scoped_read_only_falls_back_when_absent() {
     for result in [Ok(None), Err("authentication cancelled".into())] {
+        let legacy_reads = std::cell::Cell::new(0);
         let expected = result.clone();
         assert_eq!(
-            load_and_migrate_legacy_api_key(
+            load_api_key_from_stores(
+                || Ok(None),
                 || result,
-                |_| panic!("must not save without a secret"),
-                || panic!("must not delete without a secret"),
+                || {
+                    legacy_reads.set(legacy_reads.get() + 1);
+                    Ok(None)
+                },
             ),
             expected,
         );
+        assert_eq!(legacy_reads.get(), usize::from(expected.is_ok()));
     }
-}
-
-#[test]
-fn failed_migration_preserves_the_source() {
-    let result = load_and_migrate_legacy_api_key(
-        || Ok(Some("legacy-key".into())),
-        |_| Err("storage unavailable".into()),
-        || panic!("must not delete after a failed save"),
-    );
-    assert_eq!(result, Err("storage unavailable".into()));
-}
-
-#[test]
-fn migration_reports_cleanup_failure_without_reading_again() {
-    let result = load_and_migrate_legacy_api_key(
-        || Ok(Some("legacy-key".into())),
-        |_| Ok(()),
-        || Err("cannot remove source".into()),
-    );
-    assert_eq!(result, Err("cannot remove source".into()));
 }
 
 #[test]
@@ -653,30 +630,6 @@ fn keychain_fallback_reports_login_storage_failures() {
         || Err("login keychain locked".into()),
     );
     assert_eq!(result, Err("login keychain locked".into()));
-}
-
-#[test]
-fn legacy_migration_can_use_login_keychain_when_entitlements_are_missing() {
-    let calls = std::cell::RefCell::new(Vec::new());
-    let result = load_and_migrate_legacy_api_key(
-        || Ok(Some("legacy-key".into())),
-        |secret| {
-            with_keychain_fallback(
-                || Err(ProtectedKeychainError::Unavailable),
-                || {
-                    assert_eq!(secret, "legacy-key");
-                    calls.borrow_mut().push("save login");
-                    Ok(())
-                },
-            )
-        },
-        || {
-            calls.borrow_mut().push("delete legacy");
-            Ok(())
-        },
-    );
-    assert_eq!(result, Ok(Some("legacy-key".into())));
-    assert_eq!(*calls.borrow(), ["save login", "delete legacy"]);
 }
 
 #[test]
