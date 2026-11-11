@@ -552,6 +552,7 @@ impl SannyGitApp {
         self.clear_commit_preview();
         self.state_current = false;
         self.commit_message.clear();
+        self.generation_review = None;
         self.contents_preview_open = false;
         self.contents_preview = None;
         self.journal_filter.clear();

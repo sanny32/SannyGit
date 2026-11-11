@@ -564,12 +564,12 @@ fn llm_form(
                     );
                     let preset_selected =
                         endpoint_response.changed() && !endpoint_response.has_focus();
-                    endpoint_response.clone().help_text(
-                        crate::llm::PROVIDER_PRESETS
-                            .iter()
-                            .find(|provider| provider.endpoint == endpoint)
-                            .map_or("Custom endpoint", |provider| provider.name),
-                    );
+                    let provider = crate::llm::PROVIDER_PRESETS.iter()
+                        .find(|provider| provider.endpoint == endpoint)
+                        .map_or("Custom endpoint", |provider| provider.name);
+                    endpoint_response.clone().help_text(format!(
+                        "{provider}. HTTPS is required outside loopback. HTTP is allowed for localhost and loopback IPs. Redirects are blocked. Use the API key field; URL credentials, queries and fragments are rejected."
+                    ));
                     if endpoint != draft.config.endpoint {
                         draft.config.endpoint = endpoint;
                         draft.config.api_key.clear();

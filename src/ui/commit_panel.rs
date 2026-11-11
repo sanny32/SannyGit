@@ -228,6 +228,56 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             );
         });
     app.contents_preview_open = open;
+    show_generation_review(ui, app);
+}
+
+fn show_generation_review(ui: &mut Ui, app: &mut SannyGitApp) {
+    let palette = app.palette();
+    let busy = app.busy();
+    let Some(review) = app.generation_review.as_ref() else {
+        return;
+    };
+    let mut open = true;
+    let mut send = false;
+    let mut retry = false;
+    let mut cancel = false;
+    eframe::egui::Window::new("Generate commit message")
+        .id(eframe::egui::Id::unique("commit.generation.review"))
+        .open(&mut open)
+        .fixed_size(Vec2::new(720.0, 480.0))
+        .collapsible(false)
+        .show(ui.ctx(), |ui| {
+            let endpoint = crate::llm::request_endpoint(&review.config).unwrap_or_default();
+            ui.add(eframe::egui::Label::new(format!("Send to: {endpoint}")).truncate())
+                .help_text(&endpoint);
+            ui.label("Sends the reviewed diff (including paths), model and instructions below.");
+            ui.label("The snapshot stays fixed. Credentials use the Authorization header. Redirects are blocked.");
+            eframe::egui::ScrollArea::vertical()
+                .id_salt("commit.generation.instructions")
+                .max_height(52.0).min_scrolled_height(52.0)
+                .show(ui, |ui| {
+                    ui.label(format!("Model: {}\nInstructions: {}", review.config.model, review.config.instructions));
+                });
+            ui.allocate_ui_with_layout(Vec2::new(700.0, 310.0), Layout::top_down(Align::Min), |ui| {
+                ui.set_min_size(Vec2::new(700.0, 310.0));
+                match &review.preview {
+                    Some(preview) => super::diff_view::render_preview(ui, preview, palette, "commit.generation.patch"),
+                    None => { ui.label(if busy { "Loading snapshot…" } else { "Snapshot unavailable. Retry or cancel." }); }
+                }
+            });
+            ui.horizontal(|ui| {
+                send = ui.add_enabled(!busy && review.patch.is_some(), Button::new("Send and generate")).clicked();
+                retry = ui.add_enabled(!busy, Button::new("Reload snapshot")).clicked();
+                cancel = ui.button("Cancel").clicked();
+            });
+        });
+    if !open || cancel {
+        app.generation_review = None;
+    } else if send {
+        app.send_reviewed_commit_message();
+    } else if retry {
+        app.generate_commit_message();
+    }
 }
 
 fn draw_generation_animation(ui: &Ui, rect: Rect, time: f64, palette: Palette) {
@@ -322,6 +372,67 @@ mod tests {
     use super::*;
     use crate::theme::ThemeChoice;
     use eframe::egui::{self, Pos2};
+
+    #[test]
+    fn generation_review_keeps_geometry_across_loading_failure_and_ready_states() {
+        for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
+            for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+                for style in [
+                    crate::theme::InterfaceStyle::Classic,
+                    crate::theme::InterfaceStyle::Modern,
+                ] {
+                    let context = egui::Context::default();
+                    crate::theme::install_fonts(&context);
+                    theme.apply_style(&context, style);
+                    let mut app = SannyGitApp::with_theme(theme);
+                    app.interface_style = style;
+                    app.generation_review = Some(crate::app::GenerationReview {
+                        root: "/repo".into(),
+                        config: crate::llm::Config {
+                            endpoint: format!("https://example.test/{}", "long-path/".repeat(50)),
+                            instructions: "Instructions ".repeat(500),
+                            ..Default::default()
+                        },
+                        repository_scope: None,
+                        patch: None,
+                        preview: None,
+                    });
+                    let mut initial = None;
+                    for frame in 0..6 {
+                        let review = app.generation_review.as_mut().unwrap();
+                        if frame >= 3 {
+                            let patch = "+reviewed change\n".repeat(500);
+                            review.preview = Some(crate::models::DiffPreview::new(&patch));
+                            review.patch = Some(patch);
+                        }
+                        let mut output = context.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                                ..Default::default()
+                            },
+                            |ui| show_generation_review(ui, &mut app),
+                        );
+                        output.textures_delta.clear();
+                        let rect = context
+                            .memory(|memory| {
+                                memory.area_rect(egui::Id::unique("commit.generation.review"))
+                            })
+                            .unwrap();
+                        if frame == 1 {
+                            initial = Some(rect.size());
+                        }
+                        if frame > 1 {
+                            assert_eq!(Some(rect.size()), initial, "{theme:?} {style:?}");
+                        }
+                        assert!(
+                            rect.width() <= size.x && rect.height() <= size.y,
+                            "{rect:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn commit_modes_and_generation_preserve_layout_and_draft_in_both_themes() {

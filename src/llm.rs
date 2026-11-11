@@ -8,7 +8,7 @@ use std::{
 
 pub const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
 pub const DEFAULT_MODEL: &str = "gpt-4.1-mini";
-const MAX_DIFF_BYTES: usize = 256 * 1024;
+pub const MAX_DIFF_BYTES: usize = 256 * 1024;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const KEYRING_SERVICE: &str = "SannyGit";
 #[cfg(target_os = "macos")]
@@ -498,10 +498,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        let endpoint = self.endpoint.trim();
-        if !(endpoint.starts_with("https://") || endpoint.starts_with("http://")) {
-            return Err("LLM endpoint must start with http:// or https://".into());
-        }
+        validated_endpoint(&self.endpoint)?;
         if self.model.trim().is_empty() {
             return Err("Enter an LLM model name".into());
         }
@@ -551,9 +548,7 @@ pub fn generate(config: &Config, patch: &str, cancel: &AtomicBool) -> Result<Str
 async fn generate_response(config: &Config, patch: &str) -> Result<String, String> {
     let request = request_body(config, patch);
     let client = api_client(config, if config.is_local() { 300 } else { 60 })?;
-    let request = client
-        .post(chat_completions_endpoint(&config.endpoint))
-        .json(&request);
+    let request = client.post(request_endpoint(config)?).json(&request);
     let request = if config.api_key.trim().is_empty() {
         request
     } else {
@@ -562,7 +557,7 @@ async fn generate_response(config: &Config, patch: &str) -> Result<String, Strin
     let response = request
         .send()
         .await
-        .map_err(|error| format!("LLM request failed: {error}"))?;
+        .map_err(|error| format!("LLM request failed: {}", error.without_url()))?;
     parse_message(&read_api_response(response).await?)
 }
 
@@ -590,11 +585,7 @@ pub fn list_models(config: &Config) -> Result<Vec<String>, String> {
 }
 
 pub fn models_endpoint(endpoint: &str) -> Result<String, String> {
-    let mut url = reqwest::Url::parse(endpoint.trim())
-        .map_err(|_| "Enter a valid LLM endpoint URL".to_owned())?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        return Err("LLM endpoint must start with http:// or https://".into());
-    }
+    let mut url = validated_endpoint(endpoint)?;
     let path = url.path().trim_end_matches('/');
     let base = path.strip_suffix("/chat/completions").unwrap_or(path);
     let path = format!("{base}/models");
@@ -624,38 +615,34 @@ fn parse_models(value: &Value) -> Result<Vec<String>, String> {
 }
 
 fn api_client(config: &Config, timeout_seconds: u64) -> Result<Client, String> {
+    validated_endpoint(&config.endpoint)?;
     let local = config.is_local();
     let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(timeout_seconds));
     // Local diffs must not pass through an environment-configured proxy or
     // follow a server redirect to a different host.
-    if local {
-        client
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-    } else {
-        client
-    }
-    .build()
-    .map_err(|error| format!("Cannot initialize the LLM client: {error}"))
+    if local { client.no_proxy() } else { client }
+        .build()
+        .map_err(|error| format!("Cannot initialize the LLM client: {error}"))
 }
 
 async fn read_api_response(mut response: reqwest::Response) -> Result<Value, String> {
     let status = response.status();
+    if !status.is_success() {
+        return Err(api_error(status.as_u16()));
+    }
     let mut bytes = Vec::new();
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|error| format!("Cannot read the LLM response: {error}"))?
+        .map_err(|error| format!("Cannot read the LLM response: {}", error.without_url()))?
     {
         if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
             return Err("LLM response exceeds the 1 MiB limit".into());
         }
         bytes.extend_from_slice(&chunk);
-    }
-    if !status.is_success() {
-        return Err(api_error(status.as_u16(), &bytes));
     }
     serde_json::from_slice(&bytes)
         .map_err(|error| format!("LLM API returned invalid JSON: {error}"))
@@ -681,31 +668,45 @@ fn request_body(config: &Config, patch: &str) -> Value {
     })
 }
 
-fn api_error(status: u16, bytes: &[u8]) -> String {
-    let detail = serde_json::from_slice::<Value>(bytes)
-        .ok()
-        .and_then(|value| {
-            value
-                .pointer("/error/message")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .or_else(|| std::str::from_utf8(bytes).ok().map(str::to_owned));
-    let detail = detail
-        .as_deref()
-        .map(str::trim)
-        .filter(|text| !text.is_empty());
-    match detail {
-        Some(detail) => {
-            let mut chars = detail.chars();
-            let message: String = chars.by_ref().take(2000).collect();
-            let suffix = if chars.next().is_some() { "…" } else { "" };
-            format!("LLM API returned HTTP {status}: {message}{suffix}")
-        }
-        None => format!(
-            "LLM API returned HTTP {status}. Check the endpoint, model, API key and provider limits."
-        ),
+fn api_error(status: u16) -> String {
+    format!(
+        "LLM API returned HTTP {status}. Check the endpoint, model, API key and provider limits. Provider error details are hidden because they may contain credentials or submitted changes."
+    )
+}
+
+fn validated_endpoint(endpoint: &str) -> Result<reqwest::Url, String> {
+    let url = reqwest::Url::parse(endpoint.trim())
+        .map_err(|_| "Enter a valid LLM endpoint URL".to_owned())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("LLM endpoint must use http:// or https://".into());
     }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("LLM endpoint must not contain credentials, a query or a fragment. Use the API key field for authentication.".into());
+    }
+    let local = Config {
+        endpoint: url.to_string(),
+        ..Config::default()
+    }
+    .is_local();
+    if url.scheme() == "http" && !local {
+        return Err("LLM endpoints outside loopback require HTTPS".into());
+    }
+    Ok(url)
+}
+
+pub fn request_endpoint(config: &Config) -> Result<String, String> {
+    let mut url = validated_endpoint(&config.endpoint)?;
+    let path = url.path().trim_end_matches('/').to_owned();
+    if !path.ends_with("/chat/completions") {
+        url.set_path(&format!("{path}/chat/completions"));
+    } else {
+        url.set_path(&path);
+    }
+    Ok(url.into())
 }
 
 fn parse_message(value: &Value) -> Result<String, String> {

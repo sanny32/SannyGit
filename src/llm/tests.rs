@@ -16,10 +16,7 @@ fn model_urls_accept_base_and_chat_endpoints() {
         models_endpoint("http://localhost:11434/v1").unwrap(),
         "http://localhost:11434/v1/models"
     );
-    assert_eq!(
-        models_endpoint("https://example.test/v1/chat/completions?version=1").unwrap(),
-        "https://example.test/v1/models?version=1"
-    );
+    assert!(models_endpoint("https://example.test/v1/chat/completions?version=1").is_err());
     for endpoint in ["", "invalid", "file:///tmp/models", "ftp://example.test/v1"] {
         assert!(models_endpoint(endpoint).is_err());
     }
@@ -251,7 +248,7 @@ fn local_generation_sends_patch_without_auth_and_handles_server_failures() {
         (
             404,
             r#"{"error":{"message":"model is not installed"}}"#,
-            Err("model is not installed"),
+            Err("HTTP 404"),
         ),
         (
             200,
@@ -577,28 +574,48 @@ fn omits_temperature_from_generation_requests() {
 }
 
 #[test]
-fn includes_api_error_details_in_failures() {
-    assert_eq!(
-        api_error(
-            400,
-            br#"{"error":{"message":"temperature must be omitted"}}"#
-        ),
-        "LLM API returned HTTP 400: temperature must be omitted"
-    );
-    assert_eq!(
-        api_error(429, b"  rate limit exceeded\n"),
-        "LLM API returned HTTP 429: rate limit exceeded"
-    );
-    assert_eq!(
-        api_error(500, b""),
-        "LLM API returned HTTP 500. Check the endpoint, model, API key and provider limits."
-    );
-    let truncated = api_error(400, "x".repeat(2001).as_bytes());
-    assert!(truncated.ends_with('…'));
-    assert_eq!(
-        truncated.chars().count(),
-        "LLM API returned HTTP 400: ".chars().count() + 2001
-    );
+fn provider_errors_show_only_status_and_static_guidance() {
+    for status in [302, 400, 401, 429, 500] {
+        let error = api_error(status);
+        assert!(error.contains(&format!("HTTP {status}")));
+        assert!(error.contains("Provider error details are hidden"));
+    }
+}
+
+#[test]
+fn endpoints_require_secure_transport_and_separate_authentication() {
+    for endpoint in [
+        "http://example.test/v1",
+        "http://192.168.1.2/v1",
+        "https://user:secret@example.test/v1",
+        "https://example.test/v1?token=secret",
+        "https://example.test/v1#secret",
+        "https://",
+        "file:///tmp/key",
+    ] {
+        let config = Config {
+            endpoint: endpoint.into(),
+            ..Config::default()
+        };
+        assert!(config.validate().is_err(), "{endpoint}");
+        assert!(models_endpoint(endpoint).is_err());
+        assert!(request_endpoint(&config).is_err());
+        assert!(!config.validate().unwrap_err().contains("secret"));
+    }
+    for endpoint in [
+        DEFAULT_ENDPOINT,
+        "http://127.0.0.1:1234/v1",
+        "http://[::1]:1234/v1",
+    ] {
+        let config = Config {
+            endpoint: endpoint.into(),
+            ..Config::default()
+        };
+        assert!(config.validate().is_ok());
+        assert!(request_endpoint(&config)
+            .unwrap()
+            .ends_with("/chat/completions"));
+    }
 }
 
 #[test]
@@ -667,4 +684,56 @@ fn loading_saved_key_preserves_the_configured_model() {
     .unwrap();
     assert_eq!(config.model, "new-selection");
     assert_eq!(config.api_key, "saved-key");
+}
+
+#[test]
+fn redirects_and_provider_bodies_are_never_disclosed_or_followed() {
+    use std::{
+        io::{BufRead, BufReader, Read, Write},
+        net::TcpListener,
+    };
+    for status in [301, 302, 303, 307, 308, 401, 500] {
+        let target = TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let location = format!(
+            "http://{}/stolen?token=secret",
+            target.local_addr().unwrap()
+        );
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = BufReader::new(&mut socket);
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse::<usize>().unwrap();
+                }
+            }
+            reader.read_exact(&mut vec![0; length]).unwrap();
+            let body = r#"{"error":{"message":"secret credential and submitted patch"}}"#;
+            write!(socket, "HTTP/1.1 {status} Test\r\nLocation: {location}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        });
+        let config = Config {
+            endpoint: format!("http://{address}/v1"),
+            api_key: "secret".into(),
+            ..Config::default()
+        };
+        let error = generate(&config, "submitted patch", &AtomicBool::new(false)).unwrap_err();
+        server.join().unwrap();
+        assert!(error.contains(&format!("HTTP {status}")));
+        assert!(!error.contains("secret"));
+        assert!(!error.contains("submitted patch"));
+        assert!(
+            matches!(target.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+        );
+    }
 }

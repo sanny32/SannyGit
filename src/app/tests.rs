@@ -1653,3 +1653,146 @@ fn late_unlock_does_not_restore_removed_or_changed_credentials() {
         assert!(app.llm_config.api_key.is_empty());
     }
 }
+
+#[test]
+fn generation_reviews_a_fixed_snapshot_before_any_generation_request() {
+    use std::{
+        io::{BufRead, BufReader, Read, Write},
+        net::TcpListener,
+        time::{Duration, Instant},
+    };
+    let repo = crate::test_support::TempRepo::new();
+    repo.write("review.txt", "reviewed contents\n");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.apply_snapshot(git::load(&repo.0).unwrap());
+    app.llm_config.endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+    app.llm_config.store_api_key = false;
+    app.commit_message = "Keep draft".into();
+    app.generate_commit_message();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.busy() {
+        assert!(Instant::now() < deadline);
+        app.poll_worker();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.generating_commit_message);
+    assert_eq!(app.commit_message, "Keep draft");
+    let patch = app
+        .generation_review
+        .as_ref()
+        .unwrap()
+        .patch
+        .clone()
+        .unwrap();
+    assert!(patch.contains("reviewed contents"));
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+    );
+    repo.write("review.txt", "later contents must not be sent\n");
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut socket = loop {
+            match listener.accept() {
+                Ok((socket, _)) => break socket,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline);
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        };
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut reader = BufReader::new(&mut socket);
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            assert!(reader.read_line(&mut line).unwrap() > 0);
+            if line == "\r\n" {
+                break;
+            }
+            if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                length = value.trim().parse::<usize>().unwrap();
+            }
+        }
+        let mut bytes = vec![0; length];
+        reader.read_exact(&mut bytes).unwrap();
+        let body = r#"{"choices":[{"message":{"content":"Reviewed message"}}]}"#;
+        write!(
+            socket,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+    });
+    app.send_reviewed_commit_message();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.busy() {
+        assert!(Instant::now() < deadline);
+        app.poll_worker();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let request = server.join().unwrap();
+    assert_eq!(
+        request["messages"][1]["content"],
+        format!("Generate a commit message for these changes:\n\n{patch}")
+    );
+    assert_eq!(app.commit_message, "Reviewed message");
+    assert_eq!(
+        std::fs::read_to_string(repo.0.join("review.txt")).unwrap(),
+        "later contents must not be sent\n"
+    );
+}
+
+#[test]
+fn cancelled_failed_or_wrong_repository_reviews_cannot_send_or_replace_a_draft() {
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.repositories = crate::mock_data::repositories();
+    app.selected_repository = 0;
+    app.commit_message = "Keep draft".into();
+    let review = || GenerationReview {
+        root: "/different-repository".into(),
+        config: crate::llm::Config::default(),
+        repository_scope: None,
+        patch: Some("reviewed patch".into()),
+        preview: None,
+    };
+    app.generation_review = Some(review());
+    app.send_reviewed_commit_message();
+    assert!(!app.busy());
+    app.generation_review = None;
+    deliver(
+        &mut app,
+        WorkerResult::GenerationPreview(Ok((
+            crate::llm::Config::default(),
+            "late patch".into(),
+            crate::models::DiffPreview::new("late patch"),
+        ))),
+    );
+    assert!(app.generation_review.is_none());
+    app.send_reviewed_commit_message();
+    assert!(!app.busy());
+    app.generation_review = Some(GenerationReview {
+        patch: None,
+        ..review()
+    });
+    deliver(
+        &mut app,
+        WorkerResult::GenerationPreview(Err("Snapshot failed".into())),
+    );
+    assert_eq!(app.error.as_deref(), Some("Snapshot failed"));
+    app.collect_errors();
+    assert!(app
+        .error_dialogs
+        .pending
+        .iter()
+        .any(|error| error == "Snapshot failed"));
+    assert!(app.generation_review.as_ref().unwrap().patch.is_none());
+    app.send_reviewed_commit_message();
+    assert!(!app.busy());
+    assert_eq!(app.commit_message, "Keep draft");
+}
