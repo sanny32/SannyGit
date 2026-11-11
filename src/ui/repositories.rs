@@ -162,6 +162,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             }
             RepositoryAction::Reveal => app.run_repository_job(RepositoryJob::Reveal(path)),
             RepositoryAction::CopyPath => ui.ctx().copy_text(path),
+            RepositoryAction::Remove => app.request_remove_repository(path),
             RepositoryAction::Commit => ui.ctx().memory_mut(|memory| {
                 memory.request_focus(eframe::egui::Id::unique("commit.message"))
             }),
@@ -190,6 +191,7 @@ enum RepositoryAction {
     NewWindow,
     Reveal,
     CopyPath,
+    Remove,
     Commit,
     Menu(MenuAction),
 }
@@ -373,10 +375,11 @@ fn repository_row(
                 }
             }
         });
-        for label in ["Mark as Favorite", "Rename…", "Remove…"] {
+        for label in ["Mark as Favorite", "Rename…"] {
             ui.add_enabled(false, eframe::egui::Button::new(label))
                 .disabled_help_text("Not implemented yet");
         }
+        item(ui, "Remove…", idle, RepositoryAction::Remove);
         ui.separator();
         item(ui, "Copy Path", true, RepositoryAction::CopyPath);
         ui.separator();

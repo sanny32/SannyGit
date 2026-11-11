@@ -2,6 +2,52 @@ use super::controls::dialog_style::DialogResponse;
 use crate::app::{RepositoryDialog as Dialog, RepositoryJob as Job, SannyGitApp};
 use eframe::egui::{self, Button, ComboBox, RichText, ScrollArea, TextEdit, Ui, Window};
 
+fn remove_repository_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
+    let Some(path) = app.manager.repository_to_remove.clone() else {
+        app.manager.dialog = None;
+        return;
+    };
+    let palette = app.palette();
+    let mut remove = false;
+    let mut cancel = false;
+    super::controls::dialog_style::modal(ctx, palette, "repository.remove").show(ctx, |ui| {
+        ui.set_width(480.0);
+        super::controls::dialog_style::setup(ui);
+        super::controls::dialog_style::header(
+            ui,
+            palette,
+            "Remove Repository",
+            "Remove this repository from the list? Files on disk will be kept.",
+        );
+        super::controls::dialog_style::section(ui, palette.header, egui::Margin::same(18), |ui| {
+            ui.add(egui::Label::new(&path).truncate())
+                .on_hover_text(&path);
+            ui.label("Any saved commit-message draft for this repository will be discarded.");
+        });
+        super::controls::dialog_style::section(
+            ui,
+            palette.header,
+            egui::Margin::symmetric(18, 12),
+            |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    remove = ui
+                        .add_enabled(!app.busy(), super::controls::dialog_style::button("Remove"))
+                        .clicked();
+                    cancel = ui
+                        .add(super::controls::dialog_style::button("Cancel"))
+                        .dialog_cancel();
+                });
+            },
+        );
+    });
+    if cancel {
+        app.manager.dialog = None;
+        app.manager.repository_to_remove = None;
+    } else if remove {
+        app.confirm_remove_repository();
+    }
+}
+
 pub(super) fn group_picker(ui: &mut Ui, app: &mut SannyGitApp) {
     if app.manager.preferences.groups.is_empty() {
         return;
@@ -43,6 +89,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         settings_dialog(ui.ctx(), app);
         return;
     }
+    if app.manager.dialog == Some(Dialog::RemoveRepository) {
+        remove_repository_dialog(ui.ctx(), app);
+        return;
+    }
     if app.busy() && app.manager.cancel.is_some() {
         Window::new("Repository operation")
             .anchor(
@@ -73,6 +123,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         Dialog::Prune => "Prune Obsolete Worktrees",
         Dialog::Settings => "Repository Settings",
         Dialog::CloseRepository => "Close Repository",
+        Dialog::RemoveRepository => "Remove Repository",
     };
     let mut open = true;
     let mut job = None;
@@ -143,7 +194,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         if ui.add_enabled(!preview.is_empty(), Button::new("Prune Obsolete Metadata")).clicked() { job = Some(Job::Prune); }
                     }
                 }
-                Dialog::Settings => {}
+                Dialog::Settings | Dialog::RemoveRepository => {}
                 Dialog::CloseRepository => {
                     ui.label("Close this repository and discard its commit message drafts?");
                     ui.horizontal(|ui| {
@@ -330,5 +381,62 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
     }
     if let Some(job) = job {
         app.run_repository_job(job);
+    }
+}
+
+#[cfg(test)]
+mod removal_tests {
+    use super::*;
+
+    #[test]
+    fn removal_dialog_fits_both_window_sizes_and_escape_cancels() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                let ctx = egui::Context::default();
+                crate::theme::install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.repositories = crate::mock_data::repositories();
+                let path = app.repositories[0].path.clone();
+                app.request_remove_repository(path);
+                for _ in 0..4 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                            ..Default::default()
+                        },
+                        |ui| remove_repository_dialog(ui.ctx(), &mut app),
+                    );
+                    output.textures_delta.clear();
+                }
+                let rect = ctx
+                    .memory(|m| m.area_rect(egui::Id::unique("repository.remove")))
+                    .unwrap();
+                assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect));
+                assert!(rect.height() < 320.0);
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        events: vec![egui::Event::Key {
+                            key: egui::Key::Escape,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::NONE,
+                        }],
+                        ..Default::default()
+                    },
+                    |ui| remove_repository_dialog(ui.ctx(), &mut app),
+                );
+                output.textures_delta.clear();
+                assert!(app.manager.dialog.is_none());
+                assert!(app.manager.repository_to_remove.is_none());
+                assert_eq!(app.repositories.len(), 4);
+            }
+        }
     }
 }

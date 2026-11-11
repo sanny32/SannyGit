@@ -394,11 +394,13 @@ fn skipped_push_and_sync_preserve_errors_for_modal_reporting() {
                             branch: Some("main".into()),
                             upstream_remote: Some("origin".into()),
                             upstream_ref: Some("main".into()),
+                            ..Default::default()
                         }),
                         remote: "origin".into(),
                         branch: "main".into(),
                         set_upstream: false,
                         dont_show_again: false,
+                        pull: Default::default(),
                     });
                     assert_eq!(app.remote_confirmation_hidden(), skip);
                     deliver(
@@ -462,6 +464,7 @@ fn network_dialogs_keep_geometry_through_loading_errors_retry_and_cancellation()
                         branch: String::new(),
                         set_upstream: false,
                         dont_show_again: false,
+                        pull: Default::default(),
                     });
                     let mut baseline = None;
                     let mut button_positions = None;
@@ -519,6 +522,38 @@ fn network_dialogs_keep_geometry_through_loading_errors_retry_and_cancellation()
                             output.textures_delta.clear();
                             if frame < 3 {
                                 continue;
+                            }
+                            if stage == 1 && operation == crate::remotes::Operation::Pull {
+                                let labels = output
+                                    .shapes
+                                    .iter()
+                                    .filter_map(|shape| match &shape.shape {
+                                        egui::Shape::Text(text) => Some(text),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>();
+                                for expected in [
+                                    "Pull commits from a remote repository",
+                                    "Fetch From:",
+                                    "More Options",
+                                    "Fetch Only",
+                                ] {
+                                    assert!(
+                                        labels.iter().any(|text| text.galley.job.text == expected),
+                                        "Missing Pull control: {expected}"
+                                    );
+                                }
+                                for removed in [
+                                    "Local branch:",
+                                    "Remote branch:",
+                                    "Cancellation does not roll back",
+                                ] {
+                                    assert!(!labels.iter().any(|text| text
+                                        .galley
+                                        .job
+                                        .text
+                                        .contains(removed)));
+                                }
                             }
                             let rect = ctx
                                 .memory(|memory| memory.area_rect(Id::unique("remote.operation")))
@@ -1339,6 +1374,7 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
                     branch: "main".into(),
                     set_upstream: false,
                     dont_show_again: false,
+                    pull: Default::default(),
                 });
                 for _ in 0..3 {
                     output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
@@ -1349,6 +1385,8 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
                     crate::remotes::Operation::Push | crate::remotes::Operation::Sync
                 ) {
                     "Options"
+                } else if operation == crate::remotes::Operation::Pull {
+                    "Fetch From:"
                 } else {
                     "Remote:"
                 };
@@ -1359,7 +1397,8 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
                     );
                 }
                 if operation == crate::remotes::Operation::Pull {
-                    assert!(visible_text(&output.shapes, "Remote branch:"));
+                    assert!(visible_text(&output.shapes, "Fetch Only"));
+                    assert!(visible_text(&output.shapes, "More Options"));
                 }
                 assert!(app.worker.is_none());
             }

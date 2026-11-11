@@ -12,6 +12,14 @@ pub struct RemoteDialog {
     pub branch: String,
     pub set_upstream: bool,
     pub dont_show_again: bool,
+    pub pull: PullDialog,
+}
+
+#[derive(Default)]
+pub struct PullDialog {
+    pub more_options: bool,
+    pub update_tags: bool,
+    pub remember: bool,
 }
 
 impl RemoteDialog {
@@ -58,6 +66,11 @@ impl SannyGitApp {
             return;
         }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
+        let defaults = self
+            .manager
+            .preferences
+            .pull_defaults
+            .get(&self.repositories[self.selected_repository].path);
         self.network_dialog = Some(RemoteDialog {
             operation,
             state: None,
@@ -65,6 +78,11 @@ impl SannyGitApp {
             branch: String::new(),
             set_upstream: false,
             dont_show_again: false,
+            pull: PullDialog {
+                update_tags: defaults.is_some_and(|defaults| defaults.update_tags),
+                remember: defaults.is_some(),
+                ..Default::default()
+            },
         });
         self.error = None;
         self.status = "Loading remotes…".into();
@@ -105,6 +123,18 @@ impl SannyGitApp {
                         })
                         .or_else(|| state.remotes.first().cloned())
                         .unwrap_or_default();
+                    if operation == Operation::Pull {
+                        if let Some(defaults) = self
+                            .repositories
+                            .get(self.selected_repository)
+                            .and_then(|repository| {
+                                self.manager.preferences.pull_defaults.get(&repository.path)
+                            })
+                            .filter(|defaults| state.remotes.contains(&defaults.remote))
+                        {
+                            dialog.remote = defaults.remote.clone();
+                        }
+                    }
                     dialog.branch = state
                         .upstream_ref
                         .clone()
@@ -128,6 +158,20 @@ impl SannyGitApp {
     }
 
     pub fn run_remote(&mut self) {
+        self.run_remote_action(false);
+    }
+
+    pub fn run_pull_fetch_only(&mut self) {
+        if self
+            .network_dialog
+            .as_ref()
+            .is_some_and(|dialog| dialog.operation == Operation::Pull)
+        {
+            self.run_remote_action(true);
+        }
+    }
+
+    fn run_remote_action(&mut self, fetch_only: bool) {
         if !self.remote_allowed() {
             return;
         }
@@ -138,12 +182,32 @@ impl SannyGitApp {
             return;
         };
         let skip_confirmation = dialog.dont_show_again && dialog.can_skip_confirmation();
-        let operation = dialog.operation;
+        let operation = if fetch_only {
+            Operation::Fetch
+        } else {
+            dialog.operation
+        };
+        let update_tags = dialog.operation == Operation::Pull && dialog.pull.update_tags;
+        let tag_policy = (dialog.operation == Operation::Pull).then_some(dialog.pull.update_tags);
         let remote = dialog.remote.clone();
         let target = dialog.branch.clone();
         let expected_branch = state.branch.clone();
         let set_upstream = operation == Operation::Push && dialog.set_upstream;
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
+        if dialog.operation == Operation::Pull {
+            let path = self.repositories[self.selected_repository].path.clone();
+            if dialog.pull.remember {
+                self.manager.preferences.pull_defaults.insert(
+                    path,
+                    crate::repository::PullDefaults {
+                        remote: remote.clone(),
+                        update_tags,
+                    },
+                );
+            } else {
+                self.manager.preferences.pull_defaults.remove(&path);
+            }
+        }
         let cancel = Arc::new(AtomicBool::new(false));
         if skip_confirmation {
             match operation {
@@ -158,13 +222,14 @@ impl SannyGitApp {
         self.state_current = false;
         self.refs_current = false;
         if !self.start_worker(move || {
-            let outcome = remotes::run(
+            let outcome = remotes::run_with_tags(
                 &root,
                 operation,
                 &remote,
                 &target,
                 expected_branch.as_deref(),
                 &cancel,
+                tag_policy,
             )
             .and_then(|()| {
                 if set_upstream {
@@ -202,6 +267,46 @@ mod tests {
     use crate::theme::ThemeChoice;
 
     #[test]
+    fn pull_defaults_survive_restart_and_restore_the_remote_without_starting_an_operation() {
+        let repo = crate::test_support::TempRepo::new();
+        repo.git(&["remote", "add", "origin", "https://example.test/repo"]);
+        repo.git(&["remote", "add", "team", "https://example.test/team"]);
+        let path = repo.0.to_string_lossy().into_owned();
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories.push(crate::models::Repository {
+            name: "Test".into(),
+            path: path.clone(),
+        });
+        app.selected_repository = 0;
+        app.state_current = true;
+        app.manager.preferences.pull_defaults.insert(
+            path.clone(),
+            crate::repository::PullDefaults {
+                remote: "team".into(),
+                update_tags: true,
+            },
+        );
+        let saved = serde_json::to_string(&app.manager.preferences).unwrap();
+        app.manager.preferences = serde_json::from_str(&saved).unwrap();
+        app.open_remote(Operation::Pull);
+        assert!(app.network_dialog.as_ref().unwrap().pull.update_tags);
+        assert!(app.network_dialog.as_ref().unwrap().pull.remember);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.busy() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            app.poll_worker();
+        }
+        let dialog = app.network_dialog.as_ref().unwrap();
+        assert_eq!(dialog.remote, "team");
+        assert!(!dialog.pull.more_options);
+        assert!(app.state_current);
+        let legacy: crate::repository::Preferences =
+            serde_json::from_str(r#"{"groups":[],"selected_group":null}"#).unwrap();
+        assert!(legacy.pull_defaults.is_empty());
+    }
+
+    #[test]
     fn skip_confirmation_requires_the_current_branch_upstream() {
         let mut dialog = RemoteDialog {
             operation: Operation::Push,
@@ -210,11 +315,13 @@ mod tests {
                 branch: Some("main".into()),
                 upstream_remote: Some("origin".into()),
                 upstream_ref: Some("published".into()),
+                ..Default::default()
             }),
             remote: "origin".into(),
             branch: "published".into(),
             set_upstream: false,
             dont_show_again: false,
+            pull: Default::default(),
         };
         assert!(dialog.can_skip_confirmation());
         dialog.branch = "other".into();
@@ -243,6 +350,7 @@ mod tests {
             branch: String::new(),
             set_upstream: false,
             dont_show_again: false,
+            pull: Default::default(),
         });
         assert!(app.remote_confirmation_hidden());
         app.apply_remote_info(Operation::Push, Err("Cannot read configuration".into()));
@@ -261,6 +369,7 @@ mod tests {
             branch: String::new(),
             set_upstream: false,
             dont_show_again: false,
+            pull: Default::default(),
         });
         assert!(!app.remote_confirmation_hidden());
         app.preferences.skip_sync_confirmation = true;
@@ -291,6 +400,7 @@ mod tests {
             branch: String::new(),
             set_upstream: false,
             dont_show_again: false,
+            pull: Default::default(),
         });
         app.apply_remote_info(
             Operation::Push,
@@ -299,6 +409,7 @@ mod tests {
                 branch: Some("local-name".into()),
                 upstream_remote: Some("team".into()),
                 upstream_ref: Some("remote-name".into()),
+                ..Default::default()
             }),
         );
         let dialog = app.network_dialog.as_ref().unwrap();

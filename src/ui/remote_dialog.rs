@@ -13,6 +13,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let palette = app.palette();
     let busy = app.busy();
     let mut submit = false;
+    let mut fetch_only = false;
     let mut keep = true;
     super::controls::dialog_style::modal(ctx, palette, "remote.operation").show(ctx, |ui| {
         ui.set_width(580.0);
@@ -22,12 +23,11 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             branch_confirmation(ui, app, &mut dialog, busy, &mut submit, &mut keep);
             return;
         }
-        let description = match dialog.operation {
-            Operation::Sync => unreachable!(),
-            Operation::Fetch => "Download remote branches and tags without changing your working tree.",
-            Operation::Pull => "Fetch a remote branch and fast-forward the current local branch. Local changes must be committed or moved aside.",
-            Operation::Push => "Push the current local branch to the selected remote branch. Force pushes and tag pushes are not used.",
-        };
+        if dialog.operation == Operation::Pull {
+            pull_confirmation(ui, app, &mut dialog, busy, &mut submit, &mut fetch_only, &mut keep);
+            return;
+        }
+        let description = "Download remote branches and tags without changing your working tree.";
         super::controls::dialog_style::header(ui, palette, dialog.operation.label(), description);
         super::controls::dialog_style::section(ui, palette.header, egui::Margin::same(18), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
@@ -40,13 +40,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     ComboBox::from_id_salt("remote.name").width(310.0).truncate().selected_text(&dialog.remote).show_ui(ui, |ui| {
                         for remote in &state.remotes { ui.selectable_value(&mut dialog.remote, remote.clone(), remote); }
                     }); ui.end_row();
-                    if matches!(dialog.operation, Operation::Pull | Operation::Sync) {
-                        ui.label("Local branch:");
-                        let branch = state.branch.as_deref().unwrap_or(if loaded { "No local branch with commits checked out" } else { "—" });
-                        ui.add_sized([310.0, 26.0], egui::Label::new(branch).truncate().show_tooltip_when_elided(false)).help_text(branch);
-                        ui.end_row();
-                        ui.label("Remote branch:"); ui.add_sized([310.0,28.0], TextEdit::singleline(&mut dialog.branch)); ui.end_row();
-                    }
+
                 });
             });
             let (message, color) = if app.error.is_some() {
@@ -58,7 +52,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             } else if state.remotes.is_empty() {
                 ("No configured remotes. Add one through Remote → Manage Remotes, then reopen this dialog.", palette.muted)
             } else {
-                ("Cancellation does not roll back local or remote changes.", palette.muted)
+                ("", palette.muted)
             };
             ui.add_sized([ui.available_width(), 26.0], egui::Label::new(RichText::new(message).color(color)).truncate().show_tooltip_when_elided(false)).help_text(message);
         });
@@ -78,7 +72,138 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     }
     if submit {
         app.run_remote();
+    } else if fetch_only {
+        app.run_pull_fetch_only();
     }
+}
+
+fn pull_confirmation(
+    ui: &mut egui::Ui,
+    app: &mut SannyGitApp,
+    dialog: &mut crate::app::RemoteDialog,
+    busy: bool,
+    submit: &mut bool,
+    fetch_only: &mut bool,
+    keep: &mut bool,
+) {
+    use super::controls::{dialog_style, icons::Icon};
+    let palette = app.palette();
+    let loaded = dialog.state.is_some();
+    dialog_style::header_with_icon(ui, palette,
+        "Pull commits from a remote repository",
+        "Pull incorporates fetched changes into the current branch. Expand the options below to configure.", Icon::Pull);
+    dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
+        ui.spacing_mut().item_spacing.y = 8.0;
+        ui.add_enabled_ui(!busy && loaded, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Fetch From:");
+                let label = |remote: &str| {
+                    dialog
+                        .state
+                        .as_ref()
+                        .and_then(|state| state.remote_urls.get(remote))
+                        .filter(|url| !url.is_empty())
+                        .map_or_else(|| remote.to_owned(), |url| format!("{remote} ({url})"))
+                };
+                let selected_label = label(&dialog.remote);
+                ComboBox::from_id_salt("pull.remote")
+                    .width(ui.available_width())
+                    .truncate()
+                    .selected_text(&selected_label)
+                    .show_ui(ui, |ui| {
+                        if let Some(state) = &dialog.state {
+                            for remote in &state.remotes {
+                                let text = label(remote);
+                                ui.selectable_value(&mut dialog.remote, remote.clone(), &text)
+                                    .help_text(text);
+                            }
+                        }
+                    })
+                    .response
+                    .help_text(selected_label);
+            });
+            ui.checkbox(&mut dialog.pull.more_options, "More Options");
+            if dialog.pull.more_options {
+                ui.indent("pull.options", |ui| {
+                    ui.radio(true, "Merge fetched remote changes").help_text(
+                        "Fast-forward only. Diverged branches must be merged separately.",
+                    );
+                    ui.add_enabled(
+                        false,
+                        egui::RadioButton::new(false, "Rebase local branch onto fetched changes"),
+                    )
+                    .disabled_help_text("Pull with rebase is not implemented yet.");
+                    ui.checkbox(
+                        &mut dialog.pull.update_tags,
+                        "Update existing and fetch new tags",
+                    );
+                    ui.checkbox(
+                        &mut dialog.pull.remember,
+                        "Remember as default for repository",
+                    );
+                });
+            }
+        });
+        let message = if app.error.is_some() {
+            "Review the options and retry."
+        } else if !loaded {
+            "Loading remotes…"
+        } else if busy {
+            app.status.as_str()
+        } else if dialog
+            .state
+            .as_ref()
+            .is_some_and(|state| state.remotes.is_empty())
+        {
+            "No configured remotes."
+        } else {
+            ""
+        };
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), 26.0),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.add(
+                    egui::Label::new(RichText::new(message).color(palette.muted))
+                        .truncate()
+                        .show_tooltip_when_elided(false),
+                )
+                .help_text(message);
+            },
+        );
+    });
+    dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
+        let valid_remote = dialog
+            .state
+            .as_ref()
+            .is_some_and(|state| state.remotes.contains(&dialog.remote));
+        let valid_branch = dialog
+            .state
+            .as_ref()
+            .is_some_and(|state| state.branch.is_some())
+            && crate::branches::name_hint(&dialog.branch).is_none();
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            *fetch_only = ui
+                .add_enabled(
+                    !busy && valid_remote && app.state_current,
+                    dialog_style::button("Fetch Only"),
+                )
+                .clicked();
+            *submit = ui
+                .add_enabled(
+                    !busy && valid_remote && valid_branch && app.state_current,
+                    dialog_style::primary("Pull", palette),
+                )
+                .dialog_accept();
+            if ui.add(dialog_style::button("Cancel")).dialog_cancel() {
+                if busy && app.manager.cancel.is_some() {
+                    app.cancel_repository_job();
+                } else {
+                    *keep = false;
+                }
+            }
+        });
+    });
 }
 
 fn branch_confirmation(
@@ -253,6 +378,115 @@ mod tests {
     };
 
     #[test]
+    fn pull_template_changes_size_only_when_options_are_expanded() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                let ctx = egui::Context::default();
+                install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.state_current = true;
+                app.network_dialog = Some(RemoteDialog {
+                    operation: Operation::Pull,
+                    state: None,
+                    remote: "origin".into(),
+                    branch: "main".into(),
+                    set_upstream: false,
+                    dont_show_again: false,
+                    pull: Default::default(),
+                });
+                let mut collapsed_height = 0.0;
+                for expanded in [false, true] {
+                    let mut baseline = None;
+                    for stage in 0..3 {
+                        let dialog = app.network_dialog.as_mut().unwrap();
+                        dialog.pull.more_options = expanded;
+                        dialog.state = (stage > 0).then(|| State {
+                            remotes: vec!["origin".into()],
+                            branch: Some("main".into()),
+                            remote_urls: [(
+                                "origin".into(),
+                                "https://example.test/repo.git".into(),
+                            )]
+                            .into(),
+                            ..Default::default()
+                        });
+                        app.error = (stage == 2).then(|| "Remote unavailable".repeat(50));
+                        for frame in 0..4 {
+                            let mut output = ctx.run_ui(
+                                egui::RawInput {
+                                    screen_rect: Some(egui::Rect::from_min_size(
+                                        egui::Pos2::ZERO,
+                                        size,
+                                    )),
+                                    ..Default::default()
+                                },
+                                |ui| show(ui.ctx(), &mut app),
+                            );
+                            output.textures_delta.clear();
+                            if frame < 3 {
+                                continue;
+                            }
+                            let rect = ctx
+                                .memory(|m| m.area_rect(egui::Id::unique("remote.operation")))
+                                .unwrap();
+                            assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size)
+                                .contains_rect(rect));
+                            assert!(
+                                rect.height() < if expanded { 410.0 } else { 280.0 },
+                                "Oversized Pull dialog: {rect:?}, expanded: {expanded}"
+                            );
+                            if let Some(before) = baseline {
+                                assert_eq!(rect, before);
+                            } else {
+                                baseline = Some(rect);
+                            }
+                            if expanded {
+                                assert!(rect.height() > collapsed_height + 80.0);
+                            } else {
+                                collapsed_height = rect.height();
+                            }
+                            let labels = output
+                                .shapes
+                                .iter()
+                                .filter_map(|shape| match &shape.shape {
+                                    egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>();
+                            for label in [
+                                "Fetch From:",
+                                "More Options",
+                                "Cancel",
+                                "Pull",
+                                "Fetch Only",
+                            ] {
+                                assert!(labels.contains(&label), "Missing {label}");
+                            }
+                            for label in [
+                                "Merge fetched remote changes",
+                                "Rebase local branch onto fetched changes",
+                                "Update existing and fetch new tags",
+                                "Remember as default for repository",
+                            ] {
+                                assert_eq!(
+                                    labels.contains(&label),
+                                    expanded,
+                                    "Option visibility: {label}"
+                                );
+                            }
+                            if stage == 1 {
+                                assert!(labels.contains(&"origin (https://example.test/repo.git)"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn skipped_push_and_sync_do_not_render_a_modal() {
         for operation in [Operation::Push, Operation::Sync] {
             for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
@@ -269,6 +503,7 @@ mod tests {
                         branch: "main".into(),
                         set_upstream: false,
                         dont_show_again: false,
+                        pull: Default::default(),
                     });
                     for loaded in [false, true] {
                         if loaded {
@@ -277,6 +512,7 @@ mod tests {
                                 branch: Some("main".into()),
                                 upstream_remote: Some("origin".into()),
                                 upstream_ref: Some("main".into()),
+                                ..Default::default()
                             });
                         }
                         let mut output = ctx.run_ui(
@@ -316,6 +552,7 @@ mod tests {
                         branch: String::new(),
                         set_upstream: false,
                         dont_show_again: false,
+                        pull: Default::default(),
                     };
                     let mut sizes = Vec::new();
                     for stage in 0..4 {
@@ -405,6 +642,7 @@ mod tests {
                 branch: String::new(),
                 set_upstream: false,
                 dont_show_again: false,
+                pull: Default::default(),
             });
             let mut title_positions = Vec::new();
             for stage in 0..3 {
@@ -417,6 +655,7 @@ mod tests {
                         branch: Some("main".into()),
                         upstream_remote: Some("origin".into()),
                         upstream_ref: Some("main".into()),
+                        ..Default::default()
                     });
                 } else if stage == 2 {
                     app.network_dialog.as_mut().unwrap().state = None;
@@ -487,11 +726,13 @@ mod tests {
                         branch: Some("main".into()),
                         upstream_remote: Some("origin".into()),
                         upstream_ref: Some("main".into()),
+                        ..Default::default()
                     }),
                     remote: "origin".into(),
                     branch: "main".into(),
                     set_upstream: false,
                     dont_show_again: false,
+                    pull: Default::default(),
                 });
                 let mut options_pos = egui::Pos2::ZERO;
                 for frame in 0..8 {

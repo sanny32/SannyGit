@@ -677,3 +677,86 @@ fn push_rejects_non_fast_forward_and_stale_or_invalid_selections() {
     )
     .is_err());
 }
+
+#[test]
+fn pull_tag_option_updates_only_when_requested_and_fetch_only_preserves_work() {
+    let (_temp, source, other) = fixture();
+    let old = head(&other).unwrap();
+    command(&other, &["tag", "release"]);
+    commit(&source, "next\n");
+    command(&source, &["tag", "release"]);
+    command(&source, &["tag", "new-tag"]);
+    command(
+        &source,
+        &[
+            "push",
+            "origin",
+            "main",
+            "refs/tags/release",
+            "refs/tags/new-tag",
+        ],
+    );
+    run_with_tags(
+        &other,
+        Operation::Pull,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+        Some(false),
+    )
+    .unwrap();
+    assert_eq!(
+        command(&other, &["rev-parse", "release"]),
+        format!("{old}\n").as_bytes()
+    );
+    assert!(git::run(&other, &["rev-parse", "--verify", "refs/tags/new-tag"]).is_err());
+    let before = head(&other).unwrap();
+    fs::write(other.join("file"), "keep local edits\n").unwrap();
+    commit(&source, "later\n");
+    command(&source, &["push", "origin", "main"]);
+    run_with_tags(
+        &other,
+        Operation::Fetch,
+        "origin",
+        "",
+        None,
+        &AtomicBool::new(false),
+        Some(true),
+    )
+    .unwrap();
+    assert_eq!(head(&other).unwrap(), before);
+    assert_eq!(
+        fs::read_to_string(other.join("file")).unwrap(),
+        "keep local edits\n"
+    );
+    assert_eq!(
+        command(&other, &["rev-parse", "release"]),
+        format!("{before}\n").as_bytes()
+    );
+    assert_eq!(
+        command(&other, &["rev-parse", "new-tag"]),
+        format!("{before}\n").as_bytes()
+    );
+}
+
+#[test]
+fn remote_labels_mask_credentials() {
+    let repo = TempRepo::new();
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://private-user:private-password@example.test/repo?private-query#private-fragment",
+    ]);
+    let state = load(&repo.0).unwrap();
+    let label = &state.remote_urls["origin"];
+    for secret in [
+        "private-user",
+        "private-password",
+        "private-query",
+        "private-fragment",
+    ] {
+        assert!(!label.contains(secret));
+    }
+}

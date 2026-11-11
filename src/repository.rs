@@ -19,6 +19,14 @@ pub struct RepositoryGroup {
 pub struct Preferences {
     pub groups: Vec<RepositoryGroup>,
     pub selected_group: Option<String>,
+    #[serde(default)]
+    pub pull_defaults: std::collections::BTreeMap<String, PullDefaults>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct PullDefaults {
+    pub remote: String,
+    pub update_tags: bool,
 }
 
 #[derive(Clone, Debug)]

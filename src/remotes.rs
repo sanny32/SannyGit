@@ -31,6 +31,7 @@ impl Operation {
 #[derive(Clone, Default)]
 pub struct State {
     pub remotes: Vec<String>,
+    pub remote_urls: std::collections::BTreeMap<String, String>,
     pub branch: Option<String>,
     pub upstream_remote: Option<String>,
     pub upstream_ref: Option<String>,
@@ -54,6 +55,11 @@ pub fn load(root: &Path) -> Result<State, String> {
         .map(|r| r.name.clone());
     let mut state = State {
         remotes,
+        remote_urls: crate::remote_config::load(root)?
+            .entries
+            .into_iter()
+            .map(|entry| (entry.name, entry.fetch_display))
+            .collect(),
         branch,
         ..Default::default()
     };
@@ -95,6 +101,7 @@ fn require_pull_ready(root: &Path) -> Result<(), String> {
     git::require_no_operation(root)
 }
 
+#[cfg(test)]
 pub fn run(
     root: &Path,
     operation: Operation,
@@ -103,18 +110,42 @@ pub fn run(
     expected_branch: Option<&str>,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
+    run_with_tags(
+        root,
+        operation,
+        remote,
+        target,
+        expected_branch,
+        cancel,
+        None,
+    )
+}
+
+/// `None` preserves normal Fetch behavior; Pull supplies an explicit tag choice.
+pub fn run_with_tags(
+    root: &Path,
+    operation: Operation,
+    remote: &str,
+    target: &str,
+    expected_branch: Option<&str>,
+    cancel: &AtomicBool,
+    update_tags: Option<bool>,
+) -> Result<(), String> {
     let state = load(root)?;
     if !state.remotes.iter().any(|name| name == remote) {
         return Err("Choose a configured remote, then refresh before retrying.".into());
     }
     let timeout = Duration::from_secs(600);
     if operation == Operation::Fetch {
-        git::run_controlled(
-            root,
-            &["fetch", "--no-recurse-submodules", "--", remote],
-            timeout,
-            Some(cancel),
-        )?;
+        if update_tags == Some(true) {
+            fetch_tags(root, remote, cancel)?;
+        }
+        let mut args = vec!["fetch", "--no-recurse-submodules"];
+        if update_tags.is_some() {
+            args.push("--no-tags");
+        }
+        args.extend(["--", remote]);
+        git::run_controlled(root, &args, timeout, Some(cancel))?;
         return Ok(());
     }
     let branch = state
@@ -158,6 +189,11 @@ pub fn run(
         }
         Operation::Pull | Operation::Sync => {
             require_pull_ready(root)?;
+            if update_tags == Some(true) {
+                // Update tag refs separately so FETCH_HEAD still identifies only
+                // the reviewed branch in the following fetch.
+                fetch_tags(root, remote, cancel)?;
+            }
             git::run_controlled(
                 root,
                 &[
@@ -203,6 +239,23 @@ pub fn run(
         }
     }
     Ok(())
+}
+
+fn fetch_tags(root: &Path, remote: &str, cancel: &AtomicBool) -> Result<(), String> {
+    git::run_controlled(
+        root,
+        &[
+            "fetch",
+            "--no-recurse-submodules",
+            "--no-tags",
+            "--",
+            remote,
+            "+refs/tags/*:refs/tags/*",
+        ],
+        Duration::from_secs(600),
+        Some(cancel),
+    )
+    .map(|_| ())
 }
 
 fn push_tip(

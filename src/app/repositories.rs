@@ -28,6 +28,7 @@ pub enum Dialog {
     Prune,
     Settings,
     CloseRepository,
+    RemoveRepository,
 }
 
 pub struct RepositoryManager {
@@ -37,6 +38,7 @@ pub struct RepositoryManager {
     pub preferences: Preferences,
     pub dialog: Option<Dialog>,
     pub highlighted_repository: Option<String>,
+    pub repository_to_remove: Option<String>,
     pub clone_step: usize,
     pub clone_options: repository::CloneOptions,
     pub clone_branches: Vec<String>,
@@ -68,6 +70,7 @@ impl Default for RepositoryManager {
             preferences: Preferences::default(),
             dialog: None,
             highlighted_repository: None,
+            repository_to_remove: None,
             clone_step: 0,
             clone_options: repository::CloneOptions::default(),
             clone_branches: Vec::new(),
@@ -491,6 +494,41 @@ impl SannyGitApp {
         self.manager.dialog = None;
         self.error = None;
         self.status = "Repositories added".into();
+    }
+
+    pub fn request_remove_repository(&mut self, path: String) {
+        if self.busy() || !self.repositories.iter().any(|r| r.path == path) {
+            return;
+        }
+        self.manager.repository_to_remove = Some(path);
+        self.manager.dialog = Some(Dialog::RemoveRepository);
+    }
+
+    pub fn confirm_remove_repository(&mut self) {
+        if self.busy() || self.manager.dialog != Some(Dialog::RemoveRepository) {
+            return;
+        }
+        let Some(path) = self.manager.repository_to_remove.take() else {
+            return;
+        };
+        self.manager.dialog = None;
+        let Some(index) = self.repositories.iter().position(|r| r.path == path) else {
+            return;
+        };
+        if self.selected_repository == index {
+            self.close_repository(true);
+        } else if self.selected_repository != usize::MAX && self.selected_repository > index {
+            self.selected_repository -= 1;
+        }
+        self.repositories.remove(index);
+        self.assign_group(&path, None);
+        self.commit_drafts.remove(&path);
+        self.manager.hosting.remove(&path);
+        self.manager.hosting_checked.remove(&path);
+        if self.manager.highlighted_repository.as_deref() == Some(&path) {
+            self.manager.highlighted_repository = None;
+        }
+        self.status = "Repository removed from the list".into();
     }
 
     pub fn close_repository(&mut self, discard_draft: bool) {
@@ -961,6 +999,101 @@ mod tests {
             repo.git(&["log", "-1", "--format=%s"]).trim(),
             "Normal draft"
         );
+    }
+
+    #[test]
+    fn removing_active_repository_keeps_files_and_persists_the_removal() {
+        let repo = crate::test_support::TempRepo::new();
+        repo.write("keep.txt", "local changes");
+        let path = repo.0.to_string_lossy().into_owned();
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories = vec![crate::models::Repository {
+            name: "Test".into(),
+            path: path.clone(),
+        }];
+        app.selected_repository = 0;
+        app.changes = crate::mock_data::changes();
+        app.commits = crate::mock_data::commits();
+        app.refs = crate::mock_data::refs();
+        app.commit_message = "Draft".into();
+        app.manager.group_name = "Work".into();
+        app.add_group();
+        app.assign_group(&path, Some("Work".into()));
+        app.manager.highlighted_repository = Some(path.clone());
+        app.request_remove_repository(path.clone());
+        assert_eq!(app.manager.dialog, Some(Dialog::RemoveRepository));
+        assert_eq!(app.repositories.len(), 1);
+        assert_eq!(app.commit_message, "Draft");
+        app.confirm_remove_repository();
+        assert!(app.repositories.is_empty());
+        assert_eq!(app.selected_repository, usize::MAX);
+        assert!(app.changes.is_empty() && app.commits.is_empty() && app.refs.is_empty());
+        assert!(app.commit_message.is_empty());
+        assert!(app.manager.preferences.groups[0].paths.is_empty());
+        assert!(app.manager.highlighted_repository.is_none());
+        assert!(repo.0.join(".git").is_dir());
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("keep.txt")).unwrap(),
+            "local changes"
+        );
+        let mut storage = Storage::default();
+        eframe::App::save(&mut app, &mut storage);
+        assert!(
+            eframe::get_value::<Vec<String>>(&storage, "sannygit.repositories")
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            eframe::get_value::<Option<String>>(&storage, "sannygit.active_repository"),
+            Some(None)
+        );
+    }
+
+    #[test]
+    fn removing_inactive_repository_preserves_active_selection_and_draft() {
+        for selected in [0, 2, usize::MAX] {
+            let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
+            app.repositories = crate::mock_data::repositories();
+            app.selected_repository = selected;
+            let active_path = app.repositories.get(selected).map(|r| r.path.clone());
+            app.commit_message = "Keep this draft".into();
+            let path = app.repositories[1].path.clone();
+            app.commit_drafts.insert(
+                path.clone(),
+                super::super::CommitDraft {
+                    message: "Inactive draft".into(),
+                    ..Default::default()
+                },
+            );
+            app.request_remove_repository(path.clone());
+            app.confirm_remove_repository();
+            assert_eq!(
+                app.repositories
+                    .get(app.selected_repository)
+                    .map(|r| r.path.clone()),
+                active_path
+            );
+            assert_eq!(app.commit_message, "Keep this draft");
+            assert!(!app.commit_drafts.contains_key(&path));
+            assert!(!app.repositories.iter().any(|r| r.path == path));
+        }
+    }
+
+    #[test]
+    fn removal_requires_a_pending_confirmation_and_an_idle_worker() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
+        app.repositories = crate::mock_data::repositories();
+        let path = app.repositories[0].path.clone();
+        app.request_remove_repository(path.clone());
+        app.manager.dialog = None; // Cancelled confirmation.
+        app.confirm_remove_repository();
+        assert_eq!(app.repositories.len(), 4);
+        app.request_remove_repository(path);
+        let (_sender, receiver) = mpsc::channel();
+        app.worker = Some(receiver);
+        app.confirm_remove_repository();
+        assert_eq!(app.repositories.len(), 4);
+        assert_eq!(app.manager.dialog, Some(Dialog::RemoveRepository));
     }
 
     #[test]

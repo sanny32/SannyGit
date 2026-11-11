@@ -19,7 +19,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let (id, title, description, icon, width) = match &dialog.kind {
         Kind::Delete { .. } => ("ref.delete", "Delete Local Branch", "Delete a local branch only after it is fully merged into the current HEAD. No force deletion; current and worktree branches are protected.", Icon::Branch, 580.0),
         Kind::Tag { .. } => ("ref.tag.push", "Push Selected Tag", "Push exactly one tag object to one reviewed push address. Other branches and tags are not sent. Existing remote tags are not replaced.", Icon::Tag, 580.0),
-        Kind::Remotes(_) => ("remote.manager", "Manage Remotes", "Edit repository-local URLs shared by this repository's worktrees. Use Git credential helpers and SSH configuration for authentication.", Icon::Repository, 720.0),
+        Kind::Remotes(_) => ("remote.manager", "Manage Remotes", "Edit fetch and push URLs for this repository.", Icon::Repository, 620.0),
     };
     let mut close = false;
     let mut reload = false;
@@ -32,7 +32,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         dialog_style::header_with_icon(ui, palette, title, description, icon);
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            line(ui, format!("Repository: {:?}", dialog.root), palette.muted);
+            if !matches!(dialog.kind, Kind::Remotes(_)) {
+                line(ui, format!("Repository: {:?}", dialog.root), palette.muted);
+            }
             match &mut dialog.kind {
                 Kind::Delete { source, prepared } => {
                     line(ui, source.clone(), palette.text);
@@ -125,11 +127,26 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     );
                 }
                 Kind::Remotes(editor) => {
-                    config_change = remote_editor(ui, editor, busy, current, palette);
+                    config_change = remote_editor(ui, editor, busy, current);
                 }
             }
             let message = if dialog.running {
                 app.status.as_str()
+            } else if dialog.status.is_empty() {
+                if let Kind::Remotes(editor) = &dialog.kind {
+                    editor
+                        .snapshot
+                        .as_ref()
+                        .and_then(|snapshot| {
+                            snapshot
+                                .entries
+                                .iter()
+                                .find(|entry| Some(&entry.name) == editor.selected.as_ref())
+                        })
+                        .map_or("", |entry| entry.note.as_str())
+                } else {
+                    ""
+                }
             } else {
                 dialog.status.as_str()
             };
@@ -200,13 +217,18 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
 }
 
 fn line(ui: &mut egui::Ui, text: String, color: egui::Color32) {
-    ui.add_sized(
-        [ui.available_width(), 26.0],
-        Label::new(RichText::new(&text).color(color))
-            .truncate()
-            .show_tooltip_when_elided(false),
-    )
-    .help_text(text);
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), 26.0),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.add(
+                Label::new(RichText::new(&text).color(color))
+                    .truncate()
+                    .show_tooltip_when_elided(false),
+            )
+            .help_text(text);
+        },
+    );
 }
 
 fn remote_editor(
@@ -214,7 +236,6 @@ fn remote_editor(
     editor: &mut RemoteEditor,
     busy: bool,
     current: bool,
-    palette: crate::theme::Palette,
 ) -> Option<bool> {
     let mut change = None;
     ui.horizontal(|ui| {
@@ -226,8 +247,8 @@ fn remote_editor(
     let mut selected = None;
     egui::ScrollArea::vertical()
         .id_salt("remote.manager.list")
-        .min_scrolled_height(96.0)
-        .max_height(96.0)
+        .min_scrolled_height(58.0)
+        .max_height(58.0)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if let Some(snapshot) = &editor.snapshot {
@@ -271,7 +292,7 @@ fn remote_editor(
     });
     let can_edit = entry.is_none_or(|entry| entry.can_edit) && editor.current && !busy;
     let can_remove = entry.is_some_and(|entry| entry.can_remove) && editor.current && !busy;
-    let note = entry.map(|entry| entry.note.clone()).unwrap_or_else(|| "New remote. Leave Push URL empty to use the fetch URL. Embedded credentials are masked and cannot be saved.".into());
+    let field_width = ui.available_width() - 102.0;
     ui.add_enabled_ui(can_edit, |ui| {
         egui::Grid::new("remote.manager.fields")
             .min_col_width(90.0)
@@ -279,12 +300,13 @@ fn remote_editor(
             .show(ui, |ui| {
                 ui.label("Name:");
                 if ui
-                    .add_enabled(
-                        editor.selected.is_none(),
-                        TextEdit::singleline(&mut editor.name)
-                            .desired_width(460.0)
-                            .char_limit(4096),
-                    )
+                    .add_enabled_ui(editor.selected.is_none(), |ui| {
+                        ui.add_sized(
+                            [field_width, 26.0],
+                            TextEdit::singleline(&mut editor.name).char_limit(4096),
+                        )
+                    })
+                    .inner
                     .changed()
                 {
                     editor.confirm_remove = false;
@@ -294,9 +316,9 @@ fn remote_editor(
                 let masked =
                     !editor.url.is_empty() && remote_config::url_hint(&editor.url).is_some();
                 if ui
-                    .add(
+                    .add_sized(
+                        [field_width, 26.0],
                         TextEdit::singleline(&mut editor.url)
-                            .desired_width(460.0)
                             .char_limit(4096)
                             .password(masked),
                     )
@@ -309,9 +331,9 @@ fn remote_editor(
                 let masked = !editor.push_url.is_empty()
                     && remote_config::url_hint(&editor.push_url).is_some();
                 if ui
-                    .add(
+                    .add_sized(
+                        [field_width, 26.0],
                         TextEdit::singleline(&mut editor.push_url)
-                            .desired_width(460.0)
                             .char_limit(4096)
                             .password(masked)
                             .hint_text("Same as fetch when empty"),
@@ -323,7 +345,6 @@ fn remote_editor(
                 ui.end_row();
             });
     });
-    line(ui, note, palette.muted);
     let validation = remote_config::name_hint(&editor.name)
         .or_else(|| remote_config::url_hint(&editor.url))
         .or_else(|| {
@@ -466,6 +487,12 @@ mod tests {
                                 assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size)
                                     .contains_rect(rect));
                                 assert!(rect.height() < 610.0);
+                                if matches!(fixture, RefDialogFixture::Remotes) {
+                                    assert!(
+                                        rect.width() <= 624.0 && rect.height() < 470.0,
+                                        "Remote manager is oversized: {rect:?}"
+                                    );
+                                }
                                 if let Some(before) = baseline {
                                     assert_eq!(rect, before, "Dialog changed at stage {stage}: {fixture:?} {theme:?} {style:?}");
                                 } else {
@@ -482,6 +509,21 @@ mod tests {
                                         }
                                     })
                                     .collect::<Vec<_>>();
+                                if matches!(fixture, RefDialogFixture::Remotes) && stage == 1 {
+                                    for label in ["Name:", "Fetch URL:", "Push URL:"] {
+                                        let text = texts
+                                            .iter()
+                                            .find(|text| text.galley.job.text == label)
+                                            .unwrap();
+                                        let center_y = text.pos.y + text.galley.size().y / 2.0;
+                                        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+                                            egui::Shape::Rect(frame) if frame.rect.width() >= 400.0
+                                                && frame.rect.height() <= 32.0
+                                                && (frame.rect.center().y - center_y).abs() < 8.0
+                                                && frame.rect.left() > text.pos.x
+                                        )), "Narrow remote field: {label}");
+                                    }
+                                }
                                 for secret in [
                                     "dummy-user",
                                     "dummy-password",

@@ -425,7 +425,7 @@ impl SannyGitApp {
                         editor.select(selected);
                     }
                     editor.keep_draft = false;
-                    dialog.status = "Repository-local settings only. Credentials belong in Git helpers or SSH configuration.".into();
+                    dialog.status.clear();
                 }
                 Err(error) => {
                     editor.current = false;
