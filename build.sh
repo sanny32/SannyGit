@@ -192,17 +192,25 @@ if not executables:
     sys.exit("Cargo did not report the SannyGit executable.")
 print(executables[-1])
 ')"
-if [ -n "$signing_identity" ]; then
-    # Keep both the signer and identifier stable across builds so Keychain can
-    # recognize the executable after an update. Never substitute an ad-hoc
-    # signature if certificate signing fails.
-    codesign --force --sign "$signing_identity" --identifier org.sannygit.SannyGit "$binary"
-    codesign --verify --strict "$binary"
-fi
 if [ "$run_tests" -eq 1 ]; then
     (cd "$PROJECT_DIR" && cargo test --release)
 fi
-echo "Built: $binary"
+artifact="$binary"
+if [ "$(uname -s)" = Darwin ]; then
+    bundle="$(dirname "$binary")/SannyGit.app"
+    version="$(sed -nE 's/^version = "([^"]+)"/\1/p' "$PROJECT_DIR/Cargo.toml")"
+    mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
+    install -m 755 "$binary" "$bundle/Contents/MacOS/sannygit"
+    install -m 644 "$PROJECT_DIR/assets/app/sannygit.icns" "$bundle/Contents/Resources/sannygit.icns"
+    install -m 644 "$PROJECT_DIR/LICENSE" "$bundle/Contents/Resources/LICENSE"
+    install -m 644 "$PROJECT_DIR/assets/fonts/OFL.txt" "$bundle/Contents/Resources/SourceSans3-OFL.txt"
+    base_version="${version%%[-+]*}"
+    sed "s|@VERSION@|$base_version|g" "$PROJECT_DIR/.github/macos/Info.plist.in" > "$bundle/Contents/Info.plist"
+    codesign --force --sign "${signing_identity:--}" "$bundle"
+    codesign --verify --strict "$bundle"
+    artifact="$bundle"
+fi
+echo "Built: $artifact"
 if [ "$run_install" -eq 0 ]; then
     exit 0
 fi
@@ -210,18 +218,13 @@ fi
 case "$(uname -s)" in
     Darwin)
         install_prefix="${install_prefix:-$HOME/Applications}"
-        bundle="$install_prefix/SannyGit.app"
-        version="$(sed -nE 's/^version = "([^"]+)"/\1/p' "$PROJECT_DIR/Cargo.toml")"
-        mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
-        install -m 755 "$binary" "$bundle/Contents/MacOS/sannygit"
-        install -m 644 "$PROJECT_DIR/assets/app/sannygit.icns" "$bundle/Contents/Resources/sannygit.icns"
-        install -m 644 "$PROJECT_DIR/LICENSE" "$bundle/Contents/Resources/LICENSE"
-        install -m 644 "$PROJECT_DIR/assets/fonts/OFL.txt" "$bundle/Contents/Resources/SourceSans3-OFL.txt"
-        base_version="${version%%[-+]*}"
-        sed "s|@VERSION@|$base_version|g" "$PROJECT_DIR/.github/macos/Info.plist.in" > "$bundle/Contents/Info.plist"
-        codesign --force --sign "${signing_identity:--}" "$bundle"
-        codesign --verify --strict "$bundle"
-        echo "Installed: $bundle"
+        mkdir -p "$install_prefix"
+        installed_bundle="$install_prefix/SannyGit.app"
+        if [ "$bundle" != "$installed_bundle" ]; then
+            ditto "$bundle" "$installed_bundle"
+        fi
+        codesign --verify --strict "$installed_bundle"
+        echo "Installed: $installed_bundle"
         ;;
     Linux)
         install_prefix="${install_prefix:-$HOME/.local}"

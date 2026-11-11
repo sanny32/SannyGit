@@ -13,7 +13,7 @@ History loads in pages of 500 commits, up to 10,000. Search covers loaded histor
 
 ## Build
 
-The build scripts install missing dependencies and build the Release executable:
+The build scripts install missing dependencies and build in Release mode:
 
 ```sh
 ./build.sh                       # Linux / macOS
