@@ -520,13 +520,16 @@ fn migration_reports_cleanup_failure_without_reading_again() {
 }
 
 #[test]
-fn saved_credentials_restore_the_model_and_key_together() {
+fn saved_credentials_restore_the_model_when_no_model_is_configured() {
     let secret = serde_json::to_string(&SavedCredential {
         model: "custom-model".into(),
         api_key: "test-key".into(),
     })
     .unwrap();
-    let mut config = Config::default();
+    let mut config = Config {
+        model: String::new(),
+        ..Config::default()
+    };
     restore_credential(&mut config, secret).unwrap();
     assert_eq!(config.model, "custom-model");
     assert_eq!(config.api_key, "test-key");
@@ -674,4 +677,19 @@ fn legacy_migration_can_use_login_keychain_when_entitlements_are_missing() {
     );
     assert_eq!(result, Ok(Some("legacy-key".into())));
     assert_eq!(*calls.borrow(), ["save login", "delete legacy"]);
+}
+
+#[test]
+fn loading_saved_key_preserves_the_configured_model() {
+    let mut config = Config {
+        model: "new-selection".into(),
+        ..Config::default()
+    };
+    restore_credential(
+        &mut config,
+        r#"{"model":"old-selection","api_key":"saved-key"}"#.into(),
+    )
+    .unwrap();
+    assert_eq!(config.model, "new-selection");
+    assert_eq!(config.api_key, "saved-key");
 }

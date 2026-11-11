@@ -1380,3 +1380,30 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
         }
     }
 }
+
+#[test]
+fn settings_preserve_unloaded_keys_and_only_write_explicit_secret_changes() {
+    let previous = crate::llm::Config::default();
+    let mut draft = LlmSettings {
+        config: previous.clone(),
+        ..Default::default()
+    };
+    assert!(!draft.secret_changed(&previous));
+    draft.config.model = "new-model".into();
+    draft.config.instructions = "New instructions".into();
+    draft.config.endpoint = "https://other.example/v1".into();
+    assert!(!draft.secret_changed(&previous));
+    draft.save_secret(&previous, None).unwrap();
+
+    draft.config.store_api_key = false;
+    assert!(draft.secret_changed(&previous));
+    let without_storage = draft.config.clone();
+    draft.config.store_api_key = true;
+    assert!(!draft.secret_changed(&without_storage));
+
+    draft.config.api_key = "replacement".into();
+    draft.api_key_dirty = true;
+    assert!(draft.secret_changed(&previous));
+    draft.config.api_key.clear();
+    assert!(draft.secret_changed(&previous));
+}

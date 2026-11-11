@@ -205,7 +205,6 @@ fn model_accepts_dropdown_selection_and_custom_text() {
             theme.apply(&context);
             let mut app = SannyGitApp::with_theme(theme);
             app.settings_window.page = SettingsPage::Llm;
-            app.settings_window.llm.api_key_loaded = true;
             app.settings_window.llm.config.model = "custom-model".into();
             app.settings_window.llm.config.api_key = "keep-key".into();
             let models = app.llm_models.entry(&app.settings_window.llm.config, None);
@@ -296,7 +295,6 @@ fn endpoint_accepts_typed_text_and_clears_the_previous_providers_key() {
         theme.apply(&context);
         let mut app = SannyGitApp::with_theme(theme);
         app.settings_window.page = SettingsPage::Llm;
-        app.settings_window.llm.api_key_loaded = true;
         app.settings_window.llm.config.api_key = "previous-key".into();
         let render = |app: &mut SannyGitApp, events| {
             context.run_ui(
@@ -350,7 +348,6 @@ fn clicking_tree_labels_and_row_backgrounds_selects_the_page() {
         egui_extras::install_image_loaders(&context);
         theme.apply(&context);
         let mut app = SannyGitApp::with_theme(theme);
-        app.settings_window.llm.api_key_loaded = true;
         let render = |app: &mut SannyGitApp, events| {
             context.run_ui(
                 RawInput {
@@ -653,7 +650,6 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
         egui_extras::install_image_loaders(&context);
         theme.apply(&context);
         let mut app = SannyGitApp::with_theme(theme);
-        app.settings_window.llm.api_key_loaded = true;
         for (page, title) in [
             (SettingsPage::General, "Confirmations"),
             (SettingsPage::Appearance, "Color theme:"),
@@ -712,7 +708,6 @@ fn llm_error_shows_once_in_a_modal_in_both_themes() {
             theme.apply(&context);
             let mut app = SannyGitApp::with_theme(theme);
             app.settings_window.page = SettingsPage::Llm;
-            app.settings_window.llm.api_key_loaded = true;
             app.settings_window.llm.secret_error = Some(error.into());
             let render = |app: &mut SannyGitApp, time, events| {
                 let mut output = context.run_ui(
@@ -746,6 +741,64 @@ fn llm_error_shows_once_in_a_modal_in_both_themes() {
             assert_eq!(
                 full_text_count, 1,
                 "Expected one complete modal error message ({theme:?}, {size:?})"
+            );
+        }
+    }
+}
+
+#[test]
+fn opening_and_applying_llm_settings_never_reads_saved_credentials() {
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        for repository in [false, true] {
+            let context = egui::Context::default();
+            crate::theme::install_fonts(&context);
+            theme.apply(&context);
+            let mut app = SannyGitApp::with_theme(theme);
+            let path = "/projects/example".to_owned();
+            app.repositories = vec![crate::models::Repository {
+                name: "Project".into(),
+                path: path.clone(),
+            }];
+            app.repository_llm_configs
+                .insert(path.clone(), app.llm_config.clone());
+            let reads_before = crate::llm::CREDENTIAL_READS.with(|reads| reads.get());
+            if repository {
+                app.open_repository_llm_settings();
+            } else {
+                app.open_settings();
+                app.settings_window.page = SettingsPage::Llm;
+            }
+            for _ in 0..2 {
+                let mut output = context.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            pos2(0.0, 0.0),
+                            Vec2::new(740.0, 420.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| window_contents(ui, &mut app),
+                );
+                output.textures_delta.clear();
+            }
+            let draft = if repository {
+                app.settings_window.llm_repositories.get_mut(&path).unwrap()
+            } else {
+                &mut app.settings_window.llm
+            };
+            assert!(draft.config.api_key.is_empty());
+            assert!(draft.secret_error.is_none());
+            draft.config.model = "new-model".into();
+            apply_settings(&mut app).unwrap();
+            let config = if repository {
+                app.effective_llm_config(&path)
+            } else {
+                &app.llm_config
+            };
+            assert_eq!(config.model, "new-model");
+            assert_eq!(
+                crate::llm::CREDENTIAL_READS.with(|reads| reads.get()),
+                reads_before
             );
         }
     }

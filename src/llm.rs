@@ -97,8 +97,9 @@ impl Default for Config {
     }
 }
 
-// The model belongs to the credential, since provider defaults may not work
-// with a particular API key. Plain secrets from older versions remain readable.
+// Keep the saved model as a fallback for credentials from older versions.
+// A model selected in settings takes precedence without reading the key.
+// Plain secrets from older versions remain readable.
 #[derive(Deserialize, Serialize)]
 struct SavedCredential {
     model: String,
@@ -109,7 +110,9 @@ fn restore_credential(config: &mut Config, secret: String) -> Result<(), String>
     if secret.starts_with('{') {
         let saved: SavedCredential = serde_json::from_str(&secret)
             .map_err(|_| "The saved LLM credential is invalid".to_owned())?;
-        config.model = saved.model;
+        if config.model.trim().is_empty() {
+            config.model = saved.model;
+        }
         config.api_key = saved.api_key;
     } else {
         config.api_key = secret;
@@ -440,12 +443,19 @@ fn load_and_migrate_legacy_api_key(
     Ok(Some(secret))
 }
 
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static CREDENTIAL_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn load_api_key(config: &Config, repository: Option<&str>) -> Result<Option<String>, String> {
     if !config.store_api_key {
         return Ok(None);
     }
     let endpoint = chat_completions_endpoint(&config.endpoint);
     let user = credential_user(&endpoint, repository);
+    #[cfg(test)]
+    CREDENTIAL_READS.with(|reads| reads.set(reads.get() + 1));
     #[cfg(target_os = "macos")]
     {
         load_api_key_from_stores(

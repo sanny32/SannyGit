@@ -101,7 +101,6 @@ pub enum SettingsPage {
 pub struct LlmSettings {
     pub config: crate::llm::Config,
     pub api_key_dirty: bool,
-    pub api_key_loaded: bool,
     pub secret_error: Option<String>,
 }
 
@@ -111,15 +110,22 @@ impl LlmSettings {
         previous: &crate::llm::Config,
         repository: Option<&str>,
     ) -> Result<(), String> {
-        let config = &self.config;
-        let changed = self.api_key_dirty
-            || config.store_api_key != previous.store_api_key
-            || (!config.api_key.is_empty()
-                && (config.endpoint != previous.endpoint || config.model != previous.model));
-        if changed {
-            crate::llm::save_api_key(config, repository)?;
+        if self.secret_changed(previous) {
+            crate::llm::save_api_key(&self.config, repository)?;
         }
         Ok(())
+    }
+
+    fn secret_changed(&self, previous: &crate::llm::Config) -> bool {
+        let config = &self.config;
+        // An unloaded key is empty in the draft. Preserve it when only the
+        // model, endpoint or other preferences change; never read it to save.
+        self.api_key_dirty
+            || (!config.store_api_key && previous.store_api_key)
+            || (!config.api_key.is_empty()
+                && (config.store_api_key != previous.store_api_key
+                    || config.endpoint != previous.endpoint
+                    || config.model != previous.model))
     }
 }
 

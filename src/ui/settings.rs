@@ -514,7 +514,6 @@ fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     crate::app::LlmSettings {
                         config: window.llm.config.clone(),
                         api_key_dirty: !window.llm.config.api_key.is_empty(),
-                        api_key_loaded: window.llm.api_key_loaded,
                         ..Default::default()
                     },
                 );
@@ -542,11 +541,6 @@ fn llm_form(
     catalog: &mut crate::app::ModelCatalog,
 ) {
     catalog.update();
-    if !draft.api_key_loaded {
-        draft.api_key_loaded = true;
-        draft.secret_error =
-            crate::llm::load_api_key_if_needed(&mut draft.config, repository).err();
-    }
     ui.push_id(("llm.form", repository), |ui| {
         group(ui, palette, "OpenAI-compatible API", |ui| {
             egui::Grid::new("preferences.llm.connection")
@@ -591,15 +585,10 @@ fn llm_form(
                             draft.config.store_api_key = false;
                         }
                     }
-                    // Read only after editing finishes, rather than prompting
-                    // Keychain for every character typed into a custom URL.
-                    if preset_selected || endpoint_response.lost_focus() {
-                        draft.api_key_loaded = true;
-                        draft.secret_error =
-                            crate::llm::load_api_key_if_needed(&mut draft.config, repository).err();
-                        if ui.is_enabled() {
-                            catalog.load(&draft.config, repository, ui.ctx());
-                        }
+                    // Refresh with the key already in memory; editing settings
+                    // must never read the OS credential store.
+                    if (preset_selected || endpoint_response.lost_focus()) && ui.is_enabled() {
+                        catalog.load(&draft.config, repository, ui.ctx());
                     }
                     ui.end_row();
                     form_label(ui, "Model:");
@@ -632,7 +621,11 @@ fn llm_form(
                     form_label(ui, "API key:");
                     let api_key_response = ui.add(
                         egui::TextEdit::singleline(&mut draft.config.api_key)
-                            .hint_text("Optional for local servers")
+                            .hint_text(if draft.config.store_api_key {
+                                "Leave unchanged to keep saved key"
+                            } else {
+                                "Optional for local servers"
+                            })
                             .password(true)
                             .desired_width(f32::INFINITY),
                     );
