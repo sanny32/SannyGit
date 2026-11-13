@@ -247,9 +247,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                     .clicked() { app.open_discard(); }
                             } else if label == "Save Stash" {
                                 if action_button(ui, icon, label, app.stash_allowed(), palette, action_width)
-                                    .help_text("Preview and save local changes, or manage saved stashes")
+                                    .help_text("Save local changes for later")
                                     .disabled_help_text("Open and refresh a repository; wait for the current operation")
-                                    .clicked() { app.open_stashes(); }
+                                    .clicked() { app.open_save_stash(); }
                             } else if label == "Stage" || label == "Unstage" {
                                 let staged = label == "Stage";
                                 let enabled = app.staging_allowed(app.selected_change, staged);

@@ -273,6 +273,8 @@ pub fn stash_entries() -> Vec<crate::stash::Entry> {
 
 pub fn stash_dialog() -> crate::app::stash::Dialog {
     crate::app::stash::Dialog {
+        managing: true,
+        preview_expanded: false,
         path: "/test/repository".into(),
         entries: stash_entries(),
         selected: Some(0),

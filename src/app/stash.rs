@@ -11,6 +11,8 @@ pub enum Action {
 }
 
 pub struct Dialog {
+    pub managing: bool,
+    pub preview_expanded: bool,
     pub path: String,
     pub entries: Vec<backend::Entry>,
     pub selected: Option<usize>,
@@ -57,15 +59,25 @@ impl SannyGitApp {
     }
 
     pub fn open_stashes(&mut self) {
+        self.open_stash_dialog(true);
+    }
+
+    pub fn open_save_stash(&mut self) {
+        self.open_stash_dialog(false);
+    }
+
+    fn open_stash_dialog(&mut self, managing: bool) {
         if !self.stash_allowed() {
             return;
         }
         self.stash_dialog = Some(Dialog {
+            managing,
+            preview_expanded: false,
             path: self.repositories[self.selected_repository].path.clone(),
             entries: Vec::new(),
             selected: None,
             entries_current: false,
-            reload_pending: true,
+            reload_pending: managing,
             message: String::new(),
             include_untracked: false,
             restore_index: true,
@@ -74,7 +86,12 @@ impl SannyGitApp {
             previewed_entry: None,
             preview: None,
             error: None,
-            status: "Loading stashes…".into(),
+            status: if managing {
+                "Loading stashes…"
+            } else {
+                "Preview changes before saving."
+            }
+            .into(),
         });
         self.load_pending_stashes();
     }

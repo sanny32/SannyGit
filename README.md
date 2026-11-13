@@ -59,7 +59,9 @@ this signed build. Unlocked keys stay in memory until the app closes.
 Use `--debug` for a development bundle that supports debugger attachment.
 
 Default install locations are `~/Applications` on macOS, `~/.local` on Linux and
-`%LOCALAPPDATA%\Programs\SannyGit` on Windows. Add `~/.local/bin` to `PATH` on Linux.
+`%LOCALAPPDATA%\Programs\SannyGit` on Windows. 
+
+You need add `~/.local/bin` to `PATH` on Linux.
 
 ## Packages
 
