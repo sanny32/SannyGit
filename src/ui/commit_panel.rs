@@ -26,7 +26,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             [rect.left_bottom(), rect.right_bottom()],
             (3.0, palette.accent),
         );
-        let previous = app.commit_contents;
         ui.add_enabled_ui(!app.busy(), |ui| {
             eframe::egui::ComboBox::from_id_salt("commit.contents")
                 .width(98.0)
@@ -40,10 +39,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     }
                 });
         });
-        if previous != app.commit_contents {
-            app.contents_preview_open = false;
-            app.contents_preview = None;
-        }
         let staged = app.changes.iter().filter(|c| c.staged).count();
         ui.label(
             RichText::new(format!("{staged} staged"))
@@ -59,15 +54,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 |ui| {
                     if app.generating_commit_message && ui.button("Cancel generation").clicked() {
                         app.cancel_commit_message_generation();
-                        ui.close();
-                    }
-                    let blocker = app.commit_contents_preview_blocker();
-                    if ui
-                        .add_enabled(blocker.is_none(), Button::new("Preview commit contents…"))
-                        .disabled_help_text(blocker.unwrap_or(""))
-                        .clicked()
-                    {
-                        app.preview_commit_contents();
                         ui.close();
                     }
                     let blocker = app.generate_commit_message_blocker();
@@ -190,45 +176,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
             });
         });
-    let mut open = app.contents_preview_open;
-    eframe::egui::Window::new("Commit contents preview")
-        .id(eframe::egui::Id::unique("commit.contents.window"))
-        .open(&mut open)
-        .fixed_size(Vec2::new(720.0, 420.0))
-        .collapsible(false)
-        .show(ui.ctx(), |ui| {
-            ui.label(format!(
-                "{}{} — snapshot at preview time",
-                app.commit_contents.label(),
-                if app.amend { " · Amend" } else { "" }
-            ));
-            ui.label("Review again if repository contents change before committing.");
-            ui.allocate_ui_with_layout(
-                Vec2::new(700.0, 360.0),
-                Layout::top_down(Align::Min),
-                |ui| {
-                    ui.set_min_size(Vec2::new(700.0, 360.0));
-                    match &app.contents_preview {
-                        None => {
-                            ui.label("Loading preview…");
-                        }
-                        Some(Err(_)) => {
-                            ui.label("Preview unavailable.");
-                        }
-                        Some(Ok(preview)) if preview.lines.is_empty() => {
-                            ui.label("No content changes.");
-                        }
-                        Some(Ok(preview)) => super::diff_view::render_preview(
-                            ui,
-                            preview,
-                            palette,
-                            "commit.contents.preview",
-                        ),
-                    }
-                },
-            );
-        });
-    app.contents_preview_open = open;
 }
 
 fn draw_generation_animation(ui: &Ui, rect: Rect, time: f64, palette: Palette) {
@@ -372,60 +319,6 @@ mod tests {
                             app.commit_message,
                             "Existing draft\n\nKeep this text readable."
                         );
-                    }
-                }
-            }
-        }
-    }
-    #[test]
-    fn contents_preview_keeps_window_size_during_loading_errors_and_success() {
-        for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
-            for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
-                for style in [
-                    crate::theme::InterfaceStyle::Classic,
-                    crate::theme::InterfaceStyle::Modern,
-                ] {
-                    let context = egui::Context::default();
-                    crate::theme::install_fonts(&context);
-                    egui_extras::install_image_loaders(&context);
-                    theme.apply_style(&context, style);
-                    let mut app = SannyGitApp::with_theme(theme);
-                    app.interface_style = style;
-                    app.contents_preview_open = true;
-                    let mut initial = None;
-                    for frame in 0..6 {
-                        app.contents_preview = match frame {
-                            0 | 1 => None,
-                            2 => Some(Err("Long diagnostic text ".repeat(100))),
-                            3 => Some(Ok(crate::models::DiffPreview::new(""))),
-                            _ => Some(Ok(crate::models::DiffPreview::new(
-                                &"+content\n".repeat(200),
-                            ))),
-                        };
-                        let mut output = context.run_ui(
-                            egui::RawInput {
-                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
-                                ..Default::default()
-                            },
-                            |ui| show(ui, &mut app),
-                        );
-                        output.textures_delta.clear();
-                        let rect = context
-                            .memory(|memory| {
-                                memory.area_rect(egui::Id::unique("commit.contents.window"))
-                            })
-                            .unwrap();
-                        if frame == 1 {
-                            initial = Some(rect.size());
-                        }
-                        if frame > 1 {
-                            assert_eq!(
-                                Some(rect.size()),
-                                initial,
-                                "Preview resized: {theme:?}, {style:?}"
-                            );
-                        }
-                        assert!(rect.width() <= size.x && rect.height() <= size.y);
                     }
                 }
             }

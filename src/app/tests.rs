@@ -66,14 +66,13 @@ fn shortcuts_match_exact_modifiers_ignore_repeats_and_respect_disabled_actions()
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn shortcuts_do_not_escape_dialogs_or_text_editors() {
-    for blocker in 0..5 {
+    for blocker in 0..4 {
         let context = egui::Context::default();
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         match blocker {
             0 => app.manager.dialog = Some(RepositoryDialog::Group),
             1 => app.settings_window.open = true,
             2 => app.error_dialogs.pending.push_back("Failure".into()),
-            3 => app.contents_preview_open = true,
             _ => {
                 let mut text = String::new();
                 let id = egui::Id::unique("shortcut.text");
@@ -397,7 +396,6 @@ fn staged_mode_gates_commit_preview_and_generation_but_allows_message_only_amend
     app.amend = true;
     app.amend_head = Some("a".repeat(40));
     assert!(app.commit_blocker().is_none());
-    assert!(app.commit_contents_preview_blocker().is_none());
     assert!(app.generate_commit_message_blocker().is_some());
     assert_eq!(app.commit_message, "Draft");
 }

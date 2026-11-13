@@ -195,27 +195,26 @@ mod tests {
         let owner = TestWindow::new("SannyGit test owner");
         let context = Context::default();
         context.data_mut(|data| data.insert_temp(owner_key(), owner.0 as isize));
-        for title in ["SannyGit Preferences", "Repository LLM Settings"] {
-            let settings = TestWindow::new(title);
-            let unrelated = TestWindow::new("Unrelated window");
-            // SAFETY: the windows are live and owned by this test thread.
-            let style = unsafe { GetWindowLongPtrW(settings.0, -16) };
-            begin_modal(&context, title).unwrap();
-            // Repeat to cover the nonzero previous-owner return value.
-            begin_modal(&context, title).unwrap();
-            unsafe {
-                assert_eq!(GetWindow(settings.0, 4), owner.0); // GW_OWNER
-                assert!(GetWindow(unrelated.0, 4).is_null());
-                assert_eq!(GetWindowLongPtrW(settings.0, -16), style);
-                assert_eq!(style & 0x40000000, 0); // no WS_CHILD
-                assert_eq!(IsWindowEnabled(owner.0), 0);
-                assert_ne!(IsWindowEnabled(settings.0), 0);
-                assert_ne!(IsWindowEnabled(unrelated.0), 0);
-            }
-            end_modal(&context);
-            end_modal(&context); // closing more than once is harmless
-            assert_ne!(unsafe { IsWindowEnabled(owner.0) }, 0);
+        let title = "SannyGit Preferences";
+        let settings = TestWindow::new(title);
+        let unrelated = TestWindow::new("Unrelated window");
+        // SAFETY: the windows are live and owned by this test thread.
+        let style = unsafe { GetWindowLongPtrW(settings.0, -16) };
+        begin_modal(&context, title).unwrap();
+        // Repeat to cover the nonzero previous-owner return value.
+        begin_modal(&context, title).unwrap();
+        unsafe {
+            assert_eq!(GetWindow(settings.0, 4), owner.0); // GW_OWNER
+            assert!(GetWindow(unrelated.0, 4).is_null());
+            assert_eq!(GetWindowLongPtrW(settings.0, -16), style);
+            assert_eq!(style & 0x40000000, 0); // no WS_CHILD
+            assert_eq!(IsWindowEnabled(owner.0), 0);
+            assert_ne!(IsWindowEnabled(settings.0), 0);
+            assert_ne!(IsWindowEnabled(unrelated.0), 0);
         }
+        end_modal(&context);
+        end_modal(&context); // closing more than once is harmless
+        assert_ne!(unsafe { IsWindowEnabled(owner.0) }, 0);
         assert!(begin_modal(&context, "Missing settings window").is_err());
         assert_ne!(unsafe { IsWindowEnabled(owner.0) }, 0);
     }

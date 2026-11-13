@@ -133,7 +133,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let context = ui.ctx().clone();
     let palette = app.palette();
     toolbar::show(ui, app);
-    settings::show(ui.ctx(), app);
+    settings::show(ui, app);
     repository_dialogs::show(ui, app);
     stash::show(ui.ctx(), app);
     discard::show(ui.ctx(), app);

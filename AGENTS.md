@@ -16,7 +16,7 @@ Windows, Linux, and macOS. The UI language is English. The license is MIT.
   worktrees, and remotes.
   Mock data is compiled only for tests. Commit and Amend default to all changes;
   an explicit Staged only mode preserves unstaged changes. The selected mode
-  also controls the contents preview and commit-message generation.
+  also controls commit-message generation.
 - Commit-message generation uses an explicitly configured OpenAI-compatible
   service or local server. Preserve this existing feature; credentials use
   system credential storage.

@@ -20,15 +20,16 @@ fn repository_instructions_are_editable_with_global_model_settings() {
         let render = |app: &mut SannyGitApp, events| {
             let mut output = ctx.run_ui(
                 RawInput {
-                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(500.0, 360.0))),
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(620.0, 500.0))),
                     events,
                     ..Default::default()
                 },
-                |ui| window_contents(ui, app),
+                |ui| repository_llm_dialog(ui, app),
             );
             output.textures_delta.clear();
             output
         };
+        render(&mut app, vec![]);
         let click = |app: &mut SannyGitApp, label: &str| {
             let mut output = render(app, vec![]);
             let target = output
@@ -152,15 +153,16 @@ fn repository_prompt_tab_restores_global_instructions_without_touching_model_set
         let render = |app: &mut SannyGitApp, events| {
             let mut output = context.run_ui(
                 RawInput {
-                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(500.0, 360.0))),
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(620.0, 500.0))),
                     events,
                     ..Default::default()
                 },
-                |ui| window_contents(ui, app),
+                |ui| repository_llm_dialog(ui, app),
             );
             output.textures_delta.clear();
             output
         };
+        render(&mut app, vec![]);
         let click = |app: &mut SannyGitApp, label: &str| {
             let mut output = render(app, vec![]);
             let target = output
@@ -224,7 +226,7 @@ fn settings_position_centers_on_main_window() {
 #[test]
 fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes() {
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
-        for size in [Vec2::new(560.0, 368.0), Vec2::new(500.0, 360.0)] {
+        for size in [Vec2::new(620.0, 500.0), Vec2::new(560.0, 460.0)] {
             let context = egui::Context::default();
             crate::theme::install_fonts(&context);
             egui_extras::install_image_loaders(&context);
@@ -245,7 +247,7 @@ fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes(
                         events,
                         ..Default::default()
                     },
-                    |ui| window_contents(ui, app),
+                    |ui| repository_llm_dialog(ui, app),
                 )
             };
             let click = |app: &mut SannyGitApp, label: &str| {
@@ -277,62 +279,47 @@ fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes(
                     output.textures_delta.clear();
                 }
             };
+            let modal_rect = |app: &mut SannyGitApp| {
+                let mut output = render(app, vec![]);
+                output.textures_delta.clear();
+                context.memory(|m| m.area_rect(egui::Id::unique("repository.llm.settings")))
+            };
             app.open_repository_llm_settings();
             assert_eq!(
                 app.settings_window.llm_repository.as_deref(),
                 Some(path.as_str())
             );
+            // The first frame of a fresh context sizes the modal without painting.
+            let mut warm = render(&mut app, vec![]);
+            warm.textures_delta.clear();
             let mut output = render(&mut app, vec![]);
             output.textures_delta.clear();
             for label in [
-                "Project",
+                "Repository LLM Settings",
                 "Use global model settings",
                 "Endpoint:",
                 "OK",
                 "Cancel",
             ] {
-                assert!(visible_text(&output.shapes, label), "Missing {label}");
+                assert!(
+                    visible_text(&output.shapes, label),
+                    "Missing {label} at {size:?} {theme:?}"
+                );
             }
-            let text_rect = |label: &str| {
-                output
-                    .shapes
-                    .iter()
-                    .find_map(|shape| match &shape.shape {
-                        egui::Shape::Text(text) if text.galley.job.text == label => {
-                            Some(text.galley.rect.translate(text.pos.to_vec2()))
-                        }
-                        _ => None,
-                    })
-                    .unwrap()
-            };
-            let name_rect = text_rect("Project");
-            let header_text = name_rect.union(text_rect(&path));
-            let icon_rect = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::Shape::Rect(rect)
-                        if rect.rect.size() == Vec2::splat(20.0)
-                            && rect.rect.right() < name_rect.left() =>
-                    {
-                        Some(rect.rect)
-                    }
-                    _ => None,
-                })
-                .expect("Repository icon must be visible");
-            assert!(
-                (icon_rect.center().y - header_text.center().y).abs() <= 1.0,
-                "Repository icon must be centered beside both text lines"
-            );
-            assert!(
-                !output.shapes.iter().any(|shape| matches!(&shape.shape,
-                    egui::Shape::Rect(rect) if rect.fill == app.palette().selection
-                        && rect.rect.contains(name_rect.center())
-                )),
-                "Repository header must not have a selection background"
-            );
+            // Switching tabs must not resize or move the dialog.
+            let rect = modal_rect(&mut app).unwrap();
+            for tab in [
+                crate::app::RepositoryLlmTab::Prompt,
+                crate::app::RepositoryLlmTab::Model,
+            ] {
+                app.settings_window.llm_repository_tab = tab;
+                assert_eq!(
+                    modal_rect(&mut app),
+                    Some(rect),
+                    "Tab {tab:?} resized the dialog"
+                );
+            }
             for label in [
-                "Repository LLM settings",
                 "Main Window",
                 "Settings for:",
                 "Appearance",
@@ -1004,11 +991,17 @@ fn opening_and_applying_llm_settings_never_reads_saved_credentials() {
                     RawInput {
                         screen_rect: Some(Rect::from_min_size(
                             pos2(0.0, 0.0),
-                            Vec2::new(740.0, 420.0),
+                            Vec2::new(740.0, 500.0),
                         )),
                         ..Default::default()
                     },
-                    |ui| window_contents(ui, &mut app),
+                    |ui| {
+                        if repository {
+                            repository_llm_dialog(ui, &mut app);
+                        } else {
+                            window_contents(ui, &mut app);
+                        }
+                    },
                 );
                 output.textures_delta.clear();
             }

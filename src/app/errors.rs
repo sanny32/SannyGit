@@ -19,13 +19,6 @@ impl SannyGitApp {
             ("tracking", self.tracking.error.as_deref()),
             ("working tree", self.working_tree.error.as_deref()),
             (
-                "contents",
-                self.contents_preview
-                    .as_ref()
-                    .and_then(|r| r.as_ref().err())
-                    .map(String::as_str),
-            ),
-            (
                 "discard",
                 self.discard_dialog
                     .as_ref()
@@ -119,17 +112,16 @@ mod tests {
     fn local_dialog_settings_model_and_preview_errors_reach_the_queue() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
         app.settings_window.llm.secret_error = Some("Credential access failed".into());
-        app.contents_preview = Some(Err("Preview failed".into()));
         app.commit_preview_error = Some("Commit diff failed".into());
         app.tracking.error = Some("Remote check failed".into());
         app.llm_models.entry(&app.llm_config, None).error = Some("Model list failed".into());
         app.collect_errors();
-        assert_eq!(app.error_dialogs.pending.len(), 5);
+        assert_eq!(app.error_dialogs.pending.len(), 4);
         app.collect_errors();
-        assert_eq!(app.error_dialogs.pending.len(), 5);
+        assert_eq!(app.error_dialogs.pending.len(), 4);
         app.settings_window.llm.secret_error = Some("Another credential error".into());
         app.collect_errors();
-        assert_eq!(app.error_dialogs.pending.len(), 6);
+        assert_eq!(app.error_dialogs.pending.len(), 5);
     }
 
     #[test]

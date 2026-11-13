@@ -9,18 +9,21 @@ use eframe::egui::{
     ViewportBuilder, ViewportCommand, ViewportId,
 };
 
-pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
+pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if !app.settings_window.open {
         #[cfg(target_os = "windows")]
-        crate::native_window::end_modal(ctx);
+        crate::native_window::end_modal(ui.ctx());
         return;
     }
+    if app.settings_window.llm_repository.is_some() {
+        repository_llm_dialog(ui, app);
+        return;
+    }
+    preferences_window(ui.ctx(), app);
+}
 
-    let (title, size, min_size) = if app.settings_window.llm_repository.is_some() {
-        ("Repository LLM Settings", [560.0, 368.0], [500.0, 360.0])
-    } else {
-        ("SannyGit Preferences", [740.0, 420.0], [680.0, 380.0])
-    };
+fn preferences_window(ctx: &egui::Context, app: &mut SannyGitApp) {
+    let (title, size, min_size) = ("SannyGit Preferences", [740.0, 420.0], [680.0, 380.0]);
     if !app.settings_window.initial_position_set {
         app.settings_window.initial_position = ctx.input(|input| {
             let viewport = input.viewport();
@@ -42,10 +45,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     if let Some(position) = app.settings_window.initial_position {
         builder = builder.with_position(position);
     }
-    let viewport_id = match app.settings_window.llm_repository.as_deref() {
-        Some(path) => ViewportId::from_hash_of(("sannygit.repository_llm", path)),
-        None => ViewportId::from_hash_of("sannygit.preferences"),
-    };
+    let viewport_id = ViewportId::from_hash_of("sannygit.preferences");
     ctx.show_viewport_immediate(viewport_id, builder, |ui, class| {
         #[cfg(target_os = "macos")]
         ui.input_mut(|input| input.events.append(&mut app.pending_native_edit_events));
@@ -98,26 +98,20 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     super::controls::dialog_style::prepare_keyboard(ui);
     ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
     footer(ui, app, palette);
-    if app.settings_window.llm_repository.is_none() {
-        navigation(ui, app, palette);
-    }
+    navigation(ui, app, palette);
     CentralPanel::default()
         .frame(Frame::new().fill(palette.header).inner_margin(12))
         .show(ui, |ui| {
-            if app.settings_window.llm_repository.is_some() {
-                repository_llm_page(ui, app, palette);
-            } else {
-                let page_height = ui.available_height();
-                ScrollArea::vertical()
-                    .id_salt("preferences.page")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if app.settings_window.page == SettingsPage::CommitMessages {
-                            ui.set_max_height(page_height);
-                        }
-                        page(ui, app, palette);
-                    });
-            }
+            let page_height = ui.available_height();
+            ScrollArea::vertical()
+                .id_salt("preferences.page")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if app.settings_window.page == SettingsPage::CommitMessages {
+                        ui.set_max_height(page_height);
+                    }
+                    page(ui, app, palette);
+                });
         });
     super::show_errors(ui, app);
 }
@@ -140,17 +134,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         Ok(()) => {
                             close(ui.ctx(), app);
                         }
-                        Err(error) => {
-                            app.settings_window.page = SettingsPage::Llm;
-                            app.settings_window.llm_repository_tab = RepositoryLlmTab::Model;
-                            let draft = match app.settings_window.llm_repository.as_deref() {
-                                Some(path) => app.settings_window.llm_repositories.get_mut(path),
-                                None => Some(&mut app.settings_window.llm),
-                            };
-                            if let Some(draft) = draft {
-                                draft.secret_error = Some(error);
-                            }
-                        }
+                        Err(error) => report_settings_error(app, error),
                     }
                 }
                 if ui
@@ -511,90 +495,110 @@ fn apply_settings(app: &mut SannyGitApp) -> Result<(), String> {
     Ok(())
 }
 
-fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
-    // Keep checkboxes and label rows compact so the editor remains accessible
-    // at the minimum window size; input fields retain their shared height.
-    ui.spacing_mut().interact_size.y = 20.0;
-    let path = app.settings_window.llm_repository.clone();
-    if let Some(path) = &path {
-        let name = app
-            .repositories
-            .iter()
-            .find(|repository| repository.path == *path)
-            .map_or(path.as_str(), |repository| repository.name.as_str());
-        Frame::new()
-            .inner_margin(Margin::symmetric(4, 4))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
+fn report_settings_error(app: &mut SannyGitApp, error: String) {
+    app.settings_window.page = SettingsPage::Llm;
+    app.settings_window.llm_repository_tab = RepositoryLlmTab::Model;
+    let draft = match app.settings_window.llm_repository.as_deref() {
+        Some(path) => app.settings_window.llm_repositories.get_mut(path),
+        None => Some(&mut app.settings_window.llm),
+    };
+    if let Some(draft) = draft {
+        draft.secret_error = Some(error);
+    }
+}
+
+fn repository_llm_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
+    let Some(path) = app.settings_window.llm_repository.clone() else {
+        app.settings_window.open = false;
+        return;
+    };
+    let palette = app.palette();
+    let ctx = ui.ctx().clone();
+    let name = app
+        .repositories
+        .iter()
+        .find(|repository| repository.path == path)
+        .map_or(path.as_str(), |repository| repository.name.as_str())
+        .to_owned();
+    let mut accept = false;
+    let mut close = false;
+    super::controls::dialog_style::modal(&ctx, palette, "repository.llm.settings").show(&ctx, |ui| {
+        ui.set_width(560.0_f32.min(ctx.content_rect().width() - 48.0));
+        super::controls::dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        super::controls::dialog_style::header(
+            ui,
+            palette,
+            "Repository LLM Settings",
+            &format!("Model and prompt used to generate commit messages for {name}. The default settings can be found in the Preferences."),
+        );
+        super::controls::dialog_style::section(
+            ui,
+            palette.header,
+            egui::Margin::symmetric(12, 10),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                // Keep checkboxes and label rows compact so the editors remain
+                // accessible; input fields retain their shared height.
+                ui.spacing_mut().interact_size.y = 20.0;
+                let mut tab = app.settings_window.llm_repository_tab;
                 ui.horizontal(|ui| {
-                    let (icon_rect, _) =
-                        ui.allocate_exact_size(Vec2::new(20.0, 38.0), egui::Sense::hover());
-                    let text_rect = ui
-                        .allocate_ui_with_layout(
-                            Vec2::new(ui.available_width(), 38.0),
-                            Layout::top_down(Align::Min),
-                            |ui| {
-                                ui.spacing_mut().item_spacing.y = 2.0;
-                                let name_response = ui
-                                    .add(
-                                        egui::Label::new(
-                                            RichText::new(name).family(semibold_family()),
-                                        )
-                                        .truncate()
-                                        .show_tooltip_when_elided(false),
-                                    )
-                                    .help_text(name);
-                                let path_response = ui
-                                    .add(
-                                        egui::Label::new(
-                                            RichText::new(path).small().color(palette.muted),
-                                        )
-                                        .truncate()
-                                        .show_tooltip_when_elided(false),
-                                    )
-                                    .help_text(path);
-                                name_response.rect.union(path_response.rect)
-                            },
-                        )
-                        .inner;
-                    super::controls::icons::image(
-                        app.manager.hosting.get(path).copied().map_or(
-                            super::controls::icons::Icon::Repository,
-                            super::controls::icons::Icon::for_provider,
-                        ),
-                        palette.text,
-                        20.0,
-                    )
-                    .paint_at(
-                        ui,
-                        egui::Rect::from_center_size(
-                            egui::pos2(icon_rect.center().x, text_rect.center().y),
-                            Vec2::splat(20.0),
-                        ),
-                    );
+                    // Size the tab buttons like the repository settings dialog.
+                    ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
+                    ui.spacing_mut().interact_size.y = crate::theme::CONTROL_HEIGHT;
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    for (candidate, label) in [
+                        (RepositoryLlmTab::Model, "Model"),
+                        (RepositoryLlmTab::Prompt, "Prompt"),
+                    ] {
+                        if ui.selectable_label(tab == candidate, label).clicked() {
+                            tab = candidate;
+                        }
+                    }
                 });
-            });
-    }
-    let mut tab = app.settings_window.llm_repository_tab;
-    ui.horizontal(|ui| {
-        // Size the tab buttons like the repository settings dialog.
-        ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
-        ui.spacing_mut().interact_size.y = crate::theme::CONTROL_HEIGHT;
-        ui.spacing_mut().item_spacing.x = 2.0;
-        for (candidate, label) in [
-            (RepositoryLlmTab::Model, "Model"),
-            (RepositoryLlmTab::Prompt, "Prompt"),
-        ] {
-            if ui.selectable_label(tab == candidate, label).clicked() {
-                tab = candidate;
-            }
-        }
+                app.settings_window.llm_repository_tab = tab;
+                // A fixed content height keeps the dialog size stable when
+                // switching tabs; the prompt editor fills the remaining space.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 212.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| match tab {
+                        RepositoryLlmTab::Model => {
+                            repository_llm_model_tab(ui, app, palette, Some(&path));
+                        }
+                        RepositoryLlmTab::Prompt => repository_llm_prompt_tab(ui, app, Some(&path)),
+                    },
+                );
+            },
+        );
+        super::controls::dialog_style::section(
+            ui,
+            palette.header,
+            egui::Margin::symmetric(12, 8),
+            |ui| {
+                super::controls::dialog_style::button_row(ui, |ui| {
+                    accept = ui
+                        .add(super::controls::dialog_style::primary("OK", palette))
+                        .dialog_accept();
+                    if ui
+                        .add(super::controls::dialog_style::button("Cancel"))
+                        .dialog_cancel()
+                    {
+                        close = true;
+                    }
+                });
+            },
+        );
     });
-    app.settings_window.llm_repository_tab = tab;
-    match tab {
-        RepositoryLlmTab::Model => repository_llm_model_tab(ui, app, palette, path.as_deref()),
-        RepositoryLlmTab::Prompt => repository_llm_prompt_tab(ui, app, path.as_deref()),
+    if close {
+        app.settings_window.open = false;
+    } else if accept {
+        match apply_settings(app) {
+            Ok(()) => app.settings_window.open = false,
+            Err(error) => report_settings_error(app, error),
+        }
     }
+    super::show_errors(ui, app);
 }
 
 fn repository_llm_model_tab(
@@ -839,19 +843,11 @@ fn instructions_form(ui: &mut Ui, draft: &mut crate::app::LlmSettings) {
 
 fn instructions_editor(ui: &mut Ui, instructions: &mut String) {
     let editor_height = (ui.available_height() - ui.spacing().item_spacing.y).max(24.0);
-    ScrollArea::vertical()
-        .id_salt("llm.instructions")
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        .auto_shrink([false, false])
-        .min_scrolled_height(0.0)
-        .max_height(editor_height)
-        .show(ui, |ui| {
-            let instructions = ui.add_sized(
-                [ui.available_width(), editor_height],
-                egui::TextEdit::multiline(instructions).desired_rows(1),
-            );
-            super::controls::dialog_style::preserve_multiline_enter(&instructions);
-        });
+    let instructions = ui.add_sized(
+        [ui.available_width(), editor_height],
+        egui::TextEdit::multiline(instructions).desired_rows(1),
+    );
+    super::controls::dialog_style::preserve_multiline_enter(&instructions);
 }
 
 fn form_label(ui: &mut Ui, text: &str) {

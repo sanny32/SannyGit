@@ -340,21 +340,13 @@ mod tests {
         assert!(app.busy());
         assert!(!app.history_pending && !app.history_loading);
         sender
-            .send(WorkerResult::ContentsPreview(Ok(DiffPreview::new(
-                "+other worker\n",
+            .send(WorkerResult::AmendMessage(Ok((
+                "a".repeat(40),
+                "message".into(),
             ))))
             .unwrap();
         app.poll_worker();
         assert!(!app.busy());
-        assert_eq!(
-            app.contents_preview
-                .as_ref()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .added,
-            1
-        );
     }
 
     #[test]

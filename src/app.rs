@@ -65,7 +65,6 @@ enum WorkerResult {
         hash: String,
         result: Result<crate::models::DiffPreview, String>,
     },
-    ContentsPreview(Result<crate::models::DiffPreview, String>),
     CommitMessage {
         result: Result<String, String>,
         config: crate::llm::Config,
@@ -265,8 +264,6 @@ pub struct SannyGitApp {
     pub current_branch: String,
     pub commit_message: String,
     pub commit_contents: git::CommitContents,
-    pub contents_preview_open: bool,
-    pub contents_preview: Option<Result<crate::models::DiffPreview, String>>,
     pub generating_commit_message: bool,
     generation_cancel: Option<Arc<AtomicBool>>,
     pub amend: bool,
@@ -515,8 +512,6 @@ impl SannyGitApp {
             current_branch: String::new(),
             commit_message: String::new(),
             commit_contents: git::CommitContents::default(),
-            contents_preview_open: false,
-            contents_preview: None,
             generating_commit_message: false,
             generation_cancel: None,
             amend: false,
@@ -601,10 +596,6 @@ impl SannyGitApp {
             }
             Err(e) => {
                 self.error = Some(format!("Cannot start background worker: {e}"));
-                if self.contents_preview_open && self.contents_preview.is_none() {
-                    self.contents_preview =
-                        Some(Err("Background worker stopped unexpectedly".into()));
-                }
                 self.status = "Operation failed".into();
                 false
             }
@@ -862,7 +853,6 @@ impl SannyGitApp {
             || self.branch_dialog_open
             || self.rename_branch_dialog.is_some()
             || self.tag_dialog_open
-            || self.contents_preview_open
             || self.commit_details_open
             || self.error.is_some()
             || !self.error_dialogs.pending.is_empty()
@@ -1021,7 +1011,6 @@ impl SannyGitApp {
             let path = self.repositories[index].path.clone();
             self.assign_group(&path, self.manager.preferences.selected_group.clone());
         }
-        self.contents_preview_open = false;
         self.current_branch = snapshot.branch;
         self.changes = snapshot.changes;
         self.selected_change = if same_repository {
@@ -1579,7 +1568,6 @@ impl SannyGitApp {
         if self.amend_blocker().is_some() || enabled == self.amend {
             return;
         }
-        self.contents_preview_open = false;
         if !enabled {
             self.amend = false;
             self.amend_head = None;
@@ -1632,7 +1620,6 @@ impl SannyGitApp {
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
         let message = self.commit_message.clone();
         let contents = self.commit_contents;
-        self.contents_preview_open = false;
         self.state_current = false;
         self.error = None;
         let amend_head = self.amend_head.clone().filter(|_| self.amend);
@@ -1664,20 +1651,6 @@ impl SannyGitApp {
     }
 
     pub fn generate_commit_message_blocker(&self) -> Option<&'static str> {
-        self.commit_contents_preview_blocker().or_else(|| {
-            if self.commit_contents == git::CommitContents::Staged
-                && !self.changes.iter().any(|c| c.staged)
-            {
-                Some("There are no staged changes to describe")
-            } else if self.changes.is_empty() {
-                Some("There are no changes to describe")
-            } else {
-                None
-            }
-        })
-    }
-
-    pub fn commit_contents_preview_blocker(&self) -> Option<&'static str> {
         if self.busy() {
             Some("Wait for the current operation to finish")
         } else if self.repositories.get(self.selected_repository).is_none() {
@@ -1685,35 +1658,16 @@ impl SannyGitApp {
         } else if !self.state_current {
             Some("Refresh the repository before generating a message")
         } else if self.amend && self.amend_head.is_none() {
-            Some("Load the last commit before previewing its contents")
-        } else if !self.amend
-            && self.commit_contents == git::CommitContents::Staged
+            Some("Load the last commit before generating a message")
+        } else if self.commit_contents == git::CommitContents::Staged
             && !self.changes.iter().any(|c| c.staged)
         {
             Some("There are no staged changes to describe")
-        } else if self.changes.is_empty() && !self.amend {
+        } else if self.changes.is_empty() {
             Some("There are no changes to describe")
         } else {
             None
         }
-    }
-
-    pub fn preview_commit_contents(&mut self) {
-        if self.commit_contents_preview_blocker().is_some() {
-            return;
-        }
-        let root = PathBuf::from(&self.repositories[self.selected_repository].path);
-        let contents = self.commit_contents;
-        let head = self.amend_head.clone().filter(|_| self.amend);
-        self.contents_preview_open = true;
-        self.contents_preview = None;
-        self.start_worker(move || {
-            WorkerResult::ContentsPreview(
-                git::commit_patch(&root, contents, head.as_deref())
-                    .and_then(git::limit_diff)
-                    .map(|patch| crate::models::DiffPreview::new(&patch)),
-            )
-        });
     }
 
     pub fn effective_llm_config(&self, path: &str) -> &crate::llm::Config {
@@ -1820,10 +1774,6 @@ impl SannyGitApp {
                 {
                     self.commit_preview_error = self.error.clone();
                 }
-                if self.contents_preview_open && self.contents_preview.is_none() {
-                    self.contents_preview =
-                        Some(Err("Background worker stopped unexpectedly".into()));
-                }
                 self.status = "Operation failed".into();
                 self.finish_discard(false);
                 self.ref_worker_failed();
@@ -1844,7 +1794,6 @@ impl SannyGitApp {
                 self.apply_discard_prepared(root, path, result)
             }
             WorkerResult::Stash { path, result } => self.apply_stash_result(path, *result),
-            WorkerResult::ContentsPreview(result) => self.contents_preview = Some(result),
             WorkerResult::RemoteInfo { operation, result } => {
                 self.apply_remote_info(operation, result)
             }
@@ -2257,7 +2206,9 @@ impl eframe::App for SannyGitApp {
                 || (Vec::new(), Vec::new()),
                 |menu| (menu.take_actions(), menu.take_edit_events()),
             );
-            if self.settings_window.open {
+            // The OS preferences window needs the edit events forwarded; the
+            // in-app repository LLM dialog reads them from the main viewport.
+            if self.settings_window.open && self.settings_window.llm_repository.is_none() {
                 self.pending_native_edit_events.extend(edit_events);
             } else {
                 ui.input_mut(|input| input.events.extend(edit_events));
