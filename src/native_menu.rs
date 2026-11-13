@@ -229,7 +229,8 @@ fn append_items(
                         Some(MenuAction::Open | MenuAction::Clone) => "o",
                         Some(MenuAction::NewWindow) => "n",
                         Some(MenuAction::Refresh) => "\u{f708}",
-                        Some(MenuAction::Close) => "w",
+                        Some(MenuAction::Close) => "\u{f707}",
+                        Some(MenuAction::Exit) => "x",
                         _ => "",
                     },
                     |item| item.key,
@@ -251,6 +252,12 @@ fn append_items(
             item.setSubmenu(Some(&child));
         } else if let Some(action) = definition.action {
             item.setTag(items.len() as isize);
+            if action == MenuAction::Close {
+                item.setKeyEquivalentModifierMask(objc2_app_kit::NSEventModifierFlags::Control);
+            }
+            if action == MenuAction::Exit {
+                item.setKeyEquivalentModifierMask(objc2_app_kit::NSEventModifierFlags::Option);
+            }
             if action == MenuAction::Refresh {
                 item.setKeyEquivalentModifierMask(objc2_app_kit::NSEventModifierFlags::empty());
             }
@@ -280,6 +287,7 @@ fn append_items(
                     | MenuAction::LightTheme
                     | MenuAction::DarkTheme
                     | MenuAction::Close
+                    | MenuAction::Exit
                     | MenuAction::About
             ));
             items.push((action, item.clone()));

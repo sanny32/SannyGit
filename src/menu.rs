@@ -36,6 +36,7 @@ pub enum MenuAction {
     LightTheme,
     DarkTheme,
     Close,
+    Exit,
     About,
 }
 
@@ -50,7 +51,8 @@ pub const SHORTCUTS: &[(MenuAction, eframe::egui::KeyboardShortcut)] = {
         (Open, Shortcut::new(Modifiers::CTRL, Key::O)),
         (Clone, Shortcut::new(CTRL_SHIFT, Key::O)),
         (CloseRepository, Shortcut::new(Modifiers::CTRL, Key::W)),
-        (Close, Shortcut::new(CTRL_SHIFT, Key::W)),
+        (Close, Shortcut::new(Modifiers::CTRL, Key::F4)),
+        (Exit, Shortcut::new(Modifiers::ALT, Key::X)),
         (Refresh, Shortcut::new(Modifiers::NONE, Key::F5)),
         (ReloadHistory, Shortcut::new(CTRL_SHIFT, Key::F5)),
         (Preferences, Shortcut::new(Modifiers::CTRL, Key::Comma)),
@@ -222,6 +224,7 @@ pub const MENUS: &[Menu] = &[
             ),
             separator(),
             action("Close", MenuAction::Close),
+            action("Exit", MenuAction::Exit),
         ],
     },
     Menu {

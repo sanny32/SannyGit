@@ -405,6 +405,32 @@ pub fn worktrees(root: &Path) -> Result<Vec<Worktree>, String> {
     parse_worktrees(&git::run(root, &["worktree", "list", "--porcelain", "-z"])?)
 }
 
+pub fn available_worktree_branches(root: &Path) -> Result<Vec<String>, String> {
+    let trees = worktrees(root)?;
+    Ok(crate::branches::load(root)?
+        .refs
+        .into_iter()
+        .filter(|branch| {
+            branch.kind == crate::models::RefKind::Local
+                && !trees
+                    .iter()
+                    .any(|tree| tree.branch.as_deref() == Some(&branch.name))
+        })
+        .map(|branch| branch.name)
+        .collect())
+}
+
+pub fn worktree_availability(root: &Path) -> Result<(bool, bool), String> {
+    let removable = worktrees(root)?.iter().any(|tree| {
+        !tree.main
+            && !tree.bare
+            && !tree.locked
+            && !tree.prunable
+            && !same_path(&tree.path, &root.to_string_lossy())
+    });
+    Ok((removable, !prune_preview(root)?.trim().is_empty()))
+}
+
 fn parse_worktrees(bytes: &[u8]) -> Result<Vec<Worktree>, String> {
     if !bytes.is_empty() && !bytes.ends_with(&[0, 0]) {
         return Err("Truncated worktree output".into());
@@ -973,6 +999,8 @@ mod tests {
     #[test]
     fn worktree_lifecycle_preserves_ignored_dirty_active_and_locked_directories() {
         let repo = TempRepo::new();
+        assert_eq!(worktree_availability(&repo.0).unwrap(), (false, false));
+        assert!(available_worktree_branches(&repo.0).unwrap().is_empty());
         repo.write("file", "fixture\n");
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "fixture"]);
@@ -980,10 +1008,20 @@ mod tests {
         let trees =
             add_worktree(&repo.0, &linked, "feature", true, &AtomicBool::new(false)).unwrap();
         assert_eq!(trees.len(), 2);
+        assert!(available_worktree_branches(&repo.0).unwrap().is_empty());
+        repo.git(&["branch", "available"]);
+        repo.git(&["tag", "not-a-branch"]);
+        assert_eq!(
+            available_worktree_branches(&linked).unwrap(),
+            vec!["available"]
+        );
         assert!(trees[0].main);
+        assert_eq!(worktree_availability(&repo.0).unwrap(), (true, false));
+        assert_eq!(worktree_availability(&linked).unwrap(), (false, false));
         assert!(remove_worktree(&repo.0, &repo.0).is_err());
         assert!(remove_worktree(&linked, &linked).is_err());
         repo.git(&["worktree", "lock", linked.to_str().unwrap()]);
+        assert_eq!(worktree_availability(&repo.0).unwrap(), (false, false));
         assert!(remove_worktree(&repo.0, &linked).is_err());
         repo.git(&["worktree", "unlock", linked.to_str().unwrap()]);
         fs::write(linked.join("file"), "dirty").unwrap();
@@ -999,6 +1037,11 @@ mod tests {
         fs::remove_file(linked.join("ignored")).unwrap();
         assert_eq!(remove_worktree(&repo.0, &linked).unwrap().len(), 1);
         assert!(!linked.exists());
+        assert_eq!(worktree_availability(&repo.0).unwrap(), (false, false));
+        assert_eq!(
+            available_worktree_branches(&repo.0).unwrap(),
+            vec!["available", "feature"]
+        );
         assert!(crate::branches::load(&repo.0)
             .unwrap()
             .refs
@@ -1017,6 +1060,7 @@ mod tests {
         repo.git(&["worktree", "lock", linked.to_str().unwrap()]);
         fs::remove_dir_all(&linked).unwrap();
         assert!(prune_preview(&repo.0).unwrap().is_empty());
+        assert_eq!(worktree_availability(&repo.0).unwrap(), (false, false));
         assert_eq!(prune(&repo.0).unwrap().len(), 2);
         repo.git(&["worktree", "unlock", linked.to_str().unwrap()]);
         fs::File::options()
@@ -1026,8 +1070,10 @@ mod tests {
             .set_modified(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000))
             .unwrap();
         assert!(!prune_preview(&repo.0).unwrap().is_empty());
+        assert_eq!(worktree_availability(&repo.0).unwrap(), (false, true));
         assert_eq!(worktrees(&repo.0).unwrap().len(), 2);
         assert_eq!(prune(&repo.0).unwrap().len(), 1);
+        assert_eq!(worktree_availability(&repo.0).unwrap(), (false, false));
         assert!(repo.0.join("file").exists());
     }
 

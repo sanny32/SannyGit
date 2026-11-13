@@ -688,11 +688,24 @@ impl SannyGitApp {
             | MenuAction::EditUserConfig => !self.busy(),
             MenuAction::CloseRepository
             | MenuAction::AddWorktree
-            | MenuAction::RemoveWorktree
-            | MenuAction::PruneWorktrees
             | MenuAction::RepositorySettings
             | MenuAction::EditRepositoryConfig => {
                 !self.busy() && self.repositories.get(self.selected_repository).is_some()
+            }
+            MenuAction::RemoveWorktree | MenuAction::PruneWorktrees => {
+                !self.busy()
+                    && self.manager.worktree_availability.as_ref().is_some_and(
+                        |(path, remove, prune)| {
+                            self.repositories
+                                .get(self.selected_repository)
+                                .is_some_and(|r| r.path == *path)
+                                && if action == MenuAction::RemoveWorktree {
+                                    *remove
+                                } else {
+                                    *prune
+                                }
+                        },
+                    )
             }
             MenuAction::Open
             | MenuAction::Preferences
@@ -702,6 +715,7 @@ impl SannyGitApp {
             | MenuAction::MinimizeWindow
             | MenuAction::FullScreen
             | MenuAction::Close
+            | MenuAction::Exit
             | MenuAction::About => true,
             MenuAction::Refresh | MenuAction::ReloadHistory => {
                 !self.busy() && self.repositories.get(self.selected_repository).is_some()
@@ -754,7 +768,10 @@ impl SannyGitApp {
             }
             MenuAction::SearchRepositories => self.manager.dialog = Some(RepositoryDialog::Search),
             MenuAction::CloseRepository => self.close_repository(false),
-            MenuAction::AddWorktree | MenuAction::RemoveWorktree => {
+            MenuAction::AddWorktree => {
+                self.run_repository_job(RepositoryJob::PrepareAddWorktree);
+            }
+            MenuAction::RemoveWorktree => {
                 self.manager.dialog = Some(RepositoryDialog::Worktrees);
                 self.manager.confirm_remove = false;
                 self.run_repository_job(RepositoryJob::ListWorktrees);
@@ -801,7 +818,9 @@ impl SannyGitApp {
                 self.preferences.follow_system_theme = false;
                 self.theme = ThemeChoice::Dark;
             }
-            MenuAction::Close => context.send_viewport_cmd(eframe::egui::ViewportCommand::Close),
+            MenuAction::Close | MenuAction::Exit => {
+                context.send_viewport_cmd(eframe::egui::ViewportCommand::Close)
+            }
             MenuAction::About => self.about_dialog = true,
         }
         context.request_repaint();
@@ -938,6 +957,7 @@ impl SannyGitApp {
     }
 
     fn apply_snapshot(&mut self, snapshot: git::Snapshot) {
+        self.invalidate_worktree_availability();
         self.invalidate_view_reads();
         self.refs_worker = None;
         if self.current_branch != snapshot.branch {
@@ -2157,6 +2177,7 @@ impl eframe::App for SannyGitApp {
         self.finish_startup();
         self.poll_working_tree();
         self.update_repository_hosting(ui.ctx());
+        self.update_worktree_availability(ui.ctx());
         let root = self
             .repositories
             .get(self.selected_repository)

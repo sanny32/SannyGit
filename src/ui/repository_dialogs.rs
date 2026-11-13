@@ -2,6 +2,118 @@ use super::controls::dialog_style::DialogResponse;
 use crate::app::{RepositoryDialog as Dialog, RepositoryJob as Job, SannyGitApp};
 use eframe::egui::{self, Button, ComboBox, RichText, ScrollArea, TextEdit, Ui, Window};
 
+fn add_worktree_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
+    use super::controls::dialog_style as style;
+
+    let palette = app.palette();
+    if app.manager.worktree_branches.is_empty() {
+        let mut close = false;
+        style::modal(ctx, palette, "repository.add_worktree.unavailable").show(ctx, |ui| {
+            ui.set_width(370.0);
+            style::setup(ui);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            style::header_with_icon(
+                ui,
+                palette,
+                "No (more) local branches available.",
+                "You only can create worktrees for existing local branches that don't yet have an associated worktree.",
+                super::controls::icons::Icon::Warning,
+            );
+            style::section(ui, palette.header, egui::Margin::symmetric(12, 10), |ui| {
+                style::button_row(ui, |ui| {
+                    close = ui.add(style::primary("OK", palette)).dialog_close();
+                });
+            });
+        });
+        if close {
+            app.manager.dialog = None;
+        }
+        return;
+    }
+    let busy = app.busy();
+    let mut accept = false;
+    let mut cancel = false;
+    style::modal(ctx, palette, "repository.add_worktree").show(ctx, |ui| {
+        ui.set_width(480.0);
+        style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        style::header(
+            ui,
+            palette,
+            "Create another worktree from this repository",
+            "Select the branch and directory to use for the new worktree.",
+        );
+        style::section(ui, palette.header, egui::Margin::symmetric(12, 10), |ui| {
+            ui.add_enabled_ui(!busy, |ui| {
+                egui::Grid::new("worktree.fields")
+                    .num_columns(2)
+                    .spacing([8.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Branch:");
+                        ComboBox::from_id_salt("worktree.add.branch")
+                            .width(ui.available_width())
+                            .truncate()
+                            .selected_text(if app.manager.worktree_branch.is_empty() {
+                                "Select a local branch"
+                            } else {
+                                &app.manager.worktree_branch
+                            })
+                            .show_ui(ui, |ui| {
+                                for branch in &app.manager.worktree_branches {
+                                    ui.selectable_value(
+                                        &mut app.manager.worktree_branch,
+                                        branch.clone(),
+                                        branch,
+                                    );
+                                }
+                            });
+                        ui.end_row();
+                        ui.label("Directory:");
+                        ui.horizontal(|ui| {
+                            let width = (ui.available_width() - 36.0).max(80.0);
+                            ui.add(
+                                TextEdit::singleline(&mut app.manager.destination)
+                                    .desired_width(width),
+                            );
+                            super::clone_dialog::choose_folder(ui, &mut app.manager.destination);
+                        });
+                        ui.end_row();
+                    });
+            });
+        });
+        style::section(ui, palette.header, egui::Margin::symmetric(12, 10), |ui| {
+            style::button_row(ui, |ui| {
+                cancel = ui
+                    .add_enabled(!busy, style::button("Cancel"))
+                    .dialog_cancel();
+                accept = ui
+                    .add_enabled(
+                        !busy
+                            && !app.manager.destination.trim().is_empty()
+                            && app
+                                .manager
+                                .worktree_branches
+                                .contains(&app.manager.worktree_branch),
+                        style::primary("OK", palette),
+                    )
+                    .dialog_accept();
+                if busy {
+                    ui.spinner();
+                }
+            });
+        });
+    });
+    if cancel {
+        app.manager.dialog = None;
+    } else if accept {
+        app.run_repository_job(Job::AddWorktree {
+            destination: app.manager.destination.clone(),
+            branch: app.manager.worktree_branch.clone(),
+            new_branch: false,
+        });
+    }
+}
+
 fn remove_repository_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
     let Some(path) = app.manager.repository_to_remove.clone() else {
         app.manager.dialog = None;
@@ -77,6 +189,10 @@ pub(super) fn group_picker(ui: &mut Ui, app: &mut SannyGitApp) {
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
+    if app.manager.dialog == Some(Dialog::AddWorktree) {
+        add_worktree_dialog(ui.ctx(), app);
+        return;
+    }
     if app.network_dialog.is_some() {
         super::remote_dialog::show(ui.ctx(), app);
         return;
@@ -124,6 +240,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         Dialog::Clone => "Clone Repository",
         Dialog::Search => "Search for Repositories",
         Dialog::Worktrees => "Worktrees",
+        Dialog::AddWorktree => "Add Worktree",
         Dialog::Prune => "Prune Obsolete Worktrees",
         Dialog::Settings => "Repository Settings",
         Dialog::CloseRepository => "Close Repository",
@@ -198,7 +315,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         if ui.add_enabled(!preview.is_empty(), Button::new("Prune Obsolete Metadata")).clicked() { job = Some(Job::Prune); }
                     }
                 }
-                Dialog::Settings | Dialog::RemoveRepository => {}
+                Dialog::Settings | Dialog::RemoveRepository | Dialog::AddWorktree => {}
                 Dialog::CloseRepository => {
                     ui.label("Close this repository and discard its commit message drafts?");
                     ui.horizontal(|ui| {
@@ -677,6 +794,59 @@ mod tests {
 mod search_tests {
     use super::*;
     use crate::theme::{install_fonts, ThemeChoice};
+
+    #[test]
+    fn add_worktree_stays_compact_with_long_fields_and_errors_in_both_themes() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                let ctx = egui::Context::default();
+                install_fonts(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.manager.dialog = Some(Dialog::AddWorktree);
+                app.manager.worktree_branches = vec!["main".into()];
+                let mut expected_size = None;
+                for long in [false, true, false] {
+                    app.manager.worktree_branch = if long {
+                        "feature/".repeat(50)
+                    } else {
+                        "main".into()
+                    };
+                    app.manager.destination = if long {
+                        "C:/work/".repeat(100)
+                    } else {
+                        "C:/work/project-main".into()
+                    };
+                    app.error = long.then(|| "Creation failed ".repeat(100));
+                    for _ in 0..4 {
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    size,
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| add_worktree_dialog(ui.ctx(), &mut app),
+                        );
+                        output.textures_delta.clear();
+                    }
+                    let rect = ctx
+                        .memory(|memory| {
+                            memory.area_rect(egui::Id::unique("repository.add_worktree"))
+                        })
+                        .unwrap();
+                    assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect));
+                    assert!(rect.height() < 260.0, "{rect:?}");
+                    if let Some(expected) = expected_size {
+                        assert_eq!(rect.size(), expected);
+                    } else {
+                        expected_size = Some(rect.size());
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn search_dialog_fits_both_themes_and_keeps_results_geometry_stable() {

@@ -19,12 +19,18 @@ struct HostingUpdate {
     provider: Result<Option<crate::clone_source::Provider>, String>,
 }
 
+struct WorktreeAvailability {
+    path: String,
+    result: Result<(bool, bool), String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dialog {
     Group,
     Clone,
     Search,
     Worktrees,
+    AddWorktree,
     Prune,
     Settings,
     CloseRepository,
@@ -32,6 +38,9 @@ pub enum Dialog {
 }
 
 pub struct RepositoryManager {
+    availability_receiver: Option<Receiver<WorktreeAvailability>>,
+    availability_checked: Option<Instant>,
+    pub worktree_availability: Option<(String, bool, bool)>,
     pub hosting: HashMap<String, crate::clone_source::Provider>,
     hosting_checked: HashMap<String, Instant>,
     hosting_receiver: Option<Receiver<HostingUpdate>>,
@@ -55,6 +64,7 @@ pub struct RepositoryManager {
     pub worktrees: Vec<Worktree>,
     pub selected_worktree: Option<String>,
     pub worktree_branch: String,
+    pub worktree_branches: Vec<String>,
     pub worktree_new_branch: bool,
     pub confirm_remove: bool,
     pub prune_preview: Option<String>,
@@ -64,6 +74,9 @@ pub struct RepositoryManager {
 impl Default for RepositoryManager {
     fn default() -> Self {
         Self {
+            availability_receiver: None,
+            availability_checked: None,
+            worktree_availability: None,
             hosting: HashMap::new(),
             hosting_checked: HashMap::new(),
             hosting_receiver: None,
@@ -87,6 +100,7 @@ impl Default for RepositoryManager {
             worktrees: Vec::new(),
             selected_worktree: None,
             worktree_branch: String::new(),
+            worktree_branches: Vec::new(),
             worktree_new_branch: false,
             confirm_remove: false,
             prune_preview: None,
@@ -112,6 +126,7 @@ pub enum Job {
         depth: usize,
     },
     ListWorktrees,
+    PrepareAddWorktree,
     AddWorktree {
         destination: String,
         branch: String,
@@ -127,6 +142,7 @@ pub enum Job {
     },
 }
 pub enum ResultMessage {
+    WorktreeBranches(Result<Vec<String>, String>),
     CloneBranches {
         source: String,
         result: Result<Vec<String>, String>,
@@ -147,6 +163,70 @@ pub enum ResultMessage {
 }
 
 impl SannyGitApp {
+    pub(super) fn invalidate_worktree_availability(&mut self) {
+        self.manager.availability_receiver = None;
+        self.manager.availability_checked = None;
+    }
+
+    pub(super) fn update_worktree_availability(&mut self, context: &eframe::egui::Context) {
+        if let Some(receiver) = &self.manager.availability_receiver {
+            match receiver.try_recv() {
+                Ok(update) => {
+                    self.manager.availability_receiver = None;
+                    if self
+                        .repositories
+                        .get(self.selected_repository)
+                        .is_some_and(|r| r.path == update.path)
+                    {
+                        match update.result {
+                            Ok((remove, prune)) => {
+                                self.manager.worktree_availability =
+                                    Some((update.path, remove, prune))
+                            }
+                            Err(error) => {
+                                self.manager.worktree_availability = None;
+                                self.error = Some(error);
+                            }
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.manager.availability_receiver = None;
+                    self.manager.worktree_availability = None;
+                    self.error = Some("Worktree availability worker disconnected".into());
+                }
+            }
+        }
+        if self.busy()
+            || self
+                .manager
+                .availability_checked
+                .is_some_and(|time| time.elapsed() < Duration::from_secs(30))
+        {
+            return;
+        }
+        let Some(repository) = self.repositories.get(self.selected_repository) else {
+            return;
+        };
+        let path = repository.path.clone();
+        let git_executable = self.preferences.git_executable.clone();
+        let context = context.clone();
+        let (sender, receiver) = mpsc::channel();
+        self.manager.availability_checked = Some(Instant::now());
+        match std::thread::Builder::new()
+            .name("sannygit-worktree-availability".into())
+            .spawn(move || {
+                git::set_executable(git_executable);
+                let result = repository::worktree_availability(std::path::Path::new(&path));
+                let _ = sender.send(WorktreeAvailability { path, result });
+                context.request_repaint();
+            }) {
+            Ok(_) => self.manager.availability_receiver = Some(receiver),
+            Err(error) => self.error = Some(format!("Cannot inspect worktrees: {error}")),
+        }
+    }
+
     pub(super) fn invalidate_repository_hosting(&mut self) {
         self.manager.hosting_receiver = None;
         if let Some(repository) = self.repositories.get(self.selected_repository) {
@@ -220,6 +300,7 @@ impl SannyGitApp {
         let needs_root = matches!(
             job,
             Job::ListWorktrees
+                | Job::PrepareAddWorktree
                 | Job::AddWorktree { .. }
                 | Job::RemoveWorktree(_)
                 | Job::PreviewPrune
@@ -239,7 +320,7 @@ impl SannyGitApp {
             Job::InspectClone(_) => "Inspecting repository…",
             Job::Clone { .. } => "Cloning repository…",
             Job::Search { .. } => "Searching repositories…",
-            Job::ListWorktrees => "Loading worktrees…",
+            Job::ListWorktrees | Job::PrepareAddWorktree => "Loading worktrees…",
             Job::AddWorktree { .. } => "Adding worktree…",
             Job::RemoveWorktree(_) => "Removing worktree…",
             Job::PreviewPrune => "Inspecting obsolete worktrees…",
@@ -285,6 +366,9 @@ impl SannyGitApp {
                 other => {
                     let root = root.unwrap_or_default();
                     match other {
+                        Job::PrepareAddWorktree => ResultMessage::WorktreeBranches(
+                            repository::available_worktree_branches(&root),
+                        ),
                         Job::ListWorktrees => ResultMessage::Worktrees {
                             result: repository::worktrees(&root),
                             snapshot: None,
@@ -355,6 +439,22 @@ impl SannyGitApp {
         self.manager.cancel = None;
         self.status = "Ready".into();
         let outcome = match message {
+            ResultMessage::WorktreeBranches(result) => result.map(|branches| {
+                self.manager.worktree_branch = branches.first().cloned().unwrap_or_default();
+                self.manager.destination = self
+                    .repositories
+                    .get(self.selected_repository)
+                    .map(|repository| {
+                        format!(
+                            "{}-{}",
+                            repository.path,
+                            self.manager.worktree_branch.replace('/', "-")
+                        )
+                    })
+                    .unwrap_or_default();
+                self.manager.worktree_branches = branches;
+                self.manager.dialog = Some(Dialog::AddWorktree);
+            }),
             ResultMessage::CloneBranches { source, result } => result.map(|branches| {
                 if self.manager.dialog == Some(Dialog::Clone) && self.manager.clone_source == source
                 {
@@ -395,6 +495,7 @@ impl SannyGitApp {
             }),
             ResultMessage::Worktrees { result, snapshot } => {
                 if let Some(snapshot) = snapshot {
+                    self.manager.worktree_availability = None;
                     match snapshot {
                         Ok(snapshot) => self.apply_snapshot(snapshot),
                         Err(error) => {
@@ -407,7 +508,10 @@ impl SannyGitApp {
                     self.manager.worktrees = trees;
                     self.manager.confirm_remove = false;
                     self.manager.prune_preview = None;
-                    if self.manager.dialog == Some(Dialog::Prune) {
+                    if matches!(
+                        self.manager.dialog,
+                        Some(Dialog::Prune | Dialog::AddWorktree)
+                    ) {
                         self.manager.dialog = None;
                     }
                 })
@@ -608,6 +712,31 @@ mod tests {
     use super::*;
     use crate::theme::ThemeChoice;
     use std::{collections::HashMap, path::Path};
+
+    #[test]
+    fn worktree_menu_actions_require_current_repository_availability() {
+        use crate::menu::MenuAction;
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories = crate::mock_data::repositories();
+        app.selected_repository = 0;
+        let path = app.repositories[0].path.clone();
+        for (cached, remove, prune) in [
+            (None, false, false),
+            (Some((path.clone(), false, false)), false, false),
+            (Some((path.clone(), true, false)), true, false),
+            (Some((path.clone(), false, true)), false, true),
+            (Some(("other repository".into(), true, true)), false, false),
+        ] {
+            app.manager.worktree_availability = cached;
+            assert_eq!(app.menu_action_enabled(MenuAction::RemoveWorktree), remove);
+            assert_eq!(app.menu_action_enabled(MenuAction::PruneWorktrees), prune);
+        }
+        app.manager.worktree_availability = Some((path, true, true));
+        let (_sender, receiver) = mpsc::channel();
+        app.worker = Some(receiver);
+        assert!(!app.menu_action_enabled(MenuAction::RemoveWorktree));
+        assert!(!app.menu_action_enabled(MenuAction::PruneWorktrees));
+    }
 
     #[test]
     fn hosting_updates_inactive_repositories_and_retains_icons_on_errors() {

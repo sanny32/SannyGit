@@ -154,10 +154,16 @@ pub fn header_with_icon(
             ui.spacing_mut().item_spacing = egui::vec2(16.0, 6.0);
             let origin = ui.next_widget_position();
             let content_width = ui.available_width();
+            let warning = icon == Icon::Warning;
+            let text_origin = if warning {
+                origin + egui::vec2(64.0, 0.0)
+            } else {
+                origin
+            };
             let mut text = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(egui::Rect::from_min_size(
-                        origin,
+                        text_origin,
                         egui::vec2(content_width - 64.0, 0.0),
                     ))
                     .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -168,10 +174,22 @@ pub fn header_with_icon(
             let (content_rect, _) =
                 ui.allocate_exact_size(egui::vec2(content_width, height), egui::Sense::hover());
             let icon_rect = egui::Rect::from_center_size(
-                egui::pos2(content_rect.right() - 24.0, content_rect.center().y),
+                egui::pos2(
+                    if warning {
+                        content_rect.left() + 24.0
+                    } else {
+                        content_rect.right() - 24.0
+                    },
+                    content_rect.center().y,
+                ),
                 egui::Vec2::splat(48.0),
             );
-            icons::image(icon, palette.accent, 48.0).paint_at(ui, icon_rect);
+            let color = if warning {
+                palette.warning
+            } else {
+                palette.accent
+            };
+            icons::image(icon, color, 48.0).paint_at(ui, icon_rect);
         })
         .response
         .rect

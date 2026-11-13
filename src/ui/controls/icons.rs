@@ -30,6 +30,7 @@ pub enum Icon {
     Check,
     Close,
     Stop,
+    Warning,
     Star,
     Sparkles,
 }
@@ -106,6 +107,7 @@ impl Icon {
             Self::Check => svg!("check"),
             Self::Close => svg!("close"),
             Self::Stop => svg!("stop"),
+            Self::Warning => svg!("warning"),
             Self::Star => svg!("star"),
             Self::Sparkles => svg!("sparkles"),
         }
