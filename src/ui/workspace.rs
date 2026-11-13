@@ -51,7 +51,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SannyGitApp) -> [Rect; 4] {
         }))
         .show(ui, |ui| {
             ui.take_available_space();
-            super::header(ui, 34.0, palette, |ui| {
+            super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
                 let name = app
                     .repositories
                     .get(app.selected_repository)

@@ -25,6 +25,7 @@ use eframe::egui::{
 };
 
 const PANEL_GAP: i8 = 2;
+const WORKSPACE_HEADER_HEIGHT: f32 = 34.0;
 
 fn sync_badge(text: &str, palette: Palette, size: f32) -> eframe::egui::text::LayoutJob {
     use eframe::egui::{text::LayoutJob, FontId, TextFormat};
@@ -80,7 +81,10 @@ fn header<R>(
         palette.header,
     );
     ui.painter().line_segment(
-        [rect.left_bottom(), rect.right_bottom()],
+        [
+            rect.left_bottom() - Vec2::new(0.0, 0.5),
+            rect.right_bottom() - Vec2::new(0.0, 0.5),
+        ],
         (1.0, palette.border),
     );
     let mut child = ui.new_child(

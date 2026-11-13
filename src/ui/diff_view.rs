@@ -78,7 +78,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
 
 fn file_header(ui: &mut Ui, path: &str, palette: crate::theme::Palette) -> bool {
     let mut close = false;
-    super::header(ui, 30.0, palette, |ui| {
+    super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
         ui.spacing_mut().interact_size.y = 20.0;
         ui.label("Changes");
         let font = eframe::egui::TextStyle::Body.resolve(ui.style());
@@ -290,7 +290,9 @@ mod tests {
                     .find_map(|shape| match &shape.shape {
                         eframe::egui::Shape::Rect(rect)
                             if rect.fill == palette.header
-                                && (rect.rect.height() - 30.0).abs() < 0.1 =>
+                                && (rect.rect.height() - super::super::WORKSPACE_HEADER_HEIGHT)
+                                    .abs()
+                                    < 0.1 =>
                         {
                             Some(rect.rect)
                         }
