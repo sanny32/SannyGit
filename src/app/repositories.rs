@@ -682,6 +682,8 @@ mod tests {
         repo.write("file", "clone fixture\n");
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "fixture"]);
+        // Keep the source compatible with Git for Windows clone protection.
+        repo.git(&["config", "--local", "--unset", "core.hooksPath"]);
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.manager.dialog = Some(Dialog::Clone);
         *app.manager.clone_form.input() = repo.0.to_string_lossy().into_owned();

@@ -849,6 +849,9 @@ mod tests {
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "fixture"]);
         let destination = repo.0.join("clone é");
+        // Git for Windows rejects local clone sources with core.hooksPath set.
+        // Fixture writes still disable hooks through command-scoped settings.
+        repo.git(&["config", "--local", "--unset", "core.hooksPath"]);
         let cancel = AtomicBool::new(false);
         let snapshot = clone_repository(repo.0.to_str().unwrap(), &destination, &cancel).unwrap();
         assert!(snapshot.changes.is_empty());
@@ -906,6 +909,8 @@ mod tests {
         repo.git(&["commit", "-m", "main"]);
         repo.git(&["branch", "feature"]);
         repo.git(&["tag", "v1"]);
+        // Keep the source compatible with Git for Windows clone protection.
+        repo.git(&["config", "--local", "--unset", "core.hooksPath"]);
         let cancel = AtomicBool::new(false);
         let branches = clone_branches(repo.0.to_str().unwrap(), &cancel).unwrap();
         assert_eq!(branches.first().map(String::as_str), Some("main"));
