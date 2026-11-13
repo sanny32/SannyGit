@@ -80,6 +80,16 @@ fn header<R>(
         },
         palette.header,
     );
+    header_separator(ui, rect, palette);
+    let mut child = ui.new_child(
+        UiBuilder::new()
+            .max_rect(rect.shrink2(Vec2::new(8.0, 0.0)))
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    InnerResponse::new(contents(&mut child), response)
+}
+
+fn header_separator(ui: &Ui, rect: eframe::egui::Rect, palette: Palette) {
     ui.painter().line_segment(
         [
             rect.left_bottom() - Vec2::new(0.0, 0.5),
@@ -87,12 +97,6 @@ fn header<R>(
         ],
         (1.0, palette.border),
     );
-    let mut child = ui.new_child(
-        UiBuilder::new()
-            .max_rect(rect.shrink2(Vec2::new(8.0, 0.0)))
-            .layout(Layout::left_to_right(Align::Center)),
-    );
-    InnerResponse::new(contents(&mut child), response)
 }
 
 fn panel_frame(palette: Palette) -> Frame {
@@ -116,17 +120,27 @@ fn sidebar_contents(ui: &mut Ui, app: &mut SannyGitApp) -> eframe::egui::Rect {
                 },
         )
         .size_range(130.0..=(ui.available_height() - 120.0).max(130.0))
-        .frame(panel_frame(palette).inner_margin(8).outer_margin(Margin {
-            top: PANEL_GAP,
-            ..Margin::ZERO
-        }))
+        .frame(
+            panel_frame(palette)
+                .inner_margin(Margin {
+                    top: 0,
+                    ..Margin::same(8)
+                })
+                .outer_margin(Margin {
+                    top: PANEL_GAP,
+                    ..Margin::ZERO
+                }),
+        )
         .show(ui, |ui| {
             // Persist the allocated height, not the smaller content height.
             ui.take_available_space();
             branches::show(ui, app);
         });
     CentralPanel::default()
-        .frame(panel_frame(palette).inner_margin(8))
+        .frame(panel_frame(palette).inner_margin(Margin {
+            top: 0,
+            ..Margin::same(8)
+        }))
         .show(ui, |ui| repositories::show(ui, app));
     branches.response.rect
 }

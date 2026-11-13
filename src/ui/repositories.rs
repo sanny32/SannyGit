@@ -47,20 +47,28 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             });
         });
     }
-    ui.horizontal(|ui| {
-        ui.set_min_height(26.0);
-        ui.heading("Repositories");
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            icons::unavailable(
-                ui,
-                Icon::Chevron,
-                "Repository management is not implemented yet",
-            );
-            if icons::button(ui, Icon::Plus, "Open repository").clicked() {
-                app.open_dialog = true;
-            }
-        });
-    });
+    let header = ui.allocate_ui_with_layout(
+        eframe::egui::vec2(ui.available_width(), super::WORKSPACE_HEADER_HEIGHT),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.heading("Repositories");
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                icons::unavailable(
+                    ui,
+                    Icon::Chevron,
+                    "Repository management is not implemented yet",
+                );
+                if icons::button(ui, Icon::Plus, "Open repository").clicked() {
+                    app.open_dialog = true;
+                }
+            });
+        },
+    );
+    super::header_separator(
+        ui,
+        header.response.rect.expand2(eframe::egui::vec2(8.0, 0.0)),
+        palette,
+    );
     let badge = app.tracking.badge();
     let tracking_help = app.tracking.description();
     let branch_status = Some((badge.as_str(), tracking_help.as_str()));

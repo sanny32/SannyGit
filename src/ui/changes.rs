@@ -40,11 +40,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let operations_enabled =
         !app.busy() && app.state_current && app.repositories.get(app.selected_repository).is_some();
     let mut staging_request = None;
+    let mut context_request = None;
     let visible = app
         .changes
         .iter()
         .enumerate()
         .filter(|(_, change)| filter_matches(app.change_filter, change.kind))
+        .map(|(index, _)| index)
         .collect::<Vec<_>>();
     let row_height = 23.0;
     let table_clip = ui.clip_rect().intersect(ui.available_rect_before_wrap());
@@ -82,7 +84,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .body(|mut body| {
             body.ui_mut().style_mut().interaction.selectable_labels = false;
             body.rows(row_height, visible.len(), |mut row| {
-                let (index, change) = visible[row.index()];
+                let index = visible[row.index()];
+                let change = &app.changes[index];
                 row.set_selected(app.selected_change == index);
                 row.col(|ui| {
                     ui.add_space(6.0);
@@ -137,9 +140,14 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
                 let response = row.response();
                 ui_line(&response, table_clip, palette);
-                if response.clicked() {
+                if response.clicked() || response.secondary_clicked() {
                     app.selected_change = index;
                 }
+                response.context_menu(|ui| {
+                    if let Some(action) = file_context_menu(ui, app, index) {
+                        context_request = Some((index, action));
+                    }
+                });
                 if response.double_clicked()
                     && app.preferences.file_double_click == crate::preferences::FileDoubleClick::ToggleStage
                     && operations_enabled && change.kind != ChangeKind::Conflicted
@@ -152,6 +160,110 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if let Some((index, staged)) = staging_request {
         app.set_staged(index, staged);
     }
+    if let Some((index, action)) = context_request {
+        app.selected_change = index;
+        match action {
+            FileAction::ShowChanges => {}
+            FileAction::Commit => ui.ctx().memory_mut(|memory| {
+                memory.request_focus(eframe::egui::Id::unique("commit.message"));
+            }),
+            FileAction::Stage => app.set_staged(index, true),
+            FileAction::Unstage => app.set_staged(index, false),
+            FileAction::Discard => app.open_discard(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FileAction {
+    ShowChanges,
+    Commit,
+    Stage,
+    Unstage,
+    Discard,
+}
+
+fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<FileAction> {
+    let change = app.changes.get(index)?;
+    let repository = app.repositories.get(app.selected_repository);
+    ui.set_min_width(210.0);
+    let mut requested = None;
+    let mut item = |ui: &mut Ui, label, action, enabled, help: &str| {
+        if ui
+            .add_enabled(enabled, eframe::egui::Button::new(label))
+            .disabled_help_text(help)
+            .clicked()
+        {
+            requested = Some(action);
+            ui.close();
+        }
+    };
+    item(ui, "Show Changes", FileAction::ShowChanges, true, "");
+    ui.separator();
+    item(
+        ui,
+        "Commit…",
+        FileAction::Commit,
+        !app.busy() && repository.is_some(),
+        "Open a repository and wait for the current operation",
+    );
+    ui.separator();
+    for (label, action, staged) in [
+        ("Stage", FileAction::Stage, true),
+        ("Unstage", FileAction::Unstage, false),
+    ] {
+        item(
+            ui,
+            label,
+            action,
+            app.staging_allowed(index, staged),
+            "Select a suitable file after refreshing; conflicts must be resolved outside SannyGit",
+        );
+    }
+    ui.separator();
+    let discard_blocker = app.discard_blocker();
+    item(
+        ui,
+        "Discard…",
+        FileAction::Discard,
+        discard_blocker.is_none(),
+        discard_blocker.unwrap_or(""),
+    );
+    ui.separator();
+    for (label, text) in [
+        (
+            "Copy Name",
+            Some(
+                change
+                    .path
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .unwrap_or(&change.path)
+                    .to_owned(),
+            ),
+        ),
+        (
+            "Copy Path",
+            repository.map(|repository| {
+                std::path::Path::new(&repository.path)
+                    .join(&change.path)
+                    .to_string_lossy()
+                    .into_owned()
+            }),
+        ),
+        ("Copy Relative Path", Some(change.path.clone())),
+    ] {
+        if ui
+            .add_enabled(text.is_some(), eframe::egui::Button::new(label))
+            .clicked()
+        {
+            if let Some(text) = text {
+                ui.ctx().copy_text(text);
+            }
+            ui.close();
+        }
+    }
+    requested
 }
 
 fn column_separator(

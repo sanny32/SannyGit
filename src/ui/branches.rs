@@ -30,32 +30,41 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     tag_dialog(ui, app);
     remote_dialog(ui, app);
     let palette = app.palette();
-    ui.horizontal(|ui| {
-        ui.set_min_height(26.0);
-        let heading = ui.heading(
-            RichText::new("Branches").color(if app.refs_error.is_some() {
-                palette.removed_text
-            } else {
-                palette.text
-            }),
-        );
-        if app.refs_error.is_some() {
-            heading.help_text("Reload branches to retry.");
-        }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.add_enabled_ui(
-                !app.busy() && app.repositories.get(app.selected_repository).is_some(),
-                |ui| {
-                    if icons::button(ui, Icon::Plus, "Create local branch from HEAD").clicked() {
-                        app.branch_dialog_open = true;
-                    }
-                    if icons::button(ui, Icon::Fetch, "Reload branches and tags").clicked() {
-                        app.reload_refs();
-                    }
+    let header = ui.allocate_ui_with_layout(
+        Vec2::new(ui.available_width(), super::WORKSPACE_HEADER_HEIGHT),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            let heading = ui.heading(RichText::new("Branches").color(
+                if app.refs_error.is_some() {
+                    palette.removed_text
+                } else {
+                    palette.text
                 },
-            );
-        });
-    });
+            ));
+            if app.refs_error.is_some() {
+                heading.help_text("Reload branches to retry.");
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_enabled_ui(
+                    !app.busy() && app.repositories.get(app.selected_repository).is_some(),
+                    |ui| {
+                        if icons::button(ui, Icon::Plus, "Create local branch from HEAD").clicked()
+                        {
+                            app.branch_dialog_open = true;
+                        }
+                        if icons::button(ui, Icon::Fetch, "Reload branches and tags").clicked() {
+                            app.reload_refs();
+                        }
+                    },
+                );
+            });
+        },
+    );
+    super::header_separator(
+        ui,
+        header.response.rect.expand2(Vec2::new(8.0, 0.0)),
+        palette,
+    );
     let mut requested = BranchRequests {
         rename_allowed: !app.busy() && app.state_current && app.refs_current,
         ..Default::default()
