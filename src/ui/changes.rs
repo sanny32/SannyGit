@@ -9,6 +9,9 @@ use eframe::egui::{Align, Align2, Color32, FontId, Layout, Rect, RichText, Sense
 use egui_extras::{Column, TableBuilder};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
+    if app.interface_style != crate::theme::InterfaceStyle::Modern {
+        super::register_panel(ui, "files");
+    }
     let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     let tight = ui.available_width() < 420.0;
@@ -17,11 +20,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         if tight {
             ui.vertical(|ui| {
                 ui.add_space(3.0);
-                changes_title(ui, app.changes.len());
+                changes_title(ui, app.changes.len(), app.interface_style);
                 ui.horizontal(|ui| filters(ui, app, palette));
             });
         } else {
-            changes_title(ui, app.changes.len());
+            changes_title(ui, app.changes.len(), app.interface_style);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 icons::unavailable(
                     ui,
@@ -87,7 +90,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 let index = visible[row.index()];
                 let change = &app.changes[index];
                 row.set_selected(app.selected_change == index);
+                let mut row_rect = Rect::NOTHING;
                 row.col(|ui| {
+                    row_rect = ui.max_rect();
+                    ui.spacing_mut().interact_size.y = row_height;
                     ui.add_space(6.0);
                     let mut checked = change.staged;
                     let tooltip = if change.kind == ChangeKind::Conflicted {
@@ -120,6 +126,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         });
                 });
                 row.col(|ui| {
+                    row_rect = row_rect.union(ui.max_rect());
                     let color = status_color(change.kind, palette);
                     let fill = match change.kind {
                         ChangeKind::Modified | ChangeKind::Renamed => palette.modified_background,
@@ -139,11 +146,15 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     response.help_text(change.kind.label());
                 });
                 let response = row.response();
-                ui_line(&response, table_clip, palette);
+                ui_line(&response, row_rect, table_clip, palette);
                 if response.clicked() || response.secondary_clicked() {
                     app.selected_change = index;
                 }
-                response.context_menu(|ui| {
+                eframe::egui::Popup::context_menu(&response)
+                    .style(move |style: &mut eframe::egui::Style| {
+                        super::toolbar::desktop_menu_style(style, palette);
+                    })
+                    .show(|ui| {
                     if let Some(action) = file_context_menu(ui, app, index) {
                         context_request = Some((index, action));
                     }
@@ -199,7 +210,7 @@ fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<Fil
         }
     };
     item(ui, "Show Changes", FileAction::ShowChanges, true, "");
-    ui.separator();
+    ui.add(eframe::egui::Separator::default().spacing(10.0));
     item(
         ui,
         "Commit…",
@@ -207,7 +218,7 @@ fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<Fil
         !app.busy() && repository.is_some(),
         "Open a repository and wait for the current operation",
     );
-    ui.separator();
+    ui.add(eframe::egui::Separator::default().spacing(10.0));
     for (label, action, staged) in [
         ("Stage", FileAction::Stage, true),
         ("Unstage", FileAction::Unstage, false),
@@ -220,7 +231,7 @@ fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<Fil
             "Select a suitable file after refreshing; conflicts must be resolved outside SannyGit",
         );
     }
-    ui.separator();
+    ui.add(eframe::egui::Separator::default().spacing(10.0));
     let discard_blocker = app.discard_blocker();
     item(
         ui,
@@ -229,7 +240,7 @@ fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<Fil
         discard_blocker.is_none(),
         discard_blocker.unwrap_or(""),
     );
-    ui.separator();
+    ui.add(eframe::egui::Separator::default().spacing(10.0));
     for (label, text) in [
         (
             "Copy Name",
@@ -304,23 +315,30 @@ fn column_separator(
     );
 }
 
-fn ui_line(response: &eframe::egui::Response, clip: Rect, palette: Palette) {
+fn ui_line(response: &eframe::egui::Response, row: Rect, clip: Rect, palette: Palette) {
     response
         .ctx
         .layer_painter(response.layer_id)
         .with_clip_rect(clip)
         .line_segment(
-            [response.rect.left_bottom(), response.rect.right_bottom()],
+            [
+                row.left_bottom() - Vec2::new(0.0, 0.5),
+                row.right_bottom() - Vec2::new(0.0, 0.5),
+            ],
             (1.0, palette.border.gamma_multiply(0.6)),
         );
 }
 
-fn changes_title(ui: &mut Ui, count: usize) {
-    ui.horizontal(|ui| {
+fn changes_title(ui: &mut Ui, count: usize, style: crate::theme::InterfaceStyle) {
+    let title = ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        ui.label(RichText::new("Files").size(13.0).family(semibold_family()));
+        let title = ui.label(RichText::new("Files").size(13.0).family(semibold_family()));
         ui.label(format!("({count} files)"));
+        title.rect
     });
+    if style != crate::theme::InterfaceStyle::Modern {
+        super::register_panel_title(ui, "files", title.inner);
+    }
 }
 
 fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
@@ -412,6 +430,221 @@ mod tests {
     use super::*;
     use crate::theme::{install_fonts, ThemeChoice};
     use eframe::egui::{Context, Pos2, RawInput};
+
+    #[test]
+    fn row_separators_align_with_striped_backgrounds() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let ctx = Context::default();
+            install_fonts(&ctx);
+            theme.apply(&ctx);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.changes = crate::mock_data::changes();
+            app.selected_change = 2;
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 500.0))),
+                        ..Default::default()
+                    },
+                    |ui| show(ui, &mut app),
+                );
+                output.textures_delta.clear();
+                let palette = theme.palette();
+                let stripes: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        eframe::egui::Shape::Rect(rect)
+                            if (rect.fill == palette.panel_alt
+                                || rect.fill == palette.selection)
+                                && rect.rect.width() > 100.0
+                                && (rect.rect.height() - 23.0).abs() < 0.1 =>
+                        {
+                            Some(rect.rect)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let separators: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        eframe::egui::Shape::LineSegment { points, stroke }
+                            if stroke.color == palette.border.gamma_multiply(0.6)
+                                && points[0].y == points[1].y =>
+                        {
+                            Some(points[0].y)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let checkboxes: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        eframe::egui::Shape::Rect(rect)
+                            if rect.rect.right() < 52.0
+                                && rect.rect.size() == Vec2::splat(14.0) =>
+                        {
+                            Some(rect.rect)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(checkboxes.len(), separators.len());
+                for (checkbox, bottom) in checkboxes.iter().zip(&separators) {
+                    assert!(
+                        (checkbox.center().y - (bottom - 11.0)).abs() <= 0.5,
+                        "Checkbox {checkbox:?} is not centered above separator {bottom}"
+                    );
+                }
+                assert!(!stripes.is_empty());
+                for stripe in stripes {
+                    assert!(
+                        separators
+                            .iter()
+                            .any(|y| (*y - stripe.bottom()).abs() <= 0.5),
+                        "Stripe boundary {} does not match separators {separators:?}",
+                        stripe.bottom()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn file_menu_targets_right_clicked_row_and_preserves_disabled_operations() {
+        use eframe::egui::{Event, Modifiers, OutputCommand, PointerButton};
+
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for width in [350.0, 900.0] {
+                for action in [
+                    "Copy Name",
+                    "Copy Path",
+                    "Copy Relative Path",
+                    "Stage",
+                    "Unstage",
+                ] {
+                    let ctx = Context::default();
+                    install_fonts(&ctx);
+                    egui_extras::install_image_loaders(&ctx);
+                    theme.apply(&ctx);
+                    let mut app = SannyGitApp::with_theme(theme);
+                    app.repositories = crate::mock_data::repositories();
+                    app.selected_repository = 0;
+                    app.changes = crate::mock_data::changes();
+                    app.selected_change = 1;
+                    app.state_current = false;
+                    let render = |app: &mut SannyGitApp, events| {
+                        let mut output = ctx.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(
+                                    Pos2::ZERO,
+                                    Vec2::new(1100.0, 700.0),
+                                )),
+                                events,
+                                ..Default::default()
+                            },
+                            |ui| {
+                                ui.set_width(width);
+                                show(ui, app);
+                            },
+                        );
+                        output.textures_delta.clear();
+                        output
+                    };
+                    let position = |output: &eframe::egui::FullOutput, label: &str| {
+                        output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                eframe::egui::Shape::Text(text)
+                                    if text.galley.job.text == label =>
+                                {
+                                    Some(text.pos + text.galley.size() / 2.0)
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| panic!("Missing menu or file label: {label}"))
+                    };
+                    for _ in 0..3 {
+                        render(&mut app, vec![]);
+                    }
+                    let output = render(&mut app, vec![]);
+                    let y = position(&output, &app.changes[0].path).y;
+                    let pointer = Pos2::new(130.0, y);
+                    for pressed in [true, false] {
+                        render(
+                            &mut app,
+                            vec![
+                                Event::PointerMoved(pointer),
+                                Event::PointerButton {
+                                    pos: pointer,
+                                    button: PointerButton::Secondary,
+                                    pressed,
+                                    modifiers: Modifiers::NONE,
+                                },
+                            ],
+                        );
+                    }
+                    assert_eq!(app.selected_change, 0);
+                    for _ in 0..3 {
+                        render(&mut app, vec![]);
+                    }
+                    let output = render(&mut app, vec![]);
+                    for label in [
+                        "Show Changes",
+                        "Commit…",
+                        "Stage",
+                        "Unstage",
+                        "Discard…",
+                        "Copy Name",
+                        "Copy Path",
+                        "Copy Relative Path",
+                    ] {
+                        position(&output, label);
+                    }
+                    assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
+                        eframe::egui::Shape::Text(text) if matches!(text.galley.job.text.as_str(),
+                            "Rename…" | "Delete…" | "Blame" | "Stash Selection…"))));
+                    let pointer = position(&output, action);
+                    render(&mut app, vec![Event::PointerMoved(pointer)]);
+                    let mut copied = None;
+                    for pressed in [true, false] {
+                        let output = render(
+                            &mut app,
+                            vec![Event::PointerButton {
+                                pos: pointer,
+                                button: PointerButton::Primary,
+                                pressed,
+                                modifiers: Modifiers::NONE,
+                            }],
+                        );
+                        for command in output.platform_output.commands {
+                            if let OutputCommand::CopyText(text) = command {
+                                copied = Some(text);
+                            }
+                        }
+                    }
+                    let expected = match action {
+                        "Copy Name" => Some("main.rs".to_owned()),
+                        "Copy Path" => Some(
+                            std::path::Path::new(&app.repositories[0].path)
+                                .join(&app.changes[0].path)
+                                .to_string_lossy()
+                                .into_owned(),
+                        ),
+                        "Copy Relative Path" => Some(app.changes[0].path.clone()),
+                        _ => None,
+                    };
+                    assert_eq!(copied, expected, "{theme:?} {width} {action}");
+                    assert!(!app.busy(), "Disabled operation started a worker");
+                    assert!(app.error.is_none());
+                    assert!(!app.changes[0].staged);
+                }
+            }
+        }
+    }
 
     #[test]
     fn header_separator_resizes_columns_and_keeps_the_new_width() {

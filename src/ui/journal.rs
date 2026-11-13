@@ -6,13 +6,15 @@ use eframe::egui::{
 use egui_extras::{Column, TableBuilder};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
+    super::register_panel(ui, "journal");
     details(ui, app);
     let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     let wide = ui.available_width() >= 580.0;
     super::header(ui, 28.0, palette, |ui| {
         ui.spacing_mut().interact_size.y = 20.0;
-        ui.heading("Journal");
+        let title = ui.heading("Journal");
+        super::register_panel_title(ui, "journal", title.rect);
         let search_width = (ui.available_width() - 360.0).clamp(60.0, 240.0);
         ui.add_enabled(
             !app.commits.is_empty(),
@@ -234,7 +236,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         app.remember_history_scroll(hash, offset % 20.0);
     }
     if let Some(hash) = selected {
+        let details_open = app.commit_details_open;
         app.select_commit(hash);
+        app.commit_details_open = details_open;
     }
 }
 
@@ -853,7 +857,7 @@ mod tests {
                     Some("a1b2c3d"),
                     "Click on {label} in {theme:?}"
                 );
-                assert!(app.commit_details_open);
+                assert!(!app.commit_details_open);
             }
         }
     }

@@ -25,6 +25,7 @@ struct BranchRequests {
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
+    super::register_panel(ui, "branches");
     create_dialog(ui, app);
     rename_dialog(ui, app);
     tag_dialog(ui, app);
@@ -41,6 +42,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     palette.text
                 },
             ));
+            super::register_panel_title(ui, "branches", heading.rect);
             if app.refs_error.is_some() {
                 heading.help_text("Reload branches to retry.");
             }

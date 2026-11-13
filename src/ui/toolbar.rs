@@ -151,8 +151,7 @@ fn perform_edit(context: &eframe::egui::Context, action: crate::menu::EditAction
     context.request_repaint();
 }
 
-#[cfg(not(target_os = "macos"))]
-fn desktop_menu_style(style: &mut eframe::egui::Style, palette: Palette) {
+pub(super) fn desktop_menu_style(style: &mut eframe::egui::Style, palette: Palette) {
     use eframe::egui::{CornerRadius, Stroke, TextWrapMode};
 
     eframe::egui::containers::menu::menu_style(style);
