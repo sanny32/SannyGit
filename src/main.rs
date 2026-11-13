@@ -29,7 +29,11 @@ use app::SannyGitApp;
 use eframe::egui;
 
 fn main() -> eframe::Result<()> {
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/app/sannygit.png"))
+    #[cfg(target_os = "windows")]
+    let icon_bytes = include_bytes!("../assets/app/sannygit-windows.png").as_slice();
+    #[cfg(not(target_os = "windows"))]
+    let icon_bytes = include_bytes!("../assets/app/sannygit.png").as_slice();
+    let icon = eframe::icon_data::from_png_bytes(icon_bytes)
         .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     let window_size = egui::vec2(1536.0, 1024.0);
     let viewport = egui::ViewportBuilder::default()
