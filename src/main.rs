@@ -14,6 +14,8 @@ mod mock_data;
 mod models;
 #[cfg(target_os = "macos")]
 mod native_menu;
+#[cfg(target_os = "windows")]
+mod native_window;
 mod preferences;
 mod remote_config;
 mod remotes;
@@ -72,7 +74,11 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "SannyGit",
         options,
-        Box::new(|creation_context| Ok(Box::new(SannyGitApp::new(creation_context)))),
+        Box::new(|creation_context| {
+            #[cfg(target_os = "windows")]
+            native_window::remember_owner(creation_context)?;
+            Ok(Box::new(SannyGitApp::new(creation_context)))
+        }),
     )
 }
 

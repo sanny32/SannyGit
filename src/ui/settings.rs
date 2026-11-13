@@ -11,6 +11,8 @@ use eframe::egui::{
 
 pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     if !app.settings_window.open {
+        #[cfg(target_os = "windows")]
+        crate::native_window::end_modal(ctx);
         return;
     }
 
@@ -33,7 +35,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         .with_inner_size(size)
         .with_min_inner_size(min_size)
         .with_decorations(true)
+        .with_taskbar(false)
         .with_visible(false)
+        .with_minimize_button(false)
         .with_maximize_button(false);
     if let Some(position) = app.settings_window.initial_position {
         builder = builder.with_position(position);
@@ -49,18 +53,37 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             && !egui::Popup::is_any_open(ui.ctx())
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape));
         if escape || ui.input(|input| input.viewport().close_requested()) {
-            app.settings_window.open = false;
-            ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+            close(ui.ctx(), app);
             return;
         }
 
-        window_contents(ui, app);
+        #[cfg(target_os = "windows")]
         if app.settings_window.needs_reveal && class == egui::ViewportClass::Immediate {
+            if let Err(error) = crate::native_window::begin_modal(ui.ctx(), title) {
+                app.error = Some(format!(
+                    "Cannot attach settings to the main window: {error}"
+                ));
+                close(ui.ctx(), app);
+                return;
+            }
+        }
+        window_contents(ui, app);
+        if app.settings_window.open
+            && app.settings_window.needs_reveal
+            && class == egui::ViewportClass::Immediate
+        {
             // Immediate viewports process this command after painting and swapping the frame.
             ui.ctx().send_viewport_cmd(ViewportCommand::Visible(true));
             app.settings_window.needs_reveal = false;
         }
     });
+}
+
+fn close(ctx: &egui::Context, app: &mut SannyGitApp) {
+    #[cfg(target_os = "windows")]
+    crate::native_window::end_modal(ctx);
+    app.settings_window.open = false;
+    ctx.send_viewport_cmd(ViewportCommand::Close);
 }
 
 fn centered_position(outer: egui::Rect, inner: Option<egui::Rect>, size: Vec2) -> egui::Pos2 {
@@ -115,8 +138,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 {
                     match apply_settings(app) {
                         Ok(()) => {
-                            app.settings_window.open = false;
-                            ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+                            close(ui.ctx(), app);
                         }
                         Err(error) => {
                             app.settings_window.page = SettingsPage::Llm;
@@ -134,8 +156,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     .add(super::controls::dialog_style::button("Cancel"))
                     .dialog_cancel()
                 {
-                    app.settings_window.open = false;
-                    ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+                    close(ui.ctx(), app);
                 }
             });
         });
