@@ -1,7 +1,7 @@
 use super::controls::dialog_style::DialogResponse;
 use super::controls::tooltips::TooltipResponse;
 use crate::{
-    app::{SannyGitApp, SettingsPage},
+    app::{RepositoryLlmTab, SannyGitApp, SettingsPage},
     theme::{semibold_family, InterfaceStyle, Palette, ThemeChoice},
 };
 use eframe::egui::{
@@ -17,7 +17,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     }
 
     let (title, size, min_size) = if app.settings_window.llm_repository.is_some() {
-        ("Repository LLM Settings", [560.0, 420.0], [500.0, 380.0])
+        ("Repository LLM Settings", [560.0, 368.0], [500.0, 360.0])
     } else {
         ("SannyGit Preferences", [740.0, 420.0], [680.0, 380.0])
     };
@@ -142,6 +142,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         }
                         Err(error) => {
                             app.settings_window.page = SettingsPage::Llm;
+                            app.settings_window.llm_repository_tab = RepositoryLlmTab::Model;
                             let draft = match app.settings_window.llm_repository.as_deref() {
                                 Some(path) => app.settings_window.llm_repositories.get_mut(path),
                                 None => Some(&mut app.settings_window.llm),
@@ -514,8 +515,7 @@ fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     // Keep checkboxes and label rows compact so the editor remains accessible
     // at the minimum window size; input fields retain their shared height.
     ui.spacing_mut().interact_size.y = 20.0;
-    let window = &mut app.settings_window;
-    let path = window.llm_repository.clone();
+    let path = app.settings_window.llm_repository.clone();
     if let Some(path) = &path {
         let name = app
             .repositories
@@ -523,7 +523,7 @@ fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             .find(|repository| repository.path == *path)
             .map_or(path.as_str(), |repository| repository.name.as_str());
         Frame::new()
-            .inner_margin(Margin::symmetric(6, 6))
+            .inner_margin(Margin::symmetric(4, 4))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
@@ -575,27 +575,54 @@ fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 });
             });
     }
-    let mut inherit = path
-        .as_ref()
-        .is_none_or(|path| !window.llm_repositories.contains_key(path));
+    let mut tab = app.settings_window.llm_repository_tab;
+    ui.horizontal(|ui| {
+        // Size the tab buttons like the repository settings dialog.
+        ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
+        ui.spacing_mut().interact_size.y = crate::theme::CONTROL_HEIGHT;
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for (candidate, label) in [
+            (RepositoryLlmTab::Model, "Model"),
+            (RepositoryLlmTab::Prompt, "Prompt"),
+        ] {
+            if ui.selectable_label(tab == candidate, label).clicked() {
+                tab = candidate;
+            }
+        }
+    });
+    app.settings_window.llm_repository_tab = tab;
+    match tab {
+        RepositoryLlmTab::Model => repository_llm_model_tab(ui, app, palette, path.as_deref()),
+        RepositoryLlmTab::Prompt => repository_llm_prompt_tab(ui, app, path.as_deref()),
+    }
+}
+
+fn repository_llm_model_tab(
+    ui: &mut Ui,
+    app: &mut SannyGitApp,
+    palette: Palette,
+    path: Option<&str>,
+) {
+    let window = &mut app.settings_window;
+    let mut inherit = path.is_none_or(|path| !window.llm_repositories.contains_key(path));
     let response = ui.add_enabled(
         path.is_some(),
         egui::Checkbox::new(&mut inherit, "Use global model settings"),
     );
     if response.changed() {
-        if let Some(path) = &path {
+        if let Some(path) = path {
             if inherit {
                 if let Some(draft) = window.llm_repositories.get(path) {
                     if draft.config.instructions != window.llm.config.instructions {
                         window
                             .llm_instructions
-                            .insert(path.clone(), draft.config.instructions.clone());
+                            .insert(path.to_owned(), draft.config.instructions.clone());
                     }
                 }
                 window.llm_repositories.remove(path);
             } else {
                 window.llm_repositories.insert(
-                    path.clone(),
+                    path.to_owned(),
                     crate::app::LlmSettings {
                         config: window.llm.config.clone(),
                         api_key_dirty: !window.llm.config.api_key.is_empty(),
@@ -605,7 +632,7 @@ fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             }
         }
     }
-    if let Some(path) = &path {
+    if let Some(path) = path {
         if let Some(draft) = window.llm_repositories.get_mut(path) {
             llm_form(ui, draft, palette, Some(path), &mut app.llm_models);
         } else {
@@ -616,42 +643,59 @@ fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     } else {
         llm_form(ui, &mut window.llm, palette, None, &mut app.llm_models);
     }
-    if let Some(path) = &path {
-        let mut instructions = window
-            .llm_instructions
-            .get(path)
-            .cloned()
-            .unwrap_or_else(|| {
-                window
-                    .llm_repositories
-                    .get(path)
-                    .unwrap_or(&window.llm)
-                    .config
-                    .instructions
-                    .clone()
-            });
-        let previous = instructions.clone();
-        ui.horizontal(|ui| {
-            ui.label("Generation instructions:");
-            if ui.small_button("Reset to global").clicked() {
-                instructions.clone_from(&window.llm.config.instructions);
-                window.llm_instructions.remove(path);
-                if let Some(draft) = window.llm_repositories.get_mut(path) {
-                    draft.config.instructions.clone_from(&instructions);
-                }
-            }
-        });
+}
+
+fn repository_llm_prompt_tab(ui: &mut Ui, app: &mut SannyGitApp, path: Option<&str>) {
+    let window = &mut app.settings_window;
+    let global = window.llm.config.instructions.clone();
+    let Some(path) = path else {
+        let mut instructions = global;
         instructions_editor(ui, &mut instructions);
-        if instructions != previous && instructions != window.llm.config.instructions {
-            window
-                .llm_instructions
-                .insert(path.clone(), instructions.clone());
-        } else if instructions == window.llm.config.instructions {
+        return;
+    };
+    // An entry in the instructions map marks the override, so the checkbox
+    // stays unchecked even before the prompt starts to differ from the global
+    // text; a repository config only mirrors the effective instructions.
+    let mut inherit = !window.llm_instructions.contains_key(path);
+    if ui
+        .checkbox(&mut inherit, "Use global generation instructions")
+        .changed()
+    {
+        if inherit {
             window.llm_instructions.remove(path);
+            if let Some(draft) = window.llm_repositories.get_mut(path) {
+                draft.config.instructions.clone_from(&global);
+            }
+        } else {
+            let current = window
+                .llm_instructions
+                .get(path)
+                .cloned()
+                .or_else(|| {
+                    window
+                        .llm_repositories
+                        .get(path)
+                        .map(|draft| draft.config.instructions.clone())
+                })
+                .unwrap_or_else(|| global.clone());
+            window.llm_instructions.insert(path.to_owned(), current);
         }
-        if let Some(draft) = window.llm_repositories.get_mut(path) {
-            draft.config.instructions = instructions;
-        }
+    }
+    let mut instructions = window
+        .llm_instructions
+        .get(path)
+        .cloned()
+        .unwrap_or_else(|| global.clone());
+    if inherit {
+        ui.add_enabled_ui(false, |ui| instructions_editor(ui, &mut instructions));
+        return;
+    }
+    instructions_editor(ui, &mut instructions);
+    window
+        .llm_instructions
+        .insert(path.to_owned(), instructions.clone());
+    if let Some(draft) = window.llm_repositories.get_mut(path) {
+        draft.config.instructions = instructions;
     }
 }
 

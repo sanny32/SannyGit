@@ -111,6 +111,13 @@ pub enum SettingsPage {
     CommitMessages,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RepositoryLlmTab {
+    #[default]
+    Model,
+    Prompt,
+}
+
 #[derive(Clone, Default)]
 pub struct LlmSettings {
     pub config: crate::llm::Config,
@@ -158,6 +165,7 @@ pub struct SettingsWindow {
     pub llm_repositories: BTreeMap<String, LlmSettings>,
     pub llm_instructions: BTreeMap<String, String>,
     pub llm_repository: Option<String>,
+    pub llm_repository_tab: RepositoryLlmTab,
 }
 
 impl SettingsWindow {
@@ -180,6 +188,7 @@ impl SettingsWindow {
             llm_repositories: BTreeMap::new(),
             llm_instructions: BTreeMap::new(),
             llm_repository: None,
+            llm_repository_tab: RepositoryLlmTab::Model,
         }
     }
 }
@@ -942,6 +951,16 @@ impl SannyGitApp {
             })
             .collect();
         self.settings_window.llm_instructions = self.repository_llm_instructions.clone();
+        // The prompt tab tracks overrides by their dedicated map entry; mirror
+        // per-repository configs saved before the instructions were split out.
+        for (path, config) in &self.repository_llm_configs {
+            if config.instructions != self.llm_config.instructions {
+                self.settings_window
+                    .llm_instructions
+                    .entry(path.clone())
+                    .or_insert_with(|| config.instructions.clone());
+            }
+        }
         self.settings_window.llm_repository = None;
         self.settings_window.initial_position_set = false;
         self.settings_window.initial_position = None;
@@ -960,6 +979,7 @@ impl SannyGitApp {
         self.open_settings();
         self.settings_window.page = SettingsPage::Llm;
         self.settings_window.llm_repository = Some(path);
+        self.settings_window.llm_repository_tab = RepositoryLlmTab::Model;
     }
 
     pub fn refresh(&mut self) {

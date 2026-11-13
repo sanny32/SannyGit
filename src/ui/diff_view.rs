@@ -81,25 +81,59 @@ fn file_header(ui: &mut Ui, path: &str, palette: crate::theme::Palette) -> bool 
     super::header(ui, 30.0, palette, |ui| {
         ui.spacing_mut().interact_size.y = 20.0;
         ui.label("Changes");
-        ui.allocate_ui_with_layout(
-            Vec2::new(ui.available_width(), 28.0),
-            Layout::top_down(Align::Min),
-            |ui| {
-                Frame::new()
-                    .fill(palette.panel)
-                    .stroke((1.0, palette.border))
-                    .corner_radius(4)
-                    .inner_margin(Margin::symmetric(6, 0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            icons::paint(ui, Icon::for_file(path), palette.accent, 14.0);
-                            ui.label(file_name(path));
-                            ui.add_space(4.0);
-                            close = icons::button(ui, Icon::Close, "Close diff").clicked();
-                        });
-                    });
-            },
+        let font = eframe::egui::TextStyle::Body.resolve(ui.style());
+        let text = ui
+            .painter()
+            .layout_no_wrap(file_name(path).to_owned(), font, palette.text);
+        let width = (text.size().x + 64.0).min(ui.available_width()).max(64.0);
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(width, 26.0), eframe::egui::Sense::hover());
+        ui.painter().rect(
+            rect,
+            4,
+            palette.panel,
+            (1.0, palette.border),
+            eframe::egui::StrokeKind::Inside,
         );
+        response.help_text(path);
+        icons::image(Icon::for_file(path), palette.accent, 14.0).paint_at(
+            ui,
+            eframe::egui::Rect::from_center_size(
+                eframe::egui::pos2(rect.left() + 13.0, rect.center().y),
+                Vec2::splat(14.0),
+            ),
+        );
+        let close_rect = eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(rect.right() - 27.0, rect.top() + 1.0),
+            eframe::egui::pos2(rect.right() - 1.0, rect.bottom() - 1.0),
+        );
+        let close_response = ui.interact(
+            close_rect,
+            ui.scope_id().with("diff.close"),
+            eframe::egui::Sense::click(),
+        );
+        close_response.widget_info(|| {
+            eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, true, "Close diff")
+        });
+        if close_response.hovered() {
+            ui.painter().rect_filled(close_rect, 3, palette.hover);
+        }
+        icons::image(Icon::Close, palette.text, 16.0).paint_at(
+            ui,
+            eframe::egui::Rect::from_center_size(close_rect.center(), Vec2::splat(16.0)),
+        );
+        close = close_response.help_text("Close diff").clicked();
+        let text_rect = eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(rect.left() + 24.0, rect.top() + 1.0),
+            eframe::egui::pos2(close_rect.left() - 4.0, rect.bottom() - 1.0),
+        );
+        ui.painter()
+            .with_clip_rect(ui.clip_rect().intersect(text_rect))
+            .galley(
+                eframe::egui::pos2(text_rect.left(), rect.center().y - text.size().y / 2.0),
+                text,
+                palette.text,
+            );
     });
     close
 }
@@ -245,6 +279,9 @@ mod tests {
             for _ in 0..3 {
                 let mut output = ctx.run_ui(eframe::egui::RawInput::default(), |ui| {
                     file_header(ui, "app.rs", theme.palette());
+                    super::super::header(ui, 26.0, theme.palette(), |ui| {
+                        ui.label("src/app.rs");
+                    });
                 });
                 let palette = theme.palette();
                 let header = output
@@ -279,6 +316,23 @@ mod tests {
                     "Tab extends outside header: {tab:?}, {header:?}"
                 );
                 assert!(tab.1.contains_rect(tab.0), "Tab border is clipped: {tab:?}");
+                let next_header = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        eframe::egui::Shape::Rect(rect)
+                            if rect.fill == palette.header
+                                && (rect.rect.height() - 26.0).abs() < 0.1 =>
+                        {
+                            Some(rect.rect)
+                        }
+                        _ => None,
+                    })
+                    .expect("Path header missing");
+                assert!(
+                    tab.0.bottom() < next_header.top(),
+                    "Path header covers the tab border"
+                );
                 assert!(
                     tab.0.bottom() < header.bottom(),
                     "Tab overlaps header separator"

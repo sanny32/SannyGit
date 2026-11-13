@@ -20,7 +20,7 @@ fn repository_instructions_are_editable_with_global_model_settings() {
         let render = |app: &mut SannyGitApp, events| {
             let mut output = ctx.run_ui(
                 RawInput {
-                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(500.0, 380.0))),
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(500.0, 360.0))),
                     events,
                     ..Default::default()
                 },
@@ -29,7 +29,38 @@ fn repository_instructions_are_editable_with_global_model_settings() {
             output.textures_delta.clear();
             output
         };
-        let output = render(&mut app, vec![]);
+        let click = |app: &mut SannyGitApp, label: &str| {
+            let mut output = render(app, vec![]);
+            let target = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("Missing {label}"));
+            output.textures_delta.clear();
+            for pressed in [true, false] {
+                let mut output = render(
+                    app,
+                    vec![
+                        Event::PointerMoved(target),
+                        Event::PointerButton {
+                            pos: target,
+                            button: PointerButton::Primary,
+                            pressed,
+                            modifiers: Modifiers::NONE,
+                        },
+                    ],
+                );
+                output.textures_delta.clear();
+            }
+        };
+        click(&mut app, "Prompt");
+        click(&mut app, "Use global generation instructions");
+        let mut output = render(&mut app, vec![]);
         let position = output
             .shapes
             .iter()
@@ -40,6 +71,7 @@ fn repository_instructions_are_editable_with_global_model_settings() {
                 _ => None,
             })
             .expect("Instructions editor is missing");
+        output.textures_delta.clear();
         for pressed in [true, false] {
             render(
                 &mut app,
@@ -86,6 +118,98 @@ fn repository_instructions_are_editable_with_global_model_settings() {
 }
 
 #[test]
+fn repository_prompt_tab_restores_global_instructions_without_touching_model_settings() {
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        let context = egui::Context::default();
+        crate::theme::install_fonts(&context);
+        theme.apply(&context);
+        let mut app = SannyGitApp::with_theme(theme);
+        app.repositories = vec![crate::models::Repository {
+            name: "Project".into(),
+            path: "/project".into(),
+        }];
+        app.selected_repository = 0;
+        app.llm_config.store_api_key = false;
+        app.llm_config.instructions = "Global instructions".into();
+        // A repository config saved without a separate instructions override
+        // still surfaces its custom prompt on the Prompt tab.
+        app.repository_llm_configs.insert(
+            "/project".into(),
+            crate::llm::Config {
+                model: "project-model".into(),
+                store_api_key: false,
+                instructions: "Custom instructions".into(),
+                ..Default::default()
+            },
+        );
+        app.open_repository_llm_settings();
+        assert!(
+            app.settings_window
+                .llm_instructions
+                .contains_key("/project"),
+            "Custom repository instructions must mark a prompt override"
+        );
+        let render = |app: &mut SannyGitApp, events| {
+            let mut output = context.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(500.0, 360.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| window_contents(ui, app),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let click = |app: &mut SannyGitApp, label: &str| {
+            let mut output = render(app, vec![]);
+            let target = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("Missing {label}"));
+            output.textures_delta.clear();
+            for pressed in [true, false] {
+                let mut output = render(
+                    app,
+                    vec![
+                        Event::PointerMoved(target),
+                        Event::PointerButton {
+                            pos: target,
+                            button: PointerButton::Primary,
+                            pressed,
+                            modifiers: Modifiers::NONE,
+                        },
+                    ],
+                );
+                output.textures_delta.clear();
+            }
+        };
+        click(&mut app, "Prompt");
+        let mut output = render(&mut app, vec![]);
+        for label in ["Use global generation instructions", "Custom instructions"] {
+            assert!(
+                visible_text(&output.shapes, label),
+                "Missing {label} ({theme:?})"
+            );
+        }
+        output.textures_delta.clear();
+        click(&mut app, "Use global generation instructions");
+        click(&mut app, "OK");
+        assert!(app.repository_llm_instructions.is_empty());
+        let config = app.effective_generation_config("/project");
+        assert_eq!(config.instructions, "Global instructions");
+        assert_eq!(config.model, "project-model");
+        assert!(app.repository_llm_configs.contains_key("/project"));
+    }
+}
+
+#[test]
 fn settings_position_centers_on_main_window() {
     let outer = Rect::from_min_size(pos2(-800.0, 100.0), Vec2::new(1200.0, 800.0));
     let inner = Rect::from_min_size(pos2(-792.0, 132.0), Vec2::new(1184.0, 760.0));
@@ -100,7 +224,7 @@ fn settings_position_centers_on_main_window() {
 #[test]
 fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes() {
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
-        for size in [Vec2::new(560.0, 420.0), Vec2::new(500.0, 380.0)] {
+        for size in [Vec2::new(560.0, 368.0), Vec2::new(500.0, 360.0)] {
             let context = egui::Context::default();
             crate::theme::install_fonts(&context);
             egui_extras::install_image_loaders(&context);
