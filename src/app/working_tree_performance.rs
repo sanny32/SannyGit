@@ -117,7 +117,7 @@ fn backend_measurements() {
         "{}",
         serde_json::json!({"os": std::env::consts::OS,
         "arch": std::env::consts::ARCH, "debug_assertions": cfg!(debug_assertions),
-        "git": String::from_utf8(std::process::Command::new("git").arg("--version").output().unwrap().stdout).unwrap().trim()})
+        "git": String::from_utf8(crate::test_support::git_command().arg("--version").output().unwrap().stdout).unwrap().trim()})
     );
     for (files, commits) in [(100, 100), (1_000, 1_000), (5_000, 10_000)] {
         let repo = fixture(files, commits);

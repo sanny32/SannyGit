@@ -488,7 +488,7 @@ fn previews_conflict_against_ours_without_combined_diff() {
     repo.git(&["checkout", "main"]);
     repo.write("file", "ours\n");
     repo.git(&["commit", "-am", "ours"]);
-    let output = Command::new("git")
+    let output = crate::test_support::git_command()
         .current_dir(&repo.0)
         .args([
             "-c",

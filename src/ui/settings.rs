@@ -14,37 +14,60 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         return;
     }
 
-    let repository = app.settings_window.llm_repository.as_deref();
-    let (title, size, min_size) = if repository.is_some() {
+    let (title, size, min_size) = if app.settings_window.llm_repository.is_some() {
         ("Repository LLM Settings", [560.0, 420.0], [500.0, 380.0])
     } else {
         ("SannyGit Preferences", [740.0, 420.0], [680.0, 380.0])
     };
-    let builder = ViewportBuilder::default()
+    if !app.settings_window.initial_position_set {
+        app.settings_window.initial_position = ctx.input(|input| {
+            let viewport = input.viewport();
+            viewport
+                .outer_rect
+                .map(|outer| centered_position(outer, viewport.inner_rect, Vec2::from(size)))
+        });
+        app.settings_window.initial_position_set = true;
+    }
+    let mut builder = ViewportBuilder::default()
         .with_title(title)
         .with_inner_size(size)
         .with_min_inner_size(min_size)
+        .with_decorations(true)
+        .with_visible(false)
         .with_maximize_button(false);
-    let viewport_id = match repository {
+    if let Some(position) = app.settings_window.initial_position {
+        builder = builder.with_position(position);
+    }
+    let viewport_id = match app.settings_window.llm_repository.as_deref() {
         Some(path) => ViewportId::from_hash_of(("sannygit.repository_llm", path)),
         None => ViewportId::from_hash_of("sannygit.preferences"),
     };
-    let ctx = ctx.clone();
-    ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
+    ctx.show_viewport_immediate(viewport_id, builder, |ui, class| {
         #[cfg(target_os = "macos")]
         ui.input_mut(|input| input.events.append(&mut app.pending_native_edit_events));
-        let close_requested = ui.ctx().input(|input| input.viewport().close_requested());
         let escape = app.error_dialogs.pending.is_empty()
             && !egui::Popup::is_any_open(ui.ctx())
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape));
-        if close_requested || escape {
+        if escape || ui.input(|input| input.viewport().close_requested()) {
             app.settings_window.open = false;
             ui.ctx().send_viewport_cmd(ViewportCommand::Close);
             return;
         }
 
         window_contents(ui, app);
+        if app.settings_window.needs_reveal && class == egui::ViewportClass::Immediate {
+            // Immediate viewports process this command after painting and swapping the frame.
+            ui.ctx().send_viewport_cmd(ViewportCommand::Visible(true));
+            app.settings_window.needs_reveal = false;
+        }
     });
+}
+
+fn centered_position(outer: egui::Rect, inner: Option<egui::Rect>, size: Vec2) -> egui::Pos2 {
+    let decorations = inner.map_or(Vec2::ZERO, |inner| {
+        (outer.size() - inner.size()).max(Vec2::ZERO)
+    });
+    outer.center() - (size + decorations) / 2.0
 }
 
 fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {

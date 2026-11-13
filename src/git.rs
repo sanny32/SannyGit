@@ -303,8 +303,10 @@ fn execute(
                     }
                     #[cfg(target_os = "windows")]
                     {
+                        use std::os::windows::process::CommandExt;
                         let _ = Command::new("taskkill")
                             .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                            .creation_flags(0x08000000) // CREATE_NO_WINDOW
                             .stdout(Stdio::null())
                             .stderr(Stdio::null())
                             .status();

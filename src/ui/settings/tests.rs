@@ -2,6 +2,18 @@ use super::*;
 use eframe::egui::{epaint::ClippedShape, pos2, Event, Modifiers, PointerButton, RawInput, Rect};
 
 #[test]
+fn settings_position_centers_on_main_window() {
+    let outer = Rect::from_min_size(pos2(-800.0, 100.0), Vec2::new(1200.0, 800.0));
+    let inner = Rect::from_min_size(pos2(-792.0, 132.0), Vec2::new(1184.0, 760.0));
+    let position = centered_position(outer, Some(inner), Vec2::new(740.0, 420.0));
+    assert_eq!(position + Vec2::new(756.0, 460.0) / 2.0, outer.center());
+    assert_eq!(
+        centered_position(outer, None, Vec2::new(740.0, 420.0)),
+        outer.center() - Vec2::new(740.0, 420.0) / 2.0
+    );
+}
+
+#[test]
 fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes() {
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
         for size in [Vec2::new(560.0, 420.0), Vec2::new(500.0, 380.0)] {

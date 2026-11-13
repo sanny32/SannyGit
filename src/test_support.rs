@@ -11,6 +11,17 @@ use std::{
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
+pub(crate) fn git_command() -> Command {
+    #[allow(unused_mut)]
+    let mut command = Command::new("git");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    command
+}
+
 // Opt-in, repository-scoped counters also observe background workers without
 // counting other tests' temporary repositories. Never compiled into the app.
 static COMMAND_COUNTS: Mutex<Vec<(PathBuf, Weak<AtomicUsize>)>> = Mutex::new(Vec::new());
@@ -65,7 +76,7 @@ impl TempRepo {
         repo
     }
     pub(crate) fn git(&self, args: &[&str]) -> String {
-        let output = Command::new("git")
+        let output = git_command()
             .current_dir(&self.0)
             .args([
                 "-c",

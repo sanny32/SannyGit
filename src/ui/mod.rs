@@ -260,16 +260,30 @@ fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
         ui.set_width(380.0);
         dialog_style::setup(ui);
         ui.spacing_mut().item_spacing.y = 0.0;
+        dialog_style::header(
+            ui,
+            palette,
+            "Welcome to SannyGit",
+            "Your repositories, all in one place.",
+        );
         dialog_style::section(ui, palette.panel, Margin::same(18), |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            ui.heading("Welcome to SannyGit");
-            ui.add_space(8.0);
-            ui.label("Open a local repository or clone one to get started.");
-            ui.add_space(14.0);
+            ui.label(
+                eframe::egui::RichText::new("GET STARTED")
+                    .size(11.0)
+                    .color(palette.muted)
+                    .family(crate::theme::semibold_family()),
+            );
+            ui.add_space(10.0);
             if ui
                 .add_sized(
-                    [ui.available_width(), 28.0],
-                    eframe::egui::Button::new("Open or create repository…"),
+                    [ui.available_width(), 36.0],
+                    eframe::egui::Button::new((
+                        controls::icons::image(controls::icons::Icon::Folder, palette.accent, 16.0),
+                        "Open or create repository…",
+                        eframe::egui::Atom::grow(),
+                    ))
+                    .gap(10.0),
                 )
                 .clicked()
             {
@@ -279,8 +293,17 @@ fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.add_space(6.0);
             if ui
                 .add_sized(
-                    [ui.available_width(), 28.0],
-                    eframe::egui::Button::new("Clone repository…"),
+                    [ui.available_width(), 36.0],
+                    eframe::egui::Button::new((
+                        controls::icons::image(
+                            controls::icons::Icon::Repository,
+                            palette.accent,
+                            16.0,
+                        ),
+                        "Clone repository…",
+                        eframe::egui::Atom::grow(),
+                    ))
+                    .gap(10.0),
                 )
                 .clicked()
             {

@@ -90,13 +90,21 @@ fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
                 .inner_margin(Margin::symmetric(8, 0)),
         )
         .show(ui, |ui| {
-            eframe::egui::MenuBar::new().ui(ui, |ui| {
-                for menu in crate::menu::MENUS {
-                    ui.menu_button(menu.title, |ui| {
-                        menu_items(ui, app, menu.items);
-                    });
-                }
-            });
+            eframe::egui::MenuBar::new()
+                .style(|style: &mut eframe::egui::Style| {
+                    eframe::egui::containers::menu::menu_style(style);
+                    style.spacing.item_spacing.x = 4.0;
+                    style.spacing.button_padding.x = 8.0;
+                    style.spacing.interact_size.y = 24.0;
+                    style.override_font_id = Some(FontId::proportional(12.0));
+                })
+                .ui(ui, |ui| {
+                    for menu in crate::menu::MENUS {
+                        ui.menu_button(menu.title, |ui| {
+                            menu_items(ui, app, menu.items);
+                        });
+                    }
+                });
         });
 }
 

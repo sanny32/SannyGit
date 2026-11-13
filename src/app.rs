@@ -153,6 +153,9 @@ impl LlmSettings {
 
 pub struct SettingsWindow {
     pub open: bool,
+    pub initial_position_set: bool,
+    pub initial_position: Option<eframe::egui::Pos2>,
+    pub needs_reveal: bool,
     pub page: SettingsPage,
     pub theme: ThemeChoice,
     pub preferences: crate::preferences::Preferences,
@@ -168,6 +171,9 @@ impl SettingsWindow {
     fn new(theme: ThemeChoice) -> Self {
         Self {
             open: false,
+            initial_position_set: false,
+            initial_position: None,
+            needs_reveal: false,
             page: SettingsPage::Appearance,
             theme,
             preferences: crate::preferences::Preferences {
@@ -752,6 +758,9 @@ impl SannyGitApp {
             })
             .collect();
         self.settings_window.llm_repository = None;
+        self.settings_window.initial_position_set = false;
+        self.settings_window.initial_position = None;
+        self.settings_window.needs_reveal = true;
         self.settings_window.open = true;
     }
 
