@@ -1853,7 +1853,7 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
             for (dialog, button) in [
                 (RepositoryDialog::Group, "Add Group"),
                 (RepositoryDialog::Clone, "Continue"),
-                (RepositoryDialog::Search, "Add Selected"),
+                (RepositoryDialog::Search, "OK"),
                 (RepositoryDialog::Worktrees, "Remove Worktree"),
                 (RepositoryDialog::Prune, "Prune Obsolete Metadata"),
                 (RepositoryDialog::Settings, "OK"),

@@ -93,6 +93,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         remove_repository_dialog(ui.ctx(), app);
         return;
     }
+    if app.manager.dialog == Some(Dialog::Search) {
+        search_dialog(ui.ctx(), app);
+        return;
+    }
     if app.busy() && app.manager.cancel.is_some() {
         Window::new("Repository operation")
             .anchor(
@@ -153,20 +157,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     ui.label("Group name"); ui.add(TextEdit::singleline(&mut app.manager.group_name).desired_width(f32::INFINITY));
                 }
                 Dialog::Clone => {},
-                Dialog::Search => {
-                    ui.label("Search directory"); ui.add(TextEdit::singleline(&mut app.manager.search_root).desired_width(f32::INFINITY));
-                    ui.horizontal(|ui| { ui.label("Maximum depth"); ui.add(egui::DragValue::new(&mut app.manager.search_depth).range(0..=16)); });
-                    if ui.add_enabled(!app.manager.search_root.is_empty(), Button::new("Search")).clicked() {
-                        app.manager.found.clear(); app.manager.search_summary.clear();
-                        job = Some(Job::Search { root: app.manager.search_root.clone(), depth: app.manager.search_depth });
-                    }
-                    if !app.manager.search_summary.is_empty() { ui.label(&app.manager.search_summary); }
-                    ScrollArea::vertical().id_salt("repository.search.results").max_height(240.0).show(ui, |ui| {
-                        for (name,path,selected) in &mut app.manager.found { ui.checkbox(selected, format!("{name} — {path}")); }
-                    });
-                    group_picker(ui, app);
-                    if ui.add_enabled(app.manager.found.iter().any(|r| r.2), Button::new("Add Selected")).clicked() { app.add_found_repositories(); }
-                }
+                Dialog::Search => {},
                 Dialog::Worktrees => {
                     let active = app.repositories.get(app.selected_repository).map(|r| r.path.as_str());
                     ScrollArea::vertical().id_salt("repository.worktrees").max_height(180.0).show(ui, |ui| {
@@ -237,6 +228,107 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     }
     if let Some(job) = job {
         app.run_repository_job(job);
+    }
+}
+
+fn search_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
+    use super::controls::dialog_style as style;
+
+    let palette = app.palette();
+    let busy = app.busy();
+    let mut start = false;
+    let mut accept = false;
+    let mut cancel = false;
+    style::modal(ctx, palette, "repository.search").show(ctx, |ui| {
+        ui.set_width(620.0);
+        style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        style::header(
+            ui,
+            palette,
+            "Search existing local repositories",
+            "Select a root directory where the search should start and click 'Start Search'.",
+        );
+        style::section(ui, palette.header, egui::Margin::symmetric(12, 10), |ui| {
+            ui.add_enabled_ui(!busy, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Search In:");
+                    let width = (ui.available_width() - 150.0).max(80.0);
+                    ui.add(TextEdit::singleline(&mut app.manager.search_root).desired_width(width));
+                    super::clone_dialog::choose_folder(ui, &mut app.manager.search_root);
+                    start = ui
+                        .add_enabled(
+                            !app.manager.search_root.trim().is_empty(),
+                            Button::new("Start Search"),
+                        )
+                        .clicked();
+                });
+            });
+            ui.label("Found repositories (selected ones will be remembered):");
+            egui::Frame::new()
+                .fill(palette.panel)
+                .stroke((1.0, palette.border))
+                .inner_margin(4)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.add_space(24.0);
+                        ui.label("Path");
+                    });
+                    ui.separator();
+                    ScrollArea::both()
+                        .id_salt("repository.search.results")
+                        .auto_shrink([false, false])
+                        .max_height(210.0)
+                        .show(ui, |ui| {
+                            ui.set_min_height(210.0);
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                            ui.add_enabled_ui(!busy, |ui| {
+                                for (_, path, selected) in &mut app.manager.found {
+                                    ui.horizontal(|ui| {
+                                        ui.checkbox(selected, "");
+                                        if ui.selectable_label(*selected, path.as_str()).clicked() {
+                                            *selected = !*selected;
+                                        }
+                                    });
+                                }
+                            });
+                        });
+                });
+            ui.add_enabled_ui(!busy, |ui| group_picker(ui, app));
+            let status = if busy {
+                "Searching repositories…"
+            } else {
+                &app.manager.search_summary
+            };
+            style::text_line(ui, RichText::new(status).small().color(palette.muted), 18.0)
+                .on_hover_text(status);
+        });
+        style::section(ui, palette.header, egui::Margin::symmetric(12, 10), |ui| {
+            style::button_row(ui, |ui| {
+                cancel = ui.add(style::button("Cancel")).dialog_cancel();
+                accept = ui
+                    .add_enabled(
+                        !busy && app.manager.found.iter().any(|r| r.2),
+                        style::primary("OK", palette),
+                    )
+                    .dialog_accept();
+            });
+        });
+    });
+    if cancel {
+        if busy {
+            app.cancel_repository_job();
+        }
+        app.manager.dialog = None;
+    } else if accept {
+        app.add_found_repositories();
+    } else if start {
+        app.manager.search_summary.clear();
+        app.run_repository_job(Job::Search {
+            root: app.manager.search_root.trim().to_owned(),
+            depth: app.manager.search_depth,
+        });
     }
 }
 
@@ -574,6 +666,70 @@ mod tests {
                                 );
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+    use crate::theme::{install_fonts, ThemeChoice};
+
+    #[test]
+    fn search_dialog_fits_both_themes_and_keeps_results_geometry_stable() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                let ctx = egui::Context::default();
+                install_fonts(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.manager.dialog = Some(Dialog::Search);
+                let mut empty_size = None;
+                for count in [0, 100, 0] {
+                    app.manager.found = (0..count)
+                        .map(|i| {
+                            (
+                                format!("repository-{i}"),
+                                format!(
+                                    "C:/repositories/{}/repository-{i}",
+                                    "long-path/".repeat(20)
+                                ),
+                                true,
+                            )
+                        })
+                        .collect();
+                    app.manager.search_summary = if count == 0 {
+                        String::new()
+                    } else {
+                        "Search complete ".repeat(100)
+                    };
+                    for _ in 0..4 {
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    size,
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| search_dialog(ui.ctx(), &mut app),
+                        );
+                        output.textures_delta.clear();
+                    }
+                    let rect = ctx
+                        .memory(|memory| memory.area_rect(egui::Id::unique("repository.search")))
+                        .unwrap();
+                    assert!(
+                        egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect),
+                        "{rect:?}"
+                    );
+                    if let Some(expected) = empty_size {
+                        assert_eq!(rect.size(), expected);
+                    } else {
+                        empty_size = Some(rect.size());
                     }
                 }
             }
