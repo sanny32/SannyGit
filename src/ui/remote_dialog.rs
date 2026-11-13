@@ -1,7 +1,7 @@
 use super::controls::dialog_style::DialogResponse;
 use super::controls::tooltips::TooltipResponse;
 use crate::{app::SannyGitApp, remotes::Operation};
-use eframe::egui::{self, Align, ComboBox, Layout, RichText, TextEdit};
+use eframe::egui::{self, Align, ComboBox, Layout, RichText};
 
 pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     if app.remote_confirmation_hidden() {
@@ -93,7 +93,7 @@ fn pull_confirmation(
         "Pull commits from a remote repository",
         "Pull incorporates fetched changes into the current branch. Expand the options below to configure.", Icon::Pull);
     dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
-        ui.spacing_mut().item_spacing.y = 8.0;
+        ui.spacing_mut().item_spacing.y = 6.0;
         ui.add_enabled_ui(!busy && loaded, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Fetch From:");
@@ -270,7 +270,7 @@ fn branch_confirmation(
                     (message, palette.text, false)
                 };
                 ui.horizontal(|ui| {
-                    ui.set_height(26.0);
+                    ui.set_height(crate::theme::CONTROL_HEIGHT);
                     if spinning {
                         ui.add(egui::Spinner::new().size(18.0));
                     }
@@ -307,7 +307,7 @@ fn branch_confirmation(
                                         .wrap_mode(egui::TextWrapMode::Extend),
                                 );
                                 ui.add(
-                                    TextEdit::singleline(&mut dialog.branch).desired_width(220.0),
+                                    crate::ui::controls::singleline(&mut dialog.branch).desired_width(220.0),
                                 );
                                 ui.end_row();
                             });

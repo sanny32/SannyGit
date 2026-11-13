@@ -13,6 +13,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     super::header(ui, 28.0, palette, |ui| {
+        ui.spacing_mut().interact_size.y = 20.0;
         let (rect, _) = ui.allocate_exact_size(Vec2::new(60.0, 28.0), Sense::hover());
         ui.painter().text(
             rect.center(),

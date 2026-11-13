@@ -11,11 +11,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     ui.spacing_mut().item_spacing.y = 0.0;
     let wide = ui.available_width() >= 580.0;
     super::header(ui, 28.0, palette, |ui| {
+        ui.spacing_mut().interact_size.y = 20.0;
         ui.heading("Journal");
         let search_width = (ui.available_width() - 360.0).clamp(60.0, 240.0);
         ui.add_enabled(
             !app.commits.is_empty(),
-            eframe::egui::TextEdit::singleline(&mut app.journal_filter)
+            crate::ui::controls::singleline(&mut app.journal_filter)
+                .min_size(Vec2::ZERO)
                 .hint_text("Search loaded commits…")
                 .desired_width(search_width)
                 .margin(Vec2::new(5.0, 2.0)),

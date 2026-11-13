@@ -2,6 +2,90 @@ use super::*;
 use eframe::egui::{epaint::ClippedShape, pos2, Event, Modifiers, PointerButton, RawInput, Rect};
 
 #[test]
+fn repository_instructions_are_editable_with_global_model_settings() {
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        theme.apply(&ctx);
+        let mut app = SannyGitApp::with_theme(theme);
+        app.repositories = vec![crate::models::Repository {
+            name: "Project".into(),
+            path: "/project".into(),
+        }];
+        app.selected_repository = 0;
+        app.llm_config.instructions = "Global generation text".into();
+        app.open_repository_llm_settings();
+        let original = app.llm_config.clone();
+        let reads = crate::llm::CREDENTIAL_READS.with(|reads| reads.get());
+        let render = |app: &mut SannyGitApp, events| {
+            let mut output = ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(500.0, 380.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| window_contents(ui, app),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let output = render(&mut app, vec![]);
+        let position = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == "Global generation text" => {
+                    Some(text.pos + text.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+            .expect("Instructions editor is missing");
+        for pressed in [true, false] {
+            render(
+                &mut app,
+                vec![
+                    Event::PointerMoved(position),
+                    Event::PointerButton {
+                        pos: position,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        render(&mut app, vec![Event::Text("custom".into())]);
+        apply_settings(&mut app).unwrap();
+        assert!(app.repository_llm_configs.is_empty());
+        assert!(app
+            .effective_generation_config("/project")
+            .instructions
+            .contains("custom"));
+        assert_eq!(app.llm_config, original);
+        assert_eq!(
+            crate::llm::CREDENTIAL_READS.with(|reads| reads.get()),
+            reads
+        );
+        app.llm_config.model = "updated-global-model".into();
+        assert_eq!(
+            app.effective_generation_config("/project").model,
+            "updated-global-model"
+        );
+        assert!(app
+            .effective_generation_config("/project")
+            .instructions
+            .contains("custom"));
+        app.open_repository_llm_settings();
+        app.settings_window.llm_instructions.clear();
+        apply_settings(&mut app).unwrap();
+        assert_eq!(
+            app.effective_generation_config("/project").instructions,
+            "Global generation text"
+        );
+    }
+}
+
+#[test]
 fn settings_position_centers_on_main_window() {
     let outer = Rect::from_min_size(pos2(-800.0, 100.0), Vec2::new(1200.0, 800.0));
     let inner = Rect::from_min_size(pos2(-792.0, 132.0), Vec2::new(1184.0, 760.0));
@@ -78,7 +162,7 @@ fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes(
             output.textures_delta.clear();
             for label in [
                 "Project",
-                "Use global settings",
+                "Use global model settings",
                 "Endpoint:",
                 "OK",
                 "Cancel",
@@ -136,7 +220,7 @@ fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes(
                 );
             }
             output.textures_delta.clear();
-            click(&mut app, "Use global settings");
+            click(&mut app, "Use global model settings");
             let draft = app.settings_window.llm_repositories.get_mut(&path).unwrap();
             assert_eq!(draft.config.instructions, "Global instructions");
             draft.config.instructions = "Project instructions".into();
@@ -178,7 +262,7 @@ fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes(
             );
 
             app.open_repository_llm_settings();
-            click(&mut app, "Use global settings");
+            click(&mut app, "Use global model settings");
             click(&mut app, "OK");
             assert!(!app.repository_llm_configs.contains_key(&path));
             assert_eq!(app.effective_llm_config(&path), &app.llm_config);
@@ -372,12 +456,13 @@ fn clicking_tree_labels_and_row_backgrounds_selects_the_page() {
         };
         for background in [false, true] {
             for (page, label) in [
-                (SettingsPage::General, "General"),
-                (SettingsPage::Git, "Executable"),
-                (SettingsPage::Remote, "Remote"),
+                (SettingsPage::General, "User Interface"),
                 (SettingsPage::Appearance, "Appearance"),
+                (SettingsPage::Git, "Git"),
+                (SettingsPage::Remote, "Remote"),
                 (SettingsPage::DateTime, "Date & Time"),
-                (SettingsPage::Llm, "Commit messages"),
+                (SettingsPage::Llm, "AI"),
+                (SettingsPage::CommitMessages, "Commit messages"),
             ] {
                 let mut output = render(&mut app, Vec::new());
                 let rect = output
@@ -669,6 +754,7 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
             (SettingsPage::Git, "Path to Git executable:"),
             (SettingsPage::Remote, "Automatic fetch"),
             (SettingsPage::Llm, "Endpoint:"),
+            (SettingsPage::CommitMessages, "Generation instructions:"),
         ] {
             app.settings_window.page = page;
             let mut output = context.run_ui(
@@ -696,6 +782,7 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
                 }
             }
             if page == SettingsPage::Llm {
+                assert!(!visible_text(&output.shapes, "Generation instructions:"));
                 assert!(visible_text(&output.shapes, crate::llm::DEFAULT_ENDPOINT));
                 assert!(filled_rect_count(&output.shapes, app.palette().editor) >= 3);
                 for label in ["Endpoint:", "Model:", "API key:"] {
@@ -705,6 +792,13 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
                 for label in ["Model:", "API key:"] {
                     assert!((text_left(&output.shapes, label).unwrap() - left).abs() < 0.5);
                 }
+            }
+            if page == SettingsPage::CommitMessages {
+                assert!(!visible_text(&output.shapes, "Endpoint:"));
+                assert!(visible_text(
+                    &output.shapes,
+                    &app.settings_window.llm.config.instructions
+                ));
             }
         }
     }

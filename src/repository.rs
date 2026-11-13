@@ -421,12 +421,16 @@ pub fn available_worktree_branches(root: &Path) -> Result<Vec<String>, String> {
 }
 
 pub fn worktree_availability(root: &Path) -> Result<(bool, bool), String> {
+    let active = root
+        .canonicalize()
+        .map_err(|error| format!("Cannot resolve active worktree: {error}"))?;
     let removable = worktrees(root)?.iter().any(|tree| {
         !tree.main
             && !tree.bare
             && !tree.locked
             && !tree.prunable
             && !same_path(&tree.path, &root.to_string_lossy())
+            && Path::new(&tree.path).canonicalize().ok().as_ref() != Some(&active)
     });
     Ok((removable, !prune_preview(root)?.trim().is_empty()))
 }
@@ -1018,6 +1022,14 @@ mod tests {
         assert!(trees[0].main);
         assert_eq!(worktree_availability(&repo.0).unwrap(), (true, false));
         assert_eq!(worktree_availability(&linked).unwrap(), (false, false));
+        // Git resolves aliases such as macOS /var -> /private/var and Windows
+        // path casing. Availability must still exclude the active worktree.
+        let alias = linked.join("..").join("linked");
+        assert_eq!(worktree_availability(&alias).unwrap(), (false, false));
+        assert_eq!(
+            worktree_availability(&linked.canonicalize().unwrap()).unwrap(),
+            (false, false)
+        );
         assert!(remove_worktree(&repo.0, &repo.0).is_err());
         assert!(remove_worktree(&linked, &linked).is_err());
         repo.git(&["worktree", "lock", linked.to_str().unwrap()]);

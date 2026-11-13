@@ -7,7 +7,7 @@ use crate::{
     },
     remote_config,
 };
-use eframe::egui::{self, Button, ComboBox, RichText, TextEdit};
+use eframe::egui::{self, Button, ComboBox, RichText};
 
 pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let busy = app.busy();
@@ -292,7 +292,7 @@ fn remote_editor(
                     .add_enabled_ui(editor.selected.is_none(), |ui| {
                         ui.add_sized(
                             [field_width, 26.0],
-                            TextEdit::singleline(&mut editor.name).char_limit(4096),
+                            crate::ui::controls::singleline(&mut editor.name).char_limit(4096),
                         )
                     })
                     .inner
@@ -307,7 +307,7 @@ fn remote_editor(
                 if ui
                     .add_sized(
                         [field_width, 26.0],
-                        TextEdit::singleline(&mut editor.url)
+                        crate::ui::controls::singleline(&mut editor.url)
                             .char_limit(4096)
                             .password(masked),
                     )
@@ -322,7 +322,7 @@ fn remote_editor(
                 if ui
                     .add_sized(
                         [field_width, 26.0],
-                        TextEdit::singleline(&mut editor.push_url)
+                        crate::ui::controls::singleline(&mut editor.push_url)
                             .char_limit(4096)
                             .password(masked)
                             .hint_text("Same as fetch when empty"),

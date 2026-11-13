@@ -1,7 +1,5 @@
-use crate::theme::Palette;
-use eframe::egui::{
-    self, Align2, Frame, Id, Popup, Rect, Response, Sense, StrokeKind, TextEdit, Ui,
-};
+use crate::theme::{Palette, CONTROL_HEIGHT};
+use eframe::egui::{self, Align2, Frame, Id, Popup, Rect, Response, Sense, StrokeKind, Ui};
 
 /// Editable text with a full-width dropdown. Use a distinct id for each control.
 pub fn show(
@@ -15,7 +13,8 @@ pub fn show(
 ) -> Response {
     let edit_id = id.with("editor");
     let focused = ui.memory(|memory| memory.has_focus(edit_id));
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 26.0), Sense::hover());
+    let height = ui.spacing().interact_size.y.max(CONTROL_HEIGHT);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
     ui.painter().rect(
         rect,
         4,
@@ -36,7 +35,7 @@ pub fn show(
         egui::pos2(rect.right() - icon_width - 2.0 * right_padding, rect.top()),
         rect.max,
     );
-    // Match the theme's 26-point editor minimum: a shorter inset rect expands
+    // Match the theme's editor minimum: a shorter inset rect expands
     // downward and shifts the text below the center, especially at Retina scale.
     let editor_rect = Rect::from_min_max(
         rect.min + egui::vec2(6.0, 0.0),
@@ -44,7 +43,7 @@ pub fn show(
     );
     let editor = ui.put(
         editor_rect,
-        TextEdit::singleline(value)
+        crate::ui::controls::singleline(value)
             .id(edit_id)
             .frame(Frame::NONE)
             .margin(0)
@@ -110,6 +109,82 @@ mod tests {
     use egui::{Context, Pos2, RawInput, Vec2};
 
     #[test]
+    fn input_heights_match_in_panels_and_dialogs() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            for interface in [
+                crate::theme::InterfaceStyle::Classic,
+                crate::theme::InterfaceStyle::Modern,
+            ] {
+                for dialog in [false, true] {
+                    let ctx = Context::default();
+                    crate::theme::install_fonts(&ctx);
+                    theme.apply_style(&ctx, interface);
+                    let mut value = "HH:mm".to_owned();
+                    let mut editable_value = "Editable text".to_owned();
+                    for _ in 0..3 {
+                        let mut fields = Vec::new();
+                        let mut output = ctx.run_ui(RawInput::default(), |ui| {
+                            if dialog {
+                                super::super::dialog_style::setup(ui);
+                            }
+                            let edit = ui.add(crate::ui::controls::singleline(&mut value));
+                            let hint = ui.scope(|ui| {
+                                ui.spacing_mut().interact_size.y = 20.0;
+                                ui.add(crate::ui::controls::singleline(&mut String::new())
+                                    .min_size(Vec2::ZERO)
+                                    .hint_text("Search loaded commits…")
+                                    .margin(Vec2::new(5.0, 2.0)))
+                            }).inner;
+                            let combo = egui::ComboBox::from_id_salt("height.combo")
+                                .selected_text("yyyy-MM-dd")
+                                .show_ui(ui, |ui| { ui.label("Example"); })
+                                .response;
+                            let editable = show(ui, Id::unique("height.editable"), &mut editable_value, &[], 180.0, theme.palette(), "No options");
+                            for (label, response) in [("HH:mm", edit), ("yyyy-MM-dd", combo), ("Editable text", editable)] {
+                                assert!((response.rect.height() - CONTROL_HEIGHT).abs() < 0.1,
+                                    "Unexpected input height: {:?}, {theme:?}, {interface:?}, dialog={dialog}", response.rect);
+                                fields.push((label, response.rect));
+                            }
+                            fields.push(("Search loaded commits…", hint.rect));
+                        });
+                        for (label, rect) in fields {
+                            let text_rect = output
+                                .shapes
+                                .iter()
+                                .find_map(|shape| match &shape.shape {
+                                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                                        #[cfg(target_os = "windows")]
+                                        assert!(
+                                            (text
+                                                .galley
+                                                .mesh_bounds
+                                                .translate(text.pos.to_vec2())
+                                                .center()
+                                                .y
+                                                - rect.center().y)
+                                                .abs()
+                                                <= 1.5,
+                                            "Visible {label} glyphs are off-center"
+                                        );
+                                        Some(text.galley.rect.translate(text.pos.to_vec2()))
+                                    }
+                                    _ => None,
+                                })
+                                .expect("Input text is missing");
+                            assert!((text_rect.center().y - rect.center().y).abs() <= 0.5,
+                                "{label} is off-center: field={rect:?}, text={text_rect:?}, {theme:?}, {interface:?}, dialog={dialog}");
+                        }
+                        output.textures_delta.clear();
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn text_is_vertically_centered() {
         for theme in [
             crate::theme::ThemeChoice::Light,
@@ -149,7 +224,7 @@ mod tests {
                                 .iter()
                                 .find_map(|shape| match &shape.shape {
                                     eframe::egui::Shape::Rect(rect)
-                                        if (rect.rect.height() - 26.0).abs() < 0.1
+                                        if (rect.rect.height() - CONTROL_HEIGHT).abs() < 0.1
                                             && rect.rect.width() > 300.0 =>
                                     {
                                         Some(rect.rect)

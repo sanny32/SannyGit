@@ -6,7 +6,7 @@ use crate::{
     clone_source::Provider,
     repository,
 };
-use eframe::egui::{self, Align, Button, ComboBox, Layout, RichText, TextEdit, Ui};
+use eframe::egui::{self, Align, Button, ComboBox, Layout, RichText, Ui};
 
 pub(super) fn choose_folder(ui: &mut Ui, value: &mut String) {
     let response = icons::button(ui, Icon::Folder, "Open directory chooser");
@@ -230,8 +230,8 @@ fn source_page(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.label("Server URL:");
                 if ui
                     .add_sized(
-                        [width, 28.0],
-                        TextEdit::singleline(app.manager.clone_form.server())
+                        [width, crate::theme::CONTROL_HEIGHT],
+                        crate::ui::controls::singleline(app.manager.clone_form.server())
                             .hint_text("https://git.example.com"),
                     )
                     .changed()
@@ -246,8 +246,9 @@ fn source_page(ui: &mut Ui, app: &mut SannyGitApp) {
             });
             if ui
                 .add_sized(
-                    [width, 28.0],
-                    TextEdit::singleline(app.manager.clone_form.input()).hint_text(provider.hint()),
+                    [width, crate::theme::CONTROL_HEIGHT],
+                    crate::ui::controls::singleline(app.manager.clone_form.input())
+                        .hint_text(provider.hint()),
                 )
                 .changed()
             {
@@ -308,16 +309,16 @@ fn directory_page(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.label("Parent Directory:");
             ui.horizontal(|ui| {
                 ui.add_sized(
-                    [388.0, 28.0],
-                    TextEdit::singleline(&mut app.manager.clone_parent),
+                    [388.0, crate::theme::CONTROL_HEIGHT],
+                    crate::ui::controls::singleline(&mut app.manager.clone_parent),
                 );
                 choose_folder(ui, &mut app.manager.clone_parent);
             });
             ui.end_row();
             ui.label("Directory Name:");
             ui.add_sized(
-                [388.0, 28.0],
-                TextEdit::singleline(&mut app.manager.clone_name),
+                [388.0, crate::theme::CONTROL_HEIGHT],
+                crate::ui::controls::singleline(&mut app.manager.clone_name),
             );
             ui.end_row();
             ui.label("Clone Into:");
@@ -326,8 +327,8 @@ fn directory_page(ui: &mut Ui, app: &mut SannyGitApp) {
                 .display()
                 .to_string();
             ui.add_sized(
-                [424.0, 28.0],
-                TextEdit::singleline(&mut path).interactive(false),
+                [424.0, crate::theme::CONTROL_HEIGHT],
+                crate::ui::controls::singleline(&mut path).interactive(false),
             );
             ui.end_row();
         });

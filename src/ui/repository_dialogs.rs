@@ -1,6 +1,6 @@
 use super::controls::dialog_style::DialogResponse;
 use crate::app::{RepositoryDialog as Dialog, RepositoryJob as Job, SannyGitApp};
-use eframe::egui::{self, Button, ComboBox, RichText, ScrollArea, TextEdit, Ui, Window};
+use eframe::egui::{self, Button, ComboBox, RichText, ScrollArea, Ui, Window};
 
 fn add_worktree_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
     use super::controls::dialog_style as style;
@@ -72,7 +72,7 @@ fn add_worktree_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                         ui.horizontal(|ui| {
                             let width = (ui.available_width() - 36.0).max(80.0);
                             ui.add(
-                                TextEdit::singleline(&mut app.manager.destination)
+                                crate::ui::controls::singleline(&mut app.manager.destination)
                                     .desired_width(width),
                             );
                             super::clone_dialog::choose_folder(ui, &mut app.manager.destination);
@@ -271,7 +271,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             let busy = app.busy();
             ui.add_enabled_ui(!busy, |ui| match dialog {
                 Dialog::Group => {
-                    ui.label("Group name"); ui.add(TextEdit::singleline(&mut app.manager.group_name).desired_width(f32::INFINITY));
+                    ui.label("Group name"); ui.add(crate::ui::controls::singleline(&mut app.manager.group_name).desired_width(f32::INFINITY));
                 }
                 Dialog::Clone => {},
                 Dialog::Search => {},
@@ -295,10 +295,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         });
                     }
                     ui.separator(); ui.label("Add worktree: destination (new directory)");
-                    ui.add(TextEdit::singleline(&mut app.manager.destination).desired_width(f32::INFINITY));
+                    ui.add(crate::ui::controls::singleline(&mut app.manager.destination).desired_width(f32::INFINITY));
                     ui.checkbox(&mut app.manager.worktree_new_branch, "Create a new branch from HEAD");
                     if app.manager.worktree_new_branch {
-                        ui.label("New branch name"); ui.add(TextEdit::singleline(&mut app.manager.worktree_branch).desired_width(f32::INFINITY));
+                        ui.label("New branch name"); ui.add(crate::ui::controls::singleline(&mut app.manager.worktree_branch).desired_width(f32::INFINITY));
                     } else {
                         ComboBox::from_id_salt("worktree.branch").selected_text(if app.manager.worktree_branch.is_empty() { "Select a local branch" } else { &app.manager.worktree_branch }).show_ui(ui, |ui| {
                             for branch in app.refs.iter().filter(|r| r.kind == crate::models::RefKind::Local) { ui.selectable_value(&mut app.manager.worktree_branch, branch.name.clone(), &branch.name); }
@@ -371,7 +371,10 @@ fn search_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                 ui.horizontal(|ui| {
                     ui.label("Search In:");
                     let width = (ui.available_width() - 150.0).max(80.0);
-                    ui.add(TextEdit::singleline(&mut app.manager.search_root).desired_width(width));
+                    ui.add(
+                        crate::ui::controls::singleline(&mut app.manager.search_root)
+                            .desired_width(width),
+                    );
                     super::clone_dialog::choose_folder(ui, &mut app.manager.search_root);
                     start = ui
                         .add_enabled(
@@ -491,7 +494,6 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                         .max_height(160.0)
                         .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 4.0;
-                    ui.spacing_mut().interact_size.y = 22.0;
                     if tab == 0 {
                         if let Some(settings) = &mut app.manager.settings {
                             ui.add_enabled_ui(!busy, |ui| {
@@ -502,11 +504,11 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                     .spacing([8.0, 4.0])
                                     .show(ui, |ui| {
                                         ui.label("Full Name:");
-                                        ui.add(TextEdit::singleline(&mut settings.name)
+                                        ui.add(crate::ui::controls::singleline(&mut settings.name)
                                             .desired_width(field_width));
                                         ui.end_row();
                                         ui.label("Git Email:");
-                                        ui.add(TextEdit::singleline(&mut settings.email)
+                                        ui.add(crate::ui::controls::singleline(&mut settings.email)
                                             .desired_width(field_width));
                                         ui.end_row();
                                     });
@@ -560,7 +562,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                                 let width = field_width
                                                     - super::controls::icons::BUTTON_SIZE
                                                     - ui.spacing().item_spacing.x;
-                                                ui.add(TextEdit::singleline(&mut program).desired_width(width));
+                                                ui.add(crate::ui::controls::singleline(&mut program).desired_width(width));
                                                 super::controls::icons::button(
                                                     ui, super::controls::icons::Icon::Folder,
                                                     "Choose GPG program",
@@ -568,7 +570,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                             });
                                             ui.end_row();
                                             ui.label("Signing Key:");
-                                            ui.add(TextEdit::singleline(&mut key)
+                                            ui.add(crate::ui::controls::singleline(&mut key)
                                                 .desired_width(field_width));
                                             ui.end_row();
                                             ui.label("");

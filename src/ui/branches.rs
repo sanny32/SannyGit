@@ -368,7 +368,7 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                     });
                     ui.end_row();
                     ui.radio_value(&mut dialog.mode, 1, "Create local branch:");
-                    ui.add_enabled(dialog.mode == 1, TextEdit::singleline(&mut dialog.new_name).desired_width(280.0));
+                    ui.add_enabled(dialog.mode == 1, crate::ui::controls::singleline(&mut dialog.new_name).desired_width(280.0));
                     ui.end_row();
                 });
                 ui.radio_value(&mut dialog.mode, 2, "Don't create local branch (detached HEAD)");
@@ -433,7 +433,8 @@ fn rename_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                     .help_text(&dialog.source);
                     ui.add_enabled(
                         !busy,
-                        TextEdit::singleline(&mut dialog.name).desired_width(f32::INFINITY),
+                        crate::ui::controls::singleline(&mut dialog.name)
+                            .desired_width(f32::INFINITY),
                     );
                 }
                 let blocker = app.rename_branch_blocker();
@@ -512,7 +513,7 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                 .help_text(&source);
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.add(
-                        TextEdit::singleline(&mut app.new_branch_name)
+                        crate::ui::controls::singleline(&mut app.new_branch_name)
                             .hint_text("feature/my-change")
                             .desired_width(f32::INFINITY),
                     );

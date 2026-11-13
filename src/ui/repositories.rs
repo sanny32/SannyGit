@@ -6,7 +6,7 @@ use crate::{
     menu::MenuAction,
     theme::semibold_family,
 };
-use eframe::egui::{Align, CollapsingHeader, Layout, RichText, ScrollArea, TextEdit, Ui};
+use eframe::egui::{Align, CollapsingHeader, Layout, RichText, ScrollArea, Ui};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
@@ -24,7 +24,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     ui.horizontal(|ui| {
                         ui.label("Repository:");
                         let width = (ui.available_width() - 36.0).max(100.0);
-                        ui.add_sized([width, 28.0], TextEdit::singleline(&mut app.repository_path));
+                        ui.add_sized([width, crate::theme::CONTROL_HEIGHT], crate::ui::controls::singleline(&mut app.repository_path));
                         super::clone_dialog::choose_folder(ui, &mut app.repository_path);
                     });
                 });

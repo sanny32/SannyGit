@@ -92,6 +92,8 @@ fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
             bottom: 3,
         }))
         .show(ui, |ui| {
+            // MenuBar creates its horizontal layout before applying its own style.
+            ui.spacing_mut().interact_size.y = 24.0;
             eframe::egui::MenuBar::new()
                 .config(
                     eframe::egui::containers::menu::MenuConfig::new()
@@ -411,7 +413,7 @@ fn remote_help(operation: crate::remotes::Operation, remote: Option<&str>) -> St
 mod tests {
     use super::*;
     use crate::{menu::EditAction, theme::ThemeChoice};
-    use eframe::egui::{self, Context, Event, Id, OutputCommand, RawInput, TextEdit};
+    use eframe::egui::{self, Context, Event, Id, OutputCommand, RawInput};
 
     #[test]
     fn edit_menu_preserves_target_selection_and_uses_text_edit_undo_history() {
@@ -436,7 +438,7 @@ mod tests {
                             ui.memory_mut(|memory| memory.request_focus(Id::unique("menu.button")));
                             perform_edit(ui.ctx(), action);
                         }
-                        ui.add(TextEdit::singleline(&mut text).id(id));
+                        ui.add(crate::ui::controls::singleline(&mut text).id(id));
                     },
                 );
                 output.textures_delta.clear();

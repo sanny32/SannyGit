@@ -799,7 +799,9 @@ mod tests {
     }
 
     fn finish_restore(app: &mut SannyGitApp) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // Parallel integration tests can delay Git process startup on Windows CI.
+        // Return as soon as the worker finishes, but allow for a loaded runner.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while app.busy() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(5));
             app.poll_worker();
@@ -873,8 +875,18 @@ mod tests {
         );
 
         let mut storage = Storage::default();
+        app.repository_llm_instructions
+            .insert("/second".into(), "Independent prompt".into());
         eframe::App::save(&mut app, &mut storage);
+        let saved_instructions: std::collections::BTreeMap<String, String> =
+            eframe::get_value(&storage, "sannygit.repository_llm_instructions").unwrap();
+        assert_eq!(saved_instructions["/second"], "Independent prompt");
         let mut restored = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
+        restored.repository_llm_instructions = saved_instructions;
+        assert_eq!(
+            restored.effective_generation_config("/second").instructions,
+            "Independent prompt"
+        );
         restored.llm_config = eframe::get_value(&storage, "sannygit.llm").unwrap();
         restored.repository_llm_configs =
             eframe::get_value(&storage, "sannygit.repository_llm").unwrap();

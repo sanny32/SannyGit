@@ -108,6 +108,7 @@ pub enum SettingsPage {
     Git,
     Remote,
     Llm,
+    CommitMessages,
 }
 
 #[derive(Clone, Default)]
@@ -155,6 +156,7 @@ pub struct SettingsWindow {
     pub skip_push_confirmation: bool,
     pub llm: LlmSettings,
     pub llm_repositories: BTreeMap<String, LlmSettings>,
+    pub llm_instructions: BTreeMap<String, String>,
     pub llm_repository: Option<String>,
 }
 
@@ -176,6 +178,7 @@ impl SettingsWindow {
             skip_push_confirmation: false,
             llm: LlmSettings::default(),
             llm_repositories: BTreeMap::new(),
+            llm_instructions: BTreeMap::new(),
             llm_repository: None,
         }
     }
@@ -214,6 +217,7 @@ pub struct SannyGitApp {
     pub settings_window: SettingsWindow,
     pub llm_config: crate::llm::Config,
     pub repository_llm_configs: BTreeMap<String, crate::llm::Config>,
+    pub repository_llm_instructions: BTreeMap<String, String>,
     pub llm_models: ModelCatalog,
     pub about_dialog: bool,
     pub welcome_open: bool,
@@ -343,6 +347,10 @@ impl SannyGitApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.repository_llm"))
             .unwrap_or_default();
+        app.repository_llm_instructions = creation_context
+            .storage
+            .and_then(|storage| eframe::get_value(storage, "sannygit.repository_llm_instructions"))
+            .unwrap_or_default();
         if let Some(api_key) = std::env::var_os("SANNYGIT_LLM_API_KEY") {
             app.llm_config.api_key = api_key.to_string_lossy().into_owned();
         }
@@ -459,6 +467,7 @@ impl SannyGitApp {
             settings_window: SettingsWindow::new(theme),
             llm_config: crate::llm::Config::default(),
             repository_llm_configs: BTreeMap::new(),
+            repository_llm_instructions: BTreeMap::new(),
             llm_models: ModelCatalog::default(),
             about_dialog: false,
             welcome_open: false,
@@ -932,6 +941,7 @@ impl SannyGitApp {
                 )
             })
             .collect();
+        self.settings_window.llm_instructions = self.repository_llm_instructions.clone();
         self.settings_window.llm_repository = None;
         self.settings_window.initial_position_set = false;
         self.settings_window.initial_position = None;
@@ -1692,6 +1702,14 @@ impl SannyGitApp {
             .unwrap_or(&self.llm_config)
     }
 
+    pub fn effective_generation_config(&self, path: &str) -> crate::llm::Config {
+        let mut config = self.effective_llm_config(path).clone();
+        if let Some(instructions) = self.repository_llm_instructions.get(path) {
+            config.instructions.clone_from(instructions);
+        }
+        config
+    }
+
     pub fn generate_commit_message(&mut self) {
         if self.generate_commit_message_blocker().is_some() {
             return;
@@ -1702,7 +1720,7 @@ impl SannyGitApp {
             .repository_llm_configs
             .contains_key(&path)
             .then_some(path.clone());
-        let mut config = self.effective_llm_config(&path).clone();
+        let mut config = self.effective_generation_config(&path);
         if let Err(error) = crate::llm::request_endpoint(&config) {
             self.error = Some(error);
             return;
@@ -2281,6 +2299,11 @@ impl eframe::App for SannyGitApp {
         );
         eframe::set_value(storage, "sannygit.auto_fetch", &self.tracking.auto_fetch);
         eframe::set_value(storage, "sannygit.llm", &self.llm_config);
+        eframe::set_value(
+            storage,
+            "sannygit.repository_llm_instructions",
+            &self.repository_llm_instructions,
+        );
         eframe::set_value(
             storage,
             "sannygit.repository_llm",

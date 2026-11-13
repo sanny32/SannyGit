@@ -29,28 +29,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let removed = preview.removed;
 
     ui.spacing_mut().item_spacing.y = 0.0;
-    let mut close = false;
-    super::header(ui, 30.0, palette, |ui| {
-        ui.label("Changes");
-        Frame::new()
-            .fill(palette.panel)
-            .stroke((1.0, palette.border))
-            .corner_radius(4)
-            .inner_margin(Margin::symmetric(6, 0))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    icons::paint(ui, Icon::for_file(&change.path), palette.accent, 14.0);
-                    ui.label(file_name(&change.path));
-                    ui.add_space(4.0);
-                    close = icons::button(ui, Icon::Close, "Close diff").clicked();
-                });
-            });
-    });
+    let close = file_header(ui, &change.path, palette);
     if close {
         app.selected_change = usize::MAX;
         return;
     }
     super::header(ui, 26.0, palette, |ui| {
+        ui.spacing_mut().interact_size.y = 20.0;
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 let path_width = (ui.available_width() - 118.0).max(100.0);
@@ -89,6 +74,34 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         });
     });
     render_preview(ui, preview, palette, &change.path);
+}
+
+fn file_header(ui: &mut Ui, path: &str, palette: crate::theme::Palette) -> bool {
+    let mut close = false;
+    super::header(ui, 30.0, palette, |ui| {
+        ui.spacing_mut().interact_size.y = 20.0;
+        ui.label("Changes");
+        ui.allocate_ui_with_layout(
+            Vec2::new(ui.available_width(), 28.0),
+            Layout::top_down(Align::Min),
+            |ui| {
+                Frame::new()
+                    .fill(palette.panel)
+                    .stroke((1.0, palette.border))
+                    .corner_radius(4)
+                    .inner_margin(Margin::symmetric(6, 0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            icons::paint(ui, Icon::for_file(path), palette.accent, 14.0);
+                            ui.label(file_name(path));
+                            ui.add_space(4.0);
+                            close = icons::button(ui, Icon::Close, "Close diff").clicked();
+                        });
+                    });
+            },
+        );
+    });
+    close
 }
 
 pub fn render_preview(
@@ -213,4 +226,65 @@ fn show_line(
 
 fn file_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_tab_border_stays_inside_header() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            let ctx = eframe::egui::Context::default();
+            crate::theme::install_fonts(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            theme.apply(&ctx);
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(eframe::egui::RawInput::default(), |ui| {
+                    file_header(ui, "app.rs", theme.palette());
+                });
+                let palette = theme.palette();
+                let header = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        eframe::egui::Shape::Rect(rect)
+                            if rect.fill == palette.header
+                                && (rect.rect.height() - 30.0).abs() < 0.1 =>
+                        {
+                            Some(rect.rect)
+                        }
+                        _ => None,
+                    })
+                    .expect("Diff header missing");
+                let tab = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        eframe::egui::Shape::Rect(rect)
+                            if rect.fill == palette.panel
+                                && rect.stroke.color == palette.border
+                                && rect.stroke.width == 1.0 =>
+                        {
+                            Some((rect.rect, shape.clip_rect))
+                        }
+                        _ => None,
+                    })
+                    .expect("File tab missing");
+                assert!(
+                    header.contains_rect(tab.0),
+                    "Tab extends outside header: {tab:?}, {header:?}"
+                );
+                assert!(tab.1.contains_rect(tab.0), "Tab border is clipped: {tab:?}");
+                assert!(
+                    tab.0.bottom() < header.bottom(),
+                    "Tab overlaps header separator"
+                );
+                output.textures_delta.clear();
+            }
+        }
+    }
 }

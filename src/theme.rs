@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 
 pub const INTERFACE_STYLE_STORAGE_KEY: &str = "sannygit.interface_style";
 
+/// Shared minimum height for form fields and their adjacent controls, in logical pixels.
+pub const CONTROL_HEIGHT: f32 = 28.0;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InterfaceStyle {
     #[default]
@@ -73,6 +76,11 @@ pub fn install_fonts(context: &Context) {
         "Segoe UI Semibold",
     ] {
         if let Some(font) = fonts.font_data.get_mut(name) {
+            // Segoe UI's visible glyphs sit below the center of its line box.
+            // Correct the ink position without changing row heights or baselines.
+            if name.starts_with("Segoe UI") {
+                std::sync::Arc::make_mut(font).tweak.y_offset = -1.0;
+            }
             std::sync::Arc::make_mut(font).tweak.hinting_target =
                 egui::epaint::text::HintingTarget::Smooth(egui::epaint::text::SmoothHinting {
                     light: false,
@@ -214,7 +222,7 @@ impl ThemeChoice {
             }
             style.spacing.indent = 14.0;
             style.spacing.scroll.bar_width = 8.0;
-            style.spacing.interact_size.y = 20.0;
+            style.spacing.interact_size.y = CONTROL_HEIGHT;
             // Floating tooltips use the global style and must show their full text.
             style.wrap_mode = Some(egui::TextWrapMode::Wrap);
             style.interaction.resize_grab_radius_side = 5.0;

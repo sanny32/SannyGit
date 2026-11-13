@@ -112,7 +112,7 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
                     .id_salt("preferences.page")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        if app.settings_window.page == SettingsPage::Llm {
+                        if app.settings_window.page == SettingsPage::CommitMessages {
                             ui.set_max_height(page_height);
                         }
                         page(ui, app, palette);
@@ -164,6 +164,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
 
 fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     Panel::left("preferences.navigation")
+        .resizable(false)
         .exact_size(206.0)
         .frame(Frame::new().fill(palette.header).inner_margin(Margin {
             left: 12,
@@ -179,29 +180,46 @@ fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     ui.set_min_size(ui.available_size() - Vec2::splat(2.0));
                     ui.spacing_mut().item_spacing.y = 0.0;
                     ScrollArea::vertical().show(ui, |ui| {
-                        section(ui, "Main Window", |ui| {
-                            entry(ui, app, SettingsPage::General, "General")
-                        });
-                        section(ui, "User Interface", |ui| {
-                            entry(ui, app, SettingsPage::Appearance, "Appearance");
-                            entry(ui, app, SettingsPage::DateTime, "Date & Time");
-                        });
-                        section(ui, "Git", |ui| {
-                            entry(ui, app, SettingsPage::Git, "Executable");
+                        section(
+                            ui,
+                            app,
+                            SettingsPage::General,
+                            "User Interface",
+                            |ui, app| {
+                                entry(ui, app, SettingsPage::Appearance, "Appearance");
+                                entry(ui, app, SettingsPage::DateTime, "Date & Time");
+                            },
+                        );
+                        section(ui, app, SettingsPage::Git, "Git", |ui, app| {
                             entry(ui, app, SettingsPage::Remote, "Remote");
                         });
-                        section(ui, "AI", |ui| {
-                            entry(ui, app, SettingsPage::Llm, "Commit messages")
+                        section(ui, app, SettingsPage::Llm, "AI", |ui, app| {
+                            entry(ui, app, SettingsPage::CommitMessages, "Commit messages")
                         });
                     });
                 });
         });
 }
 
-fn section(ui: &mut Ui, title: &str, contents: impl FnOnce(&mut Ui)) {
-    egui::CollapsingHeader::new(title)
-        .default_open(true)
-        .show_unindented(ui, contents);
+fn section(
+    ui: &mut Ui,
+    app: &mut SannyGitApp,
+    page: SettingsPage,
+    title: &str,
+    contents: impl FnOnce(&mut Ui, &mut SannyGitApp),
+) {
+    let id = ui.make_persistent_id(("preferences.section", title));
+    let mut state =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
+    let response =
+        super::controls::selectable_row(ui, app.settings_window.page == page, 23.0, |ui| {
+            state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
+            ui.label(title);
+        });
+    if response.clicked() {
+        app.settings_window.page = page;
+    }
+    state.show_body_unindented(ui, |ui| contents(ui, app));
 }
 
 fn entry(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
@@ -221,7 +239,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     match app.settings_window.page {
         SettingsPage::General => {
             ui.spacing_mut().item_spacing.y = 4.0;
-            heading(ui, "General");
+            heading(ui, "User Interface");
             ui.horizontal(|ui| {
                 ui.label("Language:");
                 egui::ComboBox::from_id_salt("preferences.language")
@@ -237,6 +255,9 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     .response
                     .help_text("English is currently the only available language");
             });
+            // Keep the remaining checkbox and radio sections compact; the language
+            // field above uses the application's shared input height.
+            ui.spacing_mut().interact_size.y = 20.0;
             ui.add_space(4.0);
             group(ui, palette, "Startup", |ui| {
                 ui.checkbox(
@@ -403,7 +424,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     let value = &mut app.settings_window.preferences.git_executable;
                     ui.add_sized(
                         [ui.available_width() - 34.0, ui.spacing().interact_size.y],
-                        egui::TextEdit::singleline(value),
+                        crate::ui::controls::singleline(value),
                     );
                     if super::controls::icons::button(
                         ui,
@@ -442,7 +463,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             });
         }
         SettingsPage::Llm => {
-            heading(ui, "LLM commit messages");
+            heading(ui, "AI");
             llm_form(
                 ui,
                 &mut app.settings_window.llm,
@@ -450,6 +471,10 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 None,
                 &mut app.llm_models,
             );
+        }
+        SettingsPage::CommitMessages => {
+            heading(ui, "Commit messages");
+            instructions_form(ui, &mut app.settings_window.llm);
         }
     }
 }
@@ -467,6 +492,12 @@ fn apply_settings(app: &mut SannyGitApp) -> Result<(), String> {
         } else {
             app.repository_llm_configs.remove(path);
         }
+        if let Some(instructions) = app.settings_window.llm_instructions.get(path) {
+            app.repository_llm_instructions
+                .insert(path.clone(), instructions.clone());
+        } else {
+            app.repository_llm_instructions.remove(path);
+        }
     } else {
         app.settings_window.llm.save_secret(&app.llm_config, None)?;
         app.theme = app.settings_window.theme;
@@ -480,6 +511,9 @@ fn apply_settings(app: &mut SannyGitApp) -> Result<(), String> {
 }
 
 fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
+    // Keep checkboxes and label rows compact so the editor remains accessible
+    // at the minimum window size; input fields retain their shared height.
+    ui.spacing_mut().interact_size.y = 20.0;
     let window = &mut app.settings_window;
     let path = window.llm_repository.clone();
     if let Some(path) = &path {
@@ -546,11 +580,18 @@ fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         .is_none_or(|path| !window.llm_repositories.contains_key(path));
     let response = ui.add_enabled(
         path.is_some(),
-        egui::Checkbox::new(&mut inherit, "Use global settings"),
+        egui::Checkbox::new(&mut inherit, "Use global model settings"),
     );
     if response.changed() {
         if let Some(path) = &path {
             if inherit {
+                if let Some(draft) = window.llm_repositories.get(path) {
+                    if draft.config.instructions != window.llm.config.instructions {
+                        window
+                            .llm_instructions
+                            .insert(path.clone(), draft.config.instructions.clone());
+                    }
+                }
                 window.llm_repositories.remove(path);
             } else {
                 window.llm_repositories.insert(
@@ -569,11 +610,48 @@ fn repository_llm_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             llm_form(ui, draft, palette, Some(path), &mut app.llm_models);
         } else {
             ui.add_enabled_ui(false, |ui| {
-                llm_form(ui, &mut window.llm, palette, None, &mut app.llm_models)
+                llm_form(ui, &mut window.llm, palette, None, &mut app.llm_models);
             });
         }
     } else {
         llm_form(ui, &mut window.llm, palette, None, &mut app.llm_models);
+    }
+    if let Some(path) = &path {
+        let mut instructions = window
+            .llm_instructions
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| {
+                window
+                    .llm_repositories
+                    .get(path)
+                    .unwrap_or(&window.llm)
+                    .config
+                    .instructions
+                    .clone()
+            });
+        let previous = instructions.clone();
+        ui.horizontal(|ui| {
+            ui.label("Generation instructions:");
+            if ui.small_button("Reset to global").clicked() {
+                instructions.clone_from(&window.llm.config.instructions);
+                window.llm_instructions.remove(path);
+                if let Some(draft) = window.llm_repositories.get_mut(path) {
+                    draft.config.instructions.clone_from(&instructions);
+                }
+            }
+        });
+        instructions_editor(ui, &mut instructions);
+        if instructions != previous && instructions != window.llm.config.instructions {
+            window
+                .llm_instructions
+                .insert(path.clone(), instructions.clone());
+        } else if instructions == window.llm.config.instructions {
+            window.llm_instructions.remove(path);
+        }
+        if let Some(draft) = window.llm_repositories.get_mut(path) {
+            draft.config.instructions = instructions;
+        }
     }
 }
 
@@ -664,7 +742,7 @@ fn llm_form(
                     ui.end_row();
                     form_label(ui, "API key:");
                     let api_key_response = ui.add(
-                        egui::TextEdit::singleline(&mut draft.config.api_key)
+                        crate::ui::controls::singleline(&mut draft.config.api_key)
                             .hint_text(if draft.config.store_api_key {
                                 "Leave unchanged to keep saved key"
                             } else {
@@ -706,24 +784,30 @@ fn llm_form(
                 20.0,
             )
             .help_text(status);
-            ui.add_space(6.0);
-            ui.label("Generation instructions:");
-            let editor_height = (ui.available_height() - ui.spacing().item_spacing.y).max(24.0);
-            ScrollArea::vertical()
-                .id_salt("llm.instructions")
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                .auto_shrink([false, false])
-                .min_scrolled_height(0.0)
-                .max_height(editor_height)
-                .show(ui, |ui| {
-                    let instructions = ui.add_sized(
-                        [ui.available_width(), editor_height],
-                        egui::TextEdit::multiline(&mut draft.config.instructions).desired_rows(1),
-                    );
-                    super::controls::dialog_style::preserve_multiline_enter(&instructions);
-                });
         });
     });
+}
+
+fn instructions_form(ui: &mut Ui, draft: &mut crate::app::LlmSettings) {
+    ui.label("Generation instructions:");
+    instructions_editor(ui, &mut draft.config.instructions);
+}
+
+fn instructions_editor(ui: &mut Ui, instructions: &mut String) {
+    let editor_height = (ui.available_height() - ui.spacing().item_spacing.y).max(24.0);
+    ScrollArea::vertical()
+        .id_salt("llm.instructions")
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+        .auto_shrink([false, false])
+        .min_scrolled_height(0.0)
+        .max_height(editor_height)
+        .show(ui, |ui| {
+            let instructions = ui.add_sized(
+                [ui.available_width(), editor_height],
+                egui::TextEdit::multiline(instructions).desired_rows(1),
+            );
+            super::controls::dialog_style::preserve_multiline_enter(&instructions);
+        });
 }
 
 fn form_label(ui: &mut Ui, text: &str) {

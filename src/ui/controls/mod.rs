@@ -7,6 +7,13 @@ pub(super) mod tooltips;
 
 use eframe::egui::{Align, Layout, Response, Sense, Ui, UiBuilder, Vec2};
 
+/// Single-line fields share the same height and vertical text alignment.
+pub fn singleline(text: &mut dyn eframe::egui::TextBuffer) -> eframe::egui::TextEdit<'_> {
+    eframe::egui::TextEdit::singleline(text)
+        .min_size(Vec2::new(0.0, crate::theme::CONTROL_HEIGHT))
+        .align(eframe::egui::Align2::LEFT_CENTER)
+}
+
 pub fn selectable_row(
     ui: &mut Ui,
     selected: bool,

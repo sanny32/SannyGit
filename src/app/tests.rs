@@ -2144,6 +2144,10 @@ fn generation_sends_current_changes_after_one_click() {
     app.llm_config.store_api_key = false;
     app.commit_message = "Keep draft".into();
     let patch = git::commit_patch(&repo.0, app.commit_contents, None).unwrap();
+    app.repository_llm_instructions.insert(
+        app.repositories[app.selected_repository].path.clone(),
+        "Repository-specific instructions".into(),
+    );
     assert!(patch.contains("reviewed contents"));
     let server = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -2193,6 +2197,10 @@ fn generation_sends_current_changes_after_one_click() {
         std::thread::sleep(Duration::from_millis(5));
     }
     let request = server.join().unwrap();
+    assert_eq!(
+        request["messages"][0]["content"],
+        "Repository-specific instructions"
+    );
     assert_eq!(
         request["messages"][1]["content"],
         format!("Generate a commit message for these changes:\n\n{patch}")

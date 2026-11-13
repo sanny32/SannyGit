@@ -99,7 +99,6 @@ pub fn setup(ui: &mut Ui) {
     prepare_keyboard(ui);
     ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
     ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
-    ui.spacing_mut().interact_size.y = 26.0;
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
 }
 
@@ -272,7 +271,7 @@ mod tests {
                                             |ui| {
                                                 controls[0] = ui.label("Group name").rect;
                                                 controls[1] = ui
-                                                    .add(egui::TextEdit::singleline(&mut text))
+                                                    .add(crate::ui::controls::singleline(&mut text))
                                                     .rect;
                                                 controls[2] = ui.add(button("Add Group")).rect;
                                                 if expanded {
@@ -395,7 +394,7 @@ mod tests {
                                         let editor = if multiline {
                                             egui::TextEdit::multiline(&mut text)
                                         } else {
-                                            egui::TextEdit::singleline(&mut text)
+                                            crate::ui::controls::singleline(&mut text)
                                         };
                                         let response = ui.add(editor.id(editor_id));
                                         if multiline {
