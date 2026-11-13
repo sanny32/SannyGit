@@ -575,7 +575,7 @@ mod tests {
                 assert!(
                     before
                         .iter()
-                        .any(|r| r.max == journal.max && r.height() > journal.height() + 20.0),
+                        .any(|r| r.max == journal.max && r.height() > journal.height() + 10.0),
                     "Journal did not retain custom height"
                 );
                 assert!(before.len() >= 5);

@@ -1,6 +1,146 @@
 use super::*;
 use eframe::egui::{self, epaint::ClippedShape, Rect, Vec2};
 
+#[cfg(not(target_os = "macos"))]
+fn shortcut_frame(
+    app: &mut SannyGitApp,
+    context: &egui::Context,
+    key: egui::Key,
+    modifiers: egui::Modifiers,
+    repeat: bool,
+) {
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+        // Inject after egui's input preprocessing, which derives repeat from held keys.
+        ui.input_mut(|input| {
+            input.events.push(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat,
+                modifiers,
+            });
+        });
+        app.handle_shortcuts(ui.ctx());
+        let id = egui::Id::unique("commit.message");
+        if ui.memory(|memory| memory.focused() == Some(id)) {
+            ui.add(egui::TextEdit::multiline(&mut app.commit_message).id(id));
+        }
+    });
+    output.textures_delta.clear();
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn shortcuts_match_exact_modifiers_ignore_repeats_and_respect_disabled_actions() {
+    use egui::{Key, Modifiers};
+    for (modifiers, repeat, open, clone) in [
+        (Modifiers::CTRL, false, true, false),
+        (Modifiers::CTRL.plus(Modifiers::SHIFT), false, false, true),
+        (Modifiers::CTRL.plus(Modifiers::ALT), false, false, false),
+        (Modifiers::CTRL, true, false, false),
+    ] {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        shortcut_frame(
+            &mut app,
+            &egui::Context::default(),
+            Key::O,
+            modifiers,
+            repeat,
+        );
+        assert_eq!(app.open_dialog, open);
+        assert_eq!(app.manager.dialog == Some(RepositoryDialog::Clone), clone);
+    }
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    let (_sender, receiver) = mpsc::channel();
+    app.worker = Some(receiver);
+    shortcut_frame(
+        &mut app,
+        &egui::Context::default(),
+        Key::O,
+        Modifiers::CTRL.plus(Modifiers::SHIFT),
+        false,
+    );
+    assert!(app.manager.dialog.is_none());
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn shortcuts_do_not_escape_dialogs_or_text_editors() {
+    for blocker in 0..5 {
+        let context = egui::Context::default();
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        match blocker {
+            0 => app.manager.dialog = Some(RepositoryDialog::Group),
+            1 => app.settings_window.open = true,
+            2 => app.error_dialogs.pending.push_back("Failure".into()),
+            3 => app.contents_preview_open = true,
+            _ => {
+                let mut text = String::new();
+                let id = egui::Id::unique("shortcut.text");
+                let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                    ui.memory_mut(|memory| memory.request_focus(id));
+                    ui.add(egui::TextEdit::singleline(&mut text).id(id));
+                });
+                output.textures_delta.clear();
+                assert!(context.text_edit_focused());
+            }
+        }
+        shortcut_frame(
+            &mut app,
+            &context,
+            egui::Key::O,
+            egui::Modifiers::CTRL,
+            false,
+        );
+        assert!(!app.open_dialog, "blocker {blocker}");
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn commit_shortcut_works_from_message_editor_without_repeating() {
+    let repo = crate::test_support::TempRepo::new();
+    repo.write("file", "shortcut commit\n");
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.apply_snapshot(git::load(&repo.0).unwrap());
+    app.commit_message = "Commit using keyboard".into();
+    let context = egui::Context::default();
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+        let id = egui::Id::unique("commit.message");
+        ui.memory_mut(|memory| memory.request_focus(id));
+        ui.add(egui::TextEdit::multiline(&mut app.commit_message).id(id));
+    });
+    output.textures_delta.clear();
+    assert!(context.text_edit_focused());
+    shortcut_frame(
+        &mut app,
+        &context,
+        egui::Key::Enter,
+        egui::Modifiers::CTRL,
+        true,
+    );
+    assert!(!app.busy());
+    shortcut_frame(
+        &mut app,
+        &context,
+        egui::Key::Enter,
+        egui::Modifiers::CTRL,
+        false,
+    );
+    assert!(app.busy());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.busy() {
+        assert!(std::time::Instant::now() < deadline);
+        app.poll_worker();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(app.error.is_none(), "{:?}", app.error);
+    assert_eq!(
+        repo.git(&["log", "-1", "--format=%s"]).trim(),
+        "Commit using keyboard"
+    );
+}
+
 #[test]
 fn startup_keeps_remote_model_cache_without_requesting_models_when_keys_are_missing() {
     let context = egui::Context::default();

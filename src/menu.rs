@@ -2,6 +2,9 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuAction {
     NewWindow,
+    MaximizeWindow,
+    MinimizeWindow,
+    FullScreen,
     AddGroup,
     Clone,
     SearchRepositories,
@@ -34,6 +37,101 @@ pub enum MenuAction {
     DarkTheme,
     Close,
     About,
+}
+
+#[cfg(not(target_os = "macos"))]
+pub const SHORTCUTS: &[(MenuAction, eframe::egui::KeyboardShortcut)] = {
+    use eframe::egui::{Key, KeyboardShortcut as Shortcut, Modifiers};
+    use MenuAction::*;
+    const CTRL_SHIFT: Modifiers = Modifiers::CTRL.plus(Modifiers::SHIFT);
+    &[
+        (NewWindow, Shortcut::new(CTRL_SHIFT, Key::N)),
+        (FullScreen, Shortcut::new(Modifiers::NONE, Key::F11)),
+        (Open, Shortcut::new(Modifiers::CTRL, Key::O)),
+        (Clone, Shortcut::new(CTRL_SHIFT, Key::O)),
+        (CloseRepository, Shortcut::new(Modifiers::CTRL, Key::W)),
+        (Close, Shortcut::new(CTRL_SHIFT, Key::W)),
+        (Refresh, Shortcut::new(Modifiers::NONE, Key::F5)),
+        (ReloadHistory, Shortcut::new(CTRL_SHIFT, Key::F5)),
+        (Preferences, Shortcut::new(Modifiers::CTRL, Key::Comma)),
+        (Fetch, Shortcut::new(CTRL_SHIFT, Key::F)),
+        (Pull, Shortcut::new(CTRL_SHIFT, Key::L)),
+        (Push, Shortcut::new(CTRL_SHIFT, Key::P)),
+        (Stage, Shortcut::new(Modifiers::CTRL, Key::T)),
+        (Unstage, Shortcut::new(CTRL_SHIFT, Key::T)),
+        (Commit, Shortcut::new(Modifiers::CTRL, Key::Enter)),
+        (Stashes, Shortcut::new(CTRL_SHIFT, Key::S)),
+        (CreateBranch, Shortcut::new(Modifiers::CTRL, Key::B)),
+    ]
+};
+
+#[cfg(not(target_os = "macos"))]
+impl MenuAction {
+    pub fn shortcut(self) -> Option<eframe::egui::KeyboardShortcut> {
+        SHORTCUTS
+            .iter()
+            .find_map(|(action, shortcut)| (*action == self).then_some(*shortcut))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditAction {
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
+
+#[cfg(not(target_os = "macos"))]
+impl EditAction {
+    pub fn from_label(label: &str) -> Option<Self> {
+        Some(match label {
+            "Undo" => Self::Undo,
+            "Redo" => Self::Redo,
+            "Cut" => Self::Cut,
+            "Copy" => Self::Copy,
+            "Paste" => Self::Paste,
+            "Select All" => Self::SelectAll,
+            _ => return None,
+        })
+    }
+
+    pub fn shortcut(self) -> eframe::egui::KeyboardShortcut {
+        use eframe::egui::{Key, KeyboardShortcut, Modifiers};
+        let (modifiers, key) = match self {
+            Self::Undo => (Modifiers::CTRL, Key::Z),
+            Self::Redo if cfg!(target_os = "windows") => (Modifiers::CTRL, Key::Y),
+            Self::Redo => (Modifiers::CTRL.plus(Modifiers::SHIFT), Key::Z),
+            Self::Cut => (Modifiers::CTRL, Key::X),
+            Self::Copy => (Modifiers::CTRL, Key::C),
+            Self::Paste => (Modifiers::CTRL, Key::V),
+            Self::SelectAll => (Modifiers::CTRL, Key::A),
+        };
+        KeyboardShortcut::new(modifiers, key)
+    }
+
+    pub fn event(self) -> Option<eframe::egui::Event> {
+        use eframe::egui::Event;
+        match self {
+            Self::Cut => Some(Event::Cut),
+            Self::Copy => Some(Event::Copy),
+            Self::Paste => None, // The window integration reads the system clipboard.
+            _ => {
+                let shortcut = self.shortcut();
+                Some(Event::Key {
+                    key: shortcut.logical_key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    // egui uses the platform-independent command flag for text editing.
+                    modifiers: shortcut.modifiers.plus(eframe::egui::Modifiers::COMMAND),
+                })
+            }
+        }
+    }
 }
 
 pub struct MenuItem {
@@ -195,7 +293,13 @@ pub const MENUS: &[Menu] = &[
     },
     Menu {
         title: "Window",
-        items: &[action("Close", MenuAction::Close)],
+        items: &[
+            action("New Window", MenuAction::NewWindow),
+            separator(),
+            action("Maximize", MenuAction::MaximizeWindow),
+            action("Minimize", MenuAction::MinimizeWindow),
+            action("Full Screen", MenuAction::FullScreen),
+        ],
     },
     Menu {
         title: "Help",

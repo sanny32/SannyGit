@@ -81,22 +81,31 @@ fn action_button(
 
 #[cfg(not(target_os = "macos"))]
 fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
+    remember_edit_target(ui.ctx());
     let palette = app.palette();
     Panel::top("working_tree.menu")
-        .exact_size(24.0)
-        .frame(
-            Frame::new()
-                .fill(palette.header)
-                .inner_margin(Margin::symmetric(8, 0)),
-        )
+        .exact_size(34.0)
+        .frame(Frame::new().fill(palette.header).inner_margin(Margin {
+            left: 8,
+            right: 8,
+            top: 3,
+            bottom: 7,
+        }))
         .show(ui, |ui| {
             eframe::egui::MenuBar::new()
+                .config(
+                    eframe::egui::containers::menu::MenuConfig::new()
+                        .submenu_gap(0.0)
+                        .style(move |style: &mut eframe::egui::Style| {
+                            desktop_menu_style(style, palette);
+                        }),
+                )
                 .style(|style: &mut eframe::egui::Style| {
                     eframe::egui::containers::menu::menu_style(style);
-                    style.spacing.item_spacing.x = 4.0;
+                    style.spacing.item_spacing.x = 0.0;
                     style.spacing.button_padding.x = 8.0;
                     style.spacing.interact_size.y = 24.0;
-                    style.override_font_id = Some(FontId::proportional(12.0));
+                    style.override_font_id = Some(FontId::proportional(13.0));
                 })
                 .ui(ui, |ui| {
                     for menu in crate::menu::MENUS {
@@ -109,17 +118,111 @@ fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
 }
 
 #[cfg(not(target_os = "macos"))]
+fn remember_edit_target(context: &eframe::egui::Context) {
+    let key = eframe::egui::Id::unique("menu.edit.target");
+    if context.text_edit_focused() {
+        if let Some(target) = context.memory(|memory| memory.focused()) {
+            context.data_mut(|data| data.insert_temp(key, target));
+        }
+    } else if !eframe::egui::Popup::is_any_open(context) {
+        context.data_mut(|data| data.remove::<eframe::egui::Id>(key));
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn edit_target(context: &eframe::egui::Context) -> Option<eframe::egui::Id> {
+    context.data(|data| data.get_temp(eframe::egui::Id::unique("menu.edit.target")))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn perform_edit(context: &eframe::egui::Context, action: crate::menu::EditAction) {
+    let Some(target) = edit_target(context) else {
+        return;
+    };
+    // Clicking a menu item must not redirect the edit away from the original field.
+    context.memory_mut(|memory| memory.request_focus(target));
+    if let Some(event) = action.event() {
+        context.input_mut(|input| input.events.push(event));
+    } else {
+        context.send_viewport_cmd(eframe::egui::ViewportCommand::RequestPaste);
+    }
+    context.request_repaint();
+}
+
+#[cfg(not(target_os = "macos"))]
+fn desktop_menu_style(style: &mut eframe::egui::Style, palette: Palette) {
+    use eframe::egui::{CornerRadius, Stroke, TextWrapMode};
+
+    eframe::egui::containers::menu::menu_style(style);
+    style.override_font_id = Some(FontId::proportional(13.0));
+    style.wrap_mode = Some(TextWrapMode::Extend);
+    style.spacing.menu_margin = Margin::symmetric(1, 4);
+    style.spacing.item_spacing = Vec2::ZERO;
+    style.spacing.button_padding = Vec2::new(28.0, 2.0);
+    style.spacing.interact_size.y = 24.0;
+    style.visuals.window_fill = palette.menu_background;
+    style.visuals.window_stroke = Stroke::new(1.0, palette.border);
+    style.visuals.menu_corner_radius = CornerRadius::same(4);
+    for widget in [
+        &mut style.visuals.widgets.inactive,
+        &mut style.visuals.widgets.hovered,
+        &mut style.visuals.widgets.active,
+        &mut style.visuals.widgets.open,
+    ] {
+        widget.corner_radius = CornerRadius::ZERO;
+        widget.expansion = 0.0;
+    }
+    style.visuals.widgets.hovered.weak_bg_fill = palette.hover;
+    style.visuals.widgets.open.weak_bg_fill = palette.hover;
+}
+
+#[cfg(not(target_os = "macos"))]
 fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem]) {
+    ui.set_min_width(280.0);
     for item in items {
         if item.separator {
-            ui.separator();
+            ui.add(eframe::egui::Separator::default().spacing(10.0));
         } else if !item.children.is_empty() {
-            ui.menu_button(item.label, |ui| menu_items(ui, app, item.children));
+            let arrow = icons::image(Icon::Chevron, app.palette().muted, 12.0)
+                .rotate(-std::f32::consts::FRAC_PI_2, Vec2::splat(0.5));
+            eframe::egui::containers::menu::SubMenuButton::from_button(
+                Button::new(item.label).right_text(arrow),
+            )
+            .ui(ui, |ui| menu_items(ui, app, item.children));
         } else {
+            if let Some(edit) = crate::menu::EditAction::from_label(item.label) {
+                let target = edit_target(ui.ctx());
+                let has_selection = target
+                    .and_then(|id| eframe::egui::text_edit::TextEditState::load(ui.ctx(), id))
+                    .and_then(|state| state.cursor.char_range())
+                    .is_some_and(|range| !range.is_empty());
+                let enabled = target.is_some()
+                    && (!matches!(
+                        edit,
+                        crate::menu::EditAction::Cut | crate::menu::EditAction::Copy
+                    ) || has_selection);
+                if ui
+                    .add_enabled(
+                        enabled,
+                        Button::new(item.label)
+                            .shortcut_text(ui.ctx().format_shortcut(&edit.shortcut())),
+                    )
+                    .disabled_help_text("Focus a text field; Cut and Copy require selected text")
+                    .clicked()
+                {
+                    perform_edit(ui.ctx(), edit);
+                    ui.close();
+                }
+                continue;
+            }
             let enabled = item
                 .action
                 .is_some_and(|action| app.menu_action_enabled(action));
-            let response = ui.add_enabled(enabled, Button::new(item.label));
+            let mut button = Button::new(item.label);
+            if let Some(shortcut) = item.action.and_then(|action| action.shortcut()) {
+                button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
+            }
+            let response = ui.add_enabled(enabled, button);
             if let Some(action) = item.action {
                 if response.clicked() {
                     app.handle_menu_action(action, ui.ctx());
@@ -301,5 +404,103 @@ fn remote_help(operation: crate::remotes::Operation, remote: Option<&str>) -> St
             format!("Pull remote commits from the {repository} into the current branch.")
         }
         crate::remotes::Operation::Push => format!("Push local commits to the {repository}."),
+    }
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod tests {
+    use super::*;
+    use crate::{menu::EditAction, theme::ThemeChoice};
+    use eframe::egui::{self, Context, Event, Id, OutputCommand, RawInput, TextEdit};
+
+    #[test]
+    fn edit_menu_preserves_target_selection_and_uses_text_edit_undo_history() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let context = Context::default();
+            theme.apply(&context);
+            let id = Id::unique("edit.menu.test.field");
+            let mut text = "Selected text".to_owned();
+            let mut frame = |action: Option<EditAction>, events: Vec<Event>| {
+                let mut output = context.run_ui(
+                    RawInput {
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        if action.is_none() {
+                            ui.memory_mut(|memory| memory.request_focus(id));
+                        }
+                        remember_edit_target(ui.ctx());
+                        if let Some(action) = action {
+                            // Opening a menu can move focus to its buttons.
+                            ui.memory_mut(|memory| memory.request_focus(Id::unique("menu.button")));
+                            perform_edit(ui.ctx(), action);
+                        }
+                        ui.add(TextEdit::singleline(&mut text).id(id));
+                    },
+                );
+                output.textures_delta.clear();
+                (text.clone(), output)
+            };
+            frame(None, vec![]);
+            frame(Some(EditAction::SelectAll), vec![]);
+            let state = egui::text_edit::TextEditState::load(&context, id).unwrap();
+            assert_eq!(
+                state
+                    .cursor
+                    .char_range()
+                    .unwrap()
+                    .slice_str("Selected text"),
+                "Selected text"
+            );
+            let (value, output) = frame(Some(EditAction::Copy), vec![]);
+            assert_eq!(value, "Selected text");
+            assert!(output.platform_output.commands.iter().any(|command| {
+                matches!(command, OutputCommand::CopyText(text) if text == "Selected text")
+            }));
+            assert_eq!(frame(Some(EditAction::Cut), vec![]).0, "");
+            assert_eq!(frame(Some(EditAction::Undo), vec![]).0, "Selected text");
+            assert_eq!(frame(Some(EditAction::Redo), vec![]).0, "");
+            let (_, output) = frame(Some(EditAction::Paste), vec![]);
+            assert!(output.viewport_output.values().any(|viewport| {
+                viewport
+                    .commands
+                    .iter()
+                    .any(|command| matches!(command, egui::ViewportCommand::RequestPaste))
+            }));
+            assert_eq!(
+                frame(None, vec![Event::Paste("Pasted text".into())]).0,
+                "Pasted text"
+            );
+        }
+    }
+
+    #[test]
+    fn edit_shortcuts_use_os_conventions_and_leave_unimplemented_items_alone() {
+        use egui::{Key, Modifiers};
+        for (label, key) in [
+            ("Undo", Key::Z),
+            ("Cut", Key::X),
+            ("Copy", Key::C),
+            ("Paste", Key::V),
+            ("Select All", Key::A),
+        ] {
+            let shortcut = EditAction::from_label(label).unwrap().shortcut();
+            assert_eq!(shortcut.logical_key, key);
+            assert_eq!(shortcut.modifiers, Modifiers::CTRL);
+        }
+        let redo = EditAction::Redo.shortcut();
+        assert_eq!(
+            redo.logical_key,
+            if cfg!(windows) { Key::Y } else { Key::Z }
+        );
+        assert_eq!(redo.modifiers.shift, !cfg!(windows));
+        assert!(EditAction::from_label("Merge…").is_none());
+        let context = Context::default();
+        for action in [EditAction::Cut, EditAction::Paste, EditAction::SelectAll] {
+            perform_edit(&context, action);
+            assert!(context.memory(|memory| memory.focused()).is_none());
+            assert!(context.input(|input| input.events.is_empty()));
+        }
     }
 }

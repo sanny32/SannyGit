@@ -610,6 +610,9 @@ impl SannyGitApp {
             | MenuAction::Preferences
             | MenuAction::LightTheme
             | MenuAction::DarkTheme
+            | MenuAction::MaximizeWindow
+            | MenuAction::MinimizeWindow
+            | MenuAction::FullScreen
             | MenuAction::Close
             | MenuAction::About => true,
             MenuAction::Refresh | MenuAction::ReloadHistory => {
@@ -645,6 +648,17 @@ impl SannyGitApp {
         use crate::menu::MenuAction;
         match action {
             MenuAction::NewWindow => self.run_repository_job(RepositoryJob::NewWindow),
+            MenuAction::MaximizeWindow => {
+                context.send_viewport_cmd(eframe::egui::ViewportCommand::Maximized(true))
+            }
+            MenuAction::MinimizeWindow => {
+                context.send_viewport_cmd(eframe::egui::ViewportCommand::Minimized(true))
+            }
+            MenuAction::FullScreen => {
+                let fullscreen =
+                    context.input(|input| input.viewport().fullscreen.unwrap_or(false));
+                context.send_viewport_cmd(eframe::egui::ViewportCommand::Fullscreen(!fullscreen));
+            }
             MenuAction::AddGroup => self.manager.dialog = Some(RepositoryDialog::Group),
             MenuAction::Clone => {
                 self.manager.clone_step = 0;
@@ -703,6 +717,71 @@ impl SannyGitApp {
             MenuAction::About => self.about_dialog = true,
         }
         context.request_repaint();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn handle_shortcuts(&mut self, context: &eframe::egui::Context) {
+        use crate::menu::{MenuAction, SHORTCUTS};
+        use eframe::egui::Event;
+
+        if self.settings_window.open
+            || self.open_dialog
+            || self.welcome_open
+            || self.about_dialog
+            || self.manager.dialog.is_some()
+            || self.network_dialog.is_some()
+            || self.stash_dialog.is_some()
+            || self.discard_dialog.is_some()
+            || self.ref_dialog.is_some()
+            || self.remote_checkout.is_some()
+            || self.branch_dialog_open
+            || self.rename_branch_dialog.is_some()
+            || self.tag_dialog_open
+            || self.contents_preview_open
+            || self.commit_details_open
+            || self.error.is_some()
+            || !self.error_dialogs.pending.is_empty()
+            || context.memory(|memory| memory.top_modal_layer().is_some())
+            || eframe::egui::Popup::is_any_open(context)
+        {
+            return;
+        }
+        let editing = context.text_edit_focused();
+        let commit_editor = context
+            .memory(|memory| memory.focused() == Some(eframe::egui::Id::unique("commit.message")));
+        let mut selected = None;
+        context.input_mut(|input| {
+            input.events.retain(|event| {
+                let Event::Key {
+                    key,
+                    modifiers,
+                    pressed: true,
+                    repeat,
+                    ..
+                } = event
+                else {
+                    return true;
+                };
+                let Some((action, _)) = SHORTCUTS.iter().find(|(_, shortcut)| {
+                    shortcut.logical_key == *key && modifiers.matches_exact(shortcut.modifiers)
+                }) else {
+                    return true;
+                };
+                if editing
+                    && *action != MenuAction::FullScreen
+                    && !(*action == MenuAction::Commit && commit_editor)
+                {
+                    return true;
+                }
+                if !repeat && selected.is_none() && self.menu_action_enabled(*action) {
+                    selected = Some(*action);
+                }
+                false
+            });
+        });
+        if let Some(action) = selected {
+            self.handle_menu_action(action, context);
+        }
     }
 
     fn finish_startup(&mut self) {
@@ -1985,6 +2064,8 @@ impl eframe::App for SannyGitApp {
                 self.handle_menu_action(action, ui.ctx());
             }
         }
+        #[cfg(not(target_os = "macos"))]
+        self.handle_shortcuts(ui.ctx());
         ui::show(ui, self);
         self.load_ref_pending();
         self.load_pending_stashes();

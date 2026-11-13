@@ -279,13 +279,14 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                     ScrollArea::vertical()
                         .id_salt("repository.settings.content")
                         .auto_shrink([false, false])
-                        .max_height(210.0)
+                        .max_height(160.0)
                         .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 4.0;
                     ui.spacing_mut().interact_size.y = 22.0;
                     if tab == 0 {
                         if let Some(settings) = &mut app.manager.settings {
                             ui.add_enabled_ui(!busy, |ui| {
+                                let field_width = ui.available_width() - 118.0;
                                 egui::Grid::new("repository.settings.identity")
                                     .num_columns(2)
                                     .min_col_width(110.0)
@@ -293,11 +294,11 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                     .show(ui, |ui| {
                                         ui.label("Full Name:");
                                         ui.add(TextEdit::singleline(&mut settings.name)
-                                            .desired_width(ui.available_width()));
+                                            .desired_width(field_width));
                                         ui.end_row();
                                         ui.label("Git Email:");
                                         ui.add(TextEdit::singleline(&mut settings.email)
-                                            .desired_width(ui.available_width()));
+                                            .desired_width(field_width));
                                         ui.end_row();
                                     });
                             });
@@ -339,6 +340,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                 3 => {
                                     let mut program = String::new();
                                     let mut key = String::new();
+                                    let field_width = ui.available_width() - 118.0;
                                     egui::Grid::new("repository.settings.signing")
                                         .num_columns(2)
                                         .min_col_width(110.0)
@@ -346,7 +348,9 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                         .show(ui, |ui| {
                                             ui.label("GPG Program:");
                                             ui.horizontal(|ui| {
-                                                let width = (ui.available_width() - 30.0).max(80.0);
+                                                let width = field_width
+                                                    - super::controls::icons::BUTTON_SIZE
+                                                    - ui.spacing().item_spacing.x;
                                                 ui.add(TextEdit::singleline(&mut program).desired_width(width));
                                                 super::controls::icons::button(
                                                     ui, super::controls::icons::Icon::Folder,
@@ -356,7 +360,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                             ui.end_row();
                                             ui.label("Signing Key:");
                                             ui.add(TextEdit::singleline(&mut key)
-                                                .desired_width(ui.available_width()));
+                                                .desired_width(field_width));
                                             ui.end_row();
                                             ui.label("");
                                             ui.checkbox(&mut false, "Sign all commits");
@@ -473,6 +477,52 @@ mod removal_tests {
 mod tests {
     use super::*;
     use crate::theme::{install_fonts, ThemeChoice};
+
+    #[test]
+    fn settings_dialog_stays_compact_and_stable_when_switching_tabs() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                let ctx = egui::Context::default();
+                install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                let mut expected_rect = None;
+                // Include the initial loading state and the return to the User tab.
+                for tab in [0usize, 0, 1, 2, 3, 4, 0] {
+                    ctx.data_mut(|data| {
+                        data.insert_temp(egui::Id::unique("repository.settings.tab"), tab);
+                    });
+                    for frame in 0..4 {
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    size,
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| settings_dialog(ui.ctx(), &mut app),
+                        );
+                        output.textures_delta.clear();
+                        let rect = ctx
+                            .memory(|m| m.area_rect(egui::Id::unique("repository.settings")))
+                            .unwrap();
+                        if let Some(expected) = expected_rect {
+                            assert_eq!(rect, expected, "Tab {tab}: {theme:?} {size:?}");
+                        } else if frame == 3 {
+                            assert!(rect.height() < 390.0, "{rect:?}");
+                            assert!(rect.width() <= 664.0, "{rect:?}");
+                            assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size)
+                                .contains_rect(rect));
+                            expected_rect = Some(rect);
+                        }
+                    }
+                    app.manager.settings = Some(crate::repository::Settings::default());
+                }
+            }
+        }
+    }
 
     #[test]
     fn settings_labels_fit_one_line_in_both_themes_and_window_sizes() {
