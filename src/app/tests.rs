@@ -1694,7 +1694,7 @@ fn late_unlock_does_not_restore_removed_or_changed_credentials() {
 }
 
 #[test]
-fn generation_reviews_a_fixed_snapshot_before_any_generation_request() {
+fn generation_sends_current_changes_after_one_click() {
     use std::{
         io::{BufRead, BufReader, Read, Write},
         net::TcpListener,
@@ -1709,27 +1709,8 @@ fn generation_reviews_a_fixed_snapshot_before_any_generation_request() {
     app.llm_config.endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
     app.llm_config.store_api_key = false;
     app.commit_message = "Keep draft".into();
-    app.generate_commit_message();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while app.busy() {
-        assert!(Instant::now() < deadline);
-        app.poll_worker();
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert!(!app.generating_commit_message);
-    assert_eq!(app.commit_message, "Keep draft");
-    let patch = app
-        .generation_review
-        .as_ref()
-        .unwrap()
-        .patch
-        .clone()
-        .unwrap();
+    let patch = git::commit_patch(&repo.0, app.commit_contents, None).unwrap();
     assert!(patch.contains("reviewed contents"));
-    assert!(
-        matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
-    );
-    repo.write("review.txt", "later contents must not be sent\n");
     let server = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut socket = loop {
@@ -1768,7 +1749,9 @@ fn generation_reviews_a_fixed_snapshot_before_any_generation_request() {
         .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
     });
-    app.send_reviewed_commit_message();
+    app.generate_commit_message();
+    assert!(app.generating_commit_message);
+    assert_eq!(app.commit_message, "Keep draft");
     let deadline = Instant::now() + Duration::from_secs(10);
     while app.busy() {
         assert!(Instant::now() < deadline);
@@ -1783,55 +1766,39 @@ fn generation_reviews_a_fixed_snapshot_before_any_generation_request() {
     assert_eq!(app.commit_message, "Reviewed message");
     assert_eq!(
         std::fs::read_to_string(repo.0.join("review.txt")).unwrap(),
-        "later contents must not be sent\n"
+        "reviewed contents\n"
     );
 }
 
 #[test]
-fn cancelled_failed_or_wrong_repository_reviews_cannot_send_or_replace_a_draft() {
+fn generation_preparation_failure_preserves_draft_and_reports_a_modal_error() {
+    use std::time::{Duration, Instant};
+
+    let repo = crate::test_support::TempRepo::new();
+    repo.write("file", "initial contents\n");
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-    app.repositories = crate::mock_data::repositories();
-    app.selected_repository = 0;
+    app.apply_snapshot(git::load(&repo.0).unwrap());
+    app.llm_config.endpoint = "http://127.0.0.1:1/v1".into();
+    app.llm_config.store_api_key = false;
     app.commit_message = "Keep draft".into();
-    let review = || GenerationReview {
-        root: "/different-repository".into(),
-        config: crate::llm::Config::default(),
-        repository_scope: None,
-        patch: Some("reviewed patch".into()),
-        preview: None,
-    };
-    app.generation_review = Some(review());
-    app.send_reviewed_commit_message();
-    assert!(!app.busy());
-    app.generation_review = None;
-    deliver(
-        &mut app,
-        WorkerResult::GenerationPreview(Ok((
-            crate::llm::Config::default(),
-            "late patch".into(),
-            crate::models::DiffPreview::new("late patch"),
-        ))),
-    );
-    assert!(app.generation_review.is_none());
-    app.send_reviewed_commit_message();
-    assert!(!app.busy());
-    app.generation_review = Some(GenerationReview {
-        patch: None,
-        ..review()
-    });
-    deliver(
-        &mut app,
-        WorkerResult::GenerationPreview(Err("Snapshot failed".into())),
-    );
-    assert_eq!(app.error.as_deref(), Some("Snapshot failed"));
+    // The selected changes disappear before the worker reads the diff.
+    std::fs::remove_file(repo.0.join("file")).unwrap();
+    app.generate_commit_message();
+    assert!(app.generating_commit_message);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.busy() {
+        assert!(Instant::now() < deadline);
+        app.poll_worker();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.generating_commit_message);
+    assert!(app.generation_cancel.is_none());
+    assert_eq!(app.commit_message, "Keep draft");
+    assert_eq!(app.error.as_deref(), Some("The commit diff is empty"));
     app.collect_errors();
     assert!(app
         .error_dialogs
         .pending
         .iter()
-        .any(|error| error == "Snapshot failed"));
-    assert!(app.generation_review.as_ref().unwrap().patch.is_none());
-    app.send_reviewed_commit_message();
-    assert!(!app.busy());
-    assert_eq!(app.commit_message, "Keep draft");
+        .any(|error| error == "The commit diff is empty"));
 }

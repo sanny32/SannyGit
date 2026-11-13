@@ -1,6 +1,6 @@
 [package]
 name = "sannygit"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -10,7 +10,7 @@ description = "A simple, fast, modern, open-source Git GUI client"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 rfd = "0.17.2"
 eframe = { version = "0.37", default-features = false, features = [
-    "accesskit", "default_fonts", "glow", "persistence", "wayland", "x11",
+    "accesskit", "clipboard", "default_fonts", "glow", "persistence", "wayland", "x11",
 ] }
 egui_extras = { version = "0.37", features = ["svg", "image"] }
 serde = { version = "1", features = ["derive"] }

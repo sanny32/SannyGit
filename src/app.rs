@@ -66,7 +66,6 @@ enum WorkerResult {
         result: Result<crate::models::DiffPreview, String>,
     },
     ContentsPreview(Result<crate::models::DiffPreview, String>),
-    GenerationPreview(Result<(crate::llm::Config, String, crate::models::DiffPreview), String>),
     CommitMessage {
         result: Result<String, String>,
         config: crate::llm::Config,
@@ -109,14 +108,6 @@ pub enum SettingsPage {
     Git,
     Remote,
     Llm,
-}
-
-pub struct GenerationReview {
-    pub root: String,
-    pub config: crate::llm::Config,
-    pub repository_scope: Option<String>,
-    pub patch: Option<String>,
-    pub preview: Option<crate::models::DiffPreview>,
 }
 
 #[derive(Clone, Default)]
@@ -260,7 +251,6 @@ pub struct SannyGitApp {
     pub current_branch: String,
     pub commit_message: String,
     pub commit_contents: git::CommitContents,
-    pub generation_review: Option<GenerationReview>,
     pub contents_preview_open: bool,
     pub contents_preview: Option<Result<crate::models::DiffPreview, String>>,
     pub generating_commit_message: bool,
@@ -502,7 +492,6 @@ impl SannyGitApp {
             current_branch: String::new(),
             commit_message: String::new(),
             commit_contents: git::CommitContents::default(),
-            generation_review: None,
             contents_preview_open: false,
             contents_preview: None,
             generating_commit_message: false,
@@ -806,7 +795,6 @@ impl SannyGitApp {
         let same_repository = self.selected_repository == index;
         if !same_repository {
             self.remember_commit_draft();
-            self.generation_review = None;
         }
         self.selected_repository = index;
         if !same_repository {
@@ -1487,17 +1475,14 @@ impl SannyGitApp {
             self.error = Some(error);
             return;
         }
-        self.generation_review = Some(GenerationReview {
-            root: path,
-            config: config.clone(),
-            repository_scope: repository_scope.clone(),
-            patch: None,
-            preview: None,
-        });
         let contents = self.commit_contents;
         let head = self.amend_head.clone().filter(|_| self.amend);
-        self.start_worker(move || {
-            WorkerResult::GenerationPreview(
+        self.error = None;
+        self.status = "Generating commit message…".into();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.generation_cancel = Some(cancel.clone());
+        self.generating_commit_message = self.start_worker(move || {
+            let result =
                 crate::llm::load_api_key_if_needed(&mut config, repository_scope.as_deref())
                     .and_then(|()| config.validate())
                     .and_then(|()| git::commit_patch(&root, contents, head.as_deref()))
@@ -1508,43 +1493,9 @@ impl SannyGitApp {
                         } else if patch.len() > crate::llm::MAX_DIFF_BYTES {
                             Err("The commit diff exceeds the LLM request limit".into())
                         } else {
-                            let preview = crate::models::DiffPreview::new(&patch);
-                            Ok((config, patch, preview))
+                            crate::llm::generate(&config, &patch, &cancel)
                         }
-                    }),
-            )
-        });
-    }
-
-    pub fn send_reviewed_commit_message(&mut self) {
-        if self.busy() {
-            return;
-        }
-        let Some(review) = self.generation_review.as_ref() else {
-            return;
-        };
-        if review.patch.is_none()
-            || !self
-                .repositories
-                .get(self.selected_repository)
-                .is_some_and(|repository| repository.path == review.root)
-        {
-            return;
-        }
-        let Some(review) = self.generation_review.take() else {
-            return;
-        };
-        let Some(patch) = review.patch else {
-            return;
-        };
-        let config = review.config;
-        let repository_scope = review.repository_scope;
-        self.error = None;
-        self.status = "Generating commit message…".into();
-        let cancel = Arc::new(AtomicBool::new(false));
-        self.generation_cancel = Some(cancel.clone());
-        self.generating_commit_message = self.start_worker(move || {
-            let result = crate::llm::generate(&config, &patch, &cancel);
+                    });
             WorkerResult::CommitMessage {
                 result,
                 config,
@@ -1619,18 +1570,6 @@ impl SannyGitApp {
                 self.apply_discard_prepared(root, path, result)
             }
             WorkerResult::Stash { path, result } => self.apply_stash_result(path, *result),
-            WorkerResult::GenerationPreview(result) => {
-                if let Some(review) = self.generation_review.as_mut() {
-                    match result {
-                        Ok((config, patch, preview)) => {
-                            review.config = config;
-                            review.preview = Some(preview);
-                            review.patch = Some(patch);
-                        }
-                        Err(error) => self.error = Some(error),
-                    }
-                }
-            }
             WorkerResult::ContentsPreview(result) => self.contents_preview = Some(result),
             WorkerResult::RemoteInfo { operation, result } => {
                 self.apply_remote_info(operation, result)
