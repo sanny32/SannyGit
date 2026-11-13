@@ -84,12 +84,12 @@ fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
     remember_edit_target(ui.ctx());
     let palette = app.palette();
     Panel::top("working_tree.menu")
-        .exact_size(34.0)
+        .exact_size(30.0)
         .frame(Frame::new().fill(palette.header).inner_margin(Margin {
             left: 8,
             right: 8,
             top: 3,
-            bottom: 7,
+            bottom: 3,
         }))
         .show(ui, |ui| {
             eframe::egui::MenuBar::new()
