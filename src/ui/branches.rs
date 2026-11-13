@@ -50,7 +50,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         app.branch_dialog_open = true;
                     }
                     if icons::button(ui, Icon::Fetch, "Reload branches and tags").clicked() {
-                        app.refresh();
+                        app.reload_refs();
                     }
                 },
             );

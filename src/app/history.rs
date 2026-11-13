@@ -43,7 +43,7 @@ impl SannyGitApp {
     pub(super) fn queue_history_reload(&mut self) {
         if let Some(cancel) = self.history_session.cancel.take() {
             cancel.store(true, Ordering::Relaxed);
-            self.worker = None;
+            self.history_worker = None;
         }
         self.history_session.generation = self.history_session.generation.wrapping_add(1);
         self.history_session.append = false;
@@ -105,7 +105,7 @@ impl SannyGitApp {
         }
         if let Some(cancel) = self.history_session.cancel.take() {
             cancel.store(true, Ordering::Relaxed);
-            self.worker = None;
+            self.history_worker = None;
         }
         self.history_error = None;
         self.history_session.generation = self.history_session.generation.wrapping_add(1);
@@ -115,7 +115,7 @@ impl SannyGitApp {
     }
 
     pub(super) fn load_history(&mut self) {
-        if self.busy() || !self.history_pending {
+        if self.busy() || self.history_worker.is_some() || !self.history_pending {
             return;
         }
         let Some(repository) = self.repositories.get(self.selected_repository) else {
@@ -147,7 +147,7 @@ impl SannyGitApp {
         let cancel = Arc::new(AtomicBool::new(false));
         self.history_session.cancel = Some(cancel.clone());
         self.history_pending = false;
-        if !self.start_worker(move || {
+        match self.spawn_reader(move || {
             let root = PathBuf::from(&path);
             let result = if append {
                 cursor
@@ -165,9 +165,12 @@ impl SannyGitApp {
                 result,
             }
         }) {
-            self.history_session.cancel = None;
-            self.history_loading = false;
-            self.history_error = self.error.clone();
+            Ok(receiver) => self.history_worker = Some(receiver),
+            Err(error) => {
+                self.history_session.cancel = None;
+                self.history_loading = false;
+                self.history_error = Some(error);
+            }
         }
     }
 
@@ -242,9 +245,10 @@ mod tests {
     fn wait(app: &mut SannyGitApp) {
         app.load_history();
         let deadline = Instant::now() + Duration::from_secs(15);
-        while app.busy() {
+        while app.history_worker.is_some() {
+            assert!(!app.busy(), "History reads must not disable other controls");
             assert!(Instant::now() < deadline);
-            app.poll_worker();
+            app.poll_view_reads();
             std::thread::sleep(Duration::from_millis(5));
         }
     }

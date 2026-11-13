@@ -553,6 +553,7 @@ impl SannyGitApp {
         self.amend_draft = None;
         self.open_dialog = false;
         self.selected_repository = usize::MAX;
+        self.invalidate_view_reads();
         self.tracking.invalidate();
         self.selected_change = usize::MAX;
         self.current_branch.clear();
@@ -567,6 +568,7 @@ impl SannyGitApp {
         self.history_session.clear_view();
         self.history_error = None;
         self.refs_current = false;
+        self.refs_worker = None;
         self.refs_loading = false;
         self.refs_pending = false;
         self.refs_error = None;
@@ -1111,11 +1113,21 @@ mod tests {
         let path = app.repositories[0].path.clone();
         app.assign_group(&path, Some("Work".into()));
         app.commit_message = "Unsaved message".into();
+        let (sender, receiver) = mpsc::channel();
+        app.refs_worker = Some(receiver);
         app.close_repository(false);
         assert_eq!(app.manager.dialog, Some(Dialog::CloseRepository));
         assert_eq!(app.selected_repository, 0);
         assert!(!app.changes.is_empty());
+        assert!(app.refs_worker.is_some());
         app.close_repository(true);
+        assert!(app.refs_worker.is_none());
+        assert!(sender
+            .send(WorkerResult::Refs {
+                path: path.clone(),
+                result: Err("Late read".into()),
+            })
+            .is_err());
         assert_eq!(app.selected_repository, usize::MAX);
         assert!(app.changes.is_empty() && app.refs.is_empty() && app.commits.is_empty());
         assert!(!app.history_pending && !app.refs_pending);

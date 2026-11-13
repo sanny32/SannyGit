@@ -1087,6 +1087,269 @@ fn remote_checkout_uses_current_tracking_branch_or_shows_choices() {
 }
 
 #[test]
+fn branch_reload_keeps_controls_and_loaded_content_stable() {
+    use crate::test_support::TempRepo;
+    use std::time::{Duration, Instant};
+
+    let repo = TempRepo::new();
+    repo.write("file", "base\n");
+    repo.git(&["add", "file"]);
+    repo.git(&["commit", "-m", "base"]);
+    repo.write("file", "changed\n");
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        for style in [InterfaceStyle::Classic, InterfaceStyle::Modern] {
+            for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
+                let mut app = SannyGitApp::with_theme(theme);
+                app.interface_style = style;
+                app.apply_snapshot(git::load(&repo.0).unwrap());
+                app.history_pending = false;
+                app.history_loading = false;
+                app.refs_pending = false;
+                app.refs_loading = false;
+                app.refs_current = true;
+                let refs = crate::branches::load(&repo.0).unwrap();
+                app.branch_head_exists = refs.has_head;
+                app.refs = refs.refs;
+                app.loaded_diff = Some(app.selected_change);
+                app.diff_preview = Some(crate::models::DiffPreview::new("+changed"));
+                app.commit_message = "Keep this draft".into();
+                let preview = app.diff_preview.as_ref().unwrap().lines.as_ptr();
+                let history_generation = app.history_session.generation;
+                let ctx = egui::Context::default();
+                crate::theme::install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply_style(&ctx, style);
+                let mut render = || {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                            ..Default::default()
+                        },
+                        |ui| crate::ui::show(ui, &mut app),
+                    );
+                    output.textures_delta.clear();
+                    output.shapes
+                };
+                render();
+                let before = render();
+                // Capture the same labels, positions and colors through the real read.
+                let labels = |shapes: &[ClippedShape]| {
+                    shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) => {
+                                Some((text.galley.job.text.clone(), text.pos, text.fallback_color))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let before = labels(&before);
+                app.reload_refs();
+                app.load_refs();
+                assert!(app.refs_worker.is_some());
+                let deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    assert!(!app.busy());
+                    assert!(app.state_current && app.refs_current);
+                    assert!(!app.history_pending && !app.history_loading);
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                            ..Default::default()
+                        },
+                        |ui| crate::ui::show(ui, &mut app),
+                    );
+                    assert_eq!(labels(&output.shapes), before);
+                    output.textures_delta.clear();
+                    if app.refs_worker.is_none() {
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "Ref reload timed out");
+                    app.poll_refs();
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                assert!(!app.refs_loading && !app.refs_pending);
+                assert_eq!(app.commit_message, "Keep this draft");
+                assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
+                assert_eq!(app.history_session.generation, history_generation);
+            }
+        }
+    }
+}
+
+#[test]
+fn disconnected_view_readers_keep_drafts_and_report_modal_errors() {
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.commit_message = "Keep draft".into();
+    app.changes = crate::mock_data::changes();
+    app.history_loading = true;
+    for slot in [
+        &mut app.history_worker,
+        &mut app.diff_worker,
+        &mut app.commit_preview_worker,
+    ] {
+        let (sender, receiver) = mpsc::channel();
+        *slot = Some(receiver);
+        drop(sender);
+    }
+    app.poll_view_reads();
+    assert!(!app.history_loading && !app.busy());
+    assert!(app.history_error.is_some() && app.commit_preview_error.is_some());
+    assert!(app.error.is_some());
+    assert!(!app.changes.is_empty());
+    assert_eq!(app.commit_message, "Keep draft");
+    app.collect_errors();
+    assert!(!app.error_dialogs.pending.is_empty());
+}
+
+#[test]
+fn panel_reads_keep_repository_actions_available_and_reject_superseded_results() {
+    use crate::{menu::MenuAction, test_support::TempRepo};
+    use std::time::{Duration, Instant};
+
+    let repo = TempRepo::new();
+    repo.write("file", "base\n");
+    repo.git(&["add", "file"]);
+    repo.git(&["commit", "-m", "base"]);
+    repo.write("file", "changed\n");
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        for style in [InterfaceStyle::Classic, InterfaceStyle::Modern] {
+            for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
+                let mut app = SannyGitApp::with_theme(theme);
+                app.interface_style = style;
+                app.apply_snapshot(git::load(&repo.0).unwrap());
+                let refs = crate::branches::load(&repo.0).unwrap();
+                app.branch_head_exists = refs.has_head;
+                app.refs = refs.refs;
+                app.refs_current = true;
+                app.history_loading = false;
+                app.history_pending = false;
+                app.commit_message = "Keep draft".into();
+                let actions = |app: &SannyGitApp| {
+                    [
+                        MenuAction::Stage,
+                        MenuAction::Unstage,
+                        MenuAction::Commit,
+                        MenuAction::Fetch,
+                        MenuAction::CreateBranch,
+                        MenuAction::Open,
+                    ]
+                    .map(|action| app.menu_action_enabled(action))
+                };
+                let before = actions(&app);
+                let ctx = egui::Context::default();
+                crate::theme::install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply_style(&ctx, style);
+                let render = |app: &mut SannyGitApp| {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                            ..Default::default()
+                        },
+                        |ui| ui::show(ui, app),
+                    );
+                    output.textures_delta.clear();
+                    output
+                        .shapes
+                        .into_iter()
+                        .filter_map(|shape| match shape.shape {
+                            egui::Shape::Text(text)
+                                if [
+                                    "Pull",
+                                    "Sync",
+                                    "Push",
+                                    "Stage",
+                                    "Unstage",
+                                    "Discard",
+                                    "Save Stash",
+                                    "Settings",
+                                ]
+                                .contains(&text.galley.job.text.as_str()) =>
+                            {
+                                Some((text.galley.job.text.clone(), text.pos, text.fallback_color))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                };
+                render(&mut app);
+                let toolbar = render(&mut app);
+                app.reload_history();
+                app.load_history();
+                app.load_selected_diff();
+                assert!(app.history_worker.is_some() && app.diff_worker.is_some());
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while app.history_worker.is_some() || app.diff_worker.is_some() {
+                    assert!(Instant::now() < deadline);
+                    assert!(!app.busy());
+                    assert_eq!(actions(&app), before);
+                    assert_eq!(render(&mut app), toolbar);
+                    app.poll_view_reads();
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                assert!(app.selected_diff().unwrap().added > 0);
+                assert!(app.changes[app.selected_change].diff.contains("+changed"));
+                app.select_commit(app.commits[0].hash.clone());
+                for _ in 0..2 {
+                    app.load_commit_preview();
+                    assert!(app.commit_preview_worker.is_some());
+                    while app.commit_preview_worker.is_some() {
+                        assert!(Instant::now() < deadline);
+                        assert!(!app.busy());
+                        assert_eq!(actions(&app), before);
+                        app.poll_view_reads();
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
+                assert_eq!(app.commit_files.as_ref().unwrap()[0].path, "file");
+                assert!(app.commit_preview.as_ref().unwrap().added > 0);
+                assert_eq!(app.commit_message, "Keep draft");
+
+                app.reload_history();
+                app.load_history();
+                let cancel = app.history_session.cancel.clone().unwrap();
+                app.start_worker(|| WorkerResult::Repository(Err("Read failed".into())));
+                assert!(cancel.load(Ordering::Relaxed));
+                assert!(app.history_worker.is_none() && app.history_pending);
+                assert!(app.busy());
+            }
+        }
+    }
+}
+
+#[test]
+fn ref_reader_failure_and_superseding_operations_keep_previous_rows() {
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.repositories = crate::mock_data::repositories();
+    app.selected_repository = 0;
+    app.refs = crate::mock_data::refs();
+    app.refs_current = true;
+    let count = app.refs.len();
+    let (sender, receiver) = mpsc::channel();
+    app.refs_worker = Some(receiver);
+    app.refs_loading = true;
+    drop(sender);
+    app.poll_refs();
+    assert!(!app.busy() && !app.refs_loading && !app.refs_current);
+    assert!(app.refs_error.is_some());
+    assert_eq!(app.refs.len(), count);
+
+    let (sender, receiver) = mpsc::channel();
+    app.refs_worker = Some(receiver);
+    assert!(app.start_worker(|| WorkerResult::Repository(Err("Read failed".into()))));
+    assert!(app.refs_worker.is_none() && app.refs_pending);
+    assert!(sender
+        .send(WorkerResult::Refs {
+            path: app.repositories[0].path.clone(),
+            result: Err("Stale error".into()),
+        })
+        .is_err());
+    assert_eq!(app.refs.len(), count);
+}
+
+#[test]
 fn branch_load_errors_keep_rows_but_disable_branch_actions() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
     app.repositories = crate::mock_data::repositories();
@@ -1374,6 +1637,37 @@ fn empty_state_and_open_dialog_fit_in_both_themes() {
             }
             assert!(app.repositories.is_empty());
             assert!(app.worker.is_none());
+            let dialog = context
+                .memory(|memory| memory.area_rect(egui::Id::unique("repository.add")))
+                .unwrap();
+            let buttons = |shapes: &[ClippedShape]| {
+                shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text)
+                            if ["OK", "Cancel"].contains(&text.galley.job.text.as_str()) =>
+                        {
+                            Some((text.galley.job.text.clone(), text.pos))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let before = buttons(&output.shapes);
+            let (_sender, receiver) = mpsc::channel();
+            app.worker = Some(receiver);
+            app.status = "Loading repository ".repeat(40);
+            for _ in 0..3 {
+                output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
+                output.textures_delta.clear();
+            }
+            assert_eq!(
+                context
+                    .memory(|memory| memory.area_rect(egui::Id::unique("repository.add")))
+                    .unwrap(),
+                dialog
+            );
+            assert_eq!(buttons(&output.shapes), before);
         }
     }
 }

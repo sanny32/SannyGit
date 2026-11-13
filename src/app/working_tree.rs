@@ -57,6 +57,7 @@ impl Update {
 pub(super) struct Monitor {
     receiver: Option<Receiver<Update>>,
     next_read: Instant,
+    refresh_requested: bool,
     pub(super) error: Option<String>,
 }
 
@@ -65,6 +66,7 @@ impl Default for Monitor {
         Self {
             receiver: None,
             next_read: Instant::now() + CHECK_INTERVAL,
+            refresh_requested: false,
             error: None,
         }
     }
@@ -74,13 +76,24 @@ impl Monitor {
     pub(super) fn invalidate(&mut self) {
         self.receiver = None;
         self.next_read = Instant::now() + CHECK_INTERVAL;
+        self.refresh_requested = false;
     }
 }
 
 impl SannyGitApp {
+    pub(super) fn refresh_working_tree(&mut self) {
+        if self.busy() || self.repositories.get(self.selected_repository).is_none() {
+            return;
+        }
+        self.working_tree.invalidate();
+        self.working_tree.refresh_requested = true;
+        self.working_tree.next_read = Instant::now();
+        self.error = None;
+    }
+
     pub(super) fn check_working_tree(&mut self, context: &eframe::egui::Context) {
         if self.busy()
-            || !self.state_current
+            || (!self.state_current && !self.working_tree.refresh_requested)
             || self.working_tree.receiver.is_some()
             || Instant::now() < self.working_tree.next_read
         {
@@ -106,12 +119,20 @@ impl SannyGitApp {
                 context.request_repaint();
             }) {
             Ok(_) => self.working_tree.receiver = Some(receiver),
-            Err(error) => self.working_tree_error(format!("Cannot check working tree: {error}")),
+            Err(error) => self.working_tree_error(
+                format!("Cannot check working tree: {error}"),
+                self.working_tree.refresh_requested,
+            ),
         }
     }
 
-    fn working_tree_error(&mut self, error: String) {
-        let error = format!("Automatic refresh failed; previous view retained: {error}");
+    fn working_tree_error(&mut self, error: String, explicit: bool) {
+        let operation = if explicit {
+            "Refresh"
+        } else {
+            "Automatic refresh"
+        };
+        let error = format!("{operation} failed; previous view retained: {error}");
         // Do not replace an error from an explicit user operation.
         if self.error.is_none() || self.error == self.working_tree.error {
             self.error = Some(error.clone());
@@ -130,11 +151,13 @@ impl SannyGitApp {
             Ok(update) => update,
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => {
+                let explicit = self.working_tree.refresh_requested;
                 self.working_tree.invalidate();
-                self.working_tree_error("Background worker stopped unexpectedly".into());
+                self.working_tree_error("Background worker stopped unexpectedly".into(), explicit);
                 return;
             }
         };
+        let refresh_requested = self.working_tree.refresh_requested;
         self.working_tree.invalidate();
         if !self
             .repositories
@@ -146,7 +169,7 @@ impl SannyGitApp {
         let snapshot = match update.snapshot {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                self.working_tree_error(error);
+                self.working_tree_error(error, refresh_requested);
                 return;
             }
         };
@@ -158,6 +181,7 @@ impl SannyGitApp {
             self.apply_snapshot(snapshot);
             return;
         }
+        self.state_current = true;
         let selected = self
             .changes
             .get(self.selected_change)
@@ -172,6 +196,8 @@ impl SannyGitApp {
             .as_ref()
             .and_then(|path| snapshot.changes.iter().position(|c| &c.path == path));
         self.changes = snapshot.changes;
+        // Row indices and file contents may have changed during the read.
+        self.diff_worker = None;
         self.selected_change = index
             .or_else(|| (!self.changes.is_empty()).then_some(0))
             .unwrap_or(usize::MAX);
@@ -196,7 +222,7 @@ impl SannyGitApp {
                         change.diff = patch;
                         self.loaded_diff = Some(self.selected_change);
                     }
-                    Err(error) => self.working_tree_error(error),
+                    Err(error) => self.working_tree_error(error, refresh_requested),
                 }
             }
         }
@@ -207,6 +233,12 @@ impl SannyGitApp {
                 "Ready"
             }
             .into();
+        }
+        if refresh_requested {
+            self.refs_pending = true;
+            self.refs_loading = true;
+            self.refs_error = None;
+            self.queue_history_reload();
         }
     }
 }
@@ -232,6 +264,33 @@ mod tests {
             app.poll_working_tree();
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    #[test]
+    fn explicit_refresh_preserves_preview_and_draft_and_reloads_other_views() {
+        let repo = TempRepo::new();
+        repo.write("file", "contents");
+        let mut app = opened(&repo);
+        refresh(&mut app);
+        app.commit_message = "Keep draft".into();
+        let preview = app.diff_preview.as_ref().unwrap().lines.as_ptr();
+        app.refs_pending = false;
+        app.history_pending = false;
+        app.refresh();
+        assert!(!app.busy());
+        assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
+        refresh(&mut app);
+        assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
+        assert_eq!(app.commit_message, "Keep draft");
+        assert!(app.refs_pending && app.history_pending);
+
+        app.state_current = false;
+        app.refresh();
+        refresh(&mut app);
+        assert!(
+            app.state_current,
+            "Explicit refresh must recover stale repository state"
+        );
     }
 
     #[test]

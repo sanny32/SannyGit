@@ -226,6 +226,7 @@ pub struct SannyGitApp {
     pub refs_loading: bool,
     pub refs_error: Option<String>,
     refs_pending: bool,
+    refs_worker: Option<Receiver<WorkerResult>>,
     pub branch_head_exists: bool,
     pub branch_dialog_open: bool,
     pub rename_branch_dialog: Option<RenameBranchDialog>,
@@ -265,6 +266,9 @@ pub struct SannyGitApp {
     pub error_dialogs: errors::ErrorDialogs,
     pub status: String,
     worker: Option<Receiver<WorkerResult>>,
+    history_worker: Option<Receiver<WorkerResult>>,
+    diff_worker: Option<Receiver<WorkerResult>>,
+    commit_preview_worker: Option<Receiver<WorkerResult>>,
     working_tree: working_tree::Monitor,
     loaded_diff: Option<usize>,
     pub diff_preview: Option<crate::models::DiffPreview>,
@@ -467,6 +471,7 @@ impl SannyGitApp {
             refs_loading: false,
             refs_error: None,
             refs_pending: false,
+            refs_worker: None,
             branch_head_exists: false,
             branch_dialog_open: false,
             rename_branch_dialog: None,
@@ -506,6 +511,9 @@ impl SannyGitApp {
             error_dialogs: Default::default(),
             status: "Ready".into(),
             worker: None,
+            history_worker: None,
+            diff_worker: None,
+            commit_preview_worker: None,
             working_tree: working_tree::Monitor::default(),
             loaded_diff: None,
             diff_preview: None,
@@ -553,6 +561,11 @@ impl SannyGitApp {
     }
 
     fn start_worker(&mut self, job: impl FnOnce() -> WorkerResult + Send + 'static) -> bool {
+        self.invalidate_view_reads();
+        // An operation supersedes a ref read; reload after the operation completes.
+        if self.refs_worker.take().is_some() {
+            self.refs_pending = true;
+        }
         // A user operation supersedes any in-flight automatic read.
         self.working_tree.invalidate();
         self.tracking.cancel();
@@ -576,6 +589,81 @@ impl SannyGitApp {
                 }
                 self.status = "Operation failed".into();
                 false
+            }
+        }
+    }
+
+    fn spawn_reader(
+        &self,
+        job: impl FnOnce() -> WorkerResult + Send + 'static,
+    ) -> Result<Receiver<WorkerResult>, String> {
+        let (sender, receiver) = mpsc::channel();
+        let git_executable = self.preferences.git_executable.clone();
+        std::thread::Builder::new()
+            .name("sannygit-view".into())
+            .spawn(move || {
+                git::set_executable(git_executable);
+                let _ = sender.send(job());
+            })
+            .map_err(|error| format!("Cannot start background reader: {error}"))?;
+        Ok(receiver)
+    }
+
+    fn invalidate_view_reads(&mut self) {
+        if self.history_worker.take().is_some() {
+            if let Some(cancel) = self.history_session.cancel.take() {
+                cancel.store(true, Ordering::Relaxed);
+            }
+            self.history_session.generation = self.history_session.generation.wrapping_add(1);
+            self.history_pending = true;
+        }
+        if self.diff_worker.take().is_some() {
+            self.loaded_diff = None;
+        }
+        if self.commit_preview_worker.take().is_some() {
+            if self.commit_files.is_none() {
+                self.loaded_commit = None;
+            }
+            self.loaded_commit_file = None;
+            self.commit_preview_generation = self.commit_preview_generation.wrapping_add(1);
+        }
+    }
+
+    fn poll_reader(
+        receiver: &mut Option<Receiver<WorkerResult>>,
+    ) -> Option<Result<WorkerResult, String>> {
+        let result = match receiver.as_ref()?.try_recv() {
+            Ok(result) => Ok(result),
+            Err(mpsc::TryRecvError::Empty) => return None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err("Background reader stopped unexpectedly".into())
+            }
+        };
+        *receiver = None;
+        Some(result)
+    }
+
+    fn poll_view_reads(&mut self) {
+        if let Some(result) = Self::poll_reader(&mut self.history_worker) {
+            match result {
+                Ok(result) => self.apply_worker_result(result),
+                Err(error) => {
+                    self.history_loading = false;
+                    self.history_session.cancel = None;
+                    self.history_error = Some(error);
+                }
+            }
+        }
+        if let Some(result) = Self::poll_reader(&mut self.diff_worker) {
+            match result {
+                Ok(result) => self.apply_worker_result(result),
+                Err(error) => self.error = Some(error),
+            }
+        }
+        if let Some(result) = Self::poll_reader(&mut self.commit_preview_worker) {
+            match result {
+                Ok(result) => self.apply_worker_result(result),
+                Err(error) => self.commit_preview_error = Some(error),
             }
         }
     }
@@ -846,12 +934,12 @@ impl SannyGitApp {
     }
 
     pub fn refresh(&mut self) {
-        if let Some(repository) = self.repositories.get(self.selected_repository) {
-            self.open_repository(repository.path.clone());
-        }
+        self.refresh_working_tree();
     }
 
     fn apply_snapshot(&mut self, snapshot: git::Snapshot) {
+        self.invalidate_view_reads();
+        self.refs_worker = None;
         if self.current_branch != snapshot.branch {
             self.tracking.branch_changed();
         } else {
@@ -940,8 +1028,18 @@ impl SannyGitApp {
         .into();
     }
 
+    pub fn reload_refs(&mut self) {
+        if self.busy() || self.repositories.get(self.selected_repository).is_none() {
+            return;
+        }
+        // Keep the last successful snapshot usable during this read-only refresh.
+        self.refs_pending = true;
+        self.refs_loading = true;
+        self.refs_error = None;
+    }
+
     fn load_refs(&mut self) {
-        if self.busy() || !self.refs_pending {
+        if self.busy() || self.history_pending || self.refs_worker.is_some() || !self.refs_pending {
             return;
         }
         let Some(repository) = self.repositories.get(self.selected_repository) else {
@@ -949,13 +1047,43 @@ impl SannyGitApp {
         };
         let path = repository.path.clone();
         self.refs_pending = false;
-        if !self.start_worker(move || WorkerResult::Refs {
-            result: crate::branches::load(&PathBuf::from(&path)),
-            path,
-        }) {
-            self.refs_loading = false;
-            self.refs_error = self.error.clone();
+        let (sender, receiver) = mpsc::channel();
+        let git_executable = self.preferences.git_executable.clone();
+        match std::thread::Builder::new()
+            .name("sannygit-refs".into())
+            .spawn(move || {
+                git::set_executable(git_executable);
+                let _ = sender.send(WorkerResult::Refs {
+                    result: crate::branches::load(&PathBuf::from(&path)),
+                    path,
+                });
+            }) {
+            Ok(_) => self.refs_worker = Some(receiver),
+            Err(error) => self.ref_read_failed(format!("Cannot start background worker: {error}")),
         }
+    }
+
+    fn ref_read_failed(&mut self, error: String) {
+        self.refs_loading = false;
+        self.refs_current = false;
+        self.refs_error = Some(error);
+    }
+
+    fn poll_refs(&mut self) {
+        let Some(receiver) = &self.refs_worker else {
+            return;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.refs_worker = None;
+                self.ref_read_failed("Background worker stopped unexpectedly".into());
+                return;
+            }
+        };
+        self.refs_worker = None;
+        self.apply_worker_result(result);
     }
 
     fn branch_base_blocker(&self) -> Option<&'static str> {
@@ -1227,6 +1355,7 @@ impl SannyGitApp {
     }
 
     fn clear_commit_preview(&mut self) {
+        self.commit_preview_worker = None;
         self.commit_preview = None;
         self.commit_preview_error = None;
         self.loaded_commit = None;
@@ -1257,6 +1386,7 @@ impl SannyGitApp {
             return;
         }
         self.selected_commit_file = Some(path);
+        self.commit_preview_worker = None;
         self.commit_preview = None;
         self.commit_preview_error = None;
         self.loaded_commit_file = None;
@@ -1267,6 +1397,7 @@ impl SannyGitApp {
         if self.busy() {
             return;
         }
+        self.commit_preview_worker = None;
         if self.commit_files.is_none() {
             self.loaded_commit = None;
         }
@@ -1276,7 +1407,7 @@ impl SannyGitApp {
     }
 
     fn load_commit_preview(&mut self) {
-        if self.busy() || !self.commit_details_open {
+        if self.busy() || self.commit_preview_worker.is_some() || !self.commit_details_open {
             return;
         }
         let Some(hash) = self.selected_commit.clone() else {
@@ -1294,13 +1425,14 @@ impl SannyGitApp {
         let generation = self.commit_preview_generation;
         if self.loaded_commit.as_ref() != Some(&hash) {
             self.loaded_commit = Some(hash.clone());
-            if !self.start_worker(move || WorkerResult::CommitFiles {
+            match self.spawn_reader(move || WorkerResult::CommitFiles {
                 result: crate::history::files(&root, &hash, parent.as_deref()),
                 path,
                 hash,
                 generation,
             }) {
-                self.commit_preview_error = self.error.clone();
+                Ok(receiver) => self.commit_preview_worker = Some(receiver),
+                Err(error) => self.commit_preview_error = Some(error),
             }
             return;
         }
@@ -1320,7 +1452,7 @@ impl SannyGitApp {
             return;
         }
         self.loaded_commit_file = Some(file.path.clone());
-        if !self.start_worker(move || WorkerResult::CommitPatch {
+        match self.spawn_reader(move || WorkerResult::CommitPatch {
             result: crate::history::file_patch(&root, &hash, parent.as_deref(), &file)
                 .map(|patch| crate::models::DiffPreview::new(&patch)),
             path,
@@ -1328,7 +1460,8 @@ impl SannyGitApp {
             hash,
             generation,
         }) {
-            self.commit_preview_error = self.error.clone();
+            Ok(receiver) => self.commit_preview_worker = Some(receiver),
+            Err(error) => self.commit_preview_error = Some(error),
         }
     }
 
@@ -1643,6 +1776,10 @@ impl SannyGitApp {
             }
         };
         self.worker = None;
+        self.apply_worker_result(result);
+    }
+
+    fn apply_worker_result(&mut self, result: WorkerResult) {
         match result {
             WorkerResult::RefDetails { root, result } => self.apply_ref_details(root, *result),
             WorkerResult::DiscardPrepared { root, path, result } => {
@@ -1964,6 +2101,7 @@ impl SannyGitApp {
             previous.diff = String::new();
         }
         self.loaded_diff = Some(index);
+        self.diff_worker = None;
         if self.error.is_none()
             && !self.status.starts_with("Push ")
             && !self.status.starts_with("Stash ")
@@ -1984,13 +2122,16 @@ impl SannyGitApp {
         {
             self.status = "Loading diff…".into();
         }
-        self.start_worker(move || WorkerResult::Diff {
+        match self.spawn_reader(move || WorkerResult::Diff {
             index,
             result: git::diff(&root, &path, kind, original_path.as_deref()).map(|patch| {
                 let preview = crate::models::DiffPreview::new(&patch);
                 (patch, preview)
             }),
-        });
+        }) {
+            Ok(receiver) => self.diff_worker = Some(receiver),
+            Err(error) => self.error = Some(error),
+        }
     }
 }
 
@@ -2011,6 +2152,8 @@ impl eframe::App for SannyGitApp {
             self.applied_theme = self.theme;
         }
         self.poll_worker();
+        self.poll_refs();
+        self.poll_view_reads();
         self.finish_startup();
         self.poll_working_tree();
         self.update_repository_hosting(ui.ctx());
@@ -2078,7 +2221,12 @@ impl eframe::App for SannyGitApp {
         if let Some(menu) = &self.native_menu {
             menu.update_enabled(|action| self.menu_action_enabled(action));
         }
-        if self.busy() {
+        if self.busy()
+            || self.refs_worker.is_some()
+            || self.history_worker.is_some()
+            || self.diff_worker.is_some()
+            || self.commit_preview_worker.is_some()
+        {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(50));
         }

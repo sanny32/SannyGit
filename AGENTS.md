@@ -93,6 +93,9 @@ or mix Git logic with panel rendering.
   implementation details there; README is not a changelog.
 - Do not change `.gitignore` rules or the `Cargo.lock` tracking policy without
   a task-related reason. Do not add `target/` or other build artifacts.
+- Perform all local reviews in the `.review` folder. Keep all review-related
+  files (notes, drafts, findings) there; do not scatter them across the
+  repository.
 
 ## User Interface
 

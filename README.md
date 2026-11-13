@@ -63,13 +63,6 @@ Default install locations are `~/Applications` on macOS, `~/.local` on Linux and
 
 You need add `~/.local/bin` to `PATH` on Linux.
 
-## Packages
-
-Separate GitHub Actions workflows create macOS DMG, Windows installer, Linux DEB,
-RPM and AppImage packages. Run them manually or push a `v<version>` tag matching
-`Cargo.toml`. Packages and SHA-256 checksums are available in the workflow's
-artifacts. Packages are not signed with a distribution certificate or notarized.
-
 ## MIT License
 
 Copyright 2026 Alexandr Ananev [mail@ananev.org]

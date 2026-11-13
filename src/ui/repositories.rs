@@ -28,7 +28,14 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         super::clone_dialog::choose_folder(ui, &mut app.repository_path);
                     });
                 });
-                if busy { ui.horizontal(|ui| { ui.spinner(); ui.label(&app.status); }); }
+                ui.horizontal(|ui| {
+                    ui.set_height(20.0);
+                    if busy {
+                        ui.add(eframe::egui::Spinner::new().size(16.0));
+                        ui.add(eframe::egui::Label::new(&app.status).truncate().show_tooltip_when_elided(false))
+                            .help_text(&app.status);
+                    }
+                });
             });
             super::controls::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
                 super::controls::dialog_style::button_row(ui, |ui| {
