@@ -250,6 +250,7 @@ pub struct Palette {
     pub panel: Color32,
     pub panel_alt: Color32,
     pub header: Color32,
+    #[cfg(not(target_os = "macos"))]
     pub menu_background: Color32,
     pub editor: Color32,
     pub border: Color32,
@@ -284,6 +285,7 @@ impl Palette {
             panel: Color32::from_gray(39),
             panel_alt: Color32::from_gray(43),
             header: Color32::from_gray(40),
+            #[cfg(not(target_os = "macos"))]
             menu_background: Color32::from_gray(31),
             editor: Color32::from_gray(34),
             border: Color32::from_gray(58),
@@ -318,6 +320,7 @@ impl Palette {
             panel: Color32::from_rgb(255, 255, 255),
             panel_alt: Color32::from_rgb(246, 246, 246),
             header: Color32::from_rgb(236, 236, 236),
+            #[cfg(not(target_os = "macos"))]
             menu_background: Color32::WHITE,
             editor: Color32::from_rgb(255, 255, 255),
             border: Color32::from_rgb(202, 202, 202),
