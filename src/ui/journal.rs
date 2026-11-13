@@ -15,6 +15,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         ui.spacing_mut().interact_size.y = 20.0;
         let title = ui.heading("Journal");
         super::register_panel_title(ui, "journal", title.rect);
+        ui.add_space(8.0);
         let search_width = (ui.available_width() - 360.0).clamp(60.0, 240.0);
         ui.add_enabled(
             !app.commits.is_empty(),
