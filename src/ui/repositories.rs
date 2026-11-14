@@ -233,87 +233,89 @@ fn repository_row(
     let selected_row = highlighted
         .as_deref()
         .map_or(active, |path| path == repository.path);
-    let response = super::controls::selectable_row(ui, selected_row, height, |ui| {
-        icons::paint(
-            ui,
-            icon,
-            if active && branch_status.is_some_and(|(badge, _)| badge.contains(['↑', '↓'])) {
-                palette.accent
-            } else if active {
+    let response =
+        super::controls::selectable_row_with_outset(ui, selected_row, height, 8.0, |ui| {
+            icons::paint(
+                ui,
+                icon,
+                if active && branch_status.is_some_and(|(badge, _)| badge.contains(['↑', '↓']))
+                {
+                    palette.accent
+                } else if active {
+                    palette.text
+                } else {
+                    palette.muted
+                },
+                16.0,
+            );
+            let name = RichText::new(&repository.name).color(if active {
                 palette.text
             } else {
                 palette.muted
-            },
-            16.0,
-        );
-        let name = RichText::new(&repository.name).color(if active {
-            palette.text
-        } else {
-            palette.muted
-        });
-        let (badge, _) = if active {
-            branch_status.unwrap_or(("", ""))
-        } else {
-            ("", "")
-        };
-        let suffix = badge.to_owned();
-        let suffix_width = ui
-            .painter()
-            .layout_no_wrap(
-                suffix.clone(),
-                eframe::egui::FontId::proportional(12.0),
-                palette.muted,
-            )
-            .size()
-            .x;
-        let width = (ui.available_width() - suffix_width - 4.0).max(20.0);
-        ui.allocate_ui_with_layout(
-            eframe::egui::vec2(width, if palette.panel_radius > 0 { 38.0 } else { 20.0 }),
-            if palette.panel_radius > 0 {
-                Layout::top_down(Align::Min)
+            });
+            let (badge, _) = if active {
+                branch_status.unwrap_or(("", ""))
             } else {
-                Layout::left_to_right(Align::Center).with_main_align(Align::Min)
-            },
-            |ui| {
-                ui.set_min_width(width);
-                ui.add(
-                    eframe::egui::Label::new(if active {
-                        name.family(semibold_family())
-                    } else {
-                        name
-                    })
-                    .halign(Align::Min)
-                    .truncate()
-                    .show_tooltip_when_elided(false)
-                    .sense(eframe::egui::Sense::hover()),
-                );
+                ("", "")
+            };
+            let suffix = badge.to_owned();
+            let suffix_width = ui
+                .painter()
+                .layout_no_wrap(
+                    suffix.clone(),
+                    eframe::egui::FontId::proportional(12.0),
+                    palette.muted,
+                )
+                .size()
+                .x;
+            let width = (ui.available_width() - suffix_width - 4.0).max(20.0);
+            ui.allocate_ui_with_layout(
+                eframe::egui::vec2(width, if palette.panel_radius > 0 { 38.0 } else { 20.0 }),
                 if palette.panel_radius > 0 {
+                    Layout::top_down(Align::Min)
+                } else {
+                    Layout::left_to_right(Align::Center).with_main_align(Align::Min)
+                },
+                |ui| {
+                    ui.set_min_width(width);
                     ui.add(
-                        eframe::egui::Label::new(
-                            RichText::new(&repository.path).small().color(palette.muted),
-                        )
+                        eframe::egui::Label::new(if active {
+                            name.family(semibold_family())
+                        } else {
+                            name
+                        })
+                        .halign(Align::Min)
                         .truncate()
-                        .show_tooltip_when_elided(false),
+                        .show_tooltip_when_elided(false)
+                        .sense(eframe::egui::Sense::hover()),
                     );
-                }
-            },
-        );
-        if !suffix.is_empty() {
-            ui.add(
-                eframe::egui::Label::new(super::sync_badge(&suffix, palette, 12.0))
-                    .sense(eframe::egui::Sense::hover()),
+                    if palette.panel_radius > 0 {
+                        ui.add(
+                            eframe::egui::Label::new(
+                                RichText::new(&repository.path).small().color(palette.muted),
+                            )
+                            .truncate()
+                            .show_tooltip_when_elided(false),
+                        );
+                    }
+                },
             );
-        }
-    })
-    .help_text(if active {
-        format!(
-            "{}\n{}",
-            repository.path,
-            branch_status.map(|(_, help)| help).unwrap_or("")
-        )
-    } else {
-        repository.path.clone()
-    });
+            if !suffix.is_empty() {
+                ui.add(
+                    eframe::egui::Label::new(super::sync_badge(&suffix, palette, 12.0))
+                        .sense(eframe::egui::Sense::hover()),
+                );
+            }
+        })
+        .help_text(if active {
+            format!(
+                "{}\n{}",
+                repository.path,
+                branch_status.map(|(_, help)| help).unwrap_or("")
+            )
+        } else {
+            repository.path.clone()
+        });
     let mut action = None;
     response.context_menu(|ui| {
         ui.set_min_width(240.0);

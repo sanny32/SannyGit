@@ -880,7 +880,12 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
             assert!(visible_text(&output.shapes, "Cancel"));
             assert!(visible_text(&output.shapes, "OK"));
             if page == SettingsPage::General {
-                for label in ["Language:", "English", "Restore confirmation dialogs"] {
+                for label in [
+                    "Language:",
+                    "English",
+                    "Use Staged only when opening or staging files",
+                    "Restore confirmation dialogs",
+                ] {
                     assert!(
                         visible_text(&output.shapes, label),
                         "Missing {label} at minimum size"

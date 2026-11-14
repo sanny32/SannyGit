@@ -82,6 +82,7 @@ pub struct Preferences {
     pub follow_system_theme: bool,
     pub show_welcome: bool,
     pub file_double_click: FileDoubleClick,
+    pub staged_only_after_staging: bool,
     pub date_format: DateFormat,
     pub time_format: TimeFormat,
     pub verbose_dates: bool,
@@ -96,6 +97,7 @@ impl Default for Preferences {
             follow_system_theme: true,
             show_welcome: true,
             file_double_click: FileDoubleClick::default(),
+            staged_only_after_staging: true,
             date_format: DateFormat::default(),
             time_format: TimeFormat::default(),
             verbose_dates: false,
@@ -183,6 +185,7 @@ mod tests {
     fn preferences_round_trip_and_missing_fields_use_defaults() {
         let preferences = Preferences {
             file_double_click: FileDoubleClick::ToggleStage,
+            staged_only_after_staging: false,
             verbose_dates: true,
             skip_sync_confirmation: true,
             git_executable: "/Applications/Git Tools/git".into(),

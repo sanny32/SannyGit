@@ -105,8 +105,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     } else if change.staged { "Unstage this file (preserve working-tree contents)" }
                     else { "Stage all changes in this file" };
                     if ui.add_enabled(operations_enabled && change.kind != ChangeKind::Conflicted,
-                        eframe::egui::Checkbox::without_text(&mut checked)
-                            .indeterminate(change.staged && change.unstaged))
+                        eframe::egui::Checkbox::without_text(&mut checked))
                         .help_text(tooltip).disabled_help_text(tooltip).changed() {
                         staging_request = Some((index, !change.staged));
                     }

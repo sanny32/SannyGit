@@ -304,7 +304,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if app.interface_style == crate::theme::InterfaceStyle::Modern {
         modern_workspace(ui, app);
         show_panel_activity(ui, palette);
-        if !app.settings_window.open {
+        if !app.settings_window.open && (context.embed_viewports() || !app.commit_details_open) {
             show_errors(ui, app);
         }
         return;
@@ -364,7 +364,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 .show(ui, |ui| diff_view::show(ui, app));
         });
     show_panel_activity(ui, palette);
-    if !app.settings_window.open {
+    if !app.settings_window.open && (context.embed_viewports() || !app.commit_details_open) {
         show_errors(ui, app);
     }
 }

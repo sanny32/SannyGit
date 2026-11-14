@@ -1013,6 +1013,7 @@ impl SannyGitApp {
         }
         self.current_branch = snapshot.branch;
         self.changes = snapshot.changes;
+        self.update_commit_contents_after_refresh(!same_repository);
         self.selected_change = if same_repository {
             selected.and_then(|path| self.changes.iter().position(|c| c.path == path))
         } else {
@@ -1067,6 +1068,16 @@ impl SannyGitApp {
         .into();
     }
 
+    fn update_commit_contents_after_refresh(&mut self, opening_repository: bool) {
+        if !self.preferences.staged_only_after_staging {
+            return;
+        }
+        if !self.changes.iter().any(|change| change.staged) {
+            self.commit_contents = git::CommitContents::All;
+        } else if opening_repository {
+            self.commit_contents = git::CommitContents::Staged;
+        }
+    }
     pub fn reload_refs(&mut self) {
         if self.busy() || self.repositories.get(self.selected_repository).is_none() {
             return;
@@ -1541,7 +1552,11 @@ impl SannyGitApp {
             let snapshot = git::load(&root);
             WorkerResult::Operation {
                 committed: false,
-                success: "Index updated",
+                success: if staged {
+                    "File staged"
+                } else {
+                    "Index updated"
+                },
                 outcome,
                 snapshot,
             }
@@ -1951,6 +1966,12 @@ impl SannyGitApp {
                     "File restored from index" | "Untracked file deleted"
                 );
                 let operation_succeeded = outcome.is_ok();
+                if operation_succeeded
+                    && success == "File staged"
+                    && self.preferences.staged_only_after_staging
+                {
+                    self.commit_contents = git::CommitContents::Staged;
+                }
                 if success.starts_with("Stash ") {
                     if let Some(dialog) = &mut self.stash_dialog {
                         dialog.invalidate_preview();
@@ -2116,6 +2137,7 @@ impl SannyGitApp {
                 self.status.as_str(),
                 "Commit created"
                     | "Index updated"
+                    | "File staged"
                     | "File restored from index"
                     | "Untracked file deleted"
                     | "Branch deleted"

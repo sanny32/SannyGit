@@ -244,11 +244,16 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             // field above uses the application's shared input height.
             ui.spacing_mut().interact_size.y = 20.0;
             ui.add_space(4.0);
-            group(ui, palette, "Startup", |ui| {
+            group(ui, palette, "Behavior", |ui| {
                 ui.checkbox(
                     &mut app.settings_window.preferences.show_welcome,
                     "Show welcome dialog if no repository is reopened",
                 );
+                ui.checkbox(
+                    &mut app.settings_window.preferences.staged_only_after_staging,
+                    "Use Staged only when opening or staging files",
+                )
+                .help_text("Use only staged changes for commits and message generation when opening a repository with staged files or after staging a file. Switch back to All changes when the index is empty.");
             });
             ui.add_space(4.0);
             group(ui, palette, "Double-clicking a local file", |ui| {
@@ -271,13 +276,9 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     ui.checkbox(
                         &mut app.settings_window.preferences.skip_sync_confirmation,
                         "Sync",
-                    );
+                    )
+                    .help_text("Skipped operations report results in the status bar.");
                 });
-                ui.label(
-                    RichText::new("Skipped operations report results in the status bar.")
-                        .small()
-                        .color(palette.muted),
-                );
                 if ui
                     .add_enabled(
                         app.settings_window.skip_push_confirmation

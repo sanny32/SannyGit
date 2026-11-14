@@ -20,6 +20,16 @@ pub fn selectable_row(
     height: f32,
     contents: impl FnOnce(&mut Ui),
 ) -> Response {
+    selectable_row_with_outset(ui, selected, height, 0.0, contents)
+}
+
+pub fn selectable_row_with_outset(
+    ui: &mut Ui,
+    selected: bool,
+    height: f32,
+    outset: f32,
+    contents: impl FnOnce(&mut Ui),
+) -> Response {
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
     let fill = if selected {
@@ -29,7 +39,10 @@ pub fn selectable_row(
     } else {
         eframe::egui::Color32::TRANSPARENT
     };
-    ui.painter().rect_filled(rect, 0.0, fill);
+    let paint_rect = rect.expand2(Vec2::new(outset, 0.0));
+    ui.painter()
+        .with_clip_rect(ui.clip_rect().expand2(Vec2::new(outset, 0.0)))
+        .rect_filled(paint_rect, 0.0, fill);
     let mut child = ui.new_child(
         UiBuilder::new()
             .max_rect(rect.shrink2(Vec2::new(6.0, 1.0)))

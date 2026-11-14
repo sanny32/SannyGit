@@ -2282,6 +2282,8 @@ fn generation_preparation_failure_preserves_draft_and_reports_a_modal_error() {
 #[test]
 fn automatic_staged_mode_requires_successful_staging_and_enabled_preference() {
     let repo = crate::test_support::TempRepo::new();
+    repo.write("file.txt", "staged contents\n");
+    repo.git(&["add", "--", "file.txt"]);
     for enabled in [false, true] {
         for (success, outcome, expected) in [
             ("File staged", Ok(()), enabled),
@@ -2290,6 +2292,8 @@ fn automatic_staged_mode_requires_successful_staging_and_enabled_preference() {
             ("Fetch complete", Ok(()), false),
         ] {
             let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+            app.apply_snapshot(git::load(&repo.0).unwrap());
+            app.commit_contents = git::CommitContents::All;
             app.preferences.staged_only_after_staging = enabled;
             deliver(
                 &mut app,
@@ -2301,6 +2305,78 @@ fn automatic_staged_mode_requires_successful_staging_and_enabled_preference() {
                 },
             );
             assert_eq!(app.commit_contents == git::CommitContents::Staged, expected);
+        }
+    }
+}
+
+#[test]
+fn opening_repository_uses_staged_mode_only_when_enabled_and_index_has_changes() {
+    let repo = crate::test_support::TempRepo::new();
+    repo.write("staged.txt", "index contents\n");
+    for staged in [false, true] {
+        if staged {
+            repo.git(&["add", "--", "staged.txt"]);
+        }
+        for enabled in [false, true] {
+            let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+            app.preferences.staged_only_after_staging = enabled;
+            // Reproduce reopening a saved repository before its first snapshot arrives.
+            let snapshot = git::load(&repo.0).unwrap();
+            app.repositories.push(Repository {
+                name: snapshot.repository.name.clone(),
+                path: snapshot.repository.path.clone(),
+            });
+            app.apply_snapshot(snapshot);
+            assert_eq!(
+                app.commit_contents == git::CommitContents::Staged,
+                enabled && staged
+            );
+            app.commit_contents = git::CommitContents::All;
+            app.apply_snapshot(git::load(&repo.0).unwrap());
+            assert_eq!(
+                app.commit_contents,
+                git::CommitContents::All,
+                "Refresh must preserve the user's mode"
+            );
+        }
+    }
+}
+
+#[test]
+fn empty_index_restores_all_changes_after_unstaging_last_file_when_enabled() {
+    for enabled in [false, true] {
+        let repo = crate::test_support::TempRepo::new();
+        repo.write("first.txt", "first\n");
+        repo.write("last.txt", "last\n");
+        repo.git(&["add", "--", "first.txt", "last.txt"]);
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.apply_snapshot(git::load(&repo.0).unwrap());
+        app.preferences.staged_only_after_staging = enabled;
+        app.commit_contents = git::CommitContents::Staged;
+        app.commit_message = "Keep draft".into();
+        for path in ["first.txt", "last.txt"] {
+            let index = app
+                .changes
+                .iter()
+                .position(|change| change.path == path)
+                .unwrap();
+            app.set_staged(index, false);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.busy() {
+                assert!(std::time::Instant::now() < deadline);
+                app.poll_worker();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert!(app.error.is_none(), "{:?}", app.error);
+            assert_eq!(
+                app.commit_contents,
+                if enabled && path == "last.txt" {
+                    git::CommitContents::All
+                } else {
+                    git::CommitContents::Staged
+                }
+            );
+            assert_eq!(app.commit_message, "Keep draft");
         }
     }
 }

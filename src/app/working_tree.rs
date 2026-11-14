@@ -196,6 +196,7 @@ impl SannyGitApp {
             .as_ref()
             .and_then(|path| snapshot.changes.iter().position(|c| &c.path == path));
         self.changes = snapshot.changes;
+        self.update_commit_contents_after_refresh(false);
         // Row indices and file contents may have changed during the read.
         self.diff_worker = None;
         self.selected_change = index
@@ -266,6 +267,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn empty_index_restores_all_changes_after_external_commit_when_enabled() {
+        for enabled in [false, true] {
+            let repo = TempRepo::new();
+            repo.write("file", "staged contents\n");
+            repo.git(&["add", "--", "file"]);
+            let mut app = opened(&repo);
+            app.preferences.staged_only_after_staging = enabled;
+            app.commit_contents = git::CommitContents::Staged;
+            app.commit_message = "Keep draft".into();
+            repo.git(&["commit", "-m", "external commit"]);
+            refresh(&mut app);
+            assert!(app.changes.is_empty());
+            assert_eq!(
+                app.commit_contents,
+                if enabled {
+                    git::CommitContents::All
+                } else {
+                    git::CommitContents::Staged
+                }
+            );
+            assert_eq!(app.commit_message, "Keep draft");
+        }
+    }
     #[test]
     fn explicit_refresh_preserves_preview_and_draft_and_reloads_other_views() {
         let repo = TempRepo::new();
