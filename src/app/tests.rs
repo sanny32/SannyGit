@@ -1733,9 +1733,9 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
                 output.textures_delta.clear();
             }
             for text in [
-                "Commit details",
+                "Repository history",
                 "Copy hash",
-                "Commit changes",
+                "Changes",
                 "Read-only commit preview",
             ] {
                 assert!(
@@ -2127,6 +2127,15 @@ fn late_unlock_does_not_restore_removed_or_changed_credentials() {
 
 #[test]
 fn generation_sends_current_changes_after_one_click() {
+    check_generation_request(false);
+}
+
+#[test]
+fn generation_sends_only_index_changes_after_automatic_staged_switch() {
+    check_generation_request(true);
+}
+
+fn check_generation_request(stage_first: bool) {
     use std::{
         io::{BufRead, BufReader, Read, Write},
         net::TcpListener,
@@ -2141,7 +2150,29 @@ fn generation_sends_current_changes_after_one_click() {
     app.llm_config.endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
     app.llm_config.store_api_key = false;
     app.commit_message = "Keep draft".into();
+    if stage_first {
+        let index = app
+            .changes
+            .iter()
+            .position(|file| file.path == "review.txt")
+            .unwrap();
+        app.set_staged(index, true);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while app.busy() {
+            assert!(Instant::now() < deadline);
+            app.poll_worker();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert_eq!(app.commit_contents, git::CommitContents::Staged);
+        repo.write("review.txt", "unstaged edits in the staged file\n");
+        repo.write("excluded.txt", "unstaged file must not reach the LLM\n");
+    }
     let patch = git::commit_patch(&repo.0, app.commit_contents, None).unwrap();
+    if stage_first {
+        assert!(!patch.contains("unstaged edits"));
+        assert!(!patch.contains("excluded.txt"));
+    }
     app.repository_llm_instructions.insert(
         app.repositories[app.selected_repository].path.clone(),
         "Repository-specific instructions".into(),
@@ -2159,6 +2190,7 @@ fn generation_sends_current_changes_after_one_click() {
                 Err(error) => panic!("{error}"),
             }
         };
+        socket.set_nonblocking(false).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
@@ -2206,7 +2238,11 @@ fn generation_sends_current_changes_after_one_click() {
     assert_eq!(app.commit_message, "Reviewed message");
     assert_eq!(
         std::fs::read_to_string(repo.0.join("review.txt")).unwrap(),
-        "reviewed contents\n"
+        if stage_first {
+            "unstaged edits in the staged file\n"
+        } else {
+            "reviewed contents\n"
+        }
     );
 }
 
@@ -2241,4 +2277,30 @@ fn generation_preparation_failure_preserves_draft_and_reports_a_modal_error() {
         .pending
         .iter()
         .any(|error| error == "The commit diff is empty"));
+}
+
+#[test]
+fn automatic_staged_mode_requires_successful_staging_and_enabled_preference() {
+    let repo = crate::test_support::TempRepo::new();
+    for enabled in [false, true] {
+        for (success, outcome, expected) in [
+            ("File staged", Ok(()), enabled),
+            ("File staged", Err("Staging failed".to_owned()), false),
+            ("Index updated", Ok(()), false),
+            ("Fetch complete", Ok(()), false),
+        ] {
+            let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+            app.preferences.staged_only_after_staging = enabled;
+            deliver(
+                &mut app,
+                WorkerResult::Operation {
+                    committed: false,
+                    success,
+                    outcome,
+                    snapshot: git::load(&repo.0),
+                },
+            );
+            assert_eq!(app.commit_contents == git::CommitContents::Staged, expected);
+        }
+    }
 }
