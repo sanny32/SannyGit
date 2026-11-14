@@ -7,6 +7,13 @@ pub(super) mod tooltips;
 
 use eframe::egui::{Align, Layout, Response, Sense, Ui, UiBuilder, Vec2};
 
+/// Column resize handles use the same neutral contrast as panel splitters.
+pub fn table_resize_style(ui: &mut Ui, palette: crate::theme::Palette) {
+    let visuals = &mut ui.style_mut().visuals;
+    visuals.widgets.hovered.bg_stroke.color = palette.text;
+    visuals.widgets.active.bg_stroke.color = palette.text;
+}
+
 /// Single-line fields share the same height and vertical text alignment.
 pub fn singleline(text: &mut dyn eframe::egui::TextBuffer) -> eframe::egui::TextEdit<'_> {
     eframe::egui::TextEdit::singleline(text)

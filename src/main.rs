@@ -9,6 +9,7 @@ mod git;
 mod history;
 mod llm;
 mod menu;
+mod merge;
 #[cfg(test)]
 mod mock_data;
 mod models;

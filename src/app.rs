@@ -1,5 +1,6 @@
 pub mod discard;
 mod errors;
+pub mod merge;
 pub mod ref_management;
 mod remotes;
 pub mod stash;
@@ -23,6 +24,10 @@ use std::{
 };
 
 enum WorkerResult {
+    MergeDetails {
+        root: String,
+        result: Result<merge::Snapshot, String>,
+    },
     RefDetails {
         root: String,
         result: Box<ref_management::ResultMessage>,
@@ -248,6 +253,7 @@ pub struct SannyGitApp {
     pub stash_dialog: Option<stash::Dialog>,
     pub discard_dialog: Option<discard::Dialog>,
     pub ref_dialog: Option<ref_management::Dialog>,
+    pub merge_dialog: Option<merge::Dialog>,
     pub skip_push_confirmation: bool,
     pub new_branch_name: String,
     pub new_tag_name: String,
@@ -496,6 +502,7 @@ impl SannyGitApp {
             stash_dialog: None,
             discard_dialog: None,
             ref_dialog: None,
+            merge_dialog: None,
             skip_push_confirmation: false,
             new_branch_name: String::new(),
             new_tag_name: String::new(),
@@ -744,6 +751,7 @@ impl SannyGitApp {
             MenuAction::ManageRemotes => self.remote_allowed(),
             MenuAction::Discard => self.discard_blocker().is_none(),
             MenuAction::Stashes => self.stash_allowed(),
+            MenuAction::Merge => self.merge_allowed(),
             MenuAction::Fetch | MenuAction::Pull | MenuAction::Push => self.remote_allowed(),
         }
     }
@@ -811,6 +819,7 @@ impl SannyGitApp {
             MenuAction::ManageRemotes => self.open_remote_manager(),
             MenuAction::Discard => self.open_discard(),
             MenuAction::Stashes => self.open_stashes(),
+            MenuAction::Merge => self.open_merge(),
             MenuAction::CreateBranch => self.branch_dialog_open = true,
             MenuAction::SwitchBranch => self.switch_branch(),
             MenuAction::RenameBranch => self.open_rename_branch(),
@@ -849,6 +858,7 @@ impl SannyGitApp {
             || self.stash_dialog.is_some()
             || self.discard_dialog.is_some()
             || self.ref_dialog.is_some()
+            || self.merge_dialog.is_some()
             || self.remote_checkout.is_some()
             || self.branch_dialog_open
             || self.rename_branch_dialog.is_some()
@@ -1048,6 +1058,7 @@ impl SannyGitApp {
             self.stash_dialog = None;
             self.discard_dialog = None;
             self.ref_dialog = None;
+            self.merge_dialog = None;
             self.new_branch_name.clear();
             self.commits.clear();
             self.history_session.clear_view();
@@ -1804,6 +1815,7 @@ impl SannyGitApp {
 
     fn apply_worker_result(&mut self, result: WorkerResult) {
         match result {
+            WorkerResult::MergeDetails { root, result } => self.apply_merge_details(root, result),
             WorkerResult::RefDetails { root, result } => self.apply_ref_details(root, *result),
             WorkerResult::DiscardPrepared { root, path, result } => {
                 self.apply_discard_prepared(root, path, result)
@@ -1966,6 +1978,9 @@ impl SannyGitApp {
                     "File restored from index" | "Untracked file deleted"
                 );
                 let operation_succeeded = outcome.is_ok();
+                if success == "Merge complete" && operation_succeeded {
+                    self.merge_dialog = None;
+                }
                 if operation_succeeded
                     && success == "File staged"
                     && self.preferences.staged_only_after_staging
@@ -2204,6 +2219,7 @@ impl eframe::App for SannyGitApp {
             && self.stash_dialog.is_none()
             && self.discard_dialog.is_none()
             && self.ref_dialog.is_none()
+            && self.merge_dialog.is_none()
             && self.remote_checkout.is_none();
         self.tracking.update(
             root,

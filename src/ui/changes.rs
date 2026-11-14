@@ -301,7 +301,7 @@ fn column_separator(
         *width = (*width + direction * response.drag_delta().x).clamp(*range.start(), *range.end());
     }
     let color = if response.hovered() || response.dragged() {
-        palette.accent
+        palette.text
     } else {
         palette.border
     };

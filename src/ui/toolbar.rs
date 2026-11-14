@@ -343,6 +343,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 {
                                     app.open_remote(operation);
                                 }
+                            } else if label == "Merge" {
+                                if action_button(ui, icon, label, app.merge_allowed(), palette, action_width)
+                                    .help_text("Select a branch or commit to merge")
+                                    .disabled_help_text("Open and refresh a repository with commits; wait for the current operation")
+                                    .clicked() { app.open_merge(); }
                             } else if label == "Discard" {
                                 let blocker = app.discard_blocker();
                                 if action_button(ui, icon, label, blocker.is_none(), palette, action_width)

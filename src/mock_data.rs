@@ -197,6 +197,59 @@ pub fn commits() -> Vec<Commit> {
     ]
 }
 
+pub fn merge_dialog() -> crate::app::merge::Dialog {
+    let mut commits = commits();
+    for commit in &mut commits {
+        commit.hash = format!("{:0<40}", commit.hash);
+        commit.parents = commit
+            .parents
+            .iter()
+            .map(|parent| format!("{parent:0<40}"))
+            .collect();
+    }
+    let refs = vec![
+        BranchRef {
+            name: "main".into(),
+            full_name: "refs/heads/main".into(),
+            hash: commits[1].hash.clone(),
+            upstream: Some("origin/main".into()),
+            current: true,
+            kind: RefKind::Local,
+        },
+        BranchRef {
+            name: "feature".into(),
+            full_name: "refs/heads/feature".into(),
+            hash: commits[2].hash.clone(),
+            upstream: None,
+            current: false,
+            kind: RefKind::Local,
+        },
+        BranchRef {
+            name: "origin/main".into(),
+            full_name: "refs/remotes/origin/main".into(),
+            hash: commits[0].hash.clone(),
+            upstream: None,
+            current: false,
+            kind: RefKind::Remote,
+        },
+    ];
+    crate::app::merge::Dialog {
+        root: "Fixture".into(),
+        selected: Some(commits[2].hash.clone()),
+        shown: ["refs/heads/main".into()].into_iter().collect(),
+        snapshot: Some(crate::app::merge::Snapshot {
+            head: commits[1].hash.clone(),
+            branch: "main".into(),
+            refs,
+            history: crate::history::prepare(commits, false),
+        }),
+        filter: String::new(),
+        branches_open: false,
+        include_head: true,
+        include_tracked: true,
+    }
+}
+
 const MAIN_DIFF: &str = r#"@@ -8,6 +8,8 @@ fn main() -> eframe::Result<()> {
      let options = eframe::NativeOptions {
          viewport: egui::ViewportBuilder::default()

@@ -165,6 +165,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
     let reveal = history_window
         .then(|| ui.data_mut(|data| data.remove_temp::<String>(egui::Id::unique("history.reveal"))))
         .flatten();
+    super::controls::table_resize_style(ui, palette);
     let mut table = TableBuilder::new(ui)
         .id_salt("journal.commits")
         .striped(true)
@@ -652,6 +653,7 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
         .collect::<Vec<_>>();
     let mut selected = None;
     ui.spacing_mut().item_spacing.x = 8.0;
+    super::controls::table_resize_style(ui, palette);
     TableBuilder::new(ui)
         .id_salt("history.files")
         .resizable(true)
