@@ -621,6 +621,7 @@ impl SannyGitApp {
 
     fn spawn_reader(
         &self,
+        repaint: Option<eframe::egui::Context>,
         job: impl FnOnce() -> WorkerResult + Send + 'static,
     ) -> Result<Receiver<WorkerResult>, String> {
         let (sender, receiver) = mpsc::channel();
@@ -630,6 +631,9 @@ impl SannyGitApp {
             .spawn(move || {
                 git::set_executable(git_executable);
                 let _ = sender.send(job());
+                if let Some(context) = repaint {
+                    context.request_repaint();
+                }
             })
             .map_err(|error| format!("Cannot start background reader: {error}"))?;
         Ok(receiver)
@@ -1503,7 +1507,7 @@ impl SannyGitApp {
         let generation = self.commit_preview_generation;
         if self.loaded_commit.as_ref() != Some(&hash) {
             self.loaded_commit = Some(hash.clone());
-            match self.spawn_reader(move || WorkerResult::CommitFiles {
+            match self.spawn_reader(None, move || WorkerResult::CommitFiles {
                 result: crate::history::files(&root, &hash, parent.as_deref()),
                 path,
                 hash,
@@ -1530,7 +1534,7 @@ impl SannyGitApp {
             return;
         }
         self.loaded_commit_file = Some(file.path.clone());
-        match self.spawn_reader(move || WorkerResult::CommitPatch {
+        match self.spawn_reader(None, move || WorkerResult::CommitPatch {
             result: crate::history::file_patch(&root, &hash, parent.as_deref(), &file)
                 .map(|patch| crate::models::DiffPreview::new(&patch)),
             path,
@@ -2146,7 +2150,7 @@ impl SannyGitApp {
         }
     }
 
-    fn load_selected_diff(&mut self) {
+    fn load_selected_diff(&mut self, context: &eframe::egui::Context) {
         if self.busy() || self.loaded_diff == Some(self.selected_change) {
             return;
         }
@@ -2188,7 +2192,7 @@ impl SannyGitApp {
         {
             self.status = "Loading diff…".into();
         }
-        match self.spawn_reader(move || WorkerResult::Diff {
+        match self.spawn_reader(Some(context.clone()), move || WorkerResult::Diff {
             index,
             result: git::diff(&root, &path, kind, original_path.as_deref()).map(|patch| {
                 let preview = crate::models::DiffPreview::new(&patch);
@@ -2282,7 +2286,7 @@ impl eframe::App for SannyGitApp {
         ui::show(ui, self);
         self.load_ref_pending();
         self.load_pending_stashes();
-        self.load_selected_diff();
+        self.load_selected_diff(ui.ctx());
         self.load_refs();
         self.load_history();
         self.load_commit_preview();

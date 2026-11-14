@@ -147,7 +147,7 @@ impl SannyGitApp {
         let cancel = Arc::new(AtomicBool::new(false));
         self.history_session.cancel = Some(cancel.clone());
         self.history_pending = false;
-        match self.spawn_reader(move || {
+        match self.spawn_reader(None, move || {
             let root = PathBuf::from(&path);
             let result = if append {
                 cursor

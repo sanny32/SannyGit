@@ -352,8 +352,12 @@ fn graph(ui: &mut Ui, app: &SannyGitApp, index: usize, connected: bool, palette:
 
 fn details(ui: &mut Ui, app: &mut SannyGitApp) {
     let position_id = egui::Id::unique("history.initial_position");
+    let shown_id = egui::Id::unique("history.viewport_shown");
     if !app.commit_details_open || app.selected_commit.is_none() {
-        ui.data_mut(|data| data.remove::<Option<egui::Pos2>>(position_id));
+        ui.data_mut(|data| {
+            data.remove::<Option<egui::Pos2>>(position_id);
+            data.remove::<bool>(shown_id);
+        });
         return;
     }
     let name = app
@@ -391,7 +395,8 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
         .with_title(title)
         .with_inner_size([1200.0, 800.0])
         .with_min_inner_size([1100.0, 700.0])
-        .with_decorations(true);
+        .with_decorations(true)
+        .with_visible(false);
     if let Some(position) = position {
         builder = builder.with_position(position);
     }
@@ -403,6 +408,12 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
                 app.commit_details_open = false;
                 ui.ctx().send_viewport_cmd(ViewportCommand::Close);
                 return;
+            }
+            // The window starts hidden so the OS default background is never
+            // shown; reveal it once the first frame has been painted.
+            if !ui.data(|data| data.get_temp::<bool>(shown_id).unwrap_or(false)) {
+                ui.data_mut(|data| data.insert_temp(shown_id, true));
+                ui.ctx().send_viewport_cmd(ViewportCommand::Visible(true));
             }
             history_contents(ui, app);
             super::show_errors(ui, app);

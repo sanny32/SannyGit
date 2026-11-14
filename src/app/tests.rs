@@ -1202,6 +1202,37 @@ fn disconnected_view_readers_keep_drafts_and_report_modal_errors() {
 }
 
 #[test]
+fn diff_reader_wakes_ui_after_publishing_result() {
+    let app = SannyGitApp::with_theme(ThemeChoice::Light);
+    let context = eframe::egui::Context::default();
+    // Consume initial repaint requests so this wakeup comes from the reader.
+    for _ in 0..3 {
+        let mut output = context.run_ui(eframe::egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+    }
+    let (sender, wakeup) = mpsc::channel();
+    context.set_request_repaint_callback(move |_| {
+        let _ = sender.send(());
+    });
+    let receiver = app
+        .spawn_reader(Some(context), || WorkerResult::Diff {
+            index: 0,
+            result: Ok(("+new".into(), crate::models::DiffPreview::new("+new"))),
+        })
+        .unwrap();
+    wakeup
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert!(matches!(
+        receiver.try_recv(),
+        Ok(WorkerResult::Diff {
+            index: 0,
+            result: Ok(_)
+        })
+    ));
+}
+
+#[test]
 fn panel_reads_keep_repository_actions_available_and_reject_superseded_results() {
     use crate::{menu::MenuAction, test_support::TempRepo};
     use std::time::{Duration, Instant};
@@ -1276,7 +1307,7 @@ fn panel_reads_keep_repository_actions_available_and_reject_superseded_results()
                 let toolbar = render(&mut app);
                 app.reload_history();
                 app.load_history();
-                app.load_selected_diff();
+                app.load_selected_diff(&ctx);
                 assert!(app.history_worker.is_some() && app.diff_worker.is_some());
                 let deadline = Instant::now() + Duration::from_secs(10);
                 while app.history_worker.is_some() || app.diff_worker.is_some() {
