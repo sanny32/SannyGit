@@ -165,17 +165,144 @@ pub fn render_preview(
             ui.style_mut().wrap_mode = Some(TextWrapMode::Extend);
             ui.set_min_width(width);
             for line in &preview.lines[rows] {
-                show_line(ui, line, palette, &code_theme, width);
+                show_line(ui, line, palette, &code_theme, width, false);
             }
         });
 }
 
+pub fn render_side_by_side(
+    ui: &mut Ui,
+    preview: &crate::models::DiffPreview,
+    palette: crate::theme::Palette,
+    id: &str,
+) {
+    ui.spacing_mut().interact_size.y = 18.0;
+    ui.spacing_mut().item_spacing = Vec2::ZERO;
+    let code_theme = CodeTheme::from_style(ui.style());
+    let font = eframe::egui::TextStyle::Monospace.resolve(ui.style());
+    let glyph_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, 'M'));
+    let available = (ui.available_width() - ui.spacing().scroll.allocated_width() - 4.0).max(0.0);
+    let split_id = ui.scope_id().with("diff.side.split");
+    let mut ratio = ui.data(|data| data.get_temp::<f32>(split_id).unwrap_or(0.5));
+    let origin = ui.available_rect_before_wrap().min;
+    let minimum = 120.0_f32.min(available / 2.0);
+    let mut left_width = (available * ratio).clamp(minimum, (available - minimum).max(minimum));
+    let mut divider = eframe::egui::Rect::from_min_size(
+        origin + Vec2::new(left_width, 0.0),
+        Vec2::new(4.0, ui.available_height()),
+    );
+    let response = ui.interact(
+        divider.expand2(Vec2::new(3.0, 0.0)),
+        split_id,
+        eframe::egui::Sense::click_and_drag(),
+    );
+    if response.dragged() {
+        if let Some(pointer) = response.interact_pointer_pos() {
+            left_width =
+                (pointer.x - origin.x - 2.0).clamp(minimum, (available - minimum).max(minimum));
+            ratio = if available > 0.0 {
+                left_width / available
+            } else {
+                0.5
+            };
+            ui.data_mut(|data| data.insert_temp(split_id, ratio));
+            divider = divider.translate(Vec2::new(origin.x + left_width - divider.left(), 0.0));
+        }
+    }
+    if response.hovered() || response.dragged() {
+        ui.ctx()
+            .set_cursor_icon(eframe::egui::CursorIcon::ResizeColumn);
+    }
+    let side_widths = [left_width, available - left_width];
+    let code_widths =
+        side_widths.map(|width| width.max(preview.max_columns as f32 * glyph_width + 72.0));
+    ui.painter().rect_filled(divider, 0, palette.border);
+    ui.painter().line_segment(
+        [divider.center_top(), divider.center_bottom()],
+        (1.0, palette.muted),
+    );
+    let mut horizontal = [0.0; 2];
+    // Keep both horizontal bars at the bottom, independent of the visible rows.
+    eframe::egui::Panel::bottom(eframe::egui::Id::unique(("diff.side.bars", id)))
+        .exact_size(18.0)
+        .frame(Frame::NONE)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for (side, offset) in horizontal.iter_mut().enumerate() {
+                    if side == 1 {
+                        ui.add_space(4.0);
+                    }
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(side_widths[side], 18.0),
+                        Layout::top_down(Align::Min),
+                        |ui| {
+                            let output = ScrollArea::horizontal()
+                                .id_salt(("diff_side_horizontal", id, side))
+                                .scroll_bar_visibility(
+                                    eframe::egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                                )
+                                .auto_shrink([false, false])
+                                .max_height(18.0)
+                                .show(ui, |ui| {
+                                    ui.allocate_exact_size(
+                                        Vec2::new(code_widths[side], 1.0),
+                                        eframe::egui::Sense::hover(),
+                                    );
+                                });
+                            *offset = output.state.clamped_offset().x;
+                        },
+                    );
+                }
+            });
+        });
+    // One vertical viewport keeps old and new lines aligned.
+    ScrollArea::vertical()
+        .id_salt(("diff_sides", id))
+        .auto_shrink([false, false])
+        .show_rows(ui, 18.0, preview.side_by_side.len(), |ui, rows| {
+            for row in &preview.side_by_side[rows] {
+                ui.horizontal(|ui| {
+                    for side in 0..2 {
+                        if side == 1 {
+                            ui.add_space(4.0);
+                        }
+                        let (rect, _) = ui.allocate_exact_size(
+                            Vec2::new(side_widths[side], 18.0),
+                            eframe::egui::Sense::hover(),
+                        );
+                        if let Some(index) = row[side] {
+                            let mut child = ui.new_child(
+                                eframe::egui::UiBuilder::new()
+                                    .max_rect(eframe::egui::Rect::from_min_size(
+                                        rect.min - Vec2::new(horizontal[side], 0.0),
+                                        Vec2::new(code_widths[side], 18.0),
+                                    ))
+                                    .layout(Layout::top_down(Align::Min)),
+                            );
+                            child.set_clip_rect(rect.intersect(ui.clip_rect()));
+                            show_line(
+                                &mut child,
+                                &preview.lines[index],
+                                palette,
+                                &code_theme,
+                                code_widths[side],
+                                side == 0,
+                            );
+                        } else {
+                            ui.painter().rect_filled(rect, 0, palette.panel_alt);
+                        }
+                    }
+                });
+            }
+        });
+}
 fn show_line(
     ui: &mut Ui,
     line: &DiffLine,
     palette: crate::theme::Palette,
     code_theme: &CodeTheme,
     width: f32,
+    old_side: bool,
 ) {
     let fill = match line.kind {
         DiffLineKind::Added => palette.added_background,
@@ -204,11 +331,13 @@ fn show_line(
             ui.horizontal(|ui| {
                 // The reference uses one gutter: old numbers on removals and
                 // new numbers on additions and unchanged lines.
-                let number = line
-                    .new_line
-                    .or(line.old_line)
-                    .map(|n| n.to_string())
-                    .unwrap_or_default();
+                let number = (if old_side {
+                    line.old_line
+                } else {
+                    line.new_line.or(line.old_line)
+                })
+                .map(|n| n.to_string())
+                .unwrap_or_default();
                 ui.add_sized(
                     [32.0, 18.0],
                     Label::new(
@@ -270,6 +399,153 @@ fn file_name(path: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dragging_diff_divider_resizes_both_sides_and_keeps_the_split_for_other_files() {
+        use super::*;
+        use eframe::egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape};
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            let ctx = Context::default();
+            crate::theme::install_fonts(&ctx);
+            theme.apply(&ctx);
+            let app = crate::app::SannyGitApp::with_theme(theme);
+            let preview = crate::models::DiffPreview::new("@@ -1 +1 @@\n-old\n+new\n");
+            let render = |events, id| {
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            Pos2::ZERO,
+                            Vec2::new(1000.0, 300.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| render_side_by_side(ui, &preview, app.palette(), id),
+                );
+                output.textures_delta.clear();
+                output
+            };
+            let right_x = |output: &eframe::egui::FullOutput| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        Shape::Text(text) if text.galley.job.text == "new" => Some(text.pos.x),
+                        _ => None,
+                    })
+                    .unwrap()
+            };
+            for _ in 0..3 {
+                render(vec![], "first");
+            }
+            let output = render(vec![], "first");
+            let before = right_x(&output);
+            let pointer = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    Shape::LineSegment { points, .. }
+                        if (points[0].x - points[1].x).abs() < 0.1
+                            && (points[1].y - points[0].y).abs() > 250.0 =>
+                    {
+                        Some((points[0] + points[1].to_vec2()) * 0.5)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            render(vec![Event::PointerMoved(pointer)], "first");
+            render(
+                vec![Event::PointerButton {
+                    pos: pointer,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                }],
+                "first",
+            );
+            let moved = pointer + Vec2::new(100.0, 0.0);
+            render(vec![Event::PointerMoved(moved)], "first");
+            render(
+                vec![Event::PointerButton {
+                    pos: moved,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                }],
+                "first",
+            );
+            let after = right_x(&render(vec![], "first"));
+            assert!(after > before + 90.0);
+            assert_eq!(right_x(&render(vec![], "second")), after);
+        }
+    }
+    #[test]
+    fn both_diff_sides_and_their_line_numbers_fit_the_viewport() {
+        use super::*;
+        use crate::{
+            models::DiffPreview,
+            theme::{install_fonts, ThemeChoice},
+        };
+        use eframe::egui::{Context, Pos2, RawInput, Rect, Shape};
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for width in [900.0, 1200.0] {
+                let ctx = Context::default();
+                install_fonts(&ctx);
+                theme.apply(&ctx);
+                let app = crate::app::SannyGitApp::with_theme(theme);
+                let patch = format!(
+                    "@@ -10,2 +20,2 @@\n shared\n-old value\n+new value\n{}",
+                    " more context\n".repeat(200)
+                );
+                let preview = DiffPreview::new(&patch);
+                let mut output = None;
+                for _ in 0..3 {
+                    let mut frame = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(
+                                Pos2::ZERO,
+                                Vec2::new(width, 250.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| render_side_by_side(ui, &preview, app.palette(), "test"),
+                    );
+                    frame.textures_delta.clear();
+                    output = Some(frame);
+                }
+                let output = output.unwrap();
+                for (label, right_side) in [
+                    ("old value", false),
+                    ("10", false),
+                    ("new value", true),
+                    ("20", true),
+                ] {
+                    let (rect, clip) = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            Shape::Text(text) if text.galley.job.text == label => Some((
+                                text.galley.rect.translate(text.pos.to_vec2()),
+                                shape.clip_rect,
+                            )),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| panic!("Missing {label} in {theme:?}"));
+                    assert!(
+                        clip.contains_rect(rect),
+                        "{label} is clipped at {width} in {theme:?}: {rect:?} {clip:?}"
+                    );
+                    assert_eq!(
+                        rect.center().x > width / 2.0,
+                        right_side,
+                        "Wrong column for {label}"
+                    );
+                }
+            }
+        }
+    }
     use super::*;
 
     #[test]

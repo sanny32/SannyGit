@@ -123,6 +123,7 @@ pub struct DiffLine {
 /// Parsed once on the worker, then rendered using only visible rows.
 pub struct DiffPreview {
     pub lines: Vec<DiffLine>,
+    pub side_by_side: Vec<[Option<usize>; 2]>,
     pub added: usize,
     pub removed: usize,
     pub max_columns: usize,
@@ -157,8 +158,10 @@ impl DiffPreview {
             })
             .max()
             .unwrap_or(0);
+        let side_by_side = crate::diff::align_sides(&lines);
         Self {
             lines,
+            side_by_side,
             added,
             removed,
             max_columns,

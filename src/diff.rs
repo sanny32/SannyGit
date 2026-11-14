@@ -1,5 +1,76 @@
 use crate::models::{DiffLine, DiffLineKind};
 
+/// Indices into the parsed patch, prepared with the preview on its worker.
+pub fn align_sides(lines: &[DiffLine]) -> Vec<[Option<usize>; 2]> {
+    let mut rows = Vec::with_capacity(lines.len());
+    let mut index = 0;
+    while index < lines.len() {
+        if matches!(
+            lines[index].kind,
+            DiffLineKind::Added | DiffLineKind::Removed
+        ) {
+            let mut old = Vec::new();
+            let mut new = Vec::new();
+            while index < lines.len() {
+                match lines[index].kind {
+                    DiffLineKind::Removed => old.push(index),
+                    DiffLineKind::Added => new.push(index),
+                    _ => break,
+                }
+                index += 1;
+            }
+            for row in 0..old.len().max(new.len()) {
+                rows.push([old.get(row).copied(), new.get(row).copied()]);
+            }
+        } else {
+            rows.push([Some(index), Some(index)]);
+            index += 1;
+        }
+    }
+    rows
+}
+
+#[cfg(test)]
+mod alignment_tests {
+    use super::*;
+
+    #[test]
+    fn pairs_replacements_and_keeps_unequal_blocks_and_hunk_boundaries() {
+        let lines = parse_unified_diff(
+            "@@ -10,3 +20,2 @@\n same\n-old one\n-old two\n+new\n@@ -30 +40 @@\n+inserted\n",
+        );
+        let rows = align_sides(&lines);
+        assert_eq!(
+            rows,
+            vec![
+                [Some(0), Some(0)],
+                [Some(1), Some(1)],
+                [Some(2), Some(4)],
+                [Some(3), None],
+                [Some(5), Some(5)],
+                [None, Some(6)]
+            ]
+        );
+        assert_eq!(lines[rows[1][0].unwrap()].old_line, Some(10));
+        assert_eq!(lines[rows[1][1].unwrap()].new_line, Some(20));
+    }
+
+    #[test]
+    fn retains_headers_binary_notices_and_no_newline_annotations() {
+        let lines = parse_unified_diff("diff --git a/a b/a\nBinary files differ\n@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n");
+        let rows = align_sides(&lines);
+        assert_eq!(rows.len(), lines.len());
+        for (index, line) in lines.iter().enumerate() {
+            assert!(
+                rows.iter().any(|row| row.contains(&Some(index))),
+                "Dropped {}",
+                line.text
+            );
+        }
+        assert!(align_sides(&[]).is_empty());
+    }
+}
+
 pub fn parse_unified_diff(input: &str) -> Vec<DiffLine> {
     let mut old_line = None;
     let mut new_line = None;

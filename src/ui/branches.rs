@@ -176,10 +176,11 @@ fn branch_group(
                 ui.allocate_space(size);
                 continue;
             }
-            let response = super::controls::selectable_row(
+            let response = super::controls::selectable_row_with_outset(
                 ui,
                 selected_group.is_none() && *selected == branch.full_name,
                 22.0,
+                8.0,
                 |ui| {
                     ui.add_space(ui.spacing().indent);
                     icons::paint(

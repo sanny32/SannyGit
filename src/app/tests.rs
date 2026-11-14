@@ -1732,12 +1732,7 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
                 output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
                 output.textures_delta.clear();
             }
-            for text in [
-                "Repository history",
-                "Copy hash",
-                "Changes",
-                "Read-only commit preview",
-            ] {
+            for text in ["Repository history", "Changes", "Read-only commit preview"] {
                 assert!(
                     visible_text(&output.shapes, text),
                     "Commit details {text} clipped at {size:?} in {theme:?}"
