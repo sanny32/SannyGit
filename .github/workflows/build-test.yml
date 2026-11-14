@@ -10,7 +10,6 @@ on:
       - 'build.rs'
       - 'build.sh'
       - 'build.ps1'
-      - 'scripts/test_build_scripts.py'
       - 'LICENSE'
       - '.cargo/**'
       - 'rust-toolchain*'
@@ -75,7 +74,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           bash -n build.sh
-          python3 scripts/test_build_scripts.py
+          python3 .github/macos/test_build_scripts.py
           python3 .github/macos/test_keychain_entitlements.py
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings

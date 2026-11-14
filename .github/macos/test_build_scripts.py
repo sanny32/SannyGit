@@ -11,7 +11,7 @@ import tempfile
 import textwrap
 import unittest
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @unittest.skipIf(os.name == "nt", "Unix shell tests run on Linux and macOS")
