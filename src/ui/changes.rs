@@ -51,7 +51,40 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .filter(|(_, change)| filter_matches(app.change_filter, change.kind))
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
+    let focus_id = eframe::egui::Id::unique("files.selection.focus");
+    // Keep list keyboard ownership separate from the transient row widget IDs.
+    if ui.input(|input| {
+        input.pointer.any_pressed()
+            && input
+                .pointer
+                .interact_pos()
+                .is_none_or(|position| !ui.max_rect().contains(position))
+    }) || ui.input(|input| input.key_pressed(eframe::egui::Key::Tab))
+    {
+        ui.data_mut(|data| data.insert_temp(focus_id, false));
+    }
+    let focused = ui
+        .data(|data| data.get_temp::<bool>(focus_id))
+        .unwrap_or(false);
+    let reveal = keyboard_selection(ui, app, &visible, focused && !ui.ctx().text_edit_focused());
+    if (focused || ui.rect_contains_pointer(ui.max_rect()))
+        && !ui.ctx().text_edit_focused()
+        && ui.input_mut(|input| {
+            input.consume_key(eframe::egui::Modifiers::COMMAND, eframe::egui::Key::A)
+        })
+    {
+        app.selected_paths = visible
+            .iter()
+            .map(|&i| app.changes[i].path.clone())
+            .collect();
+        if !visible.contains(&app.selected_change) {
+            app.selected_change = visible.first().copied().unwrap_or(usize::MAX);
+        }
+    }
     let row_height = 23.0;
+    let click_id = focus_id.with("handled_click");
+    let frame = ui.ctx().cumulative_frame_nr();
+    let mut click_handled = ui.data(|data| data.get_temp::<u64>(click_id)) == Some(frame);
     let table_clip = ui.clip_rect().intersect(ui.available_rect_before_wrap());
     // Table row backgrounds expand into cell spacing; keep them inside the panel.
     ui.shrink_clip_rect(table_clip);
@@ -60,7 +93,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let [mut index_width, mut status_width] = ui
         .data_mut(|data| data.get_persisted::<[f32; 2]>(widths_id))
         .unwrap_or([52.0, 72.0]);
-    TableBuilder::new(ui)
+    let mut table = TableBuilder::new(ui)
         .id_salt("files.columns.v3")
         .resizable(false)
         .striped(true)
@@ -69,7 +102,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .column(Column::exact(index_width))
         .column(Column::remainder().at_least(120.0).clip(true))
         .column(Column::exact(status_width))
-        .min_scrolled_height(0.0)
+        .min_scrolled_height(0.0);
+    if let Some(position) = reveal {
+        table = table.scroll_to_row(position, None);
+    }
+    table
         .header(24.0, |mut header| {
             header.col(|ui| {
                 ui.add_space(6.0);
@@ -89,7 +126,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             body.rows(row_height, visible.len(), |mut row| {
                 let index = visible[row.index()];
                 let change = &app.changes[index];
-                row.set_selected(app.selected_change == index);
+                let can_toggle = operations_enabled && change.kind != ChangeKind::Conflicted;
+                let toggle_staged = !change.staged;
+                row.set_selected(app.change_is_selected(index));
                 let mut row_rect = Rect::NOTHING;
                 row.col(|ui| {
                     row_rect = ui.max_rect();
@@ -146,8 +185,18 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
                 let response = row.response();
                 ui_line(&response, row_rect, table_clip, palette);
-                if response.clicked() || response.secondary_clicked() {
-                    app.selected_change = index;
+                if response.clicked() && !click_handled {
+                    let modifiers = response.ctx.input(|input| input.modifiers);
+                    app.select_change(index, modifiers.command, modifiers.shift, &visible);
+                    response.ctx.data_mut(|data| data.insert_temp(focus_id, true));
+                    response.ctx.data_mut(|data| data.insert_temp(click_id, frame));
+                    click_handled = true;
+                } else if response.secondary_clicked() && !click_handled {
+                    if app.change_is_selected(index) { app.selected_change = index; }
+                    else { app.select_change(index, false, false, &visible); }
+                    response.ctx.data_mut(|data| data.insert_temp(focus_id, true));
+                    response.ctx.data_mut(|data| data.insert_temp(click_id, frame));
+                    click_handled = true;
                 }
                 eframe::egui::Popup::context_menu(&response)
                     .style(move |style: &mut eframe::egui::Style| {
@@ -160,15 +209,19 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
                 if response.double_clicked()
                     && app.preferences.file_double_click == crate::preferences::FileDoubleClick::ToggleStage
-                    && operations_enabled && change.kind != ChangeKind::Conflicted
+                    && can_toggle
                 {
-                    staging_request = Some((index, !change.staged));
+                    staging_request = Some((index, toggle_staged));
                 }
             });
         });
     ui.data_mut(|data| data.insert_persisted(widths_id, [index_width, status_width]));
     if let Some((index, staged)) = staging_request {
-        app.set_staged(index, staged);
+        if app.change_is_selected(index) {
+            app.set_selected_staged(staged);
+        } else {
+            app.set_staged(index, staged);
+        }
     }
     if let Some((index, action)) = context_request {
         app.selected_change = index;
@@ -177,11 +230,68 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             FileAction::Commit => ui.ctx().memory_mut(|memory| {
                 memory.request_focus(eframe::egui::Id::unique("commit.message"));
             }),
-            FileAction::Stage => app.set_staged(index, true),
-            FileAction::Unstage => app.set_staged(index, false),
+            FileAction::Stage => app.set_selected_staged(true),
+            FileAction::Unstage => app.set_selected_staged(false),
             FileAction::Discard => app.open_discard(),
         }
     }
+}
+
+fn keyboard_selection(
+    ui: &mut Ui,
+    app: &mut SannyGitApp,
+    visible: &[usize],
+    focused: bool,
+) -> Option<usize> {
+    use eframe::egui::{Event, Key};
+    if !focused
+        || eframe::egui::Popup::is_any_open(ui.ctx())
+        || ui.memory(|memory| memory.top_modal_layer().is_some())
+    {
+        return None;
+    }
+    let keys = ui.input_mut(|input| {
+        let mut keys = Vec::new();
+        input.events.retain(|event| {
+            if let Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+            {
+                if !modifiers.alt
+                    && !modifiers.command
+                    && matches!(key, Key::ArrowUp | Key::ArrowDown | Key::Home | Key::End)
+                {
+                    keys.push((*key, modifiers.shift));
+                    return false;
+                }
+            }
+            true
+        });
+        keys
+    });
+    let mut reveal = None;
+    for (key, extend) in keys {
+        let active = visible
+            .iter()
+            .position(|&index| index == app.selected_change);
+        let last = visible.len().saturating_sub(1);
+        let position = match key {
+            Key::ArrowUp => active
+                .map(|position| position.saturating_sub(1))
+                .unwrap_or(last),
+            Key::ArrowDown => active.map(|position| (position + 1).min(last)).unwrap_or(0),
+            Key::End => last,
+            _ => 0,
+        };
+        if let Some(&index) = visible.get(position) {
+            app.select_change(index, false, extend, visible);
+            reveal = Some(position);
+        }
+    }
+    reveal
 }
 
 #[derive(Clone, Copy)]
@@ -194,7 +304,7 @@ enum FileAction {
 }
 
 fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<FileAction> {
-    let change = app.changes.get(index)?;
+    app.changes.get(index)?;
     let repository = app.repositories.get(app.selected_repository);
     ui.set_min_width(210.0);
     let mut requested = None;
@@ -214,8 +324,8 @@ fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<Fil
         ui,
         "Commit…",
         FileAction::Commit,
-        !app.busy() && repository.is_some(),
-        "Open a repository and wait for the current operation",
+        !app.busy() && repository.is_some() && app.selected_change_indices().len() <= 1,
+        "To commit selected files, Stage them and use Staged only in the commit panel",
     );
     ui.add(eframe::egui::Separator::default().spacing(10.0));
     for (label, action, staged) in [
@@ -226,7 +336,7 @@ fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<Fil
             ui,
             label,
             action,
-            app.staging_allowed(index, staged),
+            app.selected_staging_allowed(staged),
             "Select a suitable file after refreshing; conflicts must be resolved outside SannyGit",
         );
     }
@@ -240,28 +350,46 @@ fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<Fil
         discard_blocker.unwrap_or(""),
     );
     ui.add(eframe::egui::Separator::default().spacing(10.0));
+    let selected = app.selected_change_indices();
     for (label, text) in [
         (
             "Copy Name",
             Some(
-                change
-                    .path
-                    .rsplit(['/', '\\'])
-                    .next()
-                    .unwrap_or(&change.path)
-                    .to_owned(),
+                selected
+                    .iter()
+                    .map(|&index| {
+                        let path = &app.changes[index].path;
+                        path.rsplit(['/', '\\']).next().unwrap_or(path).to_owned()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
             ),
         ),
         (
             "Copy Path",
             repository.map(|repository| {
-                std::path::Path::new(&repository.path)
-                    .join(&change.path)
-                    .to_string_lossy()
-                    .into_owned()
+                selected
+                    .iter()
+                    .map(|&index| {
+                        std::path::Path::new(&repository.path)
+                            .join(&app.changes[index].path)
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
             }),
         ),
-        ("Copy Relative Path", Some(change.path.clone())),
+        (
+            "Copy Relative Path",
+            Some(
+                selected
+                    .iter()
+                    .map(|&index| app.changes[index].path.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+        ),
     ] {
         if ui
             .add_enabled(text.is_some(), eframe::egui::Button::new(label))
@@ -404,6 +532,27 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         }
         if response.clicked() {
             app.change_filter = filter;
+            app.selected_paths.retain(|path| {
+                app.changes
+                    .iter()
+                    .any(|change| &change.path == path && filter_matches(filter, change.kind))
+            });
+            if !app
+                .changes
+                .get(app.selected_change)
+                .is_some_and(|change| filter_matches(filter, change.kind))
+            {
+                app.selected_change = app
+                    .changes
+                    .iter()
+                    .position(|change| {
+                        filter_matches(filter, change.kind)
+                            && (app.selected_paths.is_empty()
+                                || app.selected_paths.contains(&change.path))
+                    })
+                    .unwrap_or(usize::MAX);
+            }
+            app.selection_anchor = None;
         }
     }
 }
@@ -429,6 +578,127 @@ mod tests {
     use super::*;
     use crate::theme::{install_fonts, ThemeChoice};
     use eframe::egui::{Context, Pos2, RawInput};
+
+    #[test]
+    fn modifier_clicks_select_ranges_and_right_click_preserves_the_group() {
+        use eframe::egui::{Event, Modifiers, PointerButton};
+        for (theme, full_window) in [ThemeChoice::Light, ThemeChoice::Dark]
+            .into_iter()
+            .flat_map(|theme| [false, true].map(|full_window| (theme, full_window)))
+        {
+            let ctx = Context::default();
+            install_fonts(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            theme.apply(&ctx);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.changes = crate::mock_data::changes();
+            let render = |app: &mut SannyGitApp, mut events: Vec<Event>, modifiers| {
+                events.insert(0, Event::ModifiersChanged(modifiers));
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            Pos2::ZERO,
+                            Vec2::new(1100.0, 700.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        if full_window {
+                            crate::ui::show(ui, app);
+                        } else {
+                            show(ui, app);
+                        }
+                    },
+                );
+                output.textures_delta.clear();
+                output
+            };
+            for _ in 0..3 {
+                render(&mut app, vec![], Modifiers::NONE);
+            }
+            let output = render(&mut app, vec![], Modifiers::NONE);
+            let positions: Vec<_> = app
+                .changes
+                .iter()
+                .map(|change| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| {
+                            if let eframe::egui::Shape::Text(text) = &shape.shape {
+                                (text.galley.job.text == change.path).then(|| {
+                                    Pos2::new(
+                                        text.pos.x + 8.0,
+                                        text.pos.y + text.galley.size().y / 2.0,
+                                    )
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap()
+                })
+                .collect();
+            let click = |app: &mut SannyGitApp, index: usize, button, modifiers| {
+                for pressed in [true, false] {
+                    render(
+                        app,
+                        vec![
+                            Event::PointerMoved(positions[index]),
+                            Event::PointerButton {
+                                pos: positions[index],
+                                button,
+                                pressed,
+                                modifiers,
+                            },
+                        ],
+                        modifiers,
+                    );
+                }
+            };
+            click(&mut app, 0, PointerButton::Primary, Modifiers::NONE);
+            click(&mut app, 2, PointerButton::Primary, Modifiers::COMMAND);
+            assert_eq!(app.selected_change_indices(), vec![0, 2]);
+            click(&mut app, 4, PointerButton::Primary, Modifiers::SHIFT);
+            assert_eq!(app.selected_change_indices(), vec![2, 3, 4]);
+            assert!(ctx
+                .data(
+                    |data| data.get_temp::<bool>(eframe::egui::Id::unique("files.selection.focus"))
+                )
+                .unwrap_or(false));
+            let key = |app: &mut SannyGitApp, key, modifiers| {
+                render(
+                    app,
+                    vec![Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    }],
+                    modifiers,
+                );
+            };
+            key(&mut app, eframe::egui::Key::ArrowUp, Modifiers::SHIFT);
+            assert_eq!(app.selected_change_indices(), vec![2, 3]);
+            key(&mut app, eframe::egui::Key::ArrowUp, Modifiers::SHIFT);
+            assert_eq!(app.selected_change_indices(), vec![2]);
+            key(&mut app, eframe::egui::Key::ArrowUp, Modifiers::SHIFT);
+            assert_eq!(app.selected_change_indices(), vec![1, 2]);
+            key(&mut app, eframe::egui::Key::ArrowDown, Modifiers::NONE);
+            assert_eq!(app.selected_change_indices(), vec![2]);
+            key(&mut app, eframe::egui::Key::Home, Modifiers::NONE);
+            key(&mut app, eframe::egui::Key::End, Modifiers::SHIFT);
+            assert_eq!(app.selected_change_indices().len(), app.changes.len());
+            click(&mut app, 2, PointerButton::Primary, Modifiers::NONE);
+            click(&mut app, 4, PointerButton::Primary, Modifiers::SHIFT);
+            click(&mut app, 3, PointerButton::Secondary, Modifiers::NONE);
+            assert_eq!(app.selected_change_indices(), vec![2, 3, 4]);
+            assert_eq!(app.selected_change, 3);
+            assert!(!app.busy());
+        }
+    }
 
     #[test]
     fn row_separators_align_with_striped_backgrounds() {

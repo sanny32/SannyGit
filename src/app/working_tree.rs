@@ -202,6 +202,7 @@ impl SannyGitApp {
         self.selected_change = index
             .or_else(|| (!self.changes.is_empty()).then_some(0))
             .unwrap_or(usize::MAX);
+        self.retain_change_selection();
         if index.is_some() && previous_diff {
             self.loaded_diff = Some(self.selected_change);
             self.changes[self.selected_change].diff = retained_diff;

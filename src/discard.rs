@@ -278,10 +278,68 @@ pub fn execute(root: &Path, expected: &Prepared) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate every reviewed path before starting; report partial completion on I/O failure.
+pub fn execute_many(root: &Path, expected: &[Prepared]) -> Result<(), String> {
+    if expected.is_empty() {
+        return Err("Select files first.".into());
+    }
+    for entry in expected {
+        if prepare(root, &entry.path)? != *entry {
+            return Err(format!("{} changed after review. Reload details and confirm again. No files were discarded.", entry.path));
+        }
+    }
+    for (completed, entry) in expected.iter().enumerate() {
+        execute(root, entry).map_err(|error| {
+            format!(
+                "Discard stopped at {} after {completed} of {} files completed. {error}",
+                entry.path,
+                expected.len()
+            )
+        })?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{git::CommitContents, test_support::TempRepo};
+
+    #[test]
+    fn batch_preflights_every_path_and_preserves_index_and_unselected_files() {
+        let repo = base();
+        repo.write("file", "staged\n");
+        repo.git(&["add", "file"]);
+        repo.write("file", "unstaged\n");
+        repo.write("new", "new\n");
+        repo.write("other", "keep\n");
+        let index = repo.git(&["ls-files", "--stage"]);
+        let entries = [
+            prepare(&repo.0, "file").unwrap(),
+            prepare(&repo.0, "new").unwrap(),
+        ];
+        repo.write("new", "changed\n");
+        assert!(execute_many(&repo.0, &entries).is_err());
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file")).unwrap(),
+            "unstaged\n"
+        );
+        let entries = [
+            prepare(&repo.0, "file").unwrap(),
+            prepare(&repo.0, "new").unwrap(),
+        ];
+        execute_many(&repo.0, &entries).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file")).unwrap(),
+            "staged\n"
+        );
+        assert!(!repo.0.join("new").exists());
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("other")).unwrap(),
+            "keep\n"
+        );
+        assert_eq!(repo.git(&["ls-files", "--stage"]), index);
+    }
 
     fn base() -> TempRepo {
         let repo = TempRepo::new();

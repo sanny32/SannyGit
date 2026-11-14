@@ -372,6 +372,8 @@ pub fn discard_dialog(
         path: path.into(),
         action,
         prepared: Some(prepared),
+        paths: vec![path.into()],
+        additional: Vec::new(),
         confirmed: false,
         running: false,
         error: None,

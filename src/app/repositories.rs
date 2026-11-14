@@ -660,6 +660,8 @@ impl SannyGitApp {
         self.invalidate_view_reads();
         self.tracking.invalidate();
         self.selected_change = usize::MAX;
+        self.selected_paths.clear();
+        self.selection_anchor = None;
         self.current_branch.clear();
         self.changes.clear();
         self.refs.clear();

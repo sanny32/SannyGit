@@ -351,7 +351,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             } else if label == "Discard" {
                                 let blocker = app.discard_blocker();
                                 if action_button(ui, icon, label, blocker.is_none(), palette, action_width)
-                                    .help_text("Review restoring the selected file from the index, or deleting one untracked file")
+                                    .help_text("Review restoring selected files from the index or deleting selected untracked files")
                                     .disabled_help_text(blocker.unwrap_or(""))
                                     .clicked() { app.open_discard(); }
                             } else if label == "Save Stash" {
@@ -361,13 +361,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                     .clicked() { app.open_save_stash(); }
                             } else if label == "Stage" || label == "Unstage" {
                                 let staged = label == "Stage";
-                                let enabled = app.staging_allowed(app.selected_change, staged);
-                                let tooltip = if staged { "Stage all changes in the selected file" } else { "Unstage the selected file; preserve working-tree contents" };
+                                let enabled = app.selected_staging_allowed(staged);
+                                let tooltip = if staged { "Stage all changes in the selected files" } else { "Unstage the selected files; preserve working-tree contents" };
                                 if action_button(ui, icon, label, enabled, palette, action_width)
                                     .help_text(tooltip)
                                     .disabled_help_text("Select a suitable file after refreshing; conflicts must be resolved outside SannyGit")
                                     .clicked() {
-                                    app.set_staged(app.selected_change, staged);
+                                    app.set_selected_staged(staged);
                                 }
                             } else {
                                 action_button(ui, icon, label, false, palette, action_width)

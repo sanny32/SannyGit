@@ -13,25 +13,46 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let mut cancel = false;
     let mut reload = false;
     let mut submit = false;
+    let multiple = dialog.paths.len() > 1;
+    let title = if multiple {
+        "Discard Selected Files"
+    } else {
+        dialog.action.label()
+    };
+    let description = if multiple {
+        "Restore tracked files from the index and permanently delete untracked files. Unstaged edits are lost; staged contents are preserved. Review every selected path before confirming."
+    } else {
+        dialog.action.explanation()
+    };
     dialog_style::modal(ctx, palette, "discard.file").show(ctx, |ui| {
         ui.set_width(580.0);
         dialog_style::setup(ui);
         ui.spacing_mut().item_spacing.y = 0.0;
-        dialog_style::header_with_icon(ui, palette, dialog.action.label(), dialog.action.explanation(), Icon::Discard);
+        dialog_style::header_with_icon(ui, palette, title, description, Icon::Discard);
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             let repository = format!("Repository: {:?}", dialog.root);
             super::controls::dialog_style::text_line(ui, RichText::new(&repository).color(palette.muted), 26.0).help_text(repository);
-            let path = format!("File: {:?}", dialog.path);
-            super::controls::dialog_style::text_line(ui, RichText::new(&path).monospace(), 26.0).help_text(path);
+            if multiple {
+                egui::ScrollArea::vertical().id_salt("discard.paths").min_scrolled_height(110.0).max_height(110.0).auto_shrink([false, false]).show(ui, |ui| {
+                    for path in &dialog.paths {
+                        dialog_style::text_line(ui, RichText::new(path).monospace(), 22.0).help_text(path);
+                    }
+                });
+            } else {
+                let path = format!("File: {:?}", dialog.path);
+                super::controls::dialog_style::text_line(ui, RichText::new(&path).monospace(), 26.0).help_text(path);
+            }
             ui.scope(|ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                ui.add_enabled(!busy && dialog.prepared.is_some(), egui::Checkbox::new(&mut dialog.confirmed, "I confirm this action on the reviewed file."));
+                ui.add_enabled(!busy && dialog.prepared.is_some(), egui::Checkbox::new(&mut dialog.confirmed, if multiple { "I confirm this action on all reviewed files." } else { "I confirm this action on the reviewed file." }));
             });
             let (message, color) = if dialog.error.is_some() {
                 ("Reload details to retry.", palette.muted)
             } else if dialog.running {
                 ("Operation in progress…", palette.muted)
+            } else if multiple && dialog.prepared.is_some() {
+                ("Selected files reviewed. The index will be preserved.", palette.muted)
             } else if let Some(prepared) = &dialog.prepared {
                 (prepared.summary.as_str(), palette.muted)
             } else {
@@ -42,7 +63,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             dialog_style::button_row(ui, |ui| {
                 if ui.add_enabled(!busy && current && dialog.prepared.is_some() && dialog.confirmed,
-                    dialog_style::primary(dialog.action.label(), palette)).disabled_help_text("Review the file and confirm the action. Reload details if the file, index or HEAD changed.").dialog_accept() { submit = true; }
+                    dialog_style::primary(title, palette)).disabled_help_text("Review the files and confirm the action. Reload details if a file, index or HEAD changed.").dialog_accept() { submit = true; }
                 if ui.add_enabled(!dialog.running, dialog_style::button("Cancel")).dialog_cancel() { cancel = true; }
                 if ui.add_enabled(!busy && !dialog.running, dialog_style::button("Reload details")).clicked() { reload = true; }
             });
@@ -66,6 +87,52 @@ mod tests {
         discard::Action,
         theme::{install_fonts, InterfaceStyle, ThemeChoice},
     };
+
+    #[test]
+    fn group_dialog_fits_and_retains_geometry_during_loading_and_errors() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                let ctx = egui::Context::default();
+                install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let (_repo, mut dialog) = crate::mock_data::discard_dialog(Action::Restore);
+                dialog.paths.push("another/selected/path".into());
+                let prepared = dialog.prepared.take();
+                let mut app = SannyGitApp::with_theme(theme);
+                app.discard_dialog = Some(dialog);
+                let mut baseline = None;
+                for stage in 0..4 {
+                    let dialog = app.discard_dialog.as_mut().unwrap();
+                    dialog.prepared = if stage == 0 { None } else { prepared.clone() };
+                    dialog.running = stage == 2;
+                    dialog.error = (stage == 3).then(|| "Failure details ".repeat(100));
+                    for _ in 0..4 {
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    size,
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| show(ui.ctx(), &mut app),
+                        );
+                        output.textures_delta.clear();
+                    }
+                    let rect = ctx
+                        .memory(|memory| memory.area_rect(egui::Id::unique("discard.file")))
+                        .unwrap();
+                    assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect));
+                    if let Some(before) = baseline {
+                        assert_eq!(before, rect);
+                    } else {
+                        baseline = Some(rect);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn discard_dialog_keeps_compact_geometry_during_review_confirmation_progress_and_errors() {

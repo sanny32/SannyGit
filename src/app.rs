@@ -1,5 +1,6 @@
 pub mod discard;
 mod errors;
+mod file_selection;
 pub mod merge;
 pub mod ref_management;
 mod remotes;
@@ -24,6 +25,11 @@ use std::{
 };
 
 enum WorkerResult {
+    DiscardBatchPrepared {
+        root: String,
+        paths: Vec<String>,
+        result: Result<Vec<crate::discard::Prepared>, String>,
+    },
     MergeDetails {
         root: String,
         result: Result<merge::Snapshot, String>,
@@ -263,6 +269,8 @@ pub struct SannyGitApp {
     pub commits: Vec<Commit>,
     pub selected_repository: usize,
     pub selected_change: usize,
+    pub selected_paths: std::collections::BTreeSet<String>,
+    pub selection_anchor: Option<String>,
     pub selected_branch: String,
     pub selected_ref_group: Option<crate::models::RefKind>,
     pub change_filter: ChangeFilter,
@@ -512,6 +520,8 @@ impl SannyGitApp {
             commits: Vec::new(),
             selected_repository: usize::MAX,
             selected_change: usize::MAX,
+            selected_paths: Default::default(),
+            selection_anchor: None,
             selected_branch: String::new(),
             selected_ref_group: None,
             change_filter: ChangeFilter::All,
@@ -736,8 +746,8 @@ impl SannyGitApp {
             MenuAction::Refresh | MenuAction::ReloadHistory => {
                 !self.busy() && self.repositories.get(self.selected_repository).is_some()
             }
-            MenuAction::Stage => self.staging_allowed(self.selected_change, true),
-            MenuAction::Unstage => self.staging_allowed(self.selected_change, false),
+            MenuAction::Stage => self.selected_staging_allowed(true),
+            MenuAction::Unstage => self.selected_staging_allowed(false),
             MenuAction::Commit => self.commit_blocker().is_none(),
             MenuAction::CreateBranch => {
                 !self.busy() && self.state_current && self.refs_current && self.branch_head_exists
@@ -811,8 +821,8 @@ impl SannyGitApp {
             }
             MenuAction::Open => self.open_dialog = true,
             MenuAction::Refresh => self.refresh(),
-            MenuAction::Stage => self.set_staged(self.selected_change, true),
-            MenuAction::Unstage => self.set_staged(self.selected_change, false),
+            MenuAction::Stage => self.set_selected_staged(true),
+            MenuAction::Unstage => self.set_selected_staged(false),
             MenuAction::Commit => self.create_commit(),
             MenuAction::DeleteBranch => self.open_delete_branch(),
             MenuAction::PushTag => self.open_push_tag(),
@@ -1034,6 +1044,11 @@ impl SannyGitApp {
         self.loaded_diff = None;
         self.diff_preview = None;
         self.open_dialog = false;
+        if !same_repository {
+            self.selected_paths.clear();
+            self.selection_anchor = None;
+        }
+        self.retain_change_selection();
         self.refs_current = false;
         self.refs_pending = true;
         self.refs_loading = true;
@@ -1815,6 +1830,11 @@ impl SannyGitApp {
 
     fn apply_worker_result(&mut self, result: WorkerResult) {
         match result {
+            WorkerResult::DiscardBatchPrepared {
+                root,
+                paths,
+                result,
+            } => self.apply_discard_batch(root, paths, result),
             WorkerResult::MergeDetails { root, result } => self.apply_merge_details(root, result),
             WorkerResult::RefDetails { root, result } => self.apply_ref_details(root, *result),
             WorkerResult::DiscardPrepared { root, path, result } => {
@@ -1975,7 +1995,7 @@ impl SannyGitApp {
                 );
                 let discarding = matches!(
                     success,
-                    "File restored from index" | "Untracked file deleted"
+                    "File restored from index" | "Untracked file deleted" | "Files discarded"
                 );
                 let operation_succeeded = outcome.is_ok();
                 if success == "Merge complete" && operation_succeeded {

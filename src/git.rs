@@ -395,35 +395,54 @@ fn command_error(operation: &str) -> String {
 
 /// Stages or unstages the complete selected file; never changes working-tree bytes.
 pub fn set_staged(root: &Path, path: &str, staged: bool) -> Result<(), String> {
+    set_staged_paths(root, &[path.to_owned()], staged)
+}
+
+pub fn set_staged_paths(root: &Path, paths: &[String], staged: bool) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("Select files first.".into());
+    }
     require_no_operation(root)?;
     let snapshot = load(root)?;
-    let change = snapshot
-        .changes
+    let changes = paths
         .iter()
-        .find(|c| c.path == path)
-        .ok_or("The file has changed since the last refresh. Refresh and select it again.")?;
-    if change.kind == ChangeKind::Conflicted {
+        .map(|path| {
+            snapshot.changes.iter().find(|c| &c.path == path).ok_or(
+                "A selected file changed since the last refresh. Refresh and select it again.",
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if changes
+        .iter()
+        .any(|change| change.kind == ChangeKind::Conflicted)
+    {
         return Err("Resolve conflicts outside SannyGit before staging this file.".into());
     }
-    if (staged && !change.unstaged) || (!staged && !change.staged) {
+    if changes
+        .iter()
+        .any(|change| (staged && !change.unstaged) || (!staged && !change.staged))
+    {
         return Err("The file's staging state has changed. Refresh before retrying.".into());
     }
     // --revs-only succeeds with empty output for an unborn HEAD; other command
     // failures must propagate rather than being mistaken for a new repository.
     let has_head = !staged && !run(root, &["rev-parse", "--revs-only", "HEAD"])?.is_empty();
     let mut args = if staged {
-        vec!["add", "--all", "--", path]
+        vec!["add", "--all", "--"]
     } else if has_head {
-        vec!["restore", "--source=HEAD", "--staged", "--", path]
+        vec!["restore", "--source=HEAD", "--staged", "--"]
     } else {
         // Before the first commit there is no HEAD to restore. Remove only index entries.
-        vec!["update-index", "--force-remove", "--", path]
+        vec!["update-index", "--force-remove", "--"]
     };
-    if let Some(source) = &change.original_path {
-        // A copy must not stage or unstage its source; porcelain R is the only
-        // status currently displayed as Renamed.
-        if !staged && change.kind == ChangeKind::Renamed {
-            args.push(source);
+    for change in changes {
+        args.push(&change.path);
+        if let Some(source) = &change.original_path {
+            // A copy must not stage or unstage its source; porcelain R is the only
+            // status currently displayed as Renamed.
+            if !staged && change.kind == ChangeKind::Renamed {
+                args.push(source);
+            }
         }
     }
     run(root, &args).map(|_| ())
