@@ -306,8 +306,12 @@ fn repository_row(
                         .sense(eframe::egui::Sense::hover()),
                 );
             }
-        })
-        .help_text(if active {
+        });
+    let response = if palette.panel_radius > 0 {
+        // Modern rows already display the path below the repository name.
+        response
+    } else {
+        response.help_text(if active {
             format!(
                 "{}\n{}",
                 repository.path,
@@ -315,7 +319,8 @@ fn repository_row(
             )
         } else {
             repository.path.clone()
-        });
+        })
+    };
     let mut action = None;
     response.context_menu(|ui| {
         ui.set_min_width(240.0);

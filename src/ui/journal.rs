@@ -31,7 +31,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
         }
         ui.add_space(8.0);
         let search_width = (ui.available_width() - 360.0).clamp(60.0, 240.0);
-        ui.add_enabled(
+        let search = ui.add_enabled(
             !app.commits.is_empty(),
             crate::ui::controls::singleline(&mut app.journal_filter)
                 .min_size(Vec2::ZERO)
@@ -39,6 +39,8 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
                 .desired_width(search_width)
                 .margin(Vec2::new(5.0, 2.0)),
         );
+        ui.spacing_mut().interact_size.y = search.rect.height();
+        ui.spacing_mut().button_padding.y = 2.0;
         let mut all = app.history_all_branches;
         ui.add_enabled_ui(!app.busy(), |ui| {
             ComboBox::from_id_salt("journal.scope")
@@ -69,7 +71,8 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
         let cancelling = app.history_cancellable();
         let response = ui.add_enabled(
             cancelling || app.history_can_load_more(),
-            Button::new(if cancelling { "Cancel" } else { "More" }).min_size(Vec2::new(60.0, 20.0)),
+            Button::new(if cancelling { "Cancel" } else { "More" })
+                .min_size(Vec2::new(60.0, search.rect.height())),
         ).help_text(if cancelling {
             "Cancel history loading; keep existing rows, selection and scroll position."
         } else {

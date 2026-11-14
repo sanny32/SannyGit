@@ -25,6 +25,7 @@ pub enum MenuAction {
     Commit,
     Stashes,
     Merge,
+    Rebase,
     Discard,
     DeleteBranch,
     PushTag,
@@ -272,7 +273,7 @@ pub const MENUS: &[Menu] = &[
             action("Rename…", MenuAction::RenameBranch),
             action("Delete…", MenuAction::DeleteBranch),
             action("Merge…", MenuAction::Merge),
-            pending("Rebase…"),
+            action("Rebase…", MenuAction::Rebase),
         ],
     },
     Menu {

@@ -4,7 +4,10 @@ use super::controls::{
     tooltips::TooltipResponse,
 };
 use crate::{
-    app::{merge::Dialog, SannyGitApp},
+    app::{
+        merge::{Dialog, Operation},
+        SannyGitApp,
+    },
     merge::Mode,
     models::RefKind,
     theme::Palette,
@@ -24,11 +27,17 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let busy = app.busy();
     let mut close = false;
     let mut submit = None;
-    dialog_style::modal(ctx, palette, "merge").show(ctx, |ui| {
+    let mut rebase = false;
+    let operation = dialog.operation;
+    dialog_style::modal(ctx, palette, operation.id()).show(ctx, |ui| {
         ui.set_width(780.0);
         dialog_style::setup(ui);
         ui.spacing_mut().item_spacing.y = 0.0;
-        dialog_style::header_with_icon(ui, palette, "Merge", "Select the branch or commit to merge and how it should be merged into the Working Tree.", Icon::Merge);
+        let (title, description, icon) = match operation {
+            Operation::Merge => ("Merge", "Select the branch or commit to merge and how it should be merged into the Working Tree.", Icon::Merge),
+            Operation::Rebase => ("Rebase HEAD to", "Select the commit to which the HEAD commits should be rebased.", Icon::Rebase),
+        };
+        dialog_style::header_with_icon(ui, palette, title, description, icon);
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(12, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             ui.horizontal(|ui| {
@@ -40,8 +49,8 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             graph(ui, &mut dialog, palette, &app.preferences, busy);
             let status = match &dialog.snapshot {
                 None if busy => "Loading commits…".to_owned(),
-                None => "Could not load commits. Close and reopen Merge to retry.".to_owned(),
-                Some(_) if busy => "Merging…".to_owned(),
+                None => "Close and reopen the dialog to retry loading commits.".to_owned(),
+                Some(_) if busy => if operation == Operation::Rebase { "Rebasing…" } else { "Merging…" }.to_owned(),
                 Some(snapshot) => format!("{} commits loaded{} · Target: {}", snapshot.history.commits.len(), if snapshot.history.truncated { " (10,000 limit)" } else { "" }, dialog.selected.as_deref().map(|hash| &hash[..8]).unwrap_or("select a commit")),
             };
             dialog_style::text_line(ui, RichText::new(status).color(palette.muted), 20.0);
@@ -50,8 +59,12 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 close = ui.add_enabled(!busy && !dialog.branches_open, dialog_style::button("Cancel")).dialog_cancel();
                 let enabled = !busy && !dialog.branches_open && dialog.snapshot.as_ref().is_some_and(|snapshot| dialog.selected.as_ref().is_some_and(|hash| hash != &snapshot.head));
-                if ui.add_enabled(enabled, dialog_style::primary("Merge to Working Tree", palette)).help_text("Squash the selected commit into the index and working tree without creating a commit. Review the result and commit separately.").clicked() { submit = Some(Mode::WorkingTree); }
-                if ui.add_enabled(enabled, dialog_style::button("Create Merge-Commit")).help_text("Merge the selected commit and create a merge commit, even when a fast-forward is possible. Uses your Git identity, hooks and signing configuration.").clicked() { submit = Some(Mode::Commit); }
+                if operation == Operation::Rebase {
+                    rebase = ui.add_enabled(enabled, dialog_style::primary("Rebase HEAD to", palette)).help_text("Replay HEAD commits onto the selected commit. Rewrites commit history; commit or stash local changes first.").clicked();
+                } else {
+                    if ui.add_enabled(enabled, dialog_style::primary("Merge to Working Tree", palette)).help_text("Squash the selected commit into the index and working tree without creating a commit. Review the result and commit separately.").clicked() { submit = Some(Mode::WorkingTree); }
+                    if ui.add_enabled(enabled, dialog_style::button("Create Merge-Commit")).help_text("Merge the selected commit and create a merge commit, even when a fast-forward is possible. Uses your Git identity, hooks and signing configuration.").clicked() { submit = Some(Mode::Commit); }
+                }
             });
         });
     });
@@ -63,6 +76,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     }
     if let Some(mode) = submit {
         app.submit_merge(mode);
+    }
+    if rebase {
+        app.submit_rebase();
     }
 }
 
@@ -166,7 +182,7 @@ fn graph(
             ui.style_mut().interaction.selectable_labels = false;
             super::controls::table_resize_style(ui, palette);
             TableBuilder::new(ui)
-                .id_salt("merge.commits")
+                .id_salt((dialog.operation.id(), "commits"))
                 .striped(true)
                 .sense(egui::Sense::click())
                 .cell_layout(Layout::left_to_right(Align::Center))
@@ -321,7 +337,7 @@ fn branches(ctx: &egui::Context, dialog: &mut Dialog, palette: Palette) {
     let Some(snapshot) = &dialog.snapshot else {
         return;
     };
-    dialog_style::modal(ctx, palette, "merge.branches").show(ctx, |ui| {
+    dialog_style::modal(ctx, palette, dialog.operation.branches_id()).show(ctx, |ui| {
         ui.set_width(460.0);
         dialog_style::setup(ui);
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -340,7 +356,7 @@ fn branches(ctx: &egui::Context, dialog: &mut Dialog, palette: Palette) {
                 .inner_margin(6)
                 .show(ui, |ui| {
                     ScrollArea::both()
-                        .id_salt("merge.branch.tree")
+                        .id_salt((dialog.operation.id(), "branch.tree"))
                         .min_scrolled_height(200.0)
                         .max_height(200.0)
                         .auto_shrink([false, false])
@@ -350,7 +366,7 @@ fn branches(ctx: &egui::Context, dialog: &mut Dialog, palette: Palette) {
                                 format!("HEAD ({})", &snapshot.head[..8]),
                             );
                             egui::CollapsingHeader::new("Local Branches")
-                                .id_salt("merge.local")
+                                .id_salt((dialog.operation.id(), "local"))
                                 .default_open(true)
                                 .show(ui, |ui| {
                                     for entry in snapshot
@@ -386,7 +402,7 @@ fn branches(ctx: &egui::Context, dialog: &mut Dialog, palette: Palette) {
                                 .collect();
                             for remote in remotes {
                                 egui::CollapsingHeader::new(remote)
-                                    .id_salt(("merge.remote", remote))
+                                    .id_salt((dialog.operation.id(), "remote", remote))
                                     .show(ui, |ui| {
                                         for entry in snapshot.refs.iter().filter(|entry| {
                                             entry.kind == RefKind::Remote
@@ -438,31 +454,62 @@ mod tests {
     use crate::theme::{install_fonts, ThemeChoice};
 
     #[test]
-    fn merge_layout_stays_stable_when_loading_filtering_and_reporting_errors() {
-        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
-            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
-                let ctx = egui::Context::default();
-                install_fonts(&ctx);
-                egui_extras::install_image_loaders(&ctx);
-                theme.apply(&ctx);
-                let mut app = SannyGitApp::with_theme(theme);
-                let mut dialog = crate::mock_data::merge_dialog();
-                let snapshot = dialog.snapshot.take();
-                app.merge_dialog = Some(dialog);
-                let mut baseline = None;
-                for stage in 0..4 {
-                    if stage == 1 {
-                        app.merge_dialog.as_mut().unwrap().snapshot = snapshot
-                            .as_ref()
-                            .map(|_| crate::mock_data::merge_dialog().snapshot.unwrap());
+    fn commit_picker_layout_stays_stable_when_loading_filtering_and_reporting_errors() {
+        for operation in [Operation::Merge, Operation::Rebase] {
+            for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+                for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                    let ctx = egui::Context::default();
+                    install_fonts(&ctx);
+                    egui_extras::install_image_loaders(&ctx);
+                    theme.apply(&ctx);
+                    let mut app = SannyGitApp::with_theme(theme);
+                    let mut dialog = crate::mock_data::merge_dialog();
+                    dialog.operation = operation;
+                    let snapshot = dialog.snapshot.take();
+                    app.merge_dialog = Some(dialog);
+                    let mut baseline = None;
+                    for stage in 0..4 {
+                        if stage == 1 {
+                            app.merge_dialog.as_mut().unwrap().snapshot = snapshot
+                                .as_ref()
+                                .map(|_| crate::mock_data::merge_dialog().snapshot.unwrap());
+                        }
+                        if stage == 2 {
+                            app.merge_dialog.as_mut().unwrap().filter = "no matches".into();
+                        }
+                        if stage == 3 {
+                            app.error = Some("Failure details ".repeat(200));
+                        }
+                        for frame in 0..4 {
+                            let mut output = ctx.run_ui(
+                                egui::RawInput {
+                                    screen_rect: Some(egui::Rect::from_min_size(
+                                        egui::Pos2::ZERO,
+                                        size,
+                                    )),
+                                    ..Default::default()
+                                },
+                                |ui| show(ui.ctx(), &mut app),
+                            );
+                            output.textures_delta.clear();
+                            if frame < 3 {
+                                continue;
+                            }
+                            let rect = ctx
+                                .memory(|memory| memory.area_rect(egui::Id::unique(operation.id())))
+                                .unwrap();
+                            assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size)
+                                .contains_rect(rect));
+                            if let Some(before) = baseline {
+                                assert_eq!(rect, before, "stage {stage} {theme:?}");
+                            } else {
+                                baseline = Some(rect);
+                            }
+                            assert!(!app.busy());
+                        }
                     }
-                    if stage == 2 {
-                        app.merge_dialog.as_mut().unwrap().filter = "no matches".into();
-                    }
-                    if stage == 3 {
-                        app.error = Some("Failure details ".repeat(200));
-                    }
-                    for frame in 0..4 {
+                    app.merge_dialog.as_mut().unwrap().branches_open = true;
+                    for _ in 0..4 {
                         let mut output = ctx.run_ui(
                             egui::RawInput {
                                 screen_rect: Some(egui::Rect::from_min_size(
@@ -474,38 +521,15 @@ mod tests {
                             |ui| show(ui.ctx(), &mut app),
                         );
                         output.textures_delta.clear();
-                        if frame < 3 {
-                            continue;
-                        }
-                        let rect = ctx
-                            .memory(|memory| memory.area_rect(egui::Id::unique("merge")))
-                            .unwrap();
-                        assert!(
-                            egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect)
-                        );
-                        if let Some(before) = baseline {
-                            assert_eq!(rect, before, "stage {stage} {theme:?}");
-                        } else {
-                            baseline = Some(rect);
-                        }
-                        assert!(!app.busy());
                     }
+                    let rect = ctx
+                        .memory(|memory| {
+                            memory
+                                .area_rect(egui::Id::unique(format!("{}.branches", operation.id())))
+                        })
+                        .unwrap();
+                    assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect));
                 }
-                app.merge_dialog.as_mut().unwrap().branches_open = true;
-                for _ in 0..4 {
-                    let mut output = ctx.run_ui(
-                        egui::RawInput {
-                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
-                            ..Default::default()
-                        },
-                        |ui| show(ui.ctx(), &mut app),
-                    );
-                    output.textures_delta.clear();
-                }
-                let rect = ctx
-                    .memory(|memory| memory.area_rect(egui::Id::unique("merge.branches")))
-                    .unwrap();
-                assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect));
             }
         }
     }

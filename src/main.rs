@@ -18,6 +18,7 @@ mod native_menu;
 #[cfg(target_os = "windows")]
 mod native_window;
 mod preferences;
+mod rebase;
 mod remote_config;
 mod remotes;
 mod repository;

@@ -762,6 +762,7 @@ impl SannyGitApp {
             MenuAction::Discard => self.discard_blocker().is_none(),
             MenuAction::Stashes => self.stash_allowed(),
             MenuAction::Merge => self.merge_allowed(),
+            MenuAction::Rebase => self.merge_allowed(),
             MenuAction::Fetch | MenuAction::Pull | MenuAction::Push => self.remote_allowed(),
         }
     }
@@ -830,6 +831,7 @@ impl SannyGitApp {
             MenuAction::Discard => self.open_discard(),
             MenuAction::Stashes => self.open_stashes(),
             MenuAction::Merge => self.open_merge(),
+            MenuAction::Rebase => self.open_rebase(),
             MenuAction::CreateBranch => self.branch_dialog_open = true,
             MenuAction::SwitchBranch => self.switch_branch(),
             MenuAction::RenameBranch => self.open_rename_branch(),
@@ -1998,7 +2000,7 @@ impl SannyGitApp {
                     "File restored from index" | "Untracked file deleted" | "Files discarded"
                 );
                 let operation_succeeded = outcome.is_ok();
-                if success == "Merge complete" && operation_succeeded {
+                if matches!(success, "Merge complete" | "Rebase complete") && operation_succeeded {
                     self.merge_dialog = None;
                 }
                 if operation_succeeded
