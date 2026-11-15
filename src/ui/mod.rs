@@ -241,7 +241,7 @@ fn sidebar_contents(ui: &mut Ui, app: &mut SannyGitApp) -> eframe::egui::Rect {
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
-    if app.about_dialog {
+    if app.modal_dialog_open() {
         ui.disable();
     }
     ui.data_mut(|data| {

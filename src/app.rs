@@ -595,6 +595,28 @@ impl SannyGitApp {
         self.worker.is_some()
     }
 
+    /// A modal dialog owns interaction with the main window; the workspace is
+    /// dimmed while any of these is open. The commit details history window is
+    /// a non-modal secondary window and deliberately stays out of this list.
+    pub fn modal_dialog_open(&self) -> bool {
+        self.settings_window.open
+            || self.open_dialog
+            || self.welcome_open
+            || self.about_dialog
+            || self.manager.dialog.is_some()
+            || self.network_dialog.is_some()
+            || self.stash_dialog.is_some()
+            || self.discard_dialog.is_some()
+            || self.ref_dialog.is_some()
+            || self.merge_dialog.is_some()
+            || self.remote_checkout.is_some()
+            || self.branch_dialog_open
+            || self.rename_branch_dialog.is_some()
+            || self.tag_dialog_open
+            || self.error.is_some()
+            || !self.error_dialogs.pending.is_empty()
+    }
+
     fn start_worker(&mut self, job: impl FnOnce() -> WorkerResult + Send + 'static) -> bool {
         self.invalidate_view_reads();
         // An operation supersedes a ref read; reload after the operation completes.
@@ -870,23 +892,8 @@ impl SannyGitApp {
         use crate::menu::{MenuAction, SHORTCUTS};
         use eframe::egui::Event;
 
-        if self.settings_window.open
-            || self.open_dialog
-            || self.welcome_open
-            || self.about_dialog
-            || self.manager.dialog.is_some()
-            || self.network_dialog.is_some()
-            || self.stash_dialog.is_some()
-            || self.discard_dialog.is_some()
-            || self.ref_dialog.is_some()
-            || self.merge_dialog.is_some()
-            || self.remote_checkout.is_some()
-            || self.branch_dialog_open
-            || self.rename_branch_dialog.is_some()
-            || self.tag_dialog_open
+        if self.modal_dialog_open()
             || self.commit_details_open
-            || self.error.is_some()
-            || !self.error_dialogs.pending.is_empty()
             || context.memory(|memory| memory.top_modal_layer().is_some())
             || eframe::egui::Popup::is_any_open(context)
         {

@@ -95,6 +95,33 @@ fn shortcuts_do_not_escape_dialogs_or_text_editors() {
     }
 }
 
+#[test]
+fn modal_dialog_open_tracks_dialog_states_but_not_the_history_window() {
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    assert!(!app.modal_dialog_open());
+    app.about_dialog = true;
+    assert!(app.modal_dialog_open());
+    app.about_dialog = false;
+    app.settings_window.open = true;
+    assert!(app.modal_dialog_open());
+    app.settings_window.open = false;
+    app.open_dialog = true;
+    assert!(app.modal_dialog_open());
+    app.open_dialog = false;
+    app.welcome_open = true;
+    assert!(app.modal_dialog_open());
+    app.welcome_open = false;
+    app.branch_dialog_open = true;
+    assert!(app.modal_dialog_open());
+    app.branch_dialog_open = false;
+    app.error = Some("Failure".into());
+    assert!(app.modal_dialog_open());
+    app.error = None;
+    // The commit details history window is non-modal and must not dim the workspace.
+    app.commit_details_open = true;
+    assert!(!app.modal_dialog_open());
+}
+
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn commit_shortcut_works_from_message_editor_without_repeating() {
