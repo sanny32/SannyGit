@@ -6,7 +6,7 @@ use crate::{
 };
 use eframe::egui::{
     self, Align, CentralPanel, Frame, Key, Layout, Margin, Panel, RichText, ScrollArea, Ui, Vec2,
-    ViewportBuilder, ViewportCommand, ViewportId,
+    ViewportCommand, ViewportId,
 };
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -33,13 +33,12 @@ fn preferences_window(ctx: &egui::Context, app: &mut SannyGitApp) {
         });
         app.settings_window.initial_position_set = true;
     }
-    let mut builder = ViewportBuilder::default()
+    let mut builder = crate::theme::native_viewport()
         .with_title(title)
         .with_inner_size(size)
         .with_min_inner_size(min_size)
         .with_decorations(true)
         .with_taskbar(false)
-        .with_visible(false)
         .with_minimize_button(false)
         .with_maximize_button(false);
     if let Some(position) = app.settings_window.initial_position {
@@ -67,12 +66,21 @@ fn preferences_window(ctx: &egui::Context, app: &mut SannyGitApp) {
                 return;
             }
         }
+        crate::theme::paint_native_background(ui, app.palette());
+        #[cfg(target_os = "windows")]
+        if let Err(error) = crate::native_window::finish_first_presentation(ui.ctx()) {
+            app.error = Some(error.to_string());
+        }
         window_contents(ui, app);
         if app.settings_window.open
             && app.settings_window.needs_reveal
             && class == egui::ViewportClass::Immediate
         {
             // Immediate viewports process this command after painting and swapping the frame.
+            #[cfg(target_os = "windows")]
+            if let Err(error) = crate::native_window::prepare_child_presentation(ui.ctx(), title) {
+                app.error = Some(error.to_string());
+            }
             ui.ctx().send_viewport_cmd(ViewportCommand::Visible(true));
             app.settings_window.needs_reveal = false;
         }
@@ -81,7 +89,10 @@ fn preferences_window(ctx: &egui::Context, app: &mut SannyGitApp) {
 
 fn close(ctx: &egui::Context, app: &mut SannyGitApp) {
     #[cfg(target_os = "windows")]
-    crate::native_window::end_modal(ctx);
+    {
+        crate::native_window::cancel_first_presentation(ctx);
+        crate::native_window::end_modal(ctx);
+    }
     app.settings_window.open = false;
     ctx.send_viewport_cmd(ViewportCommand::Close);
 }

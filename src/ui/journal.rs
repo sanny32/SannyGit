@@ -3,7 +3,7 @@ use super::controls::tooltips::TooltipResponse;
 use crate::{app::SannyGitApp, models::HistoryEdge, theme::Palette};
 use eframe::egui::{
     self, Align, Button, CentralPanel, ComboBox, Frame, Label, Layout, Margin, Panel, RichText,
-    ScrollArea, Sense, Ui, Vec2, ViewportBuilder, ViewportCommand, ViewportId, Window,
+    ScrollArea, Sense, Ui, Vec2, ViewportCommand, ViewportId, Window,
 };
 use egui_extras::{Column, TableBuilder};
 
@@ -353,6 +353,7 @@ fn graph(ui: &mut Ui, app: &SannyGitApp, index: usize, connected: bool, palette:
 fn details(ui: &mut Ui, app: &mut SannyGitApp) {
     let position_id = egui::Id::unique("history.initial_position");
     let shown_id = egui::Id::unique("history.viewport_shown");
+    let geometry_id = egui::Id::unique("history.viewport_geometry");
     if !app.commit_details_open || app.selected_commit.is_none() {
         ui.data_mut(|data| {
             data.remove::<Option<egui::Pos2>>(position_id);
@@ -380,24 +381,36 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
         app.commit_details_open = open;
         return;
     }
-    let cached_position = ctx.data(|data| data.get_temp::<Option<egui::Pos2>>(position_id));
-    let position = cached_position.unwrap_or_else(|| {
-        let position = ctx.input(|input| {
-            let viewport = input.viewport();
-            viewport
-                .outer_rect
-                .map(|outer| history_position(outer, viewport.inner_rect))
-        });
-        ctx.data_mut(|data| data.insert_temp(position_id, position));
-        position
-    });
-    let mut builder = ViewportBuilder::default()
-        .with_title(title)
-        .with_inner_size([1200.0, 800.0])
+    let saved_geometry =
+        ctx.data_mut(|data| data.get_persisted::<HistoryViewportGeometry>(geometry_id));
+    let position = if saved_geometry.is_some() {
+        None
+    } else {
+        let cached_position = ctx.data(|data| data.get_temp::<Option<egui::Pos2>>(position_id));
+        cached_position.unwrap_or_else(|| {
+            let position = ctx.input(|input| {
+                let viewport = input.viewport();
+                viewport
+                    .outer_rect
+                    .map(|outer| history_position(outer, viewport.inner_rect))
+            });
+            ctx.data_mut(|data| data.insert_temp(position_id, position));
+            position
+        })
+    };
+    let mut builder = crate::theme::native_viewport()
+        .with_title(&title)
+        .with_inner_size(
+            saved_geometry
+                .map(|geometry| geometry.inner_size)
+                .unwrap_or_else(|| Vec2::new(1200.0, 800.0))
+                .max(Vec2::new(1100.0, 700.0)),
+        )
         .with_min_inner_size([1100.0, 700.0])
-        .with_decorations(true)
-        .with_visible(false);
-    if let Some(position) = position {
+        .with_decorations(true);
+    if let Some(geometry) = saved_geometry {
+        builder = builder.with_position(geometry.outer_position);
+    } else if let Some(position) = position {
         builder = builder.with_position(position);
     }
     ctx.show_viewport_immediate(
@@ -405,20 +418,63 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
         builder,
         |ui, _class| {
             if ui.input(|input| input.viewport().close_requested()) {
+                #[cfg(target_os = "windows")]
+                crate::native_window::cancel_first_presentation(ui.ctx());
                 app.commit_details_open = false;
                 ui.ctx().send_viewport_cmd(ViewportCommand::Close);
                 return;
             }
-            // The window starts hidden so the OS default background is never
-            // shown; reveal it once the first frame has been painted.
-            if !ui.data(|data| data.get_temp::<bool>(shown_id).unwrap_or(false)) {
-                ui.data_mut(|data| data.insert_temp(shown_id, true));
-                ui.ctx().send_viewport_cmd(ViewportCommand::Visible(true));
+            remember_viewport_geometry(ui, geometry_id);
+            crate::theme::paint_native_background(ui, app.palette());
+            #[cfg(target_os = "windows")]
+            if let Err(error) = crate::native_window::finish_first_presentation(ui.ctx()) {
+                app.error = Some(error.to_string());
             }
             history_contents(ui, app);
             super::show_errors(ui, app);
+            // Immediate viewport commands run after painting and swapping.
+            if !ui.data(|data| data.get_temp::<bool>(shown_id).unwrap_or(false)) {
+                ui.data_mut(|data| data.insert_temp(shown_id, true));
+                #[cfg(target_os = "windows")]
+                if let Err(error) =
+                    crate::native_window::prepare_child_presentation(ui.ctx(), &title)
+                {
+                    app.error = Some(error.to_string());
+                }
+                ui.ctx().send_viewport_cmd(ViewportCommand::Visible(true));
+            }
         },
     );
+}
+
+/// Geometry of the native history window, restored on reopen like the main
+/// window's. Persisted egui data survives through the memory that eframe
+/// stores in app.ron.
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+struct HistoryViewportGeometry {
+    inner_size: Vec2,
+    outer_position: egui::Pos2,
+}
+
+fn remember_viewport_geometry(ui: &mut Ui, geometry_id: egui::Id) {
+    let geometry = ui.input(|input| {
+        let viewport = input.viewport();
+        if viewport.maximized.unwrap_or(false) {
+            return None;
+        }
+        Some(HistoryViewportGeometry {
+            inner_size: viewport.inner_rect?.size(),
+            outer_position: viewport.outer_rect?.min,
+        })
+    });
+    let Some(geometry) = geometry else {
+        return;
+    };
+    ui.data_mut(|data| {
+        if data.get_persisted::<HistoryViewportGeometry>(geometry_id) != Some(geometry) {
+            data.insert_persisted(geometry_id, geometry);
+        }
+    });
 }
 
 fn history_position(outer: egui::Rect, inner: Option<egui::Rect>) -> egui::Pos2 {
@@ -441,7 +497,9 @@ fn history_contents(ui: &mut Ui, app: &mut SannyGitApp) {
 fn history_panels(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     let mode_id = egui::Id::unique("history.diff.side_by_side");
-    let mut side_by_side = ui.data(|data| data.get_temp::<bool>(mode_id).unwrap_or(true));
+    let mut side_by_side = ui
+        .data_mut(|data| data.get_persisted::<bool>(mode_id))
+        .unwrap_or(true);
     let panel_frame = || super::panel_frame(palette).corner_radius(0);
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -498,7 +556,7 @@ fn history_panels(ui: &mut Ui, app: &mut SannyGitApp) {
                 }
             }
         });
-    ui.data_mut(|data| data.insert_temp(mode_id, side_by_side));
+    ui.data_mut(|data| data.insert_persisted(mode_id, side_by_side));
     Panel::right("history.inspector")
         .resizable(true)
         .default_size(360.0)
@@ -1404,6 +1462,116 @@ mod tests {
                 );
                 assert_eq!(app.selected_commit.as_deref(), Some("a1b2c3d"));
             }
+        }
+    }
+
+    #[test]
+    fn history_diff_view_mode_is_persisted() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let ctx = Context::default();
+            install_fonts(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            theme.apply(&ctx);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.commits = crate::mock_data::commits();
+            app.selected_commit = Some(app.commits[0].hash.clone());
+            app.commit_preview = Some(crate::models::DiffPreview::new("@@ -1 +1 @@\n-old\n+new\n"));
+            let render = |app: &mut SannyGitApp, events| {
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            Pos2::ZERO,
+                            Vec2::new(1400.0, 900.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| history_contents(ui, app),
+                );
+                output.textures_delta.clear();
+                output
+            };
+            let mode_id = egui::Id::unique("history.diff.side_by_side");
+            // The side-by-side divider only exists in the split view; a saved
+            // Unified mode must render without it after a restart.
+            let divider_fill = app.palette().border;
+            let has_split_divider = |output: &egui::FullOutput| {
+                output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::Rect(rect)
+                        if rect.fill == divider_fill && rect.rect.height() > 100.0)
+                })
+            };
+            let click = |app: &mut SannyGitApp, label: &str| {
+                let pointer = render(app, vec![])
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.job.text == label => {
+                            Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("Missing {label} toggle in {theme:?}"));
+                for pressed in [true, false] {
+                    render(
+                        app,
+                        vec![
+                            Event::PointerMoved(pointer),
+                            Event::PointerButton {
+                                pos: pointer,
+                                button: PointerButton::Primary,
+                                pressed,
+                                modifiers: Modifiers::NONE,
+                            },
+                        ],
+                    );
+                }
+            };
+            for _ in 0..3 {
+                render(&mut app, vec![]);
+            }
+            assert_eq!(
+                ctx.data_mut(|data| data.get_persisted::<bool>(mode_id)),
+                Some(true),
+                "Default mode is not persisted in {theme:?}"
+            );
+            assert!(has_split_divider(&render(&mut app, vec![])));
+            click(&mut app, "Unified");
+            assert_eq!(
+                ctx.data_mut(|data| data.get_persisted::<bool>(mode_id)),
+                Some(false),
+                "Unified mode is not persisted in {theme:?}"
+            );
+            assert!(!has_split_divider(&render(&mut app, vec![])));
+            click(&mut app, "Side by Side");
+            assert_eq!(
+                ctx.data_mut(|data| data.get_persisted::<bool>(mode_id)),
+                Some(true),
+                "Side by Side mode is not persisted in {theme:?}"
+            );
+            assert!(has_split_divider(&render(&mut app, vec![])));
+            // A restored session picks the saved mode up before any click.
+            click(&mut app, "Unified");
+            let restored = crate::test_support::restart_memory(&ctx);
+            let restored_ctx = Context::default();
+            install_fonts(&restored_ctx);
+            theme.apply(&restored_ctx);
+            restored_ctx.memory_mut(|memory| *memory = restored);
+            let mut output = restored_ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1400.0, 900.0))),
+                    ..Default::default()
+                },
+                |ui| history_contents(ui, &mut app),
+            );
+            output.textures_delta.clear();
+            assert!(
+                !output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::Rect(rect)
+                        if rect.fill == divider_fill && rect.rect.height() > 100.0)
+                }),
+                "Restored session did not keep Unified mode in {theme:?}"
+            );
         }
     }
 }

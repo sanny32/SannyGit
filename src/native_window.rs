@@ -1,10 +1,17 @@
-//! Native ownership and modality for egui viewports.
+//! Native ownership, modality and first presentation for egui viewports.
 use eframe::egui::{Context, Id};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::{ffi::c_void, io};
 
 type Hwnd = *mut c_void;
 const GWLP_HWNDPARENT: i32 = -8;
+const DWMWA_CLOAK: u32 = 13;
+
+#[link(name = "dwmapi")]
+extern "system" {
+    fn DwmSetWindowAttribute(window: Hwnd, attribute: u32, value: *const c_void, size: u32) -> i32;
+    fn DwmFlush() -> i32;
+}
 
 #[link(name = "user32")]
 extern "system" {
@@ -17,6 +24,7 @@ extern "system" {
     fn GetWindowTextW(window: Hwnd, text: *mut u16, count: i32) -> i32;
     fn EnableWindow(window: Hwnd, enabled: i32) -> i32;
     fn IsWindowEnabled(window: Hwnd) -> i32;
+    fn IsWindowVisible(window: Hwnd) -> i32;
     fn SetActiveWindow(window: Hwnd) -> Hwnd;
     #[cfg_attr(target_pointer_width = "32", link_name = "SetWindowLongW")]
     fn SetWindowLongPtrW(window: Hwnd, index: i32, value: isize) -> isize;
@@ -35,6 +43,107 @@ fn disabled_owner_key() -> Id {
     Id::unique("sannygit.modal_disabled_owner")
 }
 
+fn presentation_key(context: &Context) -> Id {
+    Id::unique(("sannygit.first_presentation", context.viewport_id()))
+}
+
+#[derive(Clone, Copy)]
+struct FirstPresentation {
+    window: isize,
+    frame: u64,
+    visible_frame: Option<u64>,
+}
+
+fn set_cloaked(window: Hwnd, cloaked: bool) -> io::Result<()> {
+    let value = i32::from(cloaked);
+    // SAFETY: callers supply a live HWND on its UI thread. DWMWA_CLOAK takes
+    // a BOOL; the pointer and size describe the stack value for this call.
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            window,
+            DWMWA_CLOAK,
+            (&value as *const i32).cast(),
+            std::mem::size_of_val(&value) as u32,
+        )
+    };
+    if result < 0 {
+        return Err(io::Error::other(format!(
+            "Windows could not change window presentation (HRESULT {result:#010x})"
+        )));
+    }
+    Ok(())
+}
+
+fn begin_first_presentation(context: &Context, window: Hwnd) -> io::Result<()> {
+    set_cloaked(window, true)?;
+    let key = presentation_key(context);
+    let frame = context.cumulative_frame_nr();
+    context.data_mut(|data| {
+        data.insert_temp(
+            key,
+            FirstPresentation {
+                window: window as isize,
+                frame,
+                visible_frame: None,
+            },
+        );
+    });
+    context.request_repaint();
+    context.send_viewport_cmd(eframe::egui::ViewportCommand::RequestPaintWhileHidden);
+    Ok(())
+}
+
+/// Keep the window out of composition during ShowWindow and its opening
+/// animation. Unlike hiding it, cloaking still lets Windows compose GL frames.
+pub fn prepare_child_presentation(context: &Context, title: &str) -> io::Result<()> {
+    begin_first_presentation(context, find_owned_thread_window(context, title)?)
+}
+
+/// Called on subsequent UI frames, after the previous buffer swap. Do not
+/// release the cloak during another layout pass of the initial frame.
+pub fn finish_first_presentation(context: &Context) -> io::Result<()> {
+    let key = presentation_key(context);
+    let pending = context.data(|data| data.get_temp::<FirstPresentation>(key));
+    let Some(mut pending) = pending else {
+        return Ok(());
+    };
+    // SAFETY: the pending HWND belongs to this live viewport on the UI thread.
+    // egui's visibility also includes occlusion, so a cloaked window must be
+    // checked using WS_VISIBLE instead.
+    let shown = unsafe { IsWindowVisible(pending.window as Hwnd) != 0 };
+    if context.cumulative_frame_nr() <= pending.frame || !shown {
+        context.request_repaint();
+        context.send_viewport_cmd(eframe::egui::ViewportCommand::RequestPaintWhileHidden);
+        return Ok(());
+    }
+    // Showing a WGL window may invalidate the buffer painted while hidden.
+    // Require a complete frame swap *after* ShowWindow as well.
+    let frame = context.cumulative_frame_nr();
+    if pending.visible_frame.is_none() {
+        pending.visible_frame = Some(frame);
+        context.data_mut(|data| data.insert_temp(key, pending));
+    }
+    if pending
+        .visible_frame
+        .is_some_and(|visible| frame <= visible)
+    {
+        context.request_repaint();
+        context.send_viewport_cmd(eframe::egui::ViewportCommand::RequestPaintWhileHidden);
+        return Ok(());
+    }
+    // SAFETY: synchronizes with the compositor after the preceding frame was
+    // swapped. Failure must not prevent us from attempting to reveal the window.
+    let flushed = unsafe { DwmFlush() };
+    set_cloaked(pending.window as Hwnd, false)?;
+    context.data_mut(|data| data.remove::<FirstPresentation>(key));
+    if flushed < 0 {
+        return Err(io::Error::other(format!(
+            "Windows could not synchronize window presentation (HRESULT {flushed:#010x})"
+        )));
+    }
+    Ok(())
+}
+
 pub fn remember_owner(
     context: &eframe::CreationContext<'_>,
 ) -> Result<(), raw_window_handle::HandleError> {
@@ -46,7 +155,20 @@ pub fn remember_owner(
     Ok(())
 }
 
-pub fn begin_modal(context: &Context, title: &str) -> io::Result<()> {
+pub fn prepare_root_presentation(context: &Context) -> io::Result<()> {
+    let owner = context
+        .data(|data| data.get_temp::<isize>(owner_key()))
+        .ok_or_else(|| io::Error::other("Main window handle is unavailable"))?;
+    begin_first_presentation(context, owner as Hwnd)
+}
+
+pub fn cancel_first_presentation(context: &Context) {
+    let key = presentation_key(context);
+    // The caller is destroying the viewport, including its native cloak.
+    context.data_mut(|data| data.remove::<FirstPresentation>(key));
+}
+
+fn find_owned_thread_window(context: &Context, title: &str) -> io::Result<Hwnd> {
     let owner = context
         .data(|data| data.get_temp::<isize>(owner_key()))
         .ok_or_else(|| io::Error::other("Main window handle is unavailable"))?;
@@ -68,9 +190,17 @@ pub fn begin_modal(context: &Context, title: &str) -> io::Result<()> {
         );
     }
     if search.window.is_null() {
-        return Err(io::Error::other("Settings window handle is unavailable"));
+        return Err(io::Error::other("Native window handle is unavailable"));
     }
-    set_owner(search.window, owner as Hwnd)?;
+    Ok(search.window)
+}
+
+pub fn begin_modal(context: &Context, title: &str) -> io::Result<()> {
+    let window = find_owned_thread_window(context, title)?;
+    let owner = context
+        .data(|data| data.get_temp::<isize>(owner_key()))
+        .ok_or_else(|| io::Error::other("Main window handle is unavailable"))?;
+    set_owner(window, owner as Hwnd)?;
     // SAFETY: the root HWND is live on this thread. Remember only a window we
     // actually disable, so closing cannot enable a previously disabled owner.
     unsafe {
@@ -132,6 +262,7 @@ mod tests {
 
     #[link(name = "user32")]
     extern "system" {
+        fn ShowWindow(window: Hwnd, command: i32) -> i32;
         fn CreateWindowExW(
             ex_style: u32,
             class: *const u16,
@@ -237,5 +368,41 @@ mod tests {
     fn missing_owner_and_invalid_native_handle_return_errors() {
         assert!(begin_modal(&Context::default(), "SannyGit Preferences").is_err());
         assert!(set_owner(std::ptr::null_mut(), std::ptr::null_mut()).is_err());
+        let context = Context::default();
+        assert!(begin_first_presentation(&context, std::ptr::null_mut()).is_err());
+        let key = presentation_key(&context);
+        assert!(context.data(|data| data.get_temp::<FirstPresentation>(key).is_none()));
+    }
+
+    #[test]
+    fn first_presentation_waits_for_a_frame_after_showing_and_can_be_cancelled() {
+        let window = TestWindow::new("SannyGit first presentation test");
+        let context = Context::default();
+        begin_first_presentation(&context, window.0).unwrap();
+        let key = presentation_key(&context);
+        // The first frame must stay cloaked, even with a second layout pass.
+        let mut output = context.run_ui(Default::default(), |ui| {
+            finish_first_presentation(ui.ctx()).unwrap();
+            assert!(ui.data(|data| data.get_temp::<FirstPresentation>(key).is_some()));
+            if ui.ctx().current_pass_index() == 0 {
+                ui.ctx()
+                    .request_discard("Exercise the initial layout retry");
+            }
+        });
+        output.textures_delta.clear();
+        // SAFETY: this window is cloaked, so SW_SHOWNOACTIVATE cannot display
+        // it to the user or steal focus. Hide it again before removing the cloak.
+        unsafe { ShowWindow(window.0, 4) };
+        let mut output = context.run_ui(Default::default(), |ui| {
+            finish_first_presentation(ui.ctx()).unwrap();
+            let pending = ui.data(|data| data.get_temp::<FirstPresentation>(key).unwrap());
+            assert_eq!(pending.visible_frame, Some(ui.ctx().cumulative_frame_nr()));
+        });
+        output.textures_delta.clear();
+        unsafe { ShowWindow(window.0, 0) };
+        cancel_first_presentation(&context);
+        assert!(context.data(|data| data.get_temp::<FirstPresentation>(key).is_none()));
+        set_cloaked(window.0, false).unwrap();
+        finish_first_presentation(&context).unwrap();
     }
 }

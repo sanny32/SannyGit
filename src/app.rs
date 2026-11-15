@@ -2221,6 +2221,10 @@ impl eframe::App for SannyGitApp {
     }
 
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "windows")]
+        if let Err(error) = crate::native_window::finish_first_presentation(ui.ctx()) {
+            self.error = Some(error.to_string());
+        }
         self.llm_models.update();
         if self.preferences.follow_system_theme {
             self.theme = ThemeChoice::from_system(ui.ctx(), self.theme);

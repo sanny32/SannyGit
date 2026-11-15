@@ -6,6 +6,16 @@ pub const INTERFACE_STYLE_STORAGE_KEY: &str = "sannygit.interface_style";
 /// Shared minimum height for form fields and their adjacent controls, in logical pixels.
 pub const CONTROL_HEIGHT: f32 = 28.0;
 
+pub fn native_viewport() -> egui::ViewportBuilder {
+    egui::ViewportBuilder::default().with_visible(false)
+}
+
+pub fn paint_native_background(ui: &egui::Ui, palette: Palette) {
+    ui.ctx()
+        .layer_painter(egui::LayerId::background())
+        .rect_filled(ui.ctx().viewport_rect(), 0, palette.background);
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InterfaceStyle {
     #[default]

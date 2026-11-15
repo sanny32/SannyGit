@@ -839,6 +839,123 @@ mod tests {
     }
 
     #[test]
+    fn resized_panels_restore_after_a_restart() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let size = vec2(1536.0, 1024.0);
+            let screen = Rect::from_min_size(pos2(0.0, 0.0), size);
+            let render = |ctx: &Context, app: &mut SannyGitApp, events: Vec<Event>| {
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(screen),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| show(ui, app),
+                );
+                output.textures_delta.clear();
+            };
+            let panel_rects = |ctx: &Context| {
+                let mut rects = ctx.data(|data| {
+                    data.iter_temp_by_type::<eframe::egui::PanelState>()
+                        .map(|state| state.outer_rect)
+                        .collect::<Vec<_>>()
+                });
+                rects.sort_by(|a, b| {
+                    a.min
+                        .x
+                        .total_cmp(&b.min.x)
+                        .then(a.min.y.total_cmp(&b.min.y))
+                        .then(a.max.x.total_cmp(&b.max.x))
+                });
+                rects
+            };
+            let mut app = SannyGitApp::with_theme(theme);
+            app.repositories = crate::mock_data::repositories();
+            app.selected_repository = 0;
+            app.changes = crate::mock_data::changes();
+            app.commits = crate::mock_data::commits();
+            let ctx = Context::default();
+            crate::theme::install_fonts(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            theme.apply(&ctx);
+            for _ in 0..3 {
+                render(&ctx, &mut app, vec![]);
+            }
+            let before = panel_rects(&ctx);
+            let sidebar = before
+                .iter()
+                .copied()
+                .filter(|rect| rect.left() < 5.0 && rect.height() > size.y * 0.5)
+                .max_by(|a, b| a.height().total_cmp(&b.height()))
+                .expect("Sidebar panel is missing");
+            let pointer = pos2(sidebar.right() - 1.0, sidebar.center().y);
+            render(&ctx, &mut app, vec![Event::PointerMoved(pointer)]);
+            render(
+                &ctx,
+                &mut app,
+                vec![Event::PointerButton {
+                    pos: pointer,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                }],
+            );
+            let moved = pointer + vec2(60.0, 0.0);
+            for _ in 0..3 {
+                render(&ctx, &mut app, vec![Event::PointerMoved(moved)]);
+            }
+            render(
+                &ctx,
+                &mut app,
+                vec![Event::PointerButton {
+                    pos: moved,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                }],
+            );
+            render(&ctx, &mut app, vec![]);
+            let resized = panel_rects(&ctx);
+            assert!(
+                resized
+                    .iter()
+                    .any(|rect| rect.left() < 5.0 && rect.width() > sidebar.width() + 40.0),
+                "Sidebar did not resize in {theme:?}"
+            );
+            // Exit: eframe serializes the egui memory (which holds the panel
+            // sizes) into the app storage. Restart: a fresh context begins
+            // from that saved memory, like the native runner does.
+            let restored_memory = crate::test_support::restart_memory(&ctx);
+            let restored_ctx = Context::default();
+            crate::theme::install_fonts(&restored_ctx);
+            egui_extras::install_image_loaders(&restored_ctx);
+            restored_ctx.memory_mut(|memory| *memory = restored_memory);
+            theme.apply(&restored_ctx);
+            let mut restored_app = SannyGitApp::with_theme(theme);
+            restored_app.repositories = crate::mock_data::repositories();
+            restored_app.selected_repository = 0;
+            restored_app.changes = crate::mock_data::changes();
+            restored_app.commits = crate::mock_data::commits();
+            for _ in 0..3 {
+                render(&restored_ctx, &mut restored_app, vec![]);
+            }
+            let restored = panel_rects(&restored_ctx);
+            assert_eq!(
+                resized.len(),
+                restored.len(),
+                "Panel set changed after restart in {theme:?}"
+            );
+            for (expected, actual) in resized.iter().zip(&restored) {
+                assert!(
+                    (expected.min - actual.min).length() < 0.5
+                        && (expected.max - actual.max).length() < 0.5,
+                    "Panel size was not restored in {theme:?}: {expected:?} -> {actual:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn error_dialog_does_not_move_panels_and_can_be_dismissed() {
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
             for style in [

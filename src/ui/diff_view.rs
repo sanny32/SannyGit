@@ -183,7 +183,9 @@ pub fn render_side_by_side(
     let glyph_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, 'M'));
     let available = (ui.available_width() - ui.spacing().scroll.allocated_width() - 4.0).max(0.0);
     let split_id = ui.scope_id().with("diff.side.split");
-    let mut ratio = ui.data(|data| data.get_temp::<f32>(split_id).unwrap_or(0.5));
+    let mut ratio = ui
+        .data_mut(|data| data.get_persisted::<f32>(split_id))
+        .unwrap_or(0.5);
     let origin = ui.available_rect_before_wrap().min;
     let minimum = 120.0_f32.min(available / 2.0);
     let mut left_width = (available * ratio).clamp(minimum, (available - minimum).max(minimum));
@@ -205,7 +207,7 @@ pub fn render_side_by_side(
             } else {
                 0.5
             };
-            ui.data_mut(|data| data.insert_temp(split_id, ratio));
+            ui.data_mut(|data| data.insert_persisted(split_id, ratio));
             divider = divider.translate(Vec2::new(origin.x + left_width - divider.left(), 0.0));
         }
     }
@@ -412,7 +414,8 @@ mod tests {
             theme.apply(&ctx);
             let app = crate::app::SannyGitApp::with_theme(theme);
             let preview = crate::models::DiffPreview::new("@@ -1 +1 @@\n-old\n+new\n");
-            let render = |events, id| {
+            let mut split_id = None;
+            let mut render = |events, id| {
                 let mut output = ctx.run_ui(
                     RawInput {
                         screen_rect: Some(Rect::from_min_size(
@@ -422,7 +425,10 @@ mod tests {
                         events,
                         ..Default::default()
                     },
-                    |ui| render_side_by_side(ui, &preview, app.palette(), id),
+                    |ui| {
+                        split_id = Some(ui.scope_id().with("diff.side.split"));
+                        render_side_by_side(ui, &preview, app.palette(), id)
+                    },
                 );
                 output.textures_delta.clear();
                 output
@@ -479,6 +485,13 @@ mod tests {
             let after = right_x(&render(vec![], "first"));
             assert!(after > before + 90.0);
             assert_eq!(right_x(&render(vec![], "second")), after);
+            let stored = ctx
+                .data_mut(|data| data.get_persisted::<f32>(split_id.unwrap()))
+                .expect("Dragged split ratio is not in persisted memory");
+            assert!(
+                (stored - 0.5).abs() > 0.05,
+                "Persisted ratio does not reflect the drag: {stored}"
+            );
         }
     }
     #[test]

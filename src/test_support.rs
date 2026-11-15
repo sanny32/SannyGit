@@ -128,3 +128,32 @@ pub(crate) fn linear_repo(count: usize) -> TempRepo {
     repo.write("untracked", "keep local bytes\n");
     repo
 }
+
+/// In-memory [`eframe::Storage`] that lets UI tests round-trip persisted state
+/// through the same RON encoding eframe uses for the app storage file.
+#[derive(Default)]
+pub(crate) struct MemoryStorage(std::collections::BTreeMap<String, String>);
+
+impl eframe::Storage for MemoryStorage {
+    fn get_string(&self, key: &str) -> Option<String> {
+        self.0.get(key).cloned()
+    }
+
+    fn set_string(&mut self, key: &str, value: String) {
+        self.0.insert(key.to_owned(), value);
+    }
+
+    fn remove_string(&mut self, key: &str) {
+        self.0.remove(key);
+    }
+
+    fn flush(&mut self) {}
+}
+
+/// Serialize the egui memory like `eframe` does on exit and read it back, as
+/// the native runner does on startup after a restart.
+pub(crate) fn restart_memory(ctx: &eframe::egui::Context) -> eframe::egui::Memory {
+    let mut storage = MemoryStorage::default();
+    eframe::set_value(&mut storage, "egui", &ctx.memory(|memory| memory.clone()));
+    eframe::get_value(&storage, "egui").expect("egui memory must round-trip")
+}

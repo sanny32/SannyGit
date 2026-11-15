@@ -40,7 +40,7 @@ fn main() -> eframe::Result<()> {
     let icon = eframe::icon_data::from_png_bytes(icon_bytes)
         .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     let window_size = egui::vec2(1536.0, 1024.0);
-    let viewport = egui::ViewportBuilder::default()
+    let viewport = theme::native_viewport()
         .with_title("SannyGit")
         .with_app_id("io.github.sanny32.SannyGit")
         .with_icon(std::sync::Arc::new(icon))
@@ -79,7 +79,14 @@ fn main() -> eframe::Result<()> {
         Box::new(|creation_context| {
             #[cfg(target_os = "windows")]
             native_window::remember_owner(creation_context)?;
-            Ok(Box::new(SannyGitApp::new(creation_context)))
+            #[allow(unused_mut)]
+            let mut app = SannyGitApp::new(creation_context);
+            #[cfg(target_os = "windows")]
+            if let Err(error) = native_window::prepare_root_presentation(&creation_context.egui_ctx)
+            {
+                app.error = Some(error.to_string());
+            }
+            Ok(Box::new(app))
         }),
     )
 }
