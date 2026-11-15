@@ -2,6 +2,7 @@
 use crate::models::{ChangeFile, ChangeKind, Repository};
 use std::{
     cell::RefCell,
+    collections::BTreeSet,
     fmt::Write,
     io::Read,
     path::{Path, PathBuf},
@@ -260,11 +261,6 @@ fn execute(
         .ok_or_else(|| fail(FailureKind::Io, "Cannot read Git errors".into()))?;
     let stdin = child.stdin.take();
     let result = (|| {
-        pipe::prepare(&stdout).map_err(|error| fail(FailureKind::Io, error.to_string()))?;
-        pipe::prepare(&stderr).map_err(|error| fail(FailureKind::Io, error.to_string()))?;
-        if let Some(stdin) = &stdin {
-            pipe::prepare(stdin).map_err(|error| fail(FailureKind::Io, error.to_string()))?;
-        }
         let input = input.map(<[u8]>::to_vec);
         let start = Instant::now();
         let spawn_error = |error: std::io::Error| {
@@ -273,23 +269,23 @@ fn execute(
                 format!("Cannot start Git pipe worker: {error}"),
             )
         };
-        let writer = pipe::Worker::spawn(move |stop| {
-            if let (Some(pipe), Some(bytes)) = (stdin, input) {
-                pipe::write(pipe, &bytes, stop)?;
-            }
-            Ok(())
-        })
-        .map_err(spawn_error)?;
-        let out =
-            pipe::Worker::spawn(move |stop| pipe::capture(stdout, stop)).map_err(spawn_error)?;
-        let err =
-            pipe::Worker::spawn(move |stop| pipe::capture(stderr, stop)).map_err(spawn_error)?;
+        let writer = match (stdin, input) {
+            (Some(stdin), Some(bytes)) => Some(
+                pipe::Worker::spawn(stdin, move |pipe, stop| pipe::write(pipe, &bytes, stop))
+                    .map_err(spawn_error)?,
+            ),
+            _ => None,
+        };
+        let out = pipe::Worker::spawn(stdout, pipe::capture).map_err(spawn_error)?;
+        let err = pipe::Worker::spawn(stderr, pipe::capture).map_err(spawn_error)?;
         let status = loop {
             match child.try_wait() {
                 // Process exit alone does not mean its descendants closed our
                 // pipes. Keep cancellation and the deadline active until all I/O ends.
                 Ok(Some(status))
-                    if out.is_finished() && err.is_finished() && writer.is_finished() =>
+                    if out.is_finished()
+                        && err.is_finished()
+                        && writer.as_ref().is_none_or(pipe::Worker::is_finished) =>
                 {
                     break Ok(status)
                 }
@@ -308,7 +304,9 @@ fn execute(
                         }
                     }
                     #[cfg(target_os = "windows")]
-                    {
+                    if !matches!(result, Ok(Some(_))) {
+                        // An exited PID may already have been reused. Its pipes
+                        // are cancelled by the workers without targeting that PID.
                         use std::os::windows::process::CommandExt;
                         let _ = Command::new("taskkill")
                             .args(["/PID", &child.id().to_string(), "/T", "/F"])
@@ -349,7 +347,7 @@ fn execute(
             .map_err(|_| fail(FailureKind::Worker, "Git error reader failed".into()))?
             .map_err(|error| fail(FailureKind::Io, error))?;
         let written = writer
-            .finish()
+            .map_or(Ok(Ok(())), pipe::Worker::finish)
             .map_err(|_| fail(FailureKind::Worker, "Git input writer failed".into()))?;
         if !status.success() && !(matches!(mode, CommandMode::SyncPush) && push_needs_pull(&output))
         {
@@ -606,6 +604,60 @@ pub(crate) fn require_no_operation(root: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Porcelain status omits ignored files; reject collisions before Git can
+/// replace them during a merge or a rebase's internal reset.
+pub(crate) fn require_no_ignored_collisions(root: &Path, target: &str) -> Result<(), String> {
+    let ignored = text(run(
+        root,
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+        ],
+    )?)?;
+    if !ignored.is_empty() {
+        let paths = text(run(root, &["ls-tree", "-r", "--name-only", "-z", target])?)?;
+        if ignored_collision(&ignored, &paths) {
+            return Err("Ignored files would be overwritten by the selected commit. Move them out of the way before retrying.".into());
+        }
+    }
+    Ok(())
+}
+
+fn ignored_collision(ignored: &str, target_paths: &str) -> bool {
+    let normalize = |path: &str| {
+        if cfg!(windows) {
+            path.to_lowercase()
+        } else {
+            path.to_owned()
+        }
+    };
+    let ignored: BTreeSet<_> = ignored.split_terminator('\0').map(normalize).collect();
+    for path in target_paths.split_terminator('\0').map(normalize) {
+        let mut ancestor = path.as_str();
+        loop {
+            if ignored.contains(ancestor) {
+                return true;
+            }
+            let Some((parent, _)) = ancestor.rsplit_once('/') else {
+                break;
+            };
+            ancestor = parent;
+        }
+        let prefix = format!("{path}/");
+        if ignored
+            .range(prefix.clone()..)
+            .next()
+            .is_some_and(|entry| entry.starts_with(&prefix))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn commit_with_mode(

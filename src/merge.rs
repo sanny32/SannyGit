@@ -34,6 +34,8 @@ pub fn execute(
     if !snapshot.changes.is_empty() {
         return Err("Commit or stash local changes before merging.".into());
     }
+    // --no-overwrite-ignore alone does not protect every merge strategy.
+    git::require_no_ignored_collisions(root, target)?;
     let args = match mode {
         Mode::Commit => vec![
             "merge",

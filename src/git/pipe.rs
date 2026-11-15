@@ -12,20 +12,50 @@ use std::{
 pub(super) struct Worker<T> {
     handle: Option<JoinHandle<Result<T, String>>>,
     stop: Arc<AtomicBool>,
+    #[cfg(windows)]
+    cancel: Arc<std::sync::Mutex<Option<std::os::windows::io::OwnedHandle>>>,
 }
 
+#[cfg(windows)]
+pub(super) trait Pipe: std::os::windows::io::AsHandle {}
+#[cfg(windows)]
+impl<T: std::os::windows::io::AsHandle> Pipe for T {}
+#[cfg(unix)]
+pub(super) trait Pipe: std::os::fd::AsRawFd {}
+#[cfg(unix)]
+impl<T: std::os::fd::AsRawFd> Pipe for T {}
+
 impl<T: Send + 'static> Worker<T> {
-    pub fn spawn(
-        job: impl FnOnce(&AtomicBool) -> Result<T, String> + Send + 'static,
+    pub fn spawn<P: Pipe + Send + 'static>(
+        pipe: P,
+        job: impl FnOnce(P, &AtomicBool) -> Result<T, String> + Send + 'static,
     ) -> io::Result<Self> {
+        prepare(&pipe)?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
+        #[cfg(windows)]
+        let cancel = Arc::new(std::sync::Mutex::new(Some(
+            pipe.as_handle().try_clone_to_owned()?,
+        )));
+        #[cfg(windows)]
+        let worker_cancel = cancel.clone();
         let handle = thread::Builder::new()
             .name("sannygit-pipe".into())
-            .spawn(move || job(&flag))?;
+            .spawn(move || {
+                let result = job(pipe, &flag);
+                // Close the duplicate too: a completed stdin writer must send EOF.
+                #[cfg(windows)]
+                worker_cancel
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                result
+            })?;
         Ok(Self {
             handle: Some(handle),
             stop,
+            #[cfg(windows)]
+            cancel,
         })
     }
 
@@ -50,14 +80,24 @@ impl<T> Drop for Worker<T> {
                 use std::os::windows::io::AsRawHandle;
                 #[link(name = "kernel32")]
                 extern "system" {
-                    fn CancelSynchronousIo(thread: *mut std::ffi::c_void) -> i32;
+                    fn CancelIoEx(
+                        pipe: *mut std::ffi::c_void,
+                        overlapped: *mut std::ffi::c_void,
+                    ) -> i32;
                 }
-                // SAFETY: the join handle owns a live native thread handle.
-                // This worker performs only pipe I/O. Repeat to cover the race
-                // between checking stop and entering a synchronous read/write.
-                unsafe {
-                    CancelSynchronousIo(handle.as_raw_handle());
+                let cancel = self
+                    .cancel
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(pipe) = &*cancel {
+                    // SAFETY: this duplicate keeps the pipe object alive while
+                    // cancelling its I/O. Rust child pipes use overlapped I/O;
+                    // thread cancellation alone cannot interrupt those waits.
+                    unsafe {
+                        CancelIoEx(pipe.as_raw_handle(), std::ptr::null_mut());
+                    }
                 }
+                drop(cancel);
                 thread::sleep(Duration::from_millis(10));
             }
             let _ = handle.join();

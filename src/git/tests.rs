@@ -2,6 +2,17 @@ use super::*;
 use crate::test_support::TempRepo;
 
 #[test]
+fn ignored_collisions_compare_literal_paths_and_directory_boundaries() {
+    assert!(ignored_collision("a b\n.txt\0", "a b\n.txt\0"));
+    assert!(ignored_collision("dir/file\0", "dir\0"));
+    assert!(ignored_collision("dir\0", "dir/file\0"));
+    assert!(!ignored_collision("directory/file\0", "dir\0"));
+    assert!(!ignored_collision("dir/file\0", "dir/other\0"));
+    assert!(!ignored_collision("", "dir\0"));
+    assert_eq!(ignored_collision("NAME\0", "name\0"), cfg!(windows));
+}
+
+#[test]
 fn exited_parent_pipes_obey_timeout_cancellation_and_normal_completion() {
     let repo = TempRepo::new();
     let source = repo.0.join("pipe_fixture.rs");
