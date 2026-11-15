@@ -2,6 +2,37 @@ use super::*;
 use crate::test_support::TempRepo;
 
 #[test]
+fn staging_round_trip_command_budget() {
+    let mut repo = TempRepo::new();
+    // Match load() on symlinked temporary directories and Windows path prefixes.
+    let root = repo.git(&["rev-parse", "--show-toplevel"]);
+    repo.0 = PathBuf::from(root.strip_suffix('\n').unwrap_or(&root));
+    repo.write("file", "base\n");
+    repo.git(&["add", "file"]);
+    repo.git(&["commit", "-m", "base"]);
+    repo.write("file", "edited\n");
+    let counter = crate::test_support::GitCommandCount::new(&repo.0);
+    let start = Instant::now();
+    for _ in 0..5 {
+        for staged in [true, false] {
+            set_staged(&repo.0, "file", staged).unwrap();
+            let snapshot = load(&repo.0).unwrap();
+            assert_eq!(snapshot.changes.len(), 1);
+            assert_eq!(snapshot.changes[0].staged, staged);
+            assert_eq!(snapshot.changes[0].unstaged, !staged);
+        }
+    }
+    println!(
+        "Five stage/unstage round trips including refresh: {:?}, {} Git processes",
+        start.elapsed(),
+        counter.get()
+    );
+    // Three commands to stage, four to unstage, and three for each UI refresh.
+    assert_eq!(counter.get(), 65);
+    assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"edited\n");
+}
+
+#[test]
 fn ignored_collisions_compare_literal_paths_and_directory_boundaries() {
     assert!(ignored_collision("a b\n.txt\0", "a b\n.txt\0"));
     assert!(ignored_collision("dir/file\0", "dir\0"));

@@ -3,6 +3,23 @@ use crate::{git, models::ChangeKind};
 use std::path::PathBuf;
 
 impl SannyGitApp {
+    pub(super) fn start_index_worker(
+        &mut self,
+        job: impl FnOnce() -> WorkerResult + Send + 'static,
+    ) {
+        // Index edits supersede working-tree reads but leave immutable commit
+        // previews, history and refs (including their in-flight reads) intact.
+        self.working_tree.invalidate();
+        self.diff_worker = None;
+        match self.spawn_reader(None, job) {
+            Ok(receiver) => self.worker = Some(receiver),
+            Err(error) => {
+                self.error = Some(error);
+                self.status = "Operation failed".into();
+            }
+        }
+    }
+
     pub fn change_is_selected(&self, index: usize) -> bool {
         self.changes.get(index).is_some_and(|change| {
             if self.selected_paths.is_empty() {
@@ -130,15 +147,17 @@ impl SannyGitApp {
             "Unstaging selected files…"
         }
         .into();
-        self.start_worker(move || WorkerResult::Operation {
-            committed: false,
-            success: if staged {
-                "File staged"
-            } else {
-                "Index updated"
-            },
+        let selected = self
+            .changes
+            .get(self.selected_change)
+            .map(|c| c.path.clone());
+        self.start_index_worker(move || WorkerResult::Index {
+            staged,
             outcome: git::set_staged_paths(&root, &paths, staged),
-            snapshot: git::load(&root),
+            update: super::working_tree::Update::read(
+                root.to_string_lossy().into_owned(),
+                selected,
+            ),
         });
     }
 }

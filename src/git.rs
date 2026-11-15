@@ -2,7 +2,7 @@
 use crate::models::{ChangeFile, ChangeKind, Repository};
 use std::{
     cell::RefCell,
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fmt::Write,
     io::Read,
     path::{Path, PathBuf},
@@ -414,11 +414,13 @@ pub fn set_staged_paths(root: &Path, paths: &[String], staged: bool) -> Result<(
         return Err("Select files first.".into());
     }
     require_no_operation(root)?;
-    let snapshot = load(root)?;
+    // Staging needs fresh file states, not repository/branch discovery.
+    let status = load_changes(root)?;
+    let by_path: BTreeMap<_, _> = status.iter().map(|c| (c.path.as_str(), c)).collect();
     let changes = paths
         .iter()
         .map(|path| {
-            snapshot.changes.iter().find(|c| &c.path == path).ok_or(
+            by_path.get(path.as_str()).copied().ok_or(
                 "A selected file changed since the last refresh. Refresh and select it again.",
             )
         })
@@ -588,6 +590,10 @@ fn check_amend_head(root: &Path, expected_head: &str) -> Result<(), String> {
 /// Resolve markers through Git so linked worktrees use their own operation state.
 /// SannyGit has no continue/abort workflow yet; leave unfinished operations to Git.
 pub(crate) fn require_no_operation(root: &Path) -> Result<(), String> {
+    // These operation markers belong to the per-worktree Git directory, not
+    // the shared common directory. Resolve it once, including for linked trees.
+    let directory = text(run(root, &["rev-parse", "--absolute-git-dir"])?)?;
+    let directory = Path::new(directory.strip_suffix('\n').unwrap_or(&directory));
     for marker in [
         "MERGE_HEAD",
         "CHERRY_PICK_HEAD",
@@ -596,8 +602,7 @@ pub(crate) fn require_no_operation(root: &Path) -> Result<(), String> {
         "rebase-apply",
         "sequencer",
     ] {
-        let path = text(run(root, &["rev-parse", "--git-path", marker])?)?;
-        match root.join(path.strip_suffix('\n').unwrap_or(&path)).try_exists() {
+        match directory.join(marker).try_exists() {
             Ok(false) => {}
             Ok(true) => return Err("Finish the in-progress merge, rebase, cherry-pick or revert outside SannyGit before retrying this action.".into()),
             Err(error) => return Err(format!("Could not check unfinished Git operations: {error}")),
@@ -724,16 +729,7 @@ pub fn load(path: &Path) -> Result<Snapshot, String> {
         ),
         Err(error) => return Err(error.to_string()),
     };
-    let changes = parse_status(&run(
-        &path,
-        &[
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--ignore-submodules=none",
-        ],
-    )?)?;
+    let changes = load_changes(&path)?;
     Ok(Snapshot {
         repository: Repository {
             name: path
@@ -745,6 +741,19 @@ pub fn load(path: &Path) -> Result<Snapshot, String> {
         branch,
         changes,
     })
+}
+
+fn load_changes(path: &Path) -> Result<Vec<ChangeFile>, String> {
+    parse_status(&run(
+        path,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+    )?)
 }
 
 pub fn parse_status(bytes: &[u8]) -> Result<Vec<ChangeFile>, String> {

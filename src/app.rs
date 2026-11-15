@@ -25,6 +25,11 @@ use std::{
 };
 
 enum WorkerResult {
+    Index {
+        staged: bool,
+        outcome: Result<(), String>,
+        update: working_tree::Update,
+    },
     DiscardBatchPrepared {
         root: String,
         paths: Vec<String>,
@@ -1579,18 +1584,16 @@ impl SannyGitApp {
             "Unstaging file…"
         }
         .into();
-        self.start_worker(move || {
+        let selected = self
+            .changes
+            .get(self.selected_change)
+            .map(|c| c.path.clone());
+        self.start_index_worker(move || {
             let outcome = git::set_staged(&root, &path, staged);
-            let snapshot = git::load(&root);
-            WorkerResult::Operation {
-                committed: false,
-                success: if staged {
-                    "File staged"
-                } else {
-                    "Index updated"
-                },
+            WorkerResult::Index {
+                staged,
                 outcome,
-                snapshot,
+                update: working_tree::Update::read(root.to_string_lossy().into_owned(), selected),
             }
         });
     }
@@ -1836,6 +1839,13 @@ impl SannyGitApp {
 
     fn apply_worker_result(&mut self, result: WorkerResult) {
         match result {
+            WorkerResult::Index {
+                staged,
+                outcome,
+                update,
+            } => {
+                self.apply_index_update(update, staged, outcome);
+            }
             WorkerResult::DiscardBatchPrepared {
                 root,
                 paths,
