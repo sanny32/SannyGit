@@ -35,8 +35,22 @@ pub fn execute(
         return Err("Commit or stash local changes before merging.".into());
     }
     let args = match mode {
-        Mode::Commit => vec!["merge", "--no-ff", "--no-edit", "--no-autostash", target],
-        Mode::WorkingTree => vec!["merge", "--squash", "--no-commit", "--no-autostash", target],
+        Mode::Commit => vec![
+            "merge",
+            "--no-ff",
+            "--no-edit",
+            "--no-autostash",
+            "--no-overwrite-ignore",
+            target,
+        ],
+        Mode::WorkingTree => vec![
+            "merge",
+            "--squash",
+            "--no-commit",
+            "--no-autostash",
+            "--no-overwrite-ignore",
+            target,
+        ],
     };
     git::run(root, &args).map(|_| ()).map_err(|error| {
         format!("{error}\nIf conflicts occurred, resolve them outside SannyGit; finish or abort an unfinished merge with Git before retrying.")
@@ -61,6 +75,27 @@ mod tests {
         let target = head(&repo.0).unwrap();
         repo.git(&["checkout", "main"]);
         (repo, before, target)
+    }
+
+    #[test]
+    fn ignored_files_are_preserved_in_both_merge_modes() {
+        for mode in [Mode::Commit, Mode::WorkingTree] {
+            let (repo, before, target) = fixture();
+            repo.write(".git/info/exclude", "feature\n");
+            repo.write("feature", "private local contents\n");
+            let index = std::fs::read(repo.0.join(".git/index")).unwrap();
+            assert!(git::load(&repo.0).unwrap().changes.is_empty());
+
+            assert!(execute(&repo.0, &before, "main", &target, mode).is_err());
+
+            assert_eq!(
+                std::fs::read(repo.0.join("feature")).unwrap(),
+                b"private local contents\n"
+            );
+            assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
+            assert_eq!(head(&repo.0).unwrap(), before);
+            git::require_no_operation(&repo.0).unwrap();
+        }
     }
 
     #[test]

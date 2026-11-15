@@ -1,38 +1,6 @@
 //! Rebase only after checking the HEAD and branch reviewed in the dialog.
 use crate::{git, merge};
-use std::{collections::BTreeSet, path::Path};
-
-fn ignored_collision(ignored: &str, target_paths: &str) -> bool {
-    let normalize = |path: &str| {
-        if cfg!(windows) {
-            path.to_lowercase()
-        } else {
-            path.to_owned()
-        }
-    };
-    let ignored: BTreeSet<_> = ignored.split_terminator('\0').map(normalize).collect();
-    for path in target_paths.split_terminator('\0').map(normalize) {
-        let mut ancestor = path.as_str();
-        loop {
-            if ignored.contains(ancestor) {
-                return true;
-            }
-            let Some((parent, _)) = ancestor.rsplit_once('/') else {
-                break;
-            };
-            ancestor = parent;
-        }
-        let prefix = format!("{path}/");
-        if ignored
-            .range(prefix.clone()..)
-            .next()
-            .is_some_and(|entry| entry.starts_with(&prefix))
-        {
-            return true;
-        }
-    }
-    false
-}
+use std::path::Path;
 
 pub fn execute(
     root: &Path,
@@ -54,27 +22,7 @@ pub fn execute(
     if !snapshot.changes.is_empty() {
         return Err("Commit or stash local changes before rebasing.".into());
     }
-    // Rebase resets to the target internally, potentially overwriting ignored
-    // files, which are absent from porcelain status. Compare literal NUL paths.
-    let ignored = git::text(git::run(
-        root,
-        &[
-            "ls-files",
-            "--others",
-            "--ignored",
-            "--exclude-standard",
-            "-z",
-        ],
-    )?)?;
-    if !ignored.is_empty() {
-        let paths = git::text(git::run(
-            root,
-            &["ls-tree", "-r", "--name-only", "-z", target],
-        )?)?;
-        if ignored_collision(&ignored, &paths) {
-            return Err("Ignored files would be overwritten by the rebase target. Move them out of the way before retrying.".into());
-        }
-    }
+    git::require_no_ignored_collisions(root, target)?;
     // Pin the chosen commit and keep configuration from enabling interactive
     // steps, autostashing, or rewriting other local branches.
     git::run(root, &[
@@ -89,17 +37,6 @@ pub fn execute(
 mod tests {
     use super::*;
     use crate::test_support::TempRepo;
-
-    #[test]
-    fn ignored_collisions_compare_literal_paths_and_directory_boundaries() {
-        assert!(ignored_collision("a b\n.txt\0", "a b\n.txt\0"));
-        assert!(ignored_collision("dir/file\0", "dir\0"));
-        assert!(ignored_collision("dir\0", "dir/file\0"));
-        assert!(!ignored_collision("directory/file\0", "dir\0"));
-        assert!(!ignored_collision("dir/file\0", "dir/other\0"));
-        assert!(!ignored_collision("", "dir\0"));
-        assert_eq!(ignored_collision("NAME\0", "name\0"), cfg!(windows));
-    }
 
     fn fixture() -> (TempRepo, String, String) {
         let repo = TempRepo::new();

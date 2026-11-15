@@ -3,7 +3,7 @@ use crate::models::{ChangeFile, ChangeKind, Repository};
 use std::{
     cell::RefCell,
     fmt::Write,
-    io::{Read, Write as IoWrite},
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
@@ -16,6 +16,7 @@ const FILE_LIMIT: usize = 5_000;
 const TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(crate) mod diagnostics;
+mod pipe;
 use diagnostics::{CommandError, FailureKind};
 
 /// A completed command, kept separate from user-facing diagnostics. In Sync
@@ -82,21 +83,6 @@ pub struct Snapshot {
     pub repository: Repository,
     pub branch: String,
     pub changes: Vec<ChangeFile>,
-}
-
-fn capture(mut reader: impl Read) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    let mut buffer = [0; 8192];
-    loop {
-        let count = reader.read(&mut buffer).map_err(|e| e.to_string())?;
-        if count == 0 {
-            break;
-        }
-        // Continue draining the pipe so Git cannot block on a full pipe.
-        let remaining = (OUTPUT_LIMIT + 1).saturating_sub(bytes.len());
-        bytes.extend_from_slice(&buffer[..count.min(remaining)]);
-    }
-    Ok(bytes)
 }
 
 pub(crate) fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -273,21 +259,41 @@ fn execute(
         .take()
         .ok_or_else(|| fail(FailureKind::Io, "Cannot read Git errors".into()))?;
     let stdin = child.stdin.take();
-    let result = thread::scope(|scope| {
-        let writer = scope.spawn(move || -> Result<(), String> {
-            if let (Some(mut pipe), Some(bytes)) = (stdin, input) {
-                pipe.write_all(bytes)
-                    .map_err(|e| format!("Cannot send input to Git: {e}"))?;
+    let result = (|| {
+        pipe::prepare(&stdout).map_err(|error| fail(FailureKind::Io, error.to_string()))?;
+        pipe::prepare(&stderr).map_err(|error| fail(FailureKind::Io, error.to_string()))?;
+        if let Some(stdin) = &stdin {
+            pipe::prepare(stdin).map_err(|error| fail(FailureKind::Io, error.to_string()))?;
+        }
+        let input = input.map(<[u8]>::to_vec);
+        let start = Instant::now();
+        let spawn_error = |error: std::io::Error| {
+            fail(
+                FailureKind::Worker,
+                format!("Cannot start Git pipe worker: {error}"),
+            )
+        };
+        let writer = pipe::Worker::spawn(move |stop| {
+            if let (Some(pipe), Some(bytes)) = (stdin, input) {
+                pipe::write(pipe, &bytes, stop)?;
             }
             Ok(())
-        });
-        let out = scope.spawn(|| capture(stdout));
-        let err = scope.spawn(|| capture(stderr));
-        let start = Instant::now();
+        })
+        .map_err(spawn_error)?;
+        let out =
+            pipe::Worker::spawn(move |stop| pipe::capture(stdout, stop)).map_err(spawn_error)?;
+        let err =
+            pipe::Worker::spawn(move |stop| pipe::capture(stderr, stop)).map_err(spawn_error)?;
         let status = loop {
             match child.try_wait() {
-                Ok(Some(status)) => break Ok(status),
-                Ok(None)
+                // Process exit alone does not mean its descendants closed our
+                // pipes. Keep cancellation and the deadline active until all I/O ends.
+                Ok(Some(status))
+                    if out.is_finished() && err.is_finished() && writer.is_finished() =>
+                {
+                    break Ok(status)
+                }
+                Ok(_)
                     if start.elapsed() < timeout
                         && !cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) =>
                 {
@@ -331,18 +337,20 @@ fn execute(
                 }
             }
         };
+        // Stop pipe workers on failure before joining: descendants may have
+        // escaped process-tree termination or outlived the original Git PID.
+        let status = status?;
         let mut output = out
-            .join()
+            .finish()
             .map_err(|_| fail(FailureKind::Worker, "Git output reader failed".into()))?
             .map_err(|error| fail(FailureKind::Io, error))?;
         let errors = err
-            .join()
+            .finish()
             .map_err(|_| fail(FailureKind::Worker, "Git error reader failed".into()))?
             .map_err(|error| fail(FailureKind::Io, error))?;
         let written = writer
-            .join()
+            .finish()
             .map_err(|_| fail(FailureKind::Worker, "Git input writer failed".into()))?;
-        let status = status?;
         if !status.success() && !(matches!(mode, CommandMode::SyncPush) && push_needs_pull(&output))
         {
             return Err(CommandError::exited(operation, status.code(), &errors));
@@ -363,7 +371,12 @@ fn execute(
             status,
             stdout: output,
         })
-    });
+    })();
+    if result.is_err() {
+        // Also reap a process if pipe setup or worker startup failed.
+        let _ = child.kill();
+        let _ = child.wait();
+    }
     result
 }
 

@@ -2,6 +2,140 @@ use super::*;
 use crate::test_support::TempRepo;
 
 #[test]
+fn exited_parent_pipes_obey_timeout_cancellation_and_normal_completion() {
+    let repo = TempRepo::new();
+    let source = repo.0.join("pipe_fixture.rs");
+    let executable = repo.0.join(if cfg!(windows) {
+        "pipe_fixture.exe"
+    } else {
+        "pipe_fixture"
+    });
+    std::fs::write(
+        &source,
+        r#"
+use std::{io::Write, path::PathBuf, process::{Command, Stdio}, thread, time::{Duration, Instant}};
+fn main() {
+    let args: Vec<_> = std::env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--descendant") {
+        let directory = PathBuf::from(&args[2]);
+        println!("descendant output");
+        eprintln!("descendant diagnostic");
+        std::io::stdout().flush().unwrap();
+        std::fs::write(directory.join("ready"), b"").unwrap();
+        let start = Instant::now();
+        while !directory.join("release").exists() && start.elapsed() < Duration::from_secs(6) {
+            thread::sleep(Duration::from_millis(10));
+        }
+        return;
+    }
+    let directory = args.last().unwrap();
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command.arg("--descendant").arg(directory).stdin(Stdio::inherit())
+        .stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    #[cfg(windows)] {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let _child = command.spawn().unwrap();
+    // Deliberately exit without waiting: all three pipes stay in the descendant.
+}
+"#,
+    )
+    .unwrap();
+    let mut compiler = Command::new("rustc");
+    compiler
+        .arg("--edition=2021")
+        .arg(&source)
+        .arg("-o")
+        .arg(&executable);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        compiler.creation_flags(0x08000000);
+    }
+    let compiled = compiler.output().unwrap();
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    // Keep the configured executable on a separate thread, isolated from other tests.
+    thread::spawn(move || {
+        set_executable(executable.to_string_lossy().into_owned());
+        for scenario in ["timeout", "cancel", "blocked-input", "success"] {
+            let directory = repo.0.join(scenario);
+            std::fs::create_dir(&directory).unwrap();
+            let cancel = AtomicBool::new(false);
+            let start = Instant::now();
+            let result = thread::scope(|scope| {
+                if matches!(scenario, "cancel" | "success") {
+                    let directory = &directory;
+                    let cancel = &cancel;
+                    scope.spawn(move || {
+                        let deadline = Instant::now() + Duration::from_secs(3);
+                        while !directory.join("ready").exists() && Instant::now() < deadline {
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                        // Let the wrapper exit before cancelling/releasing its descendant.
+                        thread::sleep(Duration::from_millis(100));
+                        if scenario == "cancel" {
+                            cancel.store(true, Ordering::Relaxed);
+                        } else {
+                            std::fs::write(directory.join("release"), b"").unwrap();
+                        }
+                    });
+                }
+                let input = vec![b'x'; 2 * 1024 * 1024];
+                execute(
+                    &repo.0,
+                    &["status", directory.to_str().unwrap()],
+                    (scenario == "blocked-input").then_some(input.as_slice()),
+                    if matches!(scenario, "cancel" | "success") {
+                        Duration::from_secs(5)
+                    } else {
+                        Duration::from_millis(500)
+                    },
+                    Some(&cancel),
+                    CommandMode::Normal,
+                )
+            });
+            // Release an orphan on Windows even if an assertion below fails.
+            std::fs::write(directory.join("release"), b"").unwrap();
+            assert!(
+                directory.join("ready").exists(),
+                "{scenario}: fixture did not start"
+            );
+            assert!(
+                start.elapsed() < Duration::from_secs(3),
+                "{scenario}: pipes exceeded deadline"
+            );
+            if scenario == "success" {
+                let output = result.unwrap();
+                assert!(output.status.success());
+                assert!(String::from_utf8(output.stdout)
+                    .unwrap()
+                    .contains("descendant output"));
+            } else {
+                let error = result.unwrap_err();
+                assert_eq!(
+                    error.kind,
+                    if scenario == "cancel" {
+                        FailureKind::Cancelled
+                    } else {
+                        FailureKind::TimedOut
+                    },
+                    "{scenario}"
+                );
+                assert!(!error.to_string().contains("descendant diagnostic"));
+            }
+        }
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
 fn command_results_keep_exit_codes_and_distinguish_cancellation_from_git_failure() {
     let repo = TempRepo::new();
     let output = execute(
