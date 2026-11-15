@@ -179,7 +179,17 @@ pub(super) fn desktop_menu_style(style: &mut eframe::egui::Style, palette: Palet
 
 #[cfg(not(target_os = "macos"))]
 fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem]) {
-    ui.set_min_width(280.0);
+    // Reserve the shortcut column only when the menu actually shows shortcuts;
+    // menus without any shortcut stay as narrow as their labels (like SmartGit).
+    let has_shortcut = items.iter().any(|item| {
+        crate::menu::EditAction::from_label(item.label).is_some()
+            || item
+                .action
+                .is_some_and(|action| action.shortcut().is_some())
+    });
+    if has_shortcut {
+        ui.set_min_width(280.0);
+    }
     for item in items {
         if item.separator {
             ui.add(eframe::egui::Separator::default().spacing(10.0));

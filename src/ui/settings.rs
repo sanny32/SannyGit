@@ -12,7 +12,9 @@ use eframe::egui::{
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if !app.settings_window.open {
         #[cfg(target_os = "windows")]
-        crate::native_window::end_modal(ui.ctx());
+        if !app.about_dialog {
+            crate::native_window::end_modal(ui.ctx());
+        }
         return;
     }
     if app.settings_window.llm_repository.is_some() {

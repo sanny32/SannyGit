@@ -1,4 +1,5 @@
 use self::controls::dialog_style::DialogResponse;
+mod about;
 mod branches;
 mod changes;
 mod clone_dialog;
@@ -240,6 +241,9 @@ fn sidebar_contents(ui: &mut Ui, app: &mut SannyGitApp) -> eframe::egui::Rect {
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
+    if app.about_dialog {
+        ui.disable();
+    }
     ui.data_mut(|data| {
         data.get_temp_mut_or_default::<PanelActivity>(panel_activity_id())
             .regions
@@ -257,21 +261,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     ref_management::show(ui.ctx(), app);
     merge::show(ui.ctx(), app);
     welcome(ui, app);
-    eframe::egui::Window::new("About SannyGit")
-        .anchor(
-            eframe::egui::Align2::CENTER_CENTER,
-            eframe::egui::Vec2::ZERO,
-        )
-        .open(&mut app.about_dialog)
-        .collapsible(false)
-        .frame(dialog_style::frame(ui.ctx(), palette).inner_margin(18))
-        .resizable(false)
-        .show(ui.ctx(), |ui| {
-            ui.heading("SannyGit");
-            ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-            ui.label("A desktop Git client built with Rust and egui.");
-            ui.label("MIT License");
-        });
+    about::show(ui.ctx(), app);
     status_bar::show(ui, app);
 
     // Outer margins are transparent. Paint the complete workspace first so
@@ -306,7 +296,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if app.interface_style == crate::theme::InterfaceStyle::Modern {
         modern_workspace(ui, app);
         show_panel_activity(ui, palette);
-        if !app.settings_window.open && (context.embed_viewports() || !app.commit_details_open) {
+        if !app.settings_window.open
+            && (context.embed_viewports() || (!app.commit_details_open && !app.about_dialog))
+        {
             show_errors(ui, app);
         }
         return;
@@ -366,7 +358,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 .show(ui, |ui| diff_view::show(ui, app));
         });
     show_panel_activity(ui, palette);
-    if !app.settings_window.open && (context.embed_viewports() || !app.commit_details_open) {
+    if !app.settings_window.open
+        && (context.embed_viewports() || (!app.commit_details_open && !app.about_dialog))
+    {
         show_errors(ui, app);
     }
 }
