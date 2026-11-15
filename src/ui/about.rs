@@ -1,7 +1,6 @@
 use super::controls::{
     dialog_style::{self, DialogResponse},
     icons::{self, Icon},
-    tooltips::TooltipResponse,
 };
 use crate::{app::SannyGitApp, theme::Palette};
 use eframe::egui::{self, Align, Frame, Layout, Margin, RichText, Ui, Vec2, ViewportCommand};
@@ -131,7 +130,7 @@ fn contents(ui: &mut Ui, palette: Palette) -> bool {
             Frame::new()
                 .fill(palette.header)
                 .corner_radius(12)
-                .inner_margin(Margin::symmetric(12, 3))
+                .inner_margin(Margin::symmetric(0, 3))
                 .show(ui, |ui| {
                     ui.label(
                         RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).size(16.0),
@@ -150,14 +149,12 @@ fn contents(ui: &mut Ui, palette: Palette) -> bool {
                     "github.com/sanny32/sannygit",
                     "https://github.com/sanny32/sannygit",
                 );
-                external_link(ui, palette, "https://github.com/sanny32/sannygit");
             });
             detail_row(ui, palette, Icon::Globe, "Website:", |ui| {
                 ui.hyperlink_to(
                     "sanny32.github.io/SannyGit",
                     "https://sanny32.github.io/SannyGit",
                 );
-                external_link(ui, palette, "https://sanny32.github.io/SannyGit");
             });
             ui.add_space(12.0);
             ui.separator();
@@ -198,17 +195,6 @@ fn brand_caption(ui: &mut Ui, palette: Palette) {
     );
 }
 
-fn external_link(ui: &mut Ui, palette: Palette, url: &str) {
-    ui.add_space(2.0);
-    let response = ui.add(
-        egui::Button::image(icons::image(Icon::ExternalLink, palette.muted, 14.0)).frame(false),
-    );
-    if response.clicked() {
-        ui.ctx().open_url(egui::OpenUrl::new_tab(url));
-    }
-    response.help_text("Open in browser");
-}
-
 fn detail_row(ui: &mut Ui, palette: Palette, icon: Icon, label: &str, value: impl FnOnce(&mut Ui)) {
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), 32.0),
@@ -242,6 +228,8 @@ mod tests {
                 egui_extras::install_image_loaders(&ctx);
                 theme.apply_style(&ctx, style);
                 for _ in 0..3 {
+                    let mut details = 0;
+                    let mut wrapped = Vec::new();
                     let mut output = ctx.run_ui(
                         egui::RawInput {
                             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, SIZE)),
@@ -261,7 +249,6 @@ mod tests {
                                 });
                         },
                     );
-                    let mut details = 0;
                     for shape in &output.shapes {
                         if let egui::epaint::Shape::Text(text) = &shape.shape {
                             if [
@@ -269,22 +256,20 @@ mod tests {
                                 "Source code:",
                                 "Website:",
                                 "github.com/sanny32/sannygit",
-                                "sanny.git",
+                                "sanny32.github.io/SannyGit",
                             ]
                             .contains(&text.galley.job.text.as_str())
                             {
-                                assert_eq!(
-                                    text.galley.rows.len(),
-                                    1,
-                                    "Wrapped About detail: {}",
-                                    text.galley.job.text
-                                );
+                                if text.galley.rows.len() != 1 {
+                                    wrapped.push(text.galley.job.text.to_owned());
+                                }
                                 details += 1;
                             }
                         }
                     }
-                    assert_eq!(details, 5);
                     output.textures_delta.clear();
+                    assert!(wrapped.is_empty(), "Wrapped About detail(s): {wrapped:?}");
+                    assert_eq!(details, 5);
                 }
             }
         }
