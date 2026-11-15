@@ -153,7 +153,10 @@ fn contents(ui: &mut Ui, palette: Palette) -> bool {
                 external_link(ui, palette, "https://github.com/sanny32/sannygit");
             });
             detail_row(ui, palette, Icon::Globe, "Website:", |ui| {
-                ui.hyperlink_to("sanny32.github.io/SannyGit", "https://sanny32.github.io/SannyGit");
+                ui.hyperlink_to(
+                    "sanny32.github.io/SannyGit",
+                    "https://sanny32.github.io/SannyGit",
+                );
                 external_link(ui, palette, "https://sanny32.github.io/SannyGit");
             });
             ui.add_space(12.0);
