@@ -16,7 +16,8 @@ impl SannyGitApp {
             ("branches", self.refs_error.as_deref()),
             ("history", self.history_error.as_deref()),
             ("commit diff", self.commit_preview_error.as_deref()),
-            ("tracking", self.tracking.error.as_deref()),
+            // Periodic background fetch failures stay in the tracking monitor:
+            // they surface as the "?" badge and its tooltip, not as a modal.
             ("working tree", self.working_tree.error.as_deref()),
             (
                 "discard",
@@ -113,15 +114,23 @@ mod tests {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
         app.settings_window.llm.secret_error = Some("Credential access failed".into());
         app.commit_preview_error = Some("Commit diff failed".into());
-        app.tracking.error = Some("Remote check failed".into());
         app.llm_models.entry(&app.llm_config, None).error = Some("Model list failed".into());
         app.collect_errors();
-        assert_eq!(app.error_dialogs.pending.len(), 4);
+        assert_eq!(app.error_dialogs.pending.len(), 3);
         app.collect_errors();
-        assert_eq!(app.error_dialogs.pending.len(), 4);
+        assert_eq!(app.error_dialogs.pending.len(), 3);
         app.settings_window.llm.secret_error = Some("Another credential error".into());
         app.collect_errors();
-        assert_eq!(app.error_dialogs.pending.len(), 5);
+        assert_eq!(app.error_dialogs.pending.len(), 4);
+    }
+
+    #[test]
+    fn periodic_background_fetch_errors_stay_in_the_monitor_not_in_dialogs() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
+        app.tracking.error = Some("Git fetch failed".into());
+        app.collect_errors();
+        assert!(app.error_dialogs.pending.is_empty());
+        assert!(app.tracking.error.is_some(), "retry state must be retained");
     }
 
     #[test]
