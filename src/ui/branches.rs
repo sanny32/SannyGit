@@ -7,11 +7,9 @@ use crate::{
     models::{BranchRef, RefKind},
     theme::{semibold_family, Palette},
 };
-use eframe::egui::{
-    Align, Button, CollapsingHeader, Layout, RichText, ScrollArea, TextEdit, Ui, Vec2,
-};
+use eframe::egui::{Align, CollapsingHeader, Layout, RichText, ScrollArea, TextEdit, Ui, Vec2};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum BranchRequest {
     Switch(String),
     Rename(String),
@@ -176,88 +174,98 @@ fn branch_group(
                 continue;
             }
             ui.push_id(&branch.full_name, |ui| {
-            let response = super::controls::selectable_row_with_outset(
-                ui,
-                selected_group.is_none() && *selected == branch.full_name,
-                22.0,
-                8.0,
-                |ui| {
-                    ui.add_space(ui.spacing().indent);
-                    icons::paint(
-                        ui,
-                        if kind == RefKind::Tag {
-                            Icon::Tag
-                        } else {
-                            Icon::Branch
-                        },
-                        palette.text,
-                        14.0,
-                    );
-                    ui.add(
-                        eframe::egui::Label::new(if branch.current {
-                            RichText::new(&branch.name)
-                                .text_style(eframe::egui::TextStyle::Body)
-                                .family(semibold_family())
-                        } else {
-                            RichText::new(&branch.name).text_style(eframe::egui::TextStyle::Body)
-                        })
-                        .show_tooltip_when_elided(false)
-                        .sense(eframe::egui::Sense::hover()),
-                    );
-                    if branch.current {
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            icons::paint(ui, Icon::Star, palette.accent, 14.0)
-                        });
+                let response = super::controls::selectable_row_with_outset(
+                    ui,
+                    selected_group.is_none() && *selected == branch.full_name,
+                    22.0,
+                    8.0,
+                    |ui| {
+                        ui.add_space(ui.spacing().indent);
+                        icons::paint(
+                            ui,
+                            if kind == RefKind::Tag {
+                                Icon::Tag
+                            } else {
+                                Icon::Branch
+                            },
+                            palette.text,
+                            14.0,
+                        );
+                        ui.add(
+                            eframe::egui::Label::new(if branch.current {
+                                RichText::new(&branch.name)
+                                    .text_style(eframe::egui::TextStyle::Body)
+                                    .family(semibold_family())
+                            } else {
+                                RichText::new(&branch.name)
+                                    .text_style(eframe::egui::TextStyle::Body)
+                            })
+                            .show_tooltip_when_elided(false)
+                            .sense(eframe::egui::Sense::hover()),
+                        );
+                        if branch.current {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                icons::paint(ui, Icon::Star, palette.accent, 14.0)
+                            });
+                        }
+                    },
+                )
+                .help_text(format!(
+                    "{}\nObject: {}{}{}",
+                    branch.full_name,
+                    branch.hash,
+                    branch
+                        .upstream
+                        .as_ref()
+                        .map(|s| format!("\nUpstream: {s}"))
+                        .unwrap_or_default(),
+                    match kind {
+                        RefKind::Local => "\nDouble-click to switch",
+                        RefKind::Remote =>
+                            "\nDouble-click to switch to a local branch or choose checkout options",
+                        RefKind::Tag => "\nDouble-click to check out a detached HEAD",
                     }
-                },
-            )
-            .help_text(format!(
-                "{}\nObject: {}{}{}",
-                branch.full_name,
-                branch.hash,
-                branch
-                    .upstream
-                    .as_ref()
-                    .map(|s| format!("\nUpstream: {s}"))
-                    .unwrap_or_default(),
-                match kind {
-                    RefKind::Local => "\nDouble-click to switch",
-                    RefKind::Remote =>
-                        "\nDouble-click to switch to a local branch or choose checkout options",
-                    RefKind::Tag => "\nDouble-click to check out a detached HEAD",
+                ));
+                response.widget_info(|| {
+                    eframe::egui::WidgetInfo::selected(
+                        eframe::egui::Role::Button,
+                        true,
+                        selected_group.is_none() && *selected == branch.full_name,
+                        &branch.name,
+                    )
+                });
+                if let Some(action) = popup_menu::context(&response, palette, || {
+                    use popup_menu::Entry as E;
+                    match kind {
+                        RefKind::Local => vec![
+                            E::item(
+                                "Rename…",
+                                requested.rename_allowed,
+                                BranchRequest::Rename(branch.full_name.clone()),
+                            ).help("Refresh the repository and wait for the current operation"),
+                            E::item(
+                                "Delete…",
+                                requested.rename_allowed && !branch.current,
+                                BranchRequest::Delete(branch.full_name.clone()),
+                            ).help("Select a non-current local branch after refreshing; worktree and merge safety are checked before deletion"),
+                        ],
+                        RefKind::Tag => vec![E::item(
+                            "Push Tag…",
+                            requested.rename_allowed,
+                            BranchRequest::PushTag(branch.full_name.clone()),
+                        ).help("Refresh branches and wait for the current operation")],
+                        RefKind::Remote => Vec::new(),
+                    }
+                }) {
+                    requested.action = Some(action);
                 }
-            ));
-            response.widget_info(|| eframe::egui::WidgetInfo::selected(eframe::egui::Role::Button, true, selected_group.is_none() && *selected == branch.full_name, &branch.name));
-            if kind == RefKind::Local {
-                popup_menu::context_menu(&response, palette).show(|ui| {
-                    if ui
-                        .add_enabled(requested.rename_allowed, Button::new("Rename…"))
-                        .disabled_help_text(
-                            "Refresh the repository and wait for the current operation",
-                        )
-                        .clicked()
-                    {
-                        requested.action = Some(BranchRequest::Rename(branch.full_name.clone()));
-                        ui.close();
-                    }
-                    if ui.add_enabled(requested.rename_allowed && !branch.current, Button::new("Delete…"))
-                        .disabled_help_text("Select a non-current local branch after refreshing; worktree and merge safety are checked before deletion")
-                        .clicked() { requested.action = Some(BranchRequest::Delete(branch.full_name.clone())); ui.close(); }
-                });
-            } else if kind == RefKind::Tag {
-                popup_menu::context_menu(&response, palette).show(|ui| {
-                    if ui.add_enabled(requested.rename_allowed, Button::new("Push Tag…"))
-                        .disabled_help_text("Refresh branches and wait for the current operation")
-                        .clicked() { requested.action = Some(BranchRequest::PushTag(branch.full_name.clone())); ui.close(); }
-                });
-            }
-            if response.clicked() {
-                *selected_group = None;
-                *selected = branch.full_name.clone();
-            }
-            if response.double_clicked() {
-                requested.action = Some(BranchRequest::Switch(branch.full_name.clone()));
-            }
+                if response.clicked() {
+                    *selected_group = None;
+                    *selected = branch.full_name.clone();
+                }
+                if response.double_clicked() {
+                    requested.action = Some(BranchRequest::Switch(branch.full_name.clone()));
+                }
             });
         }
     });
@@ -267,12 +275,10 @@ fn branch_group(
         selected.clear();
     }
     if kind == RefKind::Tag {
-        popup_menu::context_menu(&group.header_response, palette).show(|ui| {
-            if ui.button("Add Tag…").clicked() {
-                add_tag_requested = true;
-                ui.close();
-            }
-        });
+        add_tag_requested = popup_menu::context(&group.header_response, palette, || {
+            vec![popup_menu::Entry::item("Add Tag…", true, ())]
+        })
+        .is_some();
     }
     add_tag_requested
 }

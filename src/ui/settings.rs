@@ -646,11 +646,16 @@ fn repository_llm_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), 212.0),
                     egui::Layout::top_down(egui::Align::Min),
-                    |ui| match tab {
-                        RepositoryLlmTab::Model => {
-                            repository_llm_model_tab(ui, app, palette, Some(&path));
+                    |ui| {
+                        // The requested allocation bounds the editor, but does
+                        // not reserve unused space in the shorter Model tab.
+                        ui.set_min_height(212.0);
+                        match tab {
+                            RepositoryLlmTab::Model => {
+                                repository_llm_model_tab(ui, app, palette, Some(&path));
+                            }
+                            RepositoryLlmTab::Prompt => repository_llm_prompt_tab(ui, app, Some(&path)),
                         }
-                        RepositoryLlmTab::Prompt => repository_llm_prompt_tab(ui, app, Some(&path)),
                     },
                 );
             },

@@ -73,6 +73,9 @@ pub enum NativeEditAction {
     Cut,
     Copy,
     Paste,
+    Undo,
+    Redo,
+    SelectAll,
 }
 
 impl NativeEditAction {
@@ -81,6 +84,9 @@ impl NativeEditAction {
             Self::Cut => 0,
             Self::Copy => 1,
             Self::Paste => 2,
+            Self::Undo => 3,
+            Self::Redo => 4,
+            Self::SelectAll => 5,
         }
     }
 
@@ -89,12 +95,30 @@ impl NativeEditAction {
             0 => Some(Self::Cut),
             1 => Some(Self::Copy),
             2 => Some(Self::Paste),
+            3 => Some(Self::Undo),
+            4 => Some(Self::Redo),
+            5 => Some(Self::SelectAll),
             _ => None,
         }
     }
 
     fn event(self) -> Option<egui::Event> {
         match self {
+            Self::Undo | Self::Redo | Self::SelectAll => Some(egui::Event::Key {
+                key: if self == Self::SelectAll {
+                    egui::Key::A
+                } else {
+                    egui::Key::Z
+                },
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: if self == Self::Redo {
+                    egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+                } else {
+                    egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND
+                },
+            }),
             Self::Cut => Some(egui::Event::Cut),
             Self::Copy => Some(egui::Event::Copy),
             Self::Paste => {
@@ -324,12 +348,17 @@ struct StandardEditItem {
 
 fn standard_edit_item(label: &str) -> Option<StandardEditItem> {
     let (selector, key, shift, native_action) = match label {
-        "Undo" => (sel!(undo:), "z", false, None),
-        "Redo" => (sel!(redo:), "z", true, None),
+        "Undo" => (sel!(undo:), "z", false, Some(NativeEditAction::Undo)),
+        "Redo" => (sel!(redo:), "z", true, Some(NativeEditAction::Redo)),
         "Cut" => (sel!(cut:), "x", false, Some(NativeEditAction::Cut)),
         "Copy" => (sel!(copy:), "c", false, Some(NativeEditAction::Copy)),
         "Paste" => (sel!(paste:), "v", false, Some(NativeEditAction::Paste)),
-        "Select All" => (sel!(selectAll:), "a", false, None),
+        "Select All" => (
+            sel!(selectAll:),
+            "a",
+            false,
+            Some(NativeEditAction::SelectAll),
+        ),
         _ => return None,
     };
     Some(StandardEditItem {
@@ -361,6 +390,9 @@ mod tests {
             NativeEditAction::Cut,
             NativeEditAction::Copy,
             NativeEditAction::Paste,
+            NativeEditAction::Undo,
+            NativeEditAction::Redo,
+            NativeEditAction::SelectAll,
         ] {
             assert_eq!(NativeEditAction::from_tag(action.tag()), Some(action));
         }
@@ -369,6 +401,28 @@ mod tests {
             Some(NativeEditAction::Paste)
         );
         assert!(standard_edit_item("Preferences").is_none());
+    }
+
+    #[test]
+    fn native_edit_shortcuts_reach_egui() {
+        for (action, key, shift) in [
+            (NativeEditAction::Undo, egui::Key::Z, false),
+            (NativeEditAction::Redo, egui::Key::Z, true),
+            (NativeEditAction::SelectAll, egui::Key::A, false),
+        ] {
+            let Some(egui::Event::Key {
+                key: actual,
+                modifiers,
+                pressed,
+                ..
+            }) = action.event()
+            else {
+                panic!("Expected a text editing key event");
+            };
+            assert_eq!(actual, key);
+            assert!(pressed && modifiers.command && modifiers.mac_cmd);
+            assert_eq!(modifiers.shift, shift);
+        }
     }
 
     #[test]
@@ -384,4 +438,95 @@ mod tests {
         output.textures_delta.clear();
         assert_eq!(value, "pasted");
     }
+}
+
+// AppKit tracks a popup in its native event loop and returns after selection or
+// cancellation. Keep its target alive for that entire interval.
+#[cfg(not(test))]
+define_class!(
+    #[unsafe(super = NSObject)]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = std::cell::Cell<Option<usize>>]
+    struct PopupHandler;
+    unsafe impl NSObjectProtocol for PopupHandler {}
+    impl PopupHandler {
+        #[unsafe(method(selectPopupItem:))]
+        fn select_popup_item(&self, sender: &NSMenuItem) {
+            self.ivars().set(usize::try_from(sender.tag()).ok());
+        }
+    }
+);
+
+#[cfg(not(test))]
+pub(crate) fn popup<T: Clone>(entries: &[crate::ui::PopupMenuEntry<T>]) -> Option<T> {
+    if entries.is_empty() {
+        return None;
+    }
+    let marker = MainThreadMarker::new()?;
+    let allocated = PopupHandler::alloc(marker).set_ivars(std::cell::Cell::new(None));
+    // SAFETY: NSObject initializes the allocated subclass on the main thread.
+    let handler: Retained<PopupHandler> = unsafe { msg_send![super(allocated), init] };
+    let mut actions = Vec::new();
+    let menu = popup_items(marker, entries, &handler, &mut actions);
+    menu.popUpMenuPositioningItem_atLocation_inView(
+        None,
+        objc2_app_kit::NSEvent::mouseLocation(),
+        None,
+    );
+    handler
+        .ivars()
+        .get()
+        .and_then(|index| actions.get(index).cloned())
+}
+
+#[cfg(not(test))]
+fn popup_items<T: Clone>(
+    marker: MainThreadMarker,
+    entries: &[crate::ui::PopupMenuEntry<T>],
+    handler: &PopupHandler,
+    actions: &mut Vec<T>,
+) -> Retained<NSMenu> {
+    use crate::ui::PopupMenuEntry as Entry;
+    let menu = NSMenu::initWithTitle(NSMenu::alloc(marker), &NSString::from_str(""));
+    menu.setAutoenablesItems(false);
+    for entry in entries {
+        let item = match entry {
+            Entry::Separator => NSMenuItem::separatorItem(marker),
+            Entry::Submenu { label, entries } => {
+                let item = NSMenuItem::new(marker);
+                item.setTitle(&NSString::from_str(label));
+                item.setSubmenu(Some(&popup_items(marker, entries, handler, actions)));
+                item
+            }
+            Entry::Item {
+                label,
+                enabled,
+                action,
+                help,
+            } => {
+                // SAFETY: PopupHandler implements this selector with NSMenuItem's action ABI.
+                let item = unsafe {
+                    NSMenuItem::initWithTitle_action_keyEquivalent(
+                        NSMenuItem::alloc(marker),
+                        &NSString::from_str(label),
+                        Some(sel!(selectPopupItem:)),
+                        &NSString::from_str(""),
+                    )
+                };
+                item.setTag(actions.len() as isize);
+                actions.push(action.clone());
+                item.setEnabled(*enabled);
+                if !help.is_empty() {
+                    item.setToolTip(Some(&NSString::from_str(help)));
+                }
+                // SAFETY: popup retains the handler until native tracking finishes.
+                unsafe {
+                    item.setTarget(Some(handler));
+                }
+                item
+            }
+        };
+        menu.addItem(&item);
+    }
+    menu
 }

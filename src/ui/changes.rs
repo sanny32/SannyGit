@@ -176,7 +176,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         rect.center(),
                         Align2::CENTER_CENTER,
                         change.kind.code(),
-                        FontId::new(crate::theme::UI_FONT_SIZE, semibold_family()),
+                        FontId::new(crate::theme::ui_font_size(), semibold_family()),
                         color,
                     );
                     response.help_text(change.kind.label());
@@ -196,11 +196,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     response.ctx.data_mut(|data| data.insert_temp(click_id, frame));
                     click_handled = true;
                 }
-                popup_menu::context_menu(&response, palette).show(|ui| {
-                    if let Some(action) = file_context_menu(ui, app, index) {
-                        context_request = Some((index, action));
-                    }
-                });
+                if let Some(action) = popup_menu::context(&response, palette, || file_context_menu(app, index)) {
+                    context_request = Some((index, action));
+                }
                 if response.double_clicked()
                     && app.preferences.file_double_click == crate::preferences::FileDoubleClick::ToggleStage
                     && can_toggle
@@ -224,6 +222,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             FileAction::Commit => ui.ctx().memory_mut(|memory| {
                 memory.request_focus(eframe::egui::Id::unique("commit.message"));
             }),
+            FileAction::Copy(text) => ui.ctx().copy_text(text),
             FileAction::Stage => app.set_selected_staged(true),
             FileAction::Unstage => app.set_selected_staged(false),
             FileAction::Discard => app.open_discard(),
@@ -288,8 +287,9 @@ fn keyboard_selection(
     reveal
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum FileAction {
+    Copy(String),
     ShowChanges,
     Commit,
     Stage,
@@ -297,53 +297,47 @@ enum FileAction {
     Discard,
 }
 
-fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<FileAction> {
-    app.changes.get(index)?;
-    let repository = app.repositories.get(app.selected_repository);
-    ui.set_min_width(210.0);
-    let mut requested = None;
-    let mut item = |ui: &mut Ui, label, action, enabled, help: &str| {
-        if ui
-            .add_enabled(enabled, eframe::egui::Button::new(label))
-            .disabled_help_text(help)
-            .clicked()
-        {
-            requested = Some(action);
-            ui.close();
-        }
-    };
-    item(ui, "Show Changes", FileAction::ShowChanges, true, "");
-    popup_menu::separator(ui);
-    item(
-        ui,
-        "Commit…",
-        FileAction::Commit,
-        !app.busy() && repository.is_some() && app.selected_change_indices().len() <= 1,
-        "To commit selected files, Stage them and use Staged only in the commit panel",
-    );
-    popup_menu::separator(ui);
-    for (label, action, staged) in [
-        ("Stage", FileAction::Stage, true),
-        ("Unstage", FileAction::Unstage, false),
-    ] {
-        item(
-            ui,
-            label,
-            action,
-            app.selected_staging_allowed(staged),
-            "Select a suitable file after refreshing; conflicts must be resolved outside SannyGit",
-        );
+fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<FileAction>> {
+    use popup_menu::Entry as E;
+    if app.changes.get(index).is_none() {
+        return Vec::new();
     }
-    popup_menu::separator(ui);
-    let discard_blocker = app.discard_blocker();
-    item(
-        ui,
-        "Discard…",
-        FileAction::Discard,
-        discard_blocker.is_none(),
-        discard_blocker.unwrap_or(""),
-    );
-    popup_menu::separator(ui);
+    let repository = app.repositories.get(app.selected_repository);
+    let mut entries = vec![
+        E::item("Show Changes", true, FileAction::ShowChanges),
+        E::Separator,
+        E::item(
+            "Commit…",
+            !app.busy() && repository.is_some() && app.selected_change_indices().len() <= 1,
+            FileAction::Commit,
+        )
+        .help("To commit selected files, Stage them and use Staged only in the commit panel"),
+        E::Separator,
+        E::item(
+            "Stage",
+            app.selected_staging_allowed(true),
+            FileAction::Stage,
+        )
+        .help(
+            "Select a suitable file after refreshing; conflicts must be resolved outside SannyGit",
+        ),
+        E::item(
+            "Unstage",
+            app.selected_staging_allowed(false),
+            FileAction::Unstage,
+        )
+        .help(
+            "Select a suitable file after refreshing; conflicts must be resolved outside SannyGit",
+        ),
+        E::Separator,
+        E::item(
+            "Discard…",
+            app.discard_blocker().is_none(),
+            FileAction::Discard,
+        )
+        .help(app.discard_blocker().unwrap_or("")),
+        E::Separator,
+    ];
     let selected = app.selected_change_indices();
     for (label, text) in [
         (
@@ -385,17 +379,13 @@ fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<Fil
             ),
         ),
     ] {
-        if ui
-            .add_enabled(text.is_some(), eframe::egui::Button::new(label))
-            .clicked()
-        {
-            if let Some(text) = text {
-                ui.ctx().copy_text(text);
-            }
-            ui.close();
-        }
+        entries.push(E::item(
+            label,
+            text.is_some(),
+            FileAction::Copy(text.unwrap_or_default()),
+        ));
     }
-    requested
+    entries
 }
 
 fn column_separator(
@@ -506,7 +496,7 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             rect.left_center() + Vec2::new(6.0, 0.0),
             Align2::LEFT_CENTER,
             label,
-            FontId::proportional(crate::theme::UI_FONT_SIZE),
+            FontId::proportional(crate::theme::ui_font_size()),
             text_color,
         );
         if filter != ChangeFilter::All {
@@ -527,7 +517,7 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 badge.center(),
                 Align2::CENTER_CENTER,
                 count,
-                FontId::proportional(crate::theme::UI_FONT_SIZE),
+                FontId::proportional(crate::theme::ui_font_size()),
                 palette.text,
             );
         }

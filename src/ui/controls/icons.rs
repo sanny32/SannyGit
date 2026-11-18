@@ -177,6 +177,7 @@ pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str) -> Response {
     response.help_text(tooltip)
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 pub fn menu(ui: &mut Ui, icon: Icon, tooltip: &str, contents: impl FnOnce(&mut Ui)) -> Response {
     let spacing = ui.spacing().clone();
     button_scope(ui, |ui| {

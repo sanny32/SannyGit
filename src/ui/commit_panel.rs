@@ -9,6 +9,13 @@ use eframe::egui::{
     TextEdit, Ui, Vec2,
 };
 
+#[derive(Clone, Copy)]
+enum MessageAction {
+    Cancel,
+    Generate,
+    Settings,
+}
+
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -19,7 +26,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             rect.center(),
             Align2::CENTER_CENTER,
             "Commit",
-            FontId::new(crate::theme::UI_FONT_SIZE, semibold_family()),
+            FontId::new(crate::theme::ui_font_size(), semibold_family()),
             palette.text,
         );
         ui.add_enabled_ui(!app.busy(), |ui| {
@@ -43,36 +50,42 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            icons::menu(
+            use super::controls::popup_menu::{self, Entry};
+            let action = popup_menu::button(
                 ui,
                 Icon::Chevron,
                 "Commit contents and message options",
-                |ui| {
-                    if app.generating_commit_message && ui.button("Cancel generation").clicked() {
-                        app.cancel_commit_message_generation();
-                        ui.close();
+                || {
+                    let mut entries = Vec::new();
+                    if app.generating_commit_message {
+                        entries.push(Entry::item(
+                            "Cancel generation",
+                            true,
+                            MessageAction::Cancel,
+                        ));
                     }
-                    let blocker = app.generate_commit_message_blocker();
-                    if ui
-                        .add_enabled(blocker.is_none(), Button::new("Generate commit message"))
-                        .disabled_help_text(blocker.unwrap_or(""))
-                        .clicked()
-                    {
-                        app.generate_commit_message();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            app.repositories.get(app.selected_repository).is_some(),
-                            Button::new("Repository LLM settings…"),
+                    entries.push(
+                        Entry::item(
+                            "Generate commit message",
+                            app.generate_commit_message_blocker().is_none(),
+                            MessageAction::Generate,
                         )
-                        .clicked()
-                    {
-                        app.open_repository_llm_settings();
-                        ui.close();
-                    }
+                        .help(app.generate_commit_message_blocker().unwrap_or("")),
+                    );
+                    entries.push(Entry::item(
+                        "Repository LLM settings…",
+                        app.repositories.get(app.selected_repository).is_some(),
+                        MessageAction::Settings,
+                    ));
+                    entries
                 },
             );
+            match action {
+                Some(MessageAction::Cancel) => app.cancel_commit_message_generation(),
+                Some(MessageAction::Generate) => app.generate_commit_message(),
+                Some(MessageAction::Settings) => app.open_repository_llm_settings(),
+                None => {}
+            }
 
             let blocker = app.generate_commit_message_blocker();
             let generating = app.generating_commit_message;

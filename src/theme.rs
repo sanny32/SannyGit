@@ -2,7 +2,26 @@ use eframe::egui::{self, Color32, Context, FontFamily, FontId, Stroke, Style, Te
 use serde::{Deserialize, Serialize};
 
 pub const INTERFACE_STYLE_STORAGE_KEY: &str = "sannygit.interface_style";
-pub const UI_FONT_SIZE: f32 = 12.0;
+/// AppKit reports logical points; egui applies monitor scaling separately.
+/// Cache the system default so painting never calls into AppKit per frame.
+pub fn ui_font_size() -> f32 {
+    #[cfg(target_os = "macos")]
+    {
+        static SIZE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+        *SIZE.get_or_init(|| {
+            let size = objc2_app_kit::NSFont::systemFontSize() as f32;
+            if size.is_finite() && size > 0.0 {
+                size
+            } else {
+                13.0
+            }
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        12.0
+    }
+}
 pub const DIALOG_TITLE_FONT_SIZE: f32 = 16.0;
 pub const SETTINGS_TITLE_FONT_SIZE: f32 = 18.0;
 pub const TOOLBAR_BRAND_FONT_SIZE: f32 = 24.0;
@@ -233,23 +252,23 @@ fn text_styles() -> std::collections::BTreeMap<TextStyle, FontId> {
     [
         (
             TextStyle::Small,
-            FontId::new(UI_FONT_SIZE, FontFamily::Proportional),
+            FontId::new(ui_font_size(), FontFamily::Proportional),
         ),
         (
             TextStyle::Body,
-            FontId::new(UI_FONT_SIZE, FontFamily::Proportional),
+            FontId::new(ui_font_size(), FontFamily::Proportional),
         ),
         (
             TextStyle::Button,
-            FontId::new(UI_FONT_SIZE, FontFamily::Proportional),
+            FontId::new(ui_font_size(), FontFamily::Proportional),
         ),
         (
             TextStyle::Heading,
-            FontId::new(UI_FONT_SIZE, semibold_family()),
+            FontId::new(ui_font_size(), semibold_family()),
         ),
         (
             TextStyle::Monospace,
-            FontId::new(UI_FONT_SIZE, FontFamily::Monospace),
+            FontId::new(ui_font_size(), FontFamily::Monospace),
         ),
     ]
     .into()
@@ -263,6 +282,7 @@ pub struct Palette {
     pub panel: Color32,
     pub panel_alt: Color32,
     pub header: Color32,
+    #[cfg(any(not(target_os = "macos"), test))]
     pub menu_background: Color32,
     pub editor: Color32,
     pub border: Color32,
@@ -298,6 +318,7 @@ impl Palette {
             panel: Color32::from_gray(39),
             panel_alt: Color32::from_gray(43),
             header: Color32::from_gray(40),
+            #[cfg(any(not(target_os = "macos"), test))]
             menu_background: Color32::from_gray(31),
             editor: Color32::from_gray(34),
             border: Color32::from_gray(58),
@@ -333,6 +354,7 @@ impl Palette {
             panel: Color32::from_rgb(255, 255, 255),
             panel_alt: Color32::from_rgb(246, 246, 246),
             header: Color32::from_rgb(236, 236, 236),
+            #[cfg(any(not(target_os = "macos"), test))]
             menu_background: Color32::WHITE,
             editor: Color32::from_rgb(255, 255, 255),
             border: Color32::from_rgb(202, 202, 202),
@@ -420,7 +442,10 @@ mod tests {
                             2
                         })
                     );
-                    assert!(style.text_styles.values().all(|font| font.size == 12.0));
+                    assert!(style
+                        .text_styles
+                        .values()
+                        .all(|font| font.size == ui_font_size()));
                     assert!(style.visuals.text_options.font_hinting);
                     assert!(!style.visuals.text_options.subpixel_binning);
                     assert_eq!(

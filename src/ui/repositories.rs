@@ -172,6 +172,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         });
     if let Some((path, action)) = context_action {
         match action {
+            RepositoryAction::MoveTo(group) => app.assign_group(&path, group),
             RepositoryAction::Open => app.open_repository(path),
             RepositoryAction::NewWindow => {
                 app.run_repository_job(RepositoryJob::NewRepositoryWindow(path))
@@ -201,7 +202,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum RepositoryAction {
     Open,
     NewWindow,
@@ -210,6 +211,7 @@ enum RepositoryAction {
     Remove,
     Commit,
     Menu(MenuAction),
+    MoveTo(Option<String>),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -262,7 +264,7 @@ fn repository_row(
                 .painter()
                 .layout_no_wrap(
                     suffix.clone(),
-                    eframe::egui::FontId::proportional(crate::theme::UI_FONT_SIZE),
+                    eframe::egui::FontId::proportional(crate::theme::ui_font_size()),
                     palette.muted,
                 )
                 .size()
@@ -320,99 +322,96 @@ fn repository_row(
             repository.path.clone()
         })
     };
-    let mut action = None;
-    popup_menu::context_menu(&response, palette).show(|ui| {
-        ui.set_min_width(240.0);
+    let mut action = popup_menu::context(&response, palette, || {
+        use popup_menu::Entry as E;
         let idle = enabled.contains(&MenuAction::NewWindow);
-        let mut item = |ui: &mut Ui, label: &str, available: bool, selected_action| {
-            if ui
-                .add_enabled(available, eframe::egui::Button::new(label))
-                .clicked()
-            {
-                action = Some(selected_action);
-                ui.close();
-            }
+        let item = |label, available, action| E::item(label, available, Some(action));
+        let reveal = if cfg!(target_os = "macos") {
+            "Reveal in Finder"
+        } else if cfg!(target_os = "windows") {
+            "Show in Explorer"
+        } else {
+            "Show in File Manager"
         };
-        item(
-            ui,
-            "Open Repository",
-            idle && !active,
-            RepositoryAction::Open,
-        );
-        item(
-            ui,
-            "Open Repository in New Window",
-            idle,
-            RepositoryAction::NewWindow,
-        );
-        popup_menu::submenu(ui, "Open", |ui| {
-            let label = if cfg!(target_os = "macos") {
-                "Reveal in Finder"
-            } else if cfg!(target_os = "windows") {
-                "Show in Explorer"
-            } else {
-                "Show in File Manager"
-            };
-            item(ui, label, idle, RepositoryAction::Reveal);
-            ui.add_enabled(false, eframe::egui::Button::new("Open in Terminal"))
-                .disabled_help_text("Opening an external terminal is not implemented yet");
-        });
-        item(
-            ui,
-            "Close Repository",
-            active && enabled.contains(&MenuAction::CloseRepository),
-            RepositoryAction::Menu(MenuAction::CloseRepository),
-        );
-        popup_menu::separator(ui);
-        item(ui, "Commit…", active && idle, RepositoryAction::Commit);
+        let mut entries = vec![
+            item("Open Repository", idle && !active, RepositoryAction::Open),
+            item(
+                "Open Repository in New Window",
+                idle,
+                RepositoryAction::NewWindow,
+            ),
+            E::submenu(
+                "Open",
+                vec![
+                    item(reveal, idle, RepositoryAction::Reveal),
+                    E::item("Open in Terminal", false, None)
+                        .help("Opening an external terminal is not implemented yet"),
+                ],
+            ),
+            item(
+                "Close Repository",
+                active && enabled.contains(&MenuAction::CloseRepository),
+                RepositoryAction::Menu(MenuAction::CloseRepository),
+            ),
+            E::Separator,
+            item("Commit…", active && idle, RepositoryAction::Commit),
+        ];
         for (label, command) in [
             ("Log", MenuAction::ReloadHistory),
             ("Pull…", MenuAction::Pull),
             ("Push", MenuAction::Push),
             ("Synchronize…", MenuAction::Fetch),
         ] {
-            item(
-                ui,
+            entries.push(item(
                 label,
                 active && enabled.contains(&command),
                 RepositoryAction::Menu(command),
-            );
+            ));
         }
-        popup_menu::separator(ui);
-        item(
-            ui,
-            "Refresh",
-            active && enabled.contains(&MenuAction::Refresh),
-            RepositoryAction::Menu(MenuAction::Refresh),
-        );
-        popup_menu::separator(ui);
-        popup_menu::submenu(ui, "Move To", |ui| {
-            if ui.button("Ungrouped").clicked() {
-                *move_to = Some((repository.path.clone(), None));
-                ui.close();
-            }
-            for group in groups {
-                if ui.button(group).clicked() {
-                    *move_to = Some((repository.path.clone(), Some(group.clone())));
-                    ui.close();
-                }
-            }
-        });
-        for label in ["Mark as Favorite", "Rename…"] {
-            ui.add_enabled(false, eframe::egui::Button::new(label))
-                .disabled_help_text("Not implemented yet");
+        entries.extend([
+            E::Separator,
+            item(
+                "Refresh",
+                active && enabled.contains(&MenuAction::Refresh),
+                RepositoryAction::Menu(MenuAction::Refresh),
+            ),
+            E::Separator,
+            E::submenu(
+                "Move To",
+                std::iter::once(E::item(
+                    "Ungrouped",
+                    true,
+                    Some(RepositoryAction::MoveTo(None)),
+                ))
+                .chain(groups.iter().map(|group| {
+                    E::item(
+                        group,
+                        true,
+                        Some(RepositoryAction::MoveTo(Some(group.clone()))),
+                    )
+                }))
+                .collect(),
+            ),
+            E::item("Mark as Favorite", false, None).help("Not implemented yet"),
+            E::item("Rename…", false, None).help("Not implemented yet"),
+            item("Remove…", idle, RepositoryAction::Remove),
+            E::Separator,
+            item("Copy Path", true, RepositoryAction::CopyPath),
+            E::Separator,
+            item(
+                "Settings…",
+                active && enabled.contains(&MenuAction::RepositorySettings),
+                RepositoryAction::Menu(MenuAction::RepositorySettings),
+            ),
+        ]);
+        entries
+    })
+    .flatten();
+    if matches!(action, Some(RepositoryAction::MoveTo(_))) {
+        if let Some(RepositoryAction::MoveTo(group)) = action.take() {
+            *move_to = Some((repository.path.clone(), group));
         }
-        item(ui, "Remove…", idle, RepositoryAction::Remove);
-        popup_menu::separator(ui);
-        item(ui, "Copy Path", true, RepositoryAction::CopyPath);
-        popup_menu::separator(ui);
-        item(
-            ui,
-            "Settings…",
-            active && enabled.contains(&MenuAction::RepositorySettings),
-            RepositoryAction::Menu(MenuAction::RepositorySettings),
-        );
-    });
+    }
     if response.secondary_clicked() {
         *highlighted = Some(repository.path.clone());
     }

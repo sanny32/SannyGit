@@ -1,4 +1,6 @@
 use self::controls::dialog_style::DialogResponse;
+#[cfg(all(target_os = "macos", not(test)))]
+pub(crate) use controls::popup_menu::Entry as PopupMenuEntry;
 mod about;
 mod branches;
 mod changes;
@@ -38,7 +40,7 @@ fn sync_badge(text: &str, palette: Palette) -> eframe::egui::text::LayoutJob {
                 " ",
                 0.0,
                 TextFormat {
-                    font_id: FontId::proportional(crate::theme::UI_FONT_SIZE),
+                    font_id: FontId::proportional(crate::theme::ui_font_size()),
                     color: palette.muted,
                     ..Default::default()
                 },
@@ -55,7 +57,7 @@ fn sync_badge(text: &str, palette: Palette) -> eframe::egui::text::LayoutJob {
             part,
             0.0,
             TextFormat {
-                font_id: FontId::proportional(crate::theme::UI_FONT_SIZE),
+                font_id: FontId::proportional(crate::theme::ui_font_size()),
                 color,
                 ..Default::default()
             },

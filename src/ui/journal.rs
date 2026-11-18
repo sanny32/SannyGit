@@ -3,7 +3,7 @@ use super::controls::tooltips::TooltipResponse;
 use crate::{
     app::SannyGitApp,
     models::HistoryEdge,
-    theme::{Palette, COMMIT_AVATAR_FONT_SIZE, UI_FONT_SIZE},
+    theme::{ui_font_size, Palette, COMMIT_AVATAR_FONT_SIZE},
 };
 use eframe::egui::{
     self, Align, Button, CentralPanel, ComboBox, Frame, Label, Layout, Margin, Panel, RichText,
@@ -146,7 +146,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
                 app.preferences.date_format.label(),
                 app.preferences.time_format.label()
             ),
-            eframe::egui::FontId::proportional(UI_FONT_SIZE),
+            eframe::egui::FontId::proportional(ui_font_size()),
             palette.muted,
         )
         .size()

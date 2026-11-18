@@ -4,7 +4,7 @@ use super::controls::popup_menu;
 use super::controls::tooltips::TooltipResponse;
 use crate::{
     app::SannyGitApp,
-    theme::{semibold_family, Palette, TOOLBAR_BRAND_FONT_SIZE, UI_FONT_SIZE},
+    theme::{semibold_family, ui_font_size, Palette, TOOLBAR_BRAND_FONT_SIZE},
 };
 use eframe::egui::{
     Align, Align2, Button, FontId, Frame, Layout, Margin, Panel, Rect, Response, Ui, Vec2,
@@ -78,7 +78,7 @@ fn action_button(
         response.rect.center_top() + Vec2::new(0.0, TOOLBAR_BUTTON_PADDING_Y + 24.0) + press_offset,
         Align2::CENTER_TOP,
         label,
-        FontId::proportional(UI_FONT_SIZE),
+        FontId::proportional(ui_font_size()),
         if enabled { palette.text } else { palette.muted },
     );
     response
@@ -106,7 +106,7 @@ fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
                     style.spacing.item_spacing.x = 0.0;
                     style.spacing.button_padding.x = 8.0;
                     style.spacing.interact_size.y = 24.0;
-                    style.override_font_id = Some(FontId::proportional(UI_FONT_SIZE));
+                    style.override_font_id = Some(FontId::proportional(ui_font_size()));
                 })
                 .ui(ui, |ui| {
                     for menu in crate::menu::MENUS {
@@ -234,7 +234,7 @@ fn brand(ui: &mut Ui, palette: Palette) {
     let title = ui.fonts_mut(|fonts| fonts.layout_job(title));
     let subtitle = ui.painter().layout_no_wrap(
         "A simple Git client".into(),
-        FontId::proportional(UI_FONT_SIZE),
+        FontId::proportional(ui_font_size()),
         palette.muted,
     );
     let icon_size = 44.0;
