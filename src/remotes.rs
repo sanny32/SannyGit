@@ -37,6 +37,21 @@ pub struct State {
     pub upstream_ref: Option<String>,
 }
 
+impl State {
+    pub fn upstream_or_origin(&self) -> Option<&str> {
+        self.upstream_remote
+            .as_ref()
+            .filter(|remote| self.remotes.contains(remote))
+            .map(String::as_str)
+            .or_else(|| {
+                self.remotes
+                    .iter()
+                    .find(|remote| *remote == "origin")
+                    .map(String::as_str)
+            })
+    }
+}
+
 pub fn load(root: &Path) -> Result<State, String> {
     // `remote` lists only names, never URLs or credentials.
     let names = git::text(git::run(root, &["remote"])?)?;
@@ -348,6 +363,28 @@ pub fn preview_tag_push(
         endpoint,
         config,
     })
+}
+
+pub fn create_and_push_tag(
+    root: &Path,
+    name: &str,
+    message: &str,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let state = load(root)?;
+    let remote = state
+        .upstream_or_origin()
+        .ok_or("Cannot push the tag. Configure an upstream for the current branch or add a remote named origin.")?;
+    let (_, config) = crate::remote_config::push_endpoint(root, remote)?;
+    branches::create_tag(root, name, message)?;
+    (|| {
+        let tag = preview_tag_push(root, &format!("refs/tags/{name}"), remote)?;
+        if tag.config != config {
+            return Err("Remote configuration changed during tag creation.".into());
+        }
+        push_tag(root, &tag, cancel)
+    })()
+    .map_err(|error| format!("Tag {name} was created locally, but push to {remote} failed. To retry, use Push Selected Tag.\n{error}"))
 }
 
 pub fn push_tag(root: &Path, expected: &TagPushPreview, cancel: &AtomicBool) -> Result<(), String> {

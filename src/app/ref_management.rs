@@ -506,6 +506,7 @@ mod tests {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.apply_snapshot(git::load(&repo.0).unwrap());
         let refs = branches::load(&repo.0).unwrap();
+        app.branch_head_exists = refs.has_head;
         app.refs = refs.refs;
         app.refs_current = true;
         app.commit_message = "Keep commit draft".into();
@@ -615,6 +616,53 @@ mod tests {
             .unwrap()
             .contains("chosen"));
         assert_eq!(app.commit_message, "Keep commit draft");
+    }
+
+    #[test]
+    fn add_tag_and_push_sends_only_the_new_tag_to_the_upstream_remote() {
+        let (repo, mut app) = opened();
+        let remote = repo.0.join("remote.git");
+        repo.git(&["init", "--bare", remote.to_str().unwrap()]);
+        repo.git(&["remote", "add", "origin", "https://example.test/repo"]);
+        repo.git(&["remote", "add", "team", remote.to_str().unwrap()]);
+        repo.git(&["push", "-u", "team", "HEAD"]);
+        app.tag_dialog_open = true;
+        app.new_tag_name = "release".into();
+        app.new_tag_message = "Release notes".into();
+        app.create_tag(true);
+        wait(&mut app);
+        assert!(!app.tag_dialog_open);
+        assert!(app.error.is_none());
+        assert_eq!(
+            repo.git(&["cat-file", "-t", "refs/tags/release"]).trim(),
+            "tag"
+        );
+        let remote_tags = || git::text(git::run(&remote, &["tag", "--list"]).unwrap()).unwrap();
+        assert!(app.ref_dialog.is_none());
+        assert_eq!(remote_tags().trim(), "release");
+    }
+
+    #[test]
+    fn add_tag_and_push_requires_an_upstream_or_origin() {
+        let (repo, mut app) = opened();
+        let remote = repo.0.join("remote.git");
+        repo.git(&["init", "--bare", remote.to_str().unwrap()]);
+        repo.git(&["remote", "add", "team", remote.to_str().unwrap()]);
+        app.tag_dialog_open = true;
+        app.new_tag_name = "release".into();
+        app.create_tag(true);
+        wait(&mut app);
+        assert!(app
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("Configure an upstream"));
+        assert!(app.tag_dialog_open);
+        assert_eq!(app.new_tag_name, "release");
+        assert!(repo.git(&["tag", "--list", "release"]).is_empty());
+        assert!(git::text(git::run(&remote, &["tag", "--list"]).unwrap())
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

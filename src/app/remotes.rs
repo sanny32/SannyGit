@@ -110,19 +110,10 @@ impl SannyGitApp {
                     .filter(|d| d.operation == operation)
                 {
                     dialog.remote = state
-                        .upstream_remote
-                        .as_ref()
-                        .filter(|remote| state.remotes.contains(remote))
-                        .cloned()
-                        .or_else(|| {
-                            state
-                                .remotes
-                                .iter()
-                                .find(|r| r.as_str() == "origin")
-                                .cloned()
-                        })
-                        .or_else(|| state.remotes.first().cloned())
-                        .unwrap_or_default();
+                        .upstream_or_origin()
+                        .or_else(|| state.remotes.first().map(String::as_str))
+                        .unwrap_or_default()
+                        .to_owned();
                     if operation == Operation::Pull {
                         if let Some(defaults) = self
                             .repositories

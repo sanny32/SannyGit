@@ -1306,7 +1306,7 @@ impl SannyGitApp {
             })
     }
 
-    pub fn create_tag(&mut self) {
+    pub fn create_tag(&mut self, push: bool) {
         if self.create_tag_blocker().is_some() {
             return;
         }
@@ -1316,13 +1316,33 @@ impl SannyGitApp {
         self.state_current = false;
         self.refs_current = false;
         self.error = None;
-        self.status = "Creating tag…".into();
-        self.start_worker(move || WorkerResult::Operation {
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.status = if push {
+            "Creating and pushing tag…"
+        } else {
+            "Creating tag…"
+        }
+        .into();
+        if push {
+            self.manager.cancel = Some(cancel.clone());
+        }
+        if !self.start_worker(move || WorkerResult::Operation {
             committed: false,
-            success: "Tag created",
-            outcome: crate::branches::create_tag(&root, &name, &message),
+            success: if push {
+                "Tag created and pushed"
+            } else {
+                "Tag created"
+            },
+            outcome: if push {
+                crate::remotes::create_and_push_tag(&root, &name, &message, &cancel)
+            } else {
+                crate::branches::create_tag(&root, &name, &message)
+            },
             snapshot: git::load(&root),
-        });
+        }) && push
+        {
+            self.manager.cancel = None;
+        }
     }
 
     pub fn create_branch_blocker(&self) -> Option<&'static str> {
@@ -2100,7 +2120,10 @@ impl SannyGitApp {
                         self.selected_ref_group = None;
                     }
                 }
-                if outcome.is_ok() && success == "Tag created" {
+                if success == "Tag created and pushed" {
+                    self.manager.cancel = None;
+                }
+                if outcome.is_ok() && matches!(success, "Tag created" | "Tag created and pushed") {
                     self.selected_branch = format!("refs/tags/{}", self.new_tag_name);
                     self.selected_ref_group = None;
                     self.tag_dialog_open = false;

@@ -337,12 +337,16 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             eframe::egui::Margin::symmetric(18, 12),
             |ui| {
                 super::controls::dialog_style::button_row(ui, |ui| {
-                    ui.add_enabled(false, super::controls::dialog_style::button("Add Tag & Push"))
-                        .disabled_help_text("Pushing tags is not implemented yet");
                     let blocker = app.create_tag_blocker();
+                    if ui.add_enabled(blocker.is_none(), super::controls::dialog_style::button("Add Tag & Push"))
+                        .disabled_help_text(blocker.unwrap_or(""))
+                        .on_hover_text("Create the tag and push it to the current remote")
+                        .clicked() {
+                        app.create_tag(true);
+                    }
                     if ui.add_enabled(blocker.is_none(), super::controls::dialog_style::primary("Add Tag", palette))
                         .disabled_help_text(blocker.unwrap_or("")).dialog_accept() {
-                        app.create_tag();
+                        app.create_tag(false);
                     }
                     if ui.add_enabled(!busy, super::controls::dialog_style::button("Cancel")).dialog_cancel() {
                         keep = false;
