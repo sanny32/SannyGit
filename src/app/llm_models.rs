@@ -23,6 +23,8 @@ pub struct ModelList {
     #[serde(skip)]
     pub attempted: bool,
     #[serde(skip)]
+    startup_refresh: bool,
+    #[serde(skip)]
     receiver: Option<Receiver<Result<Vec<String>, String>>>,
 }
 
@@ -38,6 +40,7 @@ impl ModelCatalog {
     pub(super) fn errors(&self) -> impl Iterator<Item = (&str, &str)> {
         self.entries
             .iter()
+            .filter(|(_, models)| !models.startup_refresh)
             .filter_map(|(key, models)| models.error.as_deref().map(|error| (key.as_str(), error)))
     }
 
@@ -48,6 +51,24 @@ impl ModelCatalog {
     }
 
     pub fn load(&mut self, config: &Config, repository: Option<&str>, context: &Context) {
+        self.start_load(config, repository, context).startup_refresh = false;
+    }
+
+    pub(super) fn load_at_startup(
+        &mut self,
+        config: &Config,
+        repository: Option<&str>,
+        context: &Context,
+    ) {
+        self.start_load(config, repository, context).startup_refresh = true;
+    }
+
+    fn start_load(
+        &mut self,
+        config: &Config,
+        repository: Option<&str>,
+        context: &Context,
+    ) -> &mut ModelList {
         let models = self.entry(config, repository);
         // Replace the receiver so a response using older credentials cannot
         // overwrite a newer refresh. Keep cached options until success.
@@ -69,6 +90,7 @@ impl ModelCatalog {
             Ok(_) => models.receiver = Some(receiver),
             Err(error) => models.error = Some(format!("Cannot start model list worker: {error}")),
         }
+        models
     }
 }
 

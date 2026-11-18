@@ -582,11 +582,12 @@ impl SannyGitApp {
         // Cloud endpoints usually require authentication. Keep their cached
         // models until a key is available, without reading the OS key store.
         if self.llm_config.is_local() || !self.llm_config.api_key.trim().is_empty() {
-            self.llm_models.load(&self.llm_config, None, context);
+            self.llm_models
+                .load_at_startup(&self.llm_config, None, context);
         }
         for (path, config) in &self.repository_llm_configs {
             if config.is_local() || !config.api_key.trim().is_empty() {
-                self.llm_models.load(config, Some(path), context);
+                self.llm_models.load_at_startup(config, Some(path), context);
             }
         }
     }

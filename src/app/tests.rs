@@ -188,7 +188,7 @@ fn startup_keeps_remote_model_cache_without_requesting_models_when_keys_are_miss
 }
 
 #[test]
-fn startup_refreshes_cached_models_without_loading_credentials_or_changing_selection() {
+fn startup_refreshes_cached_models_and_keeps_failures_out_of_error_dialogs() {
     use std::{
         io::{BufRead, BufReader, Write},
         net::TcpListener,
@@ -198,7 +198,7 @@ fn startup_refreshes_cached_models_without_loading_credentials_or_changing_selec
     let address = listener.local_addr().unwrap();
     listener.set_nonblocking(true).unwrap();
     let server = std::thread::spawn(move || {
-        for request in 0..4 {
+        for request in 0..6 {
             let deadline = Instant::now() + Duration::from_secs(5);
             let mut socket = loop {
                 match listener.accept() {
@@ -224,9 +224,14 @@ fn startup_refreshes_cached_models_without_loading_credentials_or_changing_selec
                 assert!(!line.to_ascii_lowercase().starts_with("authorization:"));
             }
             let body = format!(r#"{{"data":[{{"id":"model-{}"}}]}}"#, request / 2);
+            let status = if request < 4 {
+                "200 OK"
+            } else {
+                "503 Service Unavailable"
+            };
             write!(
                 socket,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             )
             .unwrap();
@@ -242,7 +247,7 @@ fn startup_refreshes_cached_models_without_loading_credentials_or_changing_selec
     };
     app.repository_llm_configs
         .insert("/repo".into(), app.llm_config.clone());
-    for launch in 0..2 {
+    for launch in 0..3 {
         if launch == 1 {
             let saved = serde_json::to_string(&app.llm_models).unwrap();
             app.llm_models = serde_json::from_str(&saved).unwrap();
@@ -266,9 +271,11 @@ fn startup_refreshes_cached_models_without_loading_credentials_or_changing_selec
         }
         for scope in [None, Some("/repo")] {
             let models = app.llm_models.entry(&app.llm_config, scope);
-            assert!(models.error.is_none(), "{:?}", models.error);
-            assert_eq!(models.options, [format!("model-{launch}")]);
+            assert_eq!(models.error.is_some(), launch == 2, "{:?}", models.error);
+            assert_eq!(models.options, [format!("model-{}", launch.min(1))]);
         }
+        app.collect_errors();
+        assert!(app.error_dialogs.pending.is_empty());
         assert_eq!(app.llm_config.model, "my-custom-model");
         assert_eq!(app.repository_llm_configs["/repo"].model, "my-custom-model");
     }
