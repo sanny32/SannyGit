@@ -69,6 +69,23 @@ class KeychainEntitlementsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expired"):
             self.derive()
 
+    def test_rejects_missing_or_invalid_expiration(self):
+        for value in [None, "2099-01-01"]:
+            with self.subTest(value=value):
+                self.profile["ExpirationDate"] = value
+                with self.assertRaisesRegex(ValueError, "no valid ExpirationDate"):
+                    self.derive()
+
+    def test_accepts_naive_utc_expiration(self):
+        self.profile["ExpirationDate"] = datetime.datetime(2099, 1, 1)
+        self.derive()
+
+    def test_expiration_respects_timezone_offset(self):
+        self.profile["ExpirationDate"] = (
+            datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=30)
+        ).astimezone(datetime.timezone(datetime.timedelta(hours=-12)))
+        self.derive()
+
     def test_rejects_other_platform_and_team(self):
         self.profile["Platform"] = ["iOS"]
         with self.assertRaisesRegex(ValueError, "macOS"):

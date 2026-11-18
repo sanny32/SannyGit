@@ -13,10 +13,20 @@ def keychain_entitlements(profile, bundle_id, debug=False):
     if "OSX" not in profile.get("Platform", []):
         raise ValueError("The provisioning profile must be for macOS.")
     expires = profile.get("ExpirationDate")
-    if not isinstance(expires, datetime.datetime) or expires.replace(
-        tzinfo=datetime.timezone.utc
-    ) <= datetime.datetime.now(datetime.timezone.utc):
-        raise ValueError("The provisioning profile has expired or has no expiration date.")
+    if not isinstance(expires, datetime.datetime):
+        raise ValueError(
+            "The provisioning profile has no valid ExpirationDate. "
+            "Use a newly generated macOS provisioning profile."
+        )
+    if expires.tzinfo is None:
+        # Dates decoded by plistlib are naive UTC timestamps.
+        expires = expires.replace(tzinfo=datetime.timezone.utc)
+    expires = expires.astimezone(datetime.timezone.utc)
+    if expires <= datetime.datetime.now(datetime.timezone.utc):
+        raise ValueError(
+            f"The provisioning profile expired at {expires:%Y-%m-%d %H:%M:%S UTC}. "
+            "Generate a new macOS provisioning profile and pass it with --keychain-profile."
+        )
     allowed = profile.get("Entitlements", {})
     pattern = allowed.get("com.apple.application-identifier", "")
     prefixes = profile.get("ApplicationIdentifierPrefix", [])
