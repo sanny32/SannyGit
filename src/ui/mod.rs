@@ -29,99 +29,6 @@ use eframe::egui::{
 const PANEL_GAP: i8 = 2;
 const WORKSPACE_HEADER_HEIGHT: f32 = 34.0;
 
-#[derive(Clone)]
-struct PanelRegion {
-    name: &'static str,
-    rect: eframe::egui::Rect,
-    layer: eframe::egui::LayerId,
-    title: Option<eframe::egui::Rect>,
-}
-
-#[derive(Clone, Default)]
-struct PanelActivity {
-    active: Option<&'static str>,
-    focused_widget: Option<eframe::egui::Id>,
-    regions: Vec<PanelRegion>,
-}
-
-fn panel_activity_id() -> eframe::egui::Id {
-    eframe::egui::Id::unique("workspace.panel_activity")
-}
-
-fn register_panel(ui: &Ui, name: &'static str) {
-    ui.data_mut(|data| {
-        let activity = data.get_temp_mut_or_default::<PanelActivity>(panel_activity_id());
-        activity.regions.retain(|region| region.name != name);
-        activity.regions.push(PanelRegion {
-            name,
-            rect: ui.max_rect(),
-            layer: ui.layer_id(),
-            title: None,
-        });
-    });
-}
-
-fn register_panel_title(ui: &Ui, name: &'static str, title: eframe::egui::Rect) {
-    ui.data_mut(|data| {
-        let activity = data.get_temp_mut_or_default::<PanelActivity>(panel_activity_id());
-        if let Some(region) = activity
-            .regions
-            .iter_mut()
-            .find(|region| region.name == name)
-        {
-            region.title = Some(eframe::egui::Rect::from_min_max(
-                eframe::egui::pos2(title.left() - 6.0, ui.max_rect().bottom() - 3.0),
-                eframe::egui::pos2(title.right() + 6.0, ui.max_rect().bottom()),
-            ));
-        }
-    });
-}
-
-fn show_panel_activity(ui: &Ui, palette: Palette) {
-    let focused = ui.memory(|memory| memory.focused());
-    let focused_response = focused.and_then(|id| ui.ctx().read_response(id));
-    let pointer = ui.input(|input| {
-        input
-            .pointer
-            .any_pressed()
-            .then(|| input.pointer.interact_pos())
-            .flatten()
-    });
-    let pointer_layer = pointer.and_then(|position| ui.ctx().layer_id_at(position));
-    let activity = ui.data_mut(|data| {
-        let activity = data.get_temp_mut_or_default::<PanelActivity>(panel_activity_id());
-        let clicked = activity.regions.iter().find(|region| {
-            pointer.is_some_and(|position| region.rect.contains(position))
-                && pointer_layer == Some(region.layer)
-        });
-        let newly_focused = (focused != activity.focused_widget)
-            .then_some(focused_response.as_ref())
-            .flatten()
-            .and_then(|response| {
-                activity.regions.iter().find(|region| {
-                    region.layer == response.layer_id
-                        && region.rect.contains(response.rect.center())
-                })
-            });
-        if let Some(region) = clicked.or(newly_focused) {
-            activity.active = Some(region.name);
-        }
-        activity.focused_widget = focused;
-        activity.clone()
-    });
-    if let Some(region) = activity
-        .regions
-        .iter()
-        .find(|region| Some(region.name) == activity.active)
-    {
-        if let Some(title) = region.title {
-            ui.ctx()
-                .layer_painter(region.layer)
-                .rect_filled(title, 0, palette.accent);
-        }
-    }
-}
-
 fn sync_badge(text: &str, palette: Palette) -> eframe::egui::text::LayoutJob {
     use eframe::egui::{text::LayoutJob, FontId, TextFormat};
     let mut job = LayoutJob::default();
@@ -244,11 +151,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if app.modal_dialog_open() {
         ui.disable();
     }
-    ui.data_mut(|data| {
-        data.get_temp_mut_or_default::<PanelActivity>(panel_activity_id())
-            .regions
-            .clear();
-    });
     // Keep dense panel rows compact without truncating floating tooltips.
     ui.style_mut().wrap_mode = Some(eframe::egui::TextWrapMode::Truncate);
     let context = ui.ctx().clone();
@@ -295,7 +197,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
 
     if app.interface_style == crate::theme::InterfaceStyle::Modern {
         modern_workspace(ui, app);
-        show_panel_activity(ui, palette);
         if !app.settings_window.open
             && (context.embed_viewports() || (!app.commit_details_open && !app.about_dialog))
         {
@@ -357,7 +258,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 }))
                 .show(ui, |ui| diff_view::show(ui, app));
         });
-    show_panel_activity(ui, palette);
     if !app.settings_window.open
         && (context.embed_viewports() || (!app.commit_details_open && !app.about_dialog))
     {
@@ -472,7 +372,7 @@ fn show_errors(ui: &mut Ui, app: &mut SannyGitApp) {
                     .id_salt("application.error.message")
                     .max_height(240.0)
                     .show(ui, |ui| {
-                        ui.add(eframe::egui::Label::new(error).wrap());
+                        ui.add(eframe::egui::Label::new(error).wrap().selectable(true));
                     });
             });
             dialog_style::section(ui, palette.header, Margin::symmetric(18, 12), |ui| {
@@ -496,7 +396,7 @@ mod tests {
     use eframe::egui::{pos2, vec2, Context, Event, Modifiers, PointerButton, RawInput, Rect};
 
     #[test]
-    fn active_panel_indicator_follows_clicks_and_commit_editor_focus() {
+    fn clicking_workspace_titles_does_not_add_an_accent_marker() {
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
             for style in [
                 crate::theme::InterfaceStyle::Classic,
@@ -516,32 +416,40 @@ mod tests {
                                 events,
                                 ..Default::default()
                             },
-                            |ui| show(ui, &mut app),
+                            |ui| {
+                                assert!(!ui.style().interaction.selectable_labels);
+                                show(ui, &mut app);
+                            },
                         );
                         output.textures_delta.clear();
                         output
                     };
-                    for _ in 0..3 {
-                        render(vec![]);
-                    }
-                    for name in [
-                        "commit",
-                        "repositories",
-                        "branches",
-                        "files",
-                        "diff",
-                        "journal",
+                    let _ = render(vec![]);
+                    let output = render(vec![]);
+                    for title in [
+                        "Files",
+                        "Changes",
+                        "Repositories",
+                        "Branches",
+                        "Commit",
+                        "Journal",
                     ] {
-                        let region = ctx
-                            .data(|data| data.get_temp::<PanelActivity>(panel_activity_id()))
-                            .unwrap()
-                            .regions
-                            .into_iter()
-                            .find(|region| region.name == name)
-                            .unwrap();
-                        let pointer = region.rect.center();
+                        let pointer = output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                eframe::egui::Shape::Text(text)
+                                    if text.galley.job.text == title =>
+                                {
+                                    Some(text.pos + text.galley.size() / 2.0)
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| {
+                                panic!("Missing {title} in {theme:?} {style:?} {size:?}")
+                            });
                         for pressed in [true, false] {
-                            render(vec![
+                            let output = render(vec![
                                 Event::PointerMoved(pointer),
                                 Event::PointerButton {
                                     pos: pointer,
@@ -550,63 +458,12 @@ mod tests {
                                     modifiers: Modifiers::NONE,
                                 },
                             ]);
+                            assert!(!output.shapes.iter().any(|shape| {
+                                matches!(&shape.shape, eframe::egui::Shape::Rect(rect)
+                                    if rect.fill == style.palette(theme).accent && rect.rect.height() == 3.0)
+                            }), "Unexpected accent marker on {title} in {theme:?} {style:?} {size:?}");
                         }
-                        let output = render(vec![]);
-                        let activity = ctx
-                            .data(|data| data.get_temp::<PanelActivity>(panel_activity_id()))
-                            .unwrap();
-                        assert_eq!(activity.active, Some(name), "{theme:?} {style:?} {size:?}");
-                        let markers: Vec<_> = output
-                            .shapes
-                            .iter()
-                            .filter_map(|shape| match &shape.shape {
-                                eframe::egui::Shape::Rect(rect)
-                                    if rect.fill == theme.palette().accent
-                                        && (rect.rect.height() - 3.0).abs() < 0.1 =>
-                                {
-                                    Some(rect.rect)
-                                }
-                                _ => None,
-                            })
-                            .collect();
-                        let expected = activity
-                            .regions
-                            .iter()
-                            .find(|region| region.name == name)
-                            .unwrap()
-                            .title
-                            .unwrap();
-                        assert_eq!(
-                            markers,
-                            vec![expected],
-                            "{theme:?} {style:?} {size:?} {name}"
-                        );
-                        // Hovering another panel must not transfer activation.
-                        let other = activity
-                            .regions
-                            .iter()
-                            .find(|region| region.name != name)
-                            .unwrap()
-                            .rect
-                            .center();
-                        render(vec![Event::PointerMoved(other)]);
-                        assert_eq!(
-                            ctx.data(|data| data.get_temp::<PanelActivity>(panel_activity_id()))
-                                .unwrap()
-                                .active,
-                            Some(name)
-                        );
                     }
-                    ctx.memory_mut(|memory| {
-                        memory.request_focus(eframe::egui::Id::unique("commit.message"))
-                    });
-                    render(vec![]);
-                    assert_eq!(
-                        ctx.data(|data| data.get_temp::<PanelActivity>(panel_activity_id()))
-                            .unwrap()
-                            .active,
-                        Some("commit")
-                    );
                 }
             }
         }

@@ -10,7 +10,6 @@ use eframe::egui::{
 };
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
-    super::register_panel(ui, "commit");
     let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     super::header(ui, 28.0, palette, |ui| {
@@ -23,7 +22,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             FontId::new(crate::theme::UI_FONT_SIZE, semibold_family()),
             palette.text,
         );
-        super::register_panel_title(ui, "commit", rect.shrink2(Vec2::new(6.0, 0.0)));
         ui.add_enabled_ui(!app.busy(), |ui| {
             eframe::egui::ComboBox::from_id_salt("commit.contents")
                 .width(98.0)

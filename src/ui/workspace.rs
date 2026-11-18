@@ -51,14 +51,12 @@ pub(super) fn show(ui: &mut Ui, app: &mut SannyGitApp) -> [Rect; 4] {
         }))
         .show(ui, |ui| {
             ui.take_available_space();
-            super::register_panel(ui, "files");
             super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
                 let name = app
                     .repositories
                     .get(app.selected_repository)
                     .map_or("Working Tree", |repository| repository.name.as_str());
-                let title = ui.heading(name);
-                super::register_panel_title(ui, "files", title.rect);
+                ui.heading(name);
                 ui.label("›");
                 ui.label(&app.current_branch);
             });

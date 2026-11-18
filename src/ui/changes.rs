@@ -9,9 +9,6 @@ use eframe::egui::{Align, Align2, Color32, FontId, Layout, Rect, RichText, Sense
 use egui_extras::{Column, TableBuilder};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
-    if app.interface_style != crate::theme::InterfaceStyle::Modern {
-        super::register_panel(ui, "files");
-    }
     let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     let tight = ui.available_width() < 420.0;
@@ -20,11 +17,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         if tight {
             ui.vertical(|ui| {
                 ui.add_space(3.0);
-                changes_title(ui, app.changes.len(), app.interface_style);
+                changes_title(ui, app.changes.len());
                 ui.horizontal(|ui| filters(ui, app, palette));
             });
         } else {
-            changes_title(ui, app.changes.len(), app.interface_style);
+            changes_title(ui, app.changes.len());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 icons::unavailable(
                     ui,
@@ -456,16 +453,12 @@ fn ui_line(response: &eframe::egui::Response, row: Rect, clip: Rect, palette: Pa
         );
 }
 
-fn changes_title(ui: &mut Ui, count: usize, style: crate::theme::InterfaceStyle) {
-    let title = ui.horizontal(|ui| {
+fn changes_title(ui: &mut Ui, count: usize) {
+    ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let title = ui.label(RichText::new("Files").family(semibold_family()));
+        ui.label(RichText::new("Files").family(semibold_family()));
         ui.label(format!("({count} files)"));
-        title.rect
     });
-    if style != crate::theme::InterfaceStyle::Modern {
-        super::register_panel_title(ui, "files", title.inner);
-    }
 }
 
 fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {

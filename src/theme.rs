@@ -199,6 +199,7 @@ impl ThemeChoice {
                 text_styles: text_styles(),
                 ..style.clone()
             };
+            style.interaction.selectable_labels = false;
             style.spacing.item_spacing = egui::vec2(4.0, 2.0);
             style.spacing.button_padding = egui::vec2(5.0, 2.0);
             style.spacing.icon_width = 14.0;

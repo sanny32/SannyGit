@@ -13,13 +13,11 @@ use crate::{
 use super::controls::icons::{self, Icon};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
-    super::register_panel(ui, "diff");
     let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     let Some(change) = app.changes.get(app.selected_change) else {
         super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
-            let title = ui.label("Changes");
-            super::register_panel_title(ui, "diff", title.rect);
+            ui.label("Changes");
         });
         return;
     };
@@ -82,8 +80,7 @@ fn file_header(ui: &mut Ui, path: &str, palette: crate::theme::Palette) -> bool 
     let mut close = false;
     super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
         ui.spacing_mut().interact_size.y = 20.0;
-        let title = ui.label("Changes");
-        super::register_panel_title(ui, "diff", title.rect);
+        ui.label("Changes");
         ui.add_space(8.0);
         let font = eframe::egui::TextStyle::Body.resolve(ui.style());
         let text = ui

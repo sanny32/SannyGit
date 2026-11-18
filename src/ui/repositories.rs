@@ -9,7 +9,6 @@ use crate::{
 use eframe::egui::{Align, CollapsingHeader, Layout, RichText, ScrollArea, Ui};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
-    super::register_panel(ui, "repositories");
     let palette = app.palette();
     if app.open_dialog {
         let ctx = ui.ctx().clone();
@@ -52,8 +51,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         eframe::egui::vec2(ui.available_width(), super::WORKSPACE_HEADER_HEIGHT),
         Layout::left_to_right(Align::Center),
         |ui| {
-            let title = ui.heading("Repositories");
-            super::register_panel_title(ui, "repositories", title.rect);
+            ui.heading("Repositories");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 icons::unavailable(
                     ui,

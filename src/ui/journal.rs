@@ -17,21 +17,15 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
 }
 
 fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
-    if !history_window {
-        super::register_panel(ui, "journal");
-    }
     let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
     let wide = ui.available_width() >= 580.0;
     super::header(ui, 28.0, palette, |ui| {
         ui.spacing_mut().interact_size.y = 20.0;
-        let title = if history_window {
-            ui.label("Graph")
+        if history_window {
+            ui.label("Graph");
         } else {
-            ui.heading("Journal")
-        };
-        if !history_window {
-            super::register_panel_title(ui, "journal", title.rect);
+            ui.heading("Journal");
         }
         ui.add_space(8.0);
         let search_width = (ui.available_width() - 360.0).clamp(60.0, 240.0);
