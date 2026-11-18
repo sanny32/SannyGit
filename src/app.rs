@@ -229,6 +229,13 @@ struct CommitDraft {
     normal_message: Option<String>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WelcomeAction {
+    Add,
+    Clone,
+    Reopen,
+}
+
 pub struct SannyGitApp {
     pub manager: RepositoryManager,
     pub tracking: tracking::Monitor,
@@ -246,6 +253,8 @@ pub struct SannyGitApp {
     pub llm_models: ModelCatalog,
     pub about_dialog: bool,
     pub welcome_open: bool,
+    pub(crate) welcome_action: WelcomeAction,
+    pub(crate) welcome_repository: Option<String>,
     welcome_pending: bool,
     applied_theme: ThemeChoice,
     applied_interface_style: InterfaceStyle,
@@ -504,6 +513,8 @@ impl SannyGitApp {
             llm_models: ModelCatalog::default(),
             about_dialog: false,
             welcome_open: false,
+            welcome_action: WelcomeAction::Reopen,
+            welcome_repository: None,
             welcome_pending: false,
             applied_theme: theme,
             applied_interface_style: InterfaceStyle::default(),

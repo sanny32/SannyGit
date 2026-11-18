@@ -268,72 +268,132 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
 }
 
 fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
+    use crate::app::WelcomeAction;
+    use eframe::egui::{Button, RichText, ScrollArea};
+
     if !app.welcome_open {
         return;
     }
+    if app.repositories.is_empty() && app.welcome_action == WelcomeAction::Reopen {
+        app.welcome_action = WelcomeAction::Add;
+    }
+    if !app
+        .repositories
+        .iter()
+        .any(|repository| app.welcome_repository.as_deref() == Some(repository.path.as_str()))
+    {
+        app.welcome_repository = app
+            .repositories
+            .first()
+            .map(|repository| repository.path.clone());
+    }
     let palette = app.palette();
+    let busy = app.busy();
+    let mut accept = false;
     dialog_style::modal(ui.ctx(), palette, "application.welcome").show(ui.ctx(), |ui| {
-        ui.set_width(380.0);
+        ui.set_width(640.0);
         dialog_style::setup(ui);
         ui.spacing_mut().item_spacing.y = 0.0;
         dialog_style::header(
             ui,
             palette,
-            "Welcome to SannyGit",
-            "Your repositories, all in one place.",
+            "What do you want to do?",
+            "Select whether to open or create a local repository, clone a remote repository, or reopen a previously used repository.",
         );
-        dialog_style::section(ui, palette.panel, Margin::same(18), |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            ui.label(
-                eframe::egui::RichText::new("GET STARTED")
-                    .color(palette.muted)
-                    .family(crate::theme::semibold_family()),
-            );
-            ui.add_space(10.0);
-            if ui
-                .add_sized(
-                    [ui.available_width(), 36.0],
-                    eframe::egui::Button::new((
-                        controls::icons::image(controls::icons::Icon::Folder, palette.accent, 16.0),
-                        "Open or create repository…",
-                        eframe::egui::Atom::grow(),
-                    ))
-                    .gap(10.0),
-                )
-                .clicked()
-            {
-                app.welcome_open = false;
-                app.open_dialog = true;
-            }
-            ui.add_space(6.0);
-            if ui
-                .add_sized(
-                    [ui.available_width(), 36.0],
-                    eframe::egui::Button::new((
-                        controls::icons::image(
-                            controls::icons::Icon::Repository,
-                            palette.accent,
-                            16.0,
-                        ),
-                        "Clone repository…",
-                        eframe::egui::Atom::grow(),
-                    ))
-                    .gap(10.0),
-                )
-                .clicked()
-            {
-                app.welcome_open = false;
-                app.handle_menu_action(crate::menu::MenuAction::Clone, ui.ctx());
-            }
+        dialog_style::section(ui, palette.header, Margin::same(18), |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.add_enabled_ui(!busy, |ui| {
+                ui.radio_value(
+                    &mut app.welcome_action,
+                    WelcomeAction::Add,
+                    "Add an existing local or create a new repository",
+                );
+                ui.radio_value(
+                    &mut app.welcome_action,
+                    WelcomeAction::Clone,
+                    "Clone existing repository",
+                );
+                ui.add_enabled_ui(!app.repositories.is_empty(), |ui| {
+                    ui.radio_value(
+                        &mut app.welcome_action,
+                        WelcomeAction::Reopen,
+                        "Reopen previously used repository:",
+                    );
+                })
+                .response
+                .on_disabled_hover_text("No previously used repositories. Open or clone a repository first.");
+                ui.visuals_mut().indent_has_left_vline = false;
+                ui.indent("welcome.repositories.indent", |ui| {
+                    Frame::new()
+                        .fill(palette.editor)
+                        .stroke((1.0, palette.border))
+                        .inner_margin(2)
+                        .show(ui, |ui| {
+                            ScrollArea::vertical()
+                                .id_salt("welcome.repositories")
+                                .max_height(176.0)
+                                .min_scrolled_height(176.0)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.spacing_mut().item_spacing.y = 0.0;
+                                    if app.repositories.is_empty() {
+                                        ui.label(RichText::new("No previously used repositories").color(palette.muted));
+                                    }
+                                    for repository in &app.repositories {
+                                        ui.push_id(&repository.path, |ui| {
+                                            let selected = app.welcome_action == WelcomeAction::Reopen
+                                                && app.welcome_repository.as_deref() == Some(repository.path.as_str());
+                                            let response = ui.add_sized(
+                                                [ui.available_width(), 24.0],
+                                                Button::selectable(selected, (
+                                                    RichText::new(&repository.name),
+                                                    RichText::new(format!("({})", repository.path)).color(palette.muted),
+                                                    eframe::egui::Atom::grow(),
+                                                )).gap(5.0).truncate(),
+                                            ).on_hover_text(&repository.path);
+                                            if response.clicked() {
+                                                app.welcome_action = WelcomeAction::Reopen;
+                                                app.welcome_repository = Some(repository.path.clone());
+                                            }
+                                            accept |= response.double_clicked();
+                                        });
+                                    }
+                                });
+                        });
+                });
+            });
         });
         dialog_style::section(ui, palette.header, Margin::symmetric(18, 12), |ui| {
-            dialog_style::button_row(ui, |ui| {
-                if ui.add(dialog_style::button("Close")).dialog_close() {
-                    app.welcome_open = false;
-                }
+            ui.horizontal(|ui| {
+                ui.checkbox(
+                    &mut app.preferences.show_welcome,
+                    "Show this dialog if no repository was opened",
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let can_accept = !busy && (app.welcome_action != WelcomeAction::Reopen
+                        || app.welcome_repository.is_some());
+                    accept |= ui.add_enabled(can_accept, dialog_style::primary("OK", palette)).dialog_accept();
+                    if ui.add(dialog_style::button("Close")).dialog_cancel() {
+                        app.welcome_open = false;
+                    }
+                });
             });
         });
     });
+    if accept && !busy {
+        app.welcome_open = false;
+        match app.welcome_action {
+            WelcomeAction::Add => app.open_dialog = true,
+            WelcomeAction::Clone => {
+                app.handle_menu_action(crate::menu::MenuAction::Clone, ui.ctx())
+            }
+            WelcomeAction::Reopen => {
+                if let Some(path) = app.welcome_repository.clone() {
+                    app.open_repository(path);
+                }
+            }
+        }
+    }
 }
 
 // Separate panel IDs preserve each style's user-adjusted split positions.
@@ -396,6 +456,62 @@ mod tests {
     use super::*;
     use crate::theme::ThemeChoice;
     use eframe::egui::{pos2, vec2, Context, Event, Modifiers, PointerButton, RawInput, Rect};
+
+    #[test]
+    fn welcome_fits_supported_sizes_and_keeps_geometry_when_selecting_actions() {
+        use crate::app::WelcomeAction;
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [vec2(1100.0, 700.0), vec2(1536.0, 1024.0)] {
+                for zoom in [1.0, 1.5] {
+                    let ctx = Context::default();
+                    crate::theme::install_fonts(&ctx);
+                    egui_extras::install_image_loaders(&ctx);
+                    theme.apply(&ctx);
+                    ctx.set_zoom_factor(zoom);
+                    let mut app = SannyGitApp::with_theme(theme);
+                    app.welcome_open = true;
+                    app.repositories = crate::mock_data::repositories();
+                    let mut initial = None;
+                    for action in [
+                        WelcomeAction::Reopen,
+                        WelcomeAction::Add,
+                        WelcomeAction::Clone,
+                    ] {
+                        app.welcome_action = action;
+                        for _ in 0..3 {
+                            let mut output = ctx.run_ui(
+                                RawInput {
+                                    screen_rect: Some(Rect::from_min_size(
+                                        eframe::egui::Pos2::ZERO,
+                                        size,
+                                    )),
+                                    ..Default::default()
+                                },
+                                |ui| welcome(ui, &mut app),
+                            );
+                            output.textures_delta.clear();
+                        }
+                        let rect = ctx
+                            .memory(|memory| {
+                                memory.area_rect(eframe::egui::Id::unique("application.welcome"))
+                            })
+                            .unwrap();
+                        assert!(
+                            ctx.content_rect().contains_rect(rect),
+                            "{theme:?} {size:?} {zoom}: {rect:?}"
+                        );
+                        if let Some(initial) = initial {
+                            assert_eq!(
+                                rect, initial,
+                                "Selecting an action resized the welcome dialog"
+                            );
+                        }
+                        initial = Some(rect);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn clicking_workspace_titles_does_not_add_an_accent_marker() {
