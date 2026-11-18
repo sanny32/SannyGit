@@ -912,21 +912,10 @@ fn llm_form(
                 "Save the API key and model in the OS credential manager"
             });
             let models = catalog.entry(&draft.config, repository);
-            let status = if models.loading() {
-                "Loading models…"
-            } else {
-                ""
-            };
             if models.loading() {
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_millis(50));
             }
-            super::controls::dialog_style::text_line(
-                ui,
-                RichText::new(status).small().color(palette.muted),
-                20.0,
-            )
-            .help_text(status);
         });
     });
 }
