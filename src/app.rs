@@ -383,6 +383,8 @@ impl SannyGitApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, llm_models::STORAGE_KEY))
             .unwrap_or_default();
+        app.llm_models.log_path =
+            eframe::storage_dir("SannyGit").map(|directory| directory.join("sannygit.log"));
         if let Some(storage) = creation_context.storage {
             app.restore_commit_drafts(storage);
         }

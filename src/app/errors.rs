@@ -44,9 +44,6 @@ impl SannyGitApp {
                 current.insert(format!("settings:{path}"), error.clone());
             }
         }
-        for (key, error) in self.llm_models.errors() {
-            current.insert(format!("models:{key}"), error.to_owned());
-        }
         for (source, error) in &current {
             if self.error_dialogs.observed.get(source) != Some(error)
                 && !self.error_dialogs.pending.contains(error)
@@ -110,18 +107,18 @@ mod tests {
     }
 
     #[test]
-    fn local_dialog_settings_model_and_preview_errors_reach_the_queue() {
+    fn settings_and_preview_errors_reach_the_queue_without_model_list_errors() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
         app.settings_window.llm.secret_error = Some("Credential access failed".into());
         app.commit_preview_error = Some("Commit diff failed".into());
         app.llm_models.entry(&app.llm_config, None).error = Some("Model list failed".into());
         app.collect_errors();
-        assert_eq!(app.error_dialogs.pending.len(), 3);
+        assert_eq!(app.error_dialogs.pending.len(), 2);
         app.collect_errors();
-        assert_eq!(app.error_dialogs.pending.len(), 3);
+        assert_eq!(app.error_dialogs.pending.len(), 2);
         app.settings_window.llm.secret_error = Some("Another credential error".into());
         app.collect_errors();
-        assert_eq!(app.error_dialogs.pending.len(), 4);
+        assert_eq!(app.error_dialogs.pending.len(), 3);
     }
 
     #[test]

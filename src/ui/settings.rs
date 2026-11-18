@@ -769,21 +769,25 @@ fn llm_form(
                             draft.config.store_api_key = false;
                         }
                     }
-                    // Refresh with the key already in memory; editing settings
-                    // must never read the OS credential store.
-                    if (preset_selected || endpoint_response.lost_focus()) && ui.is_enabled() {
+                    // The model dropdown can unlock saved credentials on demand.
+                    if (preset_selected || endpoint_response.lost_focus())
+                        && ui.is_enabled()
+                        && (!draft.config.api_key.trim().is_empty()
+                            || (draft.config.is_local() && !draft.config.store_api_key))
+                    {
                         catalog.load(&draft.config, repository, ui.ctx());
                     }
                     ui.end_row();
                     form_label(ui, "Model:");
                     let id = ui.make_persistent_id("preferences.llm.model");
+                    let popup = id.with("popup");
+                    let was_open = egui::Popup::is_id_open(ui.ctx(), popup);
                     let models = catalog.entry(&draft.config, repository);
+                    let should_load = !models.attempted || (models.error.is_some() && !was_open);
                     let empty_text = if models.loading() {
                         "Loading models…"
-                    } else if models.error.is_some() {
-                        "Cannot load models; enter a model name"
                     } else {
-                        "No models returned; enter a model name"
+                        "Enter a model name"
                     };
                     super::controls::editable_combobox::show(
                         ui,
@@ -795,10 +799,12 @@ fn llm_form(
                         empty_text,
                     )
                     .help_text("Select a model from the server or enter a custom model name");
-                    let first_open =
-                        !models.attempted && egui::Popup::is_id_open(ui.ctx(), id.with("popup"));
-                    if ui.is_enabled() && first_open {
-                        catalog.load(&draft.config, repository, ui.ctx());
+                    if ui.is_enabled() && should_load && egui::Popup::is_id_open(ui.ctx(), popup) {
+                        if draft.api_key_dirty {
+                            catalog.load(&draft.config, repository, ui.ctx());
+                        } else {
+                            catalog.load_from_dropdown(&draft.config, repository, ui.ctx());
+                        }
                         ui.ctx().request_repaint();
                     }
                     ui.end_row();
@@ -816,7 +822,12 @@ fn llm_form(
                     if api_key_response.changed() {
                         draft.api_key_dirty = true;
                     }
-                    if api_key_response.lost_focus() && draft.api_key_dirty && ui.is_enabled() {
+                    if api_key_response.lost_focus()
+                        && draft.api_key_dirty
+                        && ui.is_enabled()
+                        && (!draft.config.api_key.trim().is_empty()
+                            || (draft.config.is_local() && !draft.config.store_api_key))
+                    {
                         catalog.load(&draft.config, repository, ui.ctx());
                     }
                     ui.end_row();
