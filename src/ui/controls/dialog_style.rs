@@ -85,7 +85,37 @@ pub fn frame(ctx: &egui::Context, palette: Palette) -> Frame {
 }
 
 pub fn modal(ctx: &egui::Context, palette: Palette, id: &'static str) -> Modal {
-    Modal::new(Id::unique(id))
+    let id = Id::unique(id);
+    let offset_id = id.with("header_offset");
+    let drag_origin_id = id.with("header_drag_origin");
+    let drag_delta = if ctx.is_being_dragged(id.with("header_drag")) {
+        ctx.input(|input| {
+            input
+                .pointer
+                .total_drag_delta()
+                .filter(|_| input.pointer.primary_down())
+        })
+    } else {
+        None
+    };
+    let area = ctx.memory(|memory| memory.area_rect(id));
+    let bounds = ctx.content_rect();
+    let offset = ctx.data_mut(|data| {
+        let offset = data.get_temp::<egui::Vec2>(offset_id).unwrap_or_default();
+        if let (Some(delta), Some(area)) = (drag_delta, area) {
+            // A fixed origin prevents pixel rounding from discarding small pointer movements.
+            let start = *data.get_temp_mut_or(drag_origin_id, area.center() - bounds.center());
+            let limit = ((bounds.size() - area.size()) / 2.0).max(egui::Vec2::ZERO);
+            let offset = (start + delta).clamp(-limit, limit);
+            data.insert_temp(offset_id, offset);
+            offset
+        } else {
+            data.remove::<egui::Vec2>(drag_origin_id);
+            offset
+        }
+    });
+    Modal::new(id)
+        .area(Modal::default_area(id).anchor(egui::Align2::CENTER_CENTER, offset))
         .frame(frame(ctx, palette))
         .backdrop_color(egui::Color32::TRANSPARENT)
 }
@@ -139,7 +169,7 @@ pub fn header_with_icon(
     icon: Icon,
 ) -> egui::Rect {
     let width = ui.available_width();
-    Frame::new()
+    let rect = Frame::new()
         .fill(palette.panel)
         .corner_radius(egui::CornerRadius {
             nw: 7,
@@ -167,12 +197,15 @@ pub fn header_with_icon(
                     ))
                     .layout(egui::Layout::top_down(egui::Align::Min)),
             );
-            text.label(
-                RichText::new(title)
-                    .size(DIALOG_TITLE_FONT_SIZE)
-                    .family(semibold_family()),
+            text.add(
+                egui::Label::new(
+                    RichText::new(title)
+                        .size(DIALOG_TITLE_FONT_SIZE)
+                        .family(semibold_family()),
+                )
+                .selectable(false),
             );
-            text.add(egui::Label::new(description).wrap());
+            text.add(egui::Label::new(description).wrap().selectable(false));
             let height = text.min_rect().height().max(48.0);
             let (content_rect, _) =
                 ui.allocate_exact_size(egui::vec2(content_width, height), egui::Sense::hover());
@@ -195,7 +228,13 @@ pub fn header_with_icon(
             icons::image(icon, color, 48.0).paint_at(ui, icon_rect);
         })
         .response
-        .rect
+        .rect;
+    let layer = ui.layer_id();
+    if ui.ctx().memory(|memory| memory.top_modal_layer()) == Some(layer) {
+        ui.interact(rect, layer.id.with("header_drag"), egui::Sense::drag())
+            .on_hover_and_drag_cursor(egui::CursorIcon::Default);
+    }
+    rect
 }
 
 /// Reserve a stable row while keeping short or truncated text left-aligned.
@@ -484,6 +523,57 @@ mod tests {
             output.textures_delta.clear();
         }
         assert_eq!(actions, [false, true]);
+    }
+
+    #[test]
+    fn dragging_header_text_moves_the_modal() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let palette = ThemeChoice::Light.palette();
+        let id = "drag.dialog";
+        let render = |events| {
+            let mut header_rect = egui::Rect::NOTHING;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1100.0, 700.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    modal(ui.ctx(), palette, id).show(ui.ctx(), |ui| {
+                        ui.set_width(500.0);
+                        header_rect = header(ui, palette, "Add tag", "Enter a tag name.");
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            assert_eq!(
+                output.platform_output.cursor_icon,
+                egui::CursorIcon::Default
+            );
+            header_rect
+        };
+        render(vec![]);
+        let initial = render(vec![]);
+        let start = initial.min + egui::vec2(32.0, 24.0);
+        render(vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        for step in 1..=24 {
+            let delta = egui::vec2(0.375, 0.25) * step as f32;
+            let moved = render(vec![egui::Event::PointerMoved(start + delta)]);
+            assert!((moved.min - initial.min - delta).length() < 1.0);
+            assert_eq!(moved.size(), initial.size());
+        }
     }
 
     #[test]
