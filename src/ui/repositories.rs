@@ -263,7 +263,7 @@ fn repository_row(
                 .painter()
                 .layout_no_wrap(
                     suffix.clone(),
-                    eframe::egui::FontId::proportional(12.0),
+                    eframe::egui::FontId::proportional(crate::theme::UI_FONT_SIZE),
                     palette.muted,
                 )
                 .size()
@@ -302,7 +302,7 @@ fn repository_row(
             );
             if !suffix.is_empty() {
                 ui.add(
-                    eframe::egui::Label::new(super::sync_badge(&suffix, palette, 12.0))
+                    eframe::egui::Label::new(super::sync_badge(&suffix, palette))
                         .sense(eframe::egui::Sense::hover()),
                 );
             }

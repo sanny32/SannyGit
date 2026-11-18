@@ -50,7 +50,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         ui.set_min_width(path_width);
                         ui.add(
                             eframe::egui::Label::new(
-                                RichText::new(&change.path).size(12.0).color(palette.muted),
+                                RichText::new(&change.path).color(palette.muted),
                             )
                             .show_tooltip_when_elided(false),
                         )
@@ -59,13 +59,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 );
                 ui.label(
                     RichText::new(format!("+{added}"))
-                        .size(12.0)
                         .family(crate::theme::semibold_family())
                         .color(palette.added_text),
                 );
                 ui.label(
                     RichText::new(format!("−{removed}"))
-                        .size(12.0)
                         .family(crate::theme::semibold_family())
                         .color(palette.removed_text),
                 );
@@ -342,12 +340,7 @@ fn show_line(
                 .unwrap_or_default();
                 ui.add_sized(
                     [32.0, 18.0],
-                    Label::new(
-                        RichText::new(number)
-                            .monospace()
-                            .size(11.0)
-                            .color(palette.muted),
-                    ),
+                    Label::new(RichText::new(number).monospace().color(palette.muted)),
                 );
                 ui.add_sized(
                     [16.0, 18.0],

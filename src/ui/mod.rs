@@ -122,7 +122,7 @@ fn show_panel_activity(ui: &Ui, palette: Palette) {
     }
 }
 
-fn sync_badge(text: &str, palette: Palette, size: f32) -> eframe::egui::text::LayoutJob {
+fn sync_badge(text: &str, palette: Palette) -> eframe::egui::text::LayoutJob {
     use eframe::egui::{text::LayoutJob, FontId, TextFormat};
     let mut job = LayoutJob::default();
     for (index, part) in text.split_whitespace().enumerate() {
@@ -131,7 +131,7 @@ fn sync_badge(text: &str, palette: Palette, size: f32) -> eframe::egui::text::La
                 " ",
                 0.0,
                 TextFormat {
-                    font_id: FontId::proportional(size),
+                    font_id: FontId::proportional(crate::theme::UI_FONT_SIZE),
                     color: palette.muted,
                     ..Default::default()
                 },
@@ -148,7 +148,7 @@ fn sync_badge(text: &str, palette: Palette, size: f32) -> eframe::egui::text::La
             part,
             0.0,
             TextFormat {
-                font_id: FontId::proportional(size),
+                font_id: FontId::proportional(crate::theme::UI_FONT_SIZE),
                 color,
                 ..Default::default()
             },
@@ -384,7 +384,6 @@ fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.label(
                 eframe::egui::RichText::new("GET STARTED")
-                    .size(11.0)
                     .color(palette.muted)
                     .family(crate::theme::semibold_family()),
             );
@@ -464,7 +463,7 @@ fn show_errors(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 ui.label(
                     eframe::egui::RichText::new("Attention required")
-                        .size(16.0)
+                        .size(crate::theme::DIALOG_TITLE_FONT_SIZE)
                         .family(crate::theme::semibold_family()),
                 );
                 ui.add_space(12.0);

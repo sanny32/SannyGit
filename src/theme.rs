@@ -2,6 +2,12 @@ use eframe::egui::{self, Color32, Context, FontFamily, FontId, Stroke, Style, Te
 use serde::{Deserialize, Serialize};
 
 pub const INTERFACE_STYLE_STORAGE_KEY: &str = "sannygit.interface_style";
+pub const UI_FONT_SIZE: f32 = 12.0;
+pub const DIALOG_TITLE_FONT_SIZE: f32 = 16.0;
+pub const SETTINGS_TITLE_FONT_SIZE: f32 = 18.0;
+pub const TOOLBAR_BRAND_FONT_SIZE: f32 = 24.0;
+pub const ABOUT_BRAND_FONT_SIZE: f32 = 32.0;
+pub const COMMIT_AVATAR_FONT_SIZE: f32 = 32.0;
 
 /// Shared minimum height for form fields and their adjacent controls, in logical pixels.
 pub const CONTROL_HEIGHT: f32 = 28.0;
@@ -76,21 +82,9 @@ pub fn install_fonts(context: &Context) {
     let mut semibold = vec!["Source Sans 3 Semibold".into()];
     semibold.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
     fonts.families.insert(semibold_family(), semibold);
-    #[cfg(target_os = "windows")]
-    prefer_windows_ui_fonts(&mut fonts);
     // Fit UI glyphs horizontally as well as vertically for small desktop text.
-    for name in [
-        "Source Sans 3",
-        "Source Sans 3 Semibold",
-        "Segoe UI",
-        "Segoe UI Semibold",
-    ] {
+    for name in ["Source Sans 3", "Source Sans 3 Semibold"] {
         if let Some(font) = fonts.font_data.get_mut(name) {
-            // Segoe UI's visible glyphs sit below the center of its line box.
-            // Correct the ink position without changing row heights or baselines.
-            if name.starts_with("Segoe UI") {
-                std::sync::Arc::make_mut(font).tweak.y_offset = -1.0;
-            }
             std::sync::Arc::make_mut(font).tweak.hinting_target =
                 egui::epaint::text::HintingTarget::Smooth(egui::epaint::text::SmoothHinting {
                     light: false,
@@ -99,36 +93,29 @@ pub fn install_fonts(context: &Context) {
                 });
         }
     }
-    context.set_fonts(fonts);
-}
-
-#[cfg(target_os = "windows")]
-fn prefer_windows_ui_fonts(fonts: &mut egui::FontDefinitions) {
-    let Some(windows_dir) = std::env::var_os("WINDIR") else {
-        return;
-    };
-    let font_dir = std::path::PathBuf::from(windows_dir).join("Fonts");
-    // System fonts are optional and are never bundled with the application.
-    // Keep the embedded fonts when either face is unavailable.
-    let (Ok(regular), Ok(semibold)) = (
-        std::fs::read(font_dir.join("segoeui.ttf")),
-        std::fs::read(font_dir.join("seguisb.ttf")),
-    ) else {
-        return;
-    };
-    for (name, data, family) in [
-        ("Segoe UI", regular, FontFamily::Proportional),
-        ("Segoe UI Semibold", semibold, semibold_family()),
+    #[cfg(target_os = "windows")]
+    for (name, bytes, family) in [
+        (
+            "Inter",
+            include_bytes!("../assets/fonts/Inter-Regular.ttf").as_slice(),
+            FontFamily::Proportional,
+        ),
+        (
+            "Inter Semibold",
+            include_bytes!("../assets/fonts/Inter-SemiBold.ttf").as_slice(),
+            semibold_family(),
+        ),
     ] {
-        fonts
-            .font_data
-            .insert(name.into(), egui::FontData::from_owned(data).into());
+        let mut font = egui::FontData::from_static(bytes);
+        font.tweak.subpixel_binning = Some(true);
+        fonts.font_data.insert(name.into(), font.into());
         fonts
             .families
             .entry(family)
             .or_default()
             .insert(0, name.into());
     }
+    context.set_fonts(fonts);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,7 +174,7 @@ impl ThemeChoice {
         visuals.selection.stroke = Stroke::new(1.0_f32, palette.accent);
         visuals.override_text_color = Some(palette.text);
         visuals.text_options.font_hinting = true;
-        // Fractional glyph positions favor even spacing over sharp pixel edges.
+        // Snap glyph positions to whole pixels for sharper small text.
         visuals.text_options.subpixel_binning = false;
         visuals.widgets.noninteractive.weak_bg_fill = palette.panel_alt;
         visuals.widgets.inactive.weak_bg_fill = palette.panel_alt;
@@ -244,17 +231,23 @@ fn text_styles() -> std::collections::BTreeMap<TextStyle, FontId> {
     [
         (
             TextStyle::Small,
-            FontId::new(11.0, FontFamily::Proportional),
+            FontId::new(UI_FONT_SIZE, FontFamily::Proportional),
         ),
-        (TextStyle::Body, FontId::new(13.0, FontFamily::Proportional)),
+        (
+            TextStyle::Body,
+            FontId::new(UI_FONT_SIZE, FontFamily::Proportional),
+        ),
         (
             TextStyle::Button,
-            FontId::new(12.0, FontFamily::Proportional),
+            FontId::new(UI_FONT_SIZE, FontFamily::Proportional),
         ),
-        (TextStyle::Heading, FontId::new(13.0, semibold_family())),
+        (
+            TextStyle::Heading,
+            FontId::new(UI_FONT_SIZE, semibold_family()),
+        ),
         (
             TextStyle::Monospace,
-            FontId::new(12.0, FontFamily::Monospace),
+            FontId::new(UI_FONT_SIZE, FontFamily::Monospace),
         ),
     ]
     .into()
@@ -369,6 +362,7 @@ impl Palette {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::epaint::FontColorTransferFunction;
 
     #[test]
     fn automatic_theme_tracks_system_changes_and_keeps_a_fallback() {
@@ -424,9 +418,26 @@ mod tests {
                             2
                         })
                     );
-                    assert_eq!(style.text_styles[&TextStyle::Body].size, 13.0);
+                    assert!(style.text_styles.values().all(|font| font.size == 12.0));
                     assert!(style.visuals.text_options.font_hinting);
                     assert!(!style.visuals.text_options.subpixel_binning);
+                    assert_eq!(
+                        style.visuals.text_options.color_transfer_function,
+                        match choice {
+                            ThemeChoice::Dark => FontColorTransferFunction::DARK_MODE_DEFAULT,
+                            ThemeChoice::Light => FontColorTransferFunction::LIGHT_MODE_DEFAULT,
+                        }
+                    );
+                    ui.fonts(|fonts| {
+                        let families = &fonts.definitions().families;
+                        let (regular, semibold) = if cfg!(target_os = "windows") {
+                            ("Inter", "Inter Semibold")
+                        } else {
+                            ("Source Sans 3", "Source Sans 3 Semibold")
+                        };
+                        assert_eq!(families[&FontFamily::Proportional][0], regular);
+                        assert_eq!(families[&semibold_family()][0], semibold);
+                    });
                 });
                 output.textures_delta.clear();
             }

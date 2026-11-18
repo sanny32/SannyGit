@@ -178,7 +178,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         rect.center(),
                         Align2::CENTER_CENTER,
                         change.kind.code(),
-                        FontId::new(12.0, semibold_family()),
+                        FontId::new(crate::theme::UI_FONT_SIZE, semibold_family()),
                         color,
                     );
                     response.help_text(change.kind.label());
@@ -459,7 +459,7 @@ fn ui_line(response: &eframe::egui::Response, row: Rect, clip: Rect, palette: Pa
 fn changes_title(ui: &mut Ui, count: usize, style: crate::theme::InterfaceStyle) {
     let title = ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let title = ui.label(RichText::new("Files").size(13.0).family(semibold_family()));
+        let title = ui.label(RichText::new("Files").family(semibold_family()));
         ui.label(format!("({count} files)"));
         title.rect
     });
@@ -505,7 +505,7 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             rect.left_center() + Vec2::new(6.0, 0.0),
             Align2::LEFT_CENTER,
             label,
-            FontId::proportional(12.0),
+            FontId::proportional(crate::theme::UI_FONT_SIZE),
             text_color,
         );
         if filter != ChangeFilter::All {
@@ -526,7 +526,7 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 badge.center(),
                 Align2::CENTER_CENTER,
                 count,
-                FontId::proportional(11.0),
+                FontId::proportional(crate::theme::UI_FONT_SIZE),
                 palette.text,
             );
         }

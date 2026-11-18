@@ -1,6 +1,10 @@
 use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
-use crate::{app::SannyGitApp, models::HistoryEdge, theme::Palette};
+use crate::{
+    app::SannyGitApp,
+    models::HistoryEdge,
+    theme::{Palette, COMMIT_AVATAR_FONT_SIZE, UI_FONT_SIZE},
+};
 use eframe::egui::{
     self, Align, Button, CentralPanel, ComboBox, Frame, Label, Layout, Margin, Panel, RichText,
     ScrollArea, Sense, Ui, Vec2, ViewportCommand, ViewportId, Window,
@@ -148,7 +152,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
                 app.preferences.date_format.label(),
                 app.preferences.time_format.label()
             ),
-            eframe::egui::FontId::proportional(13.0),
+            eframe::egui::FontId::proportional(UI_FONT_SIZE),
             palette.muted,
         )
         .size()
@@ -214,7 +218,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
                     if title == "Graph" {
                         ui.add_space(6.0);
                     }
-                    ui.label(RichText::new(title).size(12.0));
+                    ui.label(title);
                 });
             }
         })
@@ -616,7 +620,7 @@ fn metadata(ui: &mut Ui, app: &SannyGitApp) {
                             .unwrap_or('?')
                             .to_uppercase()
                             .to_string(),
-                        egui::FontId::proportional(32.0),
+                        egui::FontId::proportional(COMMIT_AVATAR_FONT_SIZE),
                         palette.on_accent,
                     );
                     ui.vertical(|ui| {

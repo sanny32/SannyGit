@@ -1,6 +1,9 @@
 use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
-use crate::{app::SannyGitApp, theme::Palette};
+use crate::{
+    app::SannyGitApp,
+    theme::{semibold_family, Palette, TOOLBAR_BRAND_FONT_SIZE, UI_FONT_SIZE},
+};
 use eframe::egui::{
     Align, Align2, Button, FontId, Frame, Layout, Margin, Panel, Rect, Response, Ui, Vec2,
 };
@@ -73,7 +76,7 @@ fn action_button(
         response.rect.center_top() + Vec2::new(0.0, TOOLBAR_BUTTON_PADDING_Y + 24.0) + press_offset,
         Align2::CENTER_TOP,
         label,
-        FontId::proportional(12.0),
+        FontId::proportional(UI_FONT_SIZE),
         if enabled { palette.text } else { palette.muted },
     );
     response
@@ -107,7 +110,7 @@ fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
                     style.spacing.item_spacing.x = 0.0;
                     style.spacing.button_padding.x = 8.0;
                     style.spacing.interact_size.y = 24.0;
-                    style.override_font_id = Some(FontId::proportional(13.0));
+                    style.override_font_id = Some(FontId::proportional(UI_FONT_SIZE));
                 })
                 .ui(ui, |ui| {
                     for menu in crate::menu::MENUS {
@@ -155,7 +158,7 @@ pub(super) fn desktop_menu_style(style: &mut eframe::egui::Style, palette: Palet
     use eframe::egui::{CornerRadius, Stroke, TextWrapMode};
 
     eframe::egui::containers::menu::menu_style(style);
-    style.override_font_id = Some(FontId::proportional(13.0));
+    style.override_font_id = Some(FontId::proportional(UI_FONT_SIZE));
     style.wrap_mode = Some(TextWrapMode::Extend);
     style.spacing.menu_margin = Margin::symmetric(1, 4);
     style.spacing.item_spacing = Vec2::ZERO;
@@ -255,7 +258,7 @@ fn brand(ui: &mut Ui, palette: Palette) {
             text,
             0.0,
             TextFormat {
-                font_id: FontId::new(24.0, crate::theme::semibold_family()),
+                font_id: FontId::new(TOOLBAR_BRAND_FONT_SIZE, semibold_family()),
                 color,
                 ..Default::default()
             },
@@ -263,8 +266,8 @@ fn brand(ui: &mut Ui, palette: Palette) {
     }
     let title = ui.fonts_mut(|fonts| fonts.layout_job(title));
     let subtitle = ui.painter().layout_no_wrap(
-        "A simple Git client.".into(),
-        FontId::proportional(11.0),
+        "A simple Git client".into(),
+        FontId::proportional(UI_FONT_SIZE),
         palette.muted,
     );
     let icon_size = 44.0;

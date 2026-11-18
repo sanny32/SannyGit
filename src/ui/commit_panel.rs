@@ -20,7 +20,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             rect.center(),
             Align2::CENTER_CENTER,
             "Commit",
-            FontId::new(13.0, semibold_family()),
+            FontId::new(crate::theme::UI_FONT_SIZE, semibold_family()),
             palette.text,
         );
         super::register_panel_title(ui, "commit", rect.shrink2(Vec2::new(6.0, 0.0)));

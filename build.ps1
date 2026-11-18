@@ -135,6 +135,7 @@ try {
         Copy-Item -LiteralPath $binary -Destination (Join-Path $prefix "SannyGit.exe") -Force
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot "LICENSE") -Destination (Join-Path $prefix "LICENSE") -Force
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot "assets\fonts\OFL.txt") -Destination (Join-Path $prefix "SourceSans3-OFL.txt") -Force
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot "assets\fonts\OFL-Inter.txt") -Destination (Join-Path $prefix "Inter-OFL.txt") -Force
         Write-Host "Installed: $(Join-Path $prefix 'SannyGit.exe')"
     }
 }

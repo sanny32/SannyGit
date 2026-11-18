@@ -875,7 +875,11 @@ fn form_label(ui: &mut Ui, text: &str) {
 }
 
 fn heading(ui: &mut Ui, title: &str) {
-    ui.label(RichText::new(title).size(18.0).family(semibold_family()));
+    ui.label(
+        RichText::new(title)
+            .size(crate::theme::SETTINGS_TITLE_FONT_SIZE)
+            .family(semibold_family()),
+    );
     ui.add_space(8.0);
 }
 

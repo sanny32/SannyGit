@@ -18,7 +18,7 @@ on:
       - 'clippy.toml'
       - '.clippy.toml'
       - 'assets/fonts/*.ttf'
-      - 'assets/fonts/OFL.txt'
+      - 'assets/fonts/OFL*.txt'
       - 'assets/icons/*.svg'
       - 'assets/previews/*.png'
       - 'assets/app/sannygit.png'

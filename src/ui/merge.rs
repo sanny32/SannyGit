@@ -139,7 +139,7 @@ fn graph(
                 rect.center() + egui::vec2(0.0, 19.0),
                 egui::Align2::CENTER_CENTER,
                 "Loading commit graph…",
-                egui::FontId::proportional(13.0),
+                egui::FontId::proportional(crate::theme::UI_FONT_SIZE),
                 palette.muted,
             );
         }
@@ -280,7 +280,7 @@ fn graph(
                                 .collect();
                             let mut text = egui::text::LayoutJob::default();
                             let badge = egui::TextFormat {
-                                font_id: egui::FontId::proportional(11.0),
+                                font_id: egui::FontId::proportional(crate::theme::UI_FONT_SIZE),
                                 color: palette.accent,
                                 background: palette.selection,
                                 valign: Align::Center,
@@ -297,7 +297,7 @@ fn graph(
                                 commit.subject(),
                                 4.0,
                                 egui::TextFormat {
-                                    font_id: egui::FontId::proportional(13.0),
+                                    font_id: egui::FontId::proportional(crate::theme::UI_FONT_SIZE),
                                     color: palette.text,
                                     valign: Align::Center,
                                     ..Default::default()

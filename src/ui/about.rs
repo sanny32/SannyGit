@@ -2,7 +2,10 @@ use super::controls::{
     dialog_style::{self, DialogResponse},
     icons::{self, Icon},
 };
-use crate::{app::SannyGitApp, theme::Palette};
+use crate::{
+    app::SannyGitApp,
+    theme::{semibold_family, Palette, ABOUT_BRAND_FONT_SIZE},
+};
 use eframe::egui::{self, Align, Frame, Layout, Margin, RichText, Ui, Vec2, ViewportCommand};
 
 const TITLE: &str = "About SannyGit";
@@ -125,16 +128,18 @@ fn contents(ui: &mut Ui, palette: Palette) -> bool {
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
-            ui.label(RichText::new("SannyGit").size(32.0).strong());
+            ui.label(
+                RichText::new("SannyGit")
+                    .size(ABOUT_BRAND_FONT_SIZE)
+                    .family(semibold_family()),
+            );
             ui.add_space(8.0);
             Frame::new()
                 .fill(palette.header)
                 .corner_radius(12)
                 .inner_margin(Margin::symmetric(0, 3))
                 .show(ui, |ui| {
-                    ui.label(
-                        RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).size(16.0),
-                    );
+                    ui.label(concat!("Version ", env!("CARGO_PKG_VERSION")));
                 });
             ui.add_space(12.0);
             ui.label(RichText::new(
@@ -181,18 +186,14 @@ fn brand_caption(ui: &mut Ui, palette: Palette) {
             text,
             0.0,
             TextFormat {
-                font_id: egui::FontId::new(32.0, crate::theme::semibold_family()),
+                font_id: egui::FontId::new(ABOUT_BRAND_FONT_SIZE, semibold_family()),
                 color,
                 ..Default::default()
             },
         );
     }
     ui.label(title);
-    ui.label(
-        RichText::new("A simple Git client")
-            .size(16.0)
-            .color(palette.muted),
-    );
+    ui.label(RichText::new("A simple Git client").color(palette.muted));
 }
 
 fn detail_row(ui: &mut Ui, palette: Palette, icon: Icon, label: &str, value: impl FnOnce(&mut Ui)) {

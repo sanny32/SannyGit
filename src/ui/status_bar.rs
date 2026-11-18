@@ -25,7 +25,7 @@ pub fn show(ui: &mut Ui, app: &SannyGitApp) {
                 let badge = app.tracking.badge();
                 if !badge.is_empty() {
                     ui.add(
-                        eframe::egui::Label::new(super::sync_badge(&badge, palette, 13.0))
+                        eframe::egui::Label::new(super::sync_badge(&badge, palette))
                             .selectable(false),
                     )
                     .help_text(app.tracking.description());
@@ -34,16 +34,14 @@ pub fn show(ui: &mut Ui, app: &SannyGitApp) {
                 ui.label(format!("{} changes", app.changes.len()));
                 ui.separator();
                 ui.add(
-                    eframe::egui::Label::new(
-                        RichText::new(&app.status).size(12.0).color(palette.muted),
-                    )
-                    .truncate()
-                    .show_tooltip_when_elided(false),
+                    eframe::egui::Label::new(RichText::new(&app.status).color(palette.muted))
+                        .truncate()
+                        .show_tooltip_when_elided(false),
                 )
                 .help_text(&app.status);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some(repository) = app.repositories.get(app.selected_repository) {
-                        ui.label(RichText::new(&repository.path).size(12.0));
+                        ui.label(&repository.path);
                         icons::paint(ui, Icon::Folder, palette.text, 14.0);
                     }
                 });

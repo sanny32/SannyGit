@@ -198,9 +198,10 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
 }
 
 fn source_page(ui: &mut Ui, app: &mut SannyGitApp) {
+    let provider_width = 200.0;
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
-            ui.set_width(184.0);
+            ui.set_width(provider_width);
             ui.spacing_mut().item_spacing.y = 3.0;
             for provider in Provider::ALL {
                 let icon = match provider {
@@ -217,7 +218,7 @@ fn source_page(ui: &mut Ui, app: &mut SannyGitApp) {
                 ))
                 .gap(8.0)
                 .selected(app.manager.clone_form.provider == provider);
-                if ui.add_sized([184.0, 26.0], button).clicked() {
+                if ui.add_sized([provider_width, 26.0], button).clicked() {
                     app.manager.clone_form.provider = provider;
                     app.error = None;
                 }

@@ -54,7 +54,7 @@ jobs:
           $prefix = Join-Path $env:RUNNER_TEMP "SannyGit install check"
           $process = Start-Process -FilePath $env:SANNYGIT_SETUP -ArgumentList "/S /D=$prefix" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Silent installation failed." }
-          foreach ($file in @("SannyGit.exe", "LICENSE", "SourceSans3-OFL.txt", "Uninstall.exe")) {
+          foreach ($file in @("SannyGit.exe", "LICENSE", "SourceSans3-OFL.txt", "Inter-OFL.txt", "Uninstall.exe")) {
             if (-not (Test-Path (Join-Path $prefix $file))) { throw "Missing installed file: $file" }
           }
           Set-Content (Join-Path $prefix "keep.txt") "User file"

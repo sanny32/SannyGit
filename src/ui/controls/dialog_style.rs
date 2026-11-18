@@ -1,6 +1,6 @@
 //! Compact desktop dialog chrome shared by repository dialogs.
 use super::icons::{self, Icon};
-use crate::theme::{semibold_family, Palette};
+use crate::theme::{semibold_family, Palette, DIALOG_TITLE_FONT_SIZE};
 use eframe::egui::{self, Button, Frame, Id, Margin, Modal, RichText, Ui};
 
 /// Keyboard activation shares the exact availability and action of a dialog button.
@@ -167,7 +167,11 @@ pub fn header_with_icon(
                     ))
                     .layout(egui::Layout::top_down(egui::Align::Min)),
             );
-            text.label(RichText::new(title).size(16.0).family(semibold_family()));
+            text.label(
+                RichText::new(title)
+                    .size(DIALOG_TITLE_FONT_SIZE)
+                    .family(semibold_family()),
+            );
             text.add(egui::Label::new(description).wrap());
             let height = text.min_rect().height().max(48.0);
             let (content_rect, _) =

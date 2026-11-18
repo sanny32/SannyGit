@@ -238,7 +238,7 @@ fn branch_confirmation(
                 ui.add(
                     egui::Label::new(
                         RichText::new(&title)
-                            .size(16.0)
+                            .size(crate::theme::DIALOG_TITLE_FONT_SIZE)
                             .family(crate::theme::semibold_family()),
                     )
                     .truncate().show_tooltip_when_elided(false),

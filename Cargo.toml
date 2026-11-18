@@ -38,3 +38,7 @@ raw-window-handle = "0.6"
 
 [build-dependencies]
 winresource = "0.1"
+
+[patch.crates-io]
+# winit 0.30.13 with the Windows mixed-DPI drag fix from upstream PR #4694.
+winit = { git = "https://github.com/rust-windowing/winit", rev = "39c4009c41e5977d779cf8a365792c8153ca77c5" }
