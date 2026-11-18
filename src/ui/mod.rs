@@ -459,14 +459,15 @@ fn show_errors(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.set_width(460.0);
             dialog_style::setup(ui);
             ui.spacing_mut().item_spacing.y = 0.0;
+            dialog_style::header_with_icon(
+                ui,
+                palette,
+                "Attention required",
+                "The operation could not be completed.",
+                controls::icons::Icon::Warning,
+            );
             dialog_style::section(ui, palette.panel, Margin::same(18), |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                ui.label(
-                    eframe::egui::RichText::new("Attention required")
-                        .size(crate::theme::DIALOG_TITLE_FONT_SIZE)
-                        .family(crate::theme::semibold_family()),
-                );
-                ui.add_space(12.0);
                 eframe::egui::ScrollArea::vertical()
                     .id_salt("application.error.message")
                     .max_height(240.0)

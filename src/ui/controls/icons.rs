@@ -170,24 +170,36 @@ pub fn action(ui: &mut Ui, icon: Icon, enabled: bool) -> Response {
 }
 
 pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str) -> Response {
-    action(ui, icon, true).help_text(tooltip)
+    let response = action(ui, icon, true);
+    response.widget_info(|| {
+        eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, true, tooltip)
+    });
+    response.help_text(tooltip)
 }
 
 pub fn menu(ui: &mut Ui, icon: Icon, tooltip: &str, contents: impl FnOnce(&mut Ui)) -> Response {
     let spacing = ui.spacing().clone();
     button_scope(ui, |ui| {
-        eframe::egui::containers::menu::MenuButton::from_button(button_widget(ui, icon))
-            .ui(ui, |ui| {
-                *ui.spacing_mut() = spacing;
-                contents(ui);
-            })
-            .0
-            .help_text(tooltip)
+        let response =
+            eframe::egui::containers::menu::MenuButton::from_button(button_widget(ui, icon))
+                .ui(ui, |ui| {
+                    *ui.spacing_mut() = spacing;
+                    contents(ui);
+                })
+                .0;
+        response.widget_info(|| {
+            eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, true, tooltip)
+        });
+        response.help_text(tooltip)
     })
 }
 
 pub fn unavailable(ui: &mut Ui, icon: Icon, tooltip: &str) {
-    action(ui, icon, false).disabled_help_text(tooltip);
+    let response = action(ui, icon, false);
+    response.widget_info(|| {
+        eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, false, tooltip)
+    });
+    response.disabled_help_text(tooltip);
 }
 
 #[cfg(test)]

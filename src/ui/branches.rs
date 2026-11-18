@@ -176,6 +176,7 @@ fn branch_group(
                 ui.allocate_space(size);
                 continue;
             }
+            ui.push_id(&branch.full_name, |ui| {
             let response = super::controls::selectable_row_with_outset(
                 ui,
                 selected_group.is_none() && *selected == branch.full_name,
@@ -227,6 +228,7 @@ fn branch_group(
                     RefKind::Tag => "\nDouble-click to check out a detached HEAD",
                 }
             ));
+            response.widget_info(|| eframe::egui::WidgetInfo::selected(eframe::egui::Role::Button, true, selected_group.is_none() && *selected == branch.full_name, &branch.name));
             if kind == RefKind::Local {
                 response.context_menu(|ui| {
                     if ui
@@ -257,6 +259,7 @@ fn branch_group(
             if response.double_clicked() {
                 requested.action = Some(BranchRequest::Switch(branch.full_name.clone()));
             }
+            });
         }
     });
     *ui.visuals_mut() = previous_visuals;

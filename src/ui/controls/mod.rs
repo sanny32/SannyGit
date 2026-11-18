@@ -50,6 +50,14 @@ pub fn selectable_row_with_outset(
     ui.painter()
         .with_clip_rect(ui.clip_rect().expand2(Vec2::new(outset, 0.0)))
         .rect_filled(paint_rect, 0.0, fill);
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            0.0,
+            ui.visuals().selection.stroke,
+            eframe::egui::StrokeKind::Inside,
+        );
+    }
     let mut child = ui.new_child(
         UiBuilder::new()
             .max_rect(rect.shrink2(Vec2::new(6.0, 1.0)))

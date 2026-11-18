@@ -485,6 +485,9 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         let selected = app.change_filter == filter;
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(width * width_scale, 22.0), Sense::click());
+        response.widget_info(|| {
+            eframe::egui::WidgetInfo::selected(eframe::egui::Role::Button, true, selected, label)
+        });
         ui.painter().rect_filled(
             rect,
             4.0,
@@ -496,6 +499,14 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 palette.panel
             },
         );
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                rect,
+                4.0,
+                ui.visuals().selection.stroke,
+                eframe::egui::StrokeKind::Inside,
+            );
+        }
         let text_color = if selected {
             Color32::WHITE
         } else {
