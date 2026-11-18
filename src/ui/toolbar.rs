@@ -1,4 +1,6 @@
 use super::controls::icons::{self, Icon};
+#[cfg(not(target_os = "macos"))]
+use super::controls::popup_menu;
 use super::controls::tooltips::TooltipResponse;
 use crate::{
     app::SannyGitApp,
@@ -98,13 +100,7 @@ fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
             // MenuBar creates its horizontal layout before applying its own style.
             ui.spacing_mut().interact_size.y = 24.0;
             eframe::egui::MenuBar::new()
-                .config(
-                    eframe::egui::containers::menu::MenuConfig::new()
-                        .submenu_gap(0.0)
-                        .style(move |style: &mut eframe::egui::Style| {
-                            desktop_menu_style(style, palette);
-                        }),
-                )
+                .config(popup_menu::config(palette))
                 .style(|style: &mut eframe::egui::Style| {
                     eframe::egui::containers::menu::menu_style(style);
                     style.spacing.item_spacing.x = 0.0;
@@ -154,32 +150,6 @@ fn perform_edit(context: &eframe::egui::Context, action: crate::menu::EditAction
     context.request_repaint();
 }
 
-pub(super) fn desktop_menu_style(style: &mut eframe::egui::Style, palette: Palette) {
-    use eframe::egui::{CornerRadius, Stroke, TextWrapMode};
-
-    eframe::egui::containers::menu::menu_style(style);
-    style.override_font_id = Some(FontId::proportional(UI_FONT_SIZE));
-    style.wrap_mode = Some(TextWrapMode::Extend);
-    style.spacing.menu_margin = Margin::symmetric(1, 4);
-    style.spacing.item_spacing = Vec2::ZERO;
-    style.spacing.button_padding = Vec2::new(28.0, 2.0);
-    style.spacing.interact_size.y = 24.0;
-    style.visuals.window_fill = palette.menu_background;
-    style.visuals.window_stroke = Stroke::new(1.0, palette.border);
-    style.visuals.menu_corner_radius = CornerRadius::same(4);
-    for widget in [
-        &mut style.visuals.widgets.inactive,
-        &mut style.visuals.widgets.hovered,
-        &mut style.visuals.widgets.active,
-        &mut style.visuals.widgets.open,
-    ] {
-        widget.corner_radius = CornerRadius::ZERO;
-        widget.expansion = 0.0;
-    }
-    style.visuals.widgets.hovered.weak_bg_fill = palette.hover;
-    style.visuals.widgets.open.weak_bg_fill = palette.hover;
-}
-
 #[cfg(not(target_os = "macos"))]
 fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem]) {
     // Reserve the shortcut column only when the menu actually shows shortcuts;
@@ -195,14 +165,11 @@ fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem
     }
     for item in items {
         if item.separator {
-            ui.add(eframe::egui::Separator::default().spacing(10.0));
+            popup_menu::separator(ui);
         } else if !item.children.is_empty() {
-            let arrow = icons::image(Icon::Chevron, app.palette().muted, 12.0)
-                .rotate(-std::f32::consts::FRAC_PI_2, Vec2::splat(0.5));
-            eframe::egui::containers::menu::SubMenuButton::from_button(
-                Button::new(item.label).right_text(arrow),
-            )
-            .ui(ui, |ui| menu_items(ui, app, item.children));
+            popup_menu::submenu(ui, item.label, |ui| {
+                menu_items(ui, app, item.children);
+            });
         } else {
             if let Some(edit) = crate::menu::EditAction::from_label(item.label) {
                 let target = edit_target(ui.ctx());

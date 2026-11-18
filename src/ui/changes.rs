@@ -1,4 +1,5 @@
 use super::controls::icons::{self, Icon};
+use super::controls::popup_menu;
 use super::controls::tooltips::TooltipResponse;
 use crate::{
     app::{ChangeFilter, SannyGitApp},
@@ -195,11 +196,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     response.ctx.data_mut(|data| data.insert_temp(click_id, frame));
                     click_handled = true;
                 }
-                eframe::egui::Popup::context_menu(&response)
-                    .style(move |style: &mut eframe::egui::Style| {
-                        super::toolbar::desktop_menu_style(style, palette);
-                    })
-                    .show(|ui| {
+                popup_menu::context_menu(&response, palette).show(|ui| {
                     if let Some(action) = file_context_menu(ui, app, index) {
                         context_request = Some((index, action));
                     }
@@ -316,7 +313,7 @@ fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<Fil
         }
     };
     item(ui, "Show Changes", FileAction::ShowChanges, true, "");
-    ui.add(eframe::egui::Separator::default().spacing(10.0));
+    popup_menu::separator(ui);
     item(
         ui,
         "Commit…",
@@ -324,7 +321,7 @@ fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<Fil
         !app.busy() && repository.is_some() && app.selected_change_indices().len() <= 1,
         "To commit selected files, Stage them and use Staged only in the commit panel",
     );
-    ui.add(eframe::egui::Separator::default().spacing(10.0));
+    popup_menu::separator(ui);
     for (label, action, staged) in [
         ("Stage", FileAction::Stage, true),
         ("Unstage", FileAction::Unstage, false),
@@ -337,7 +334,7 @@ fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<Fil
             "Select a suitable file after refreshing; conflicts must be resolved outside SannyGit",
         );
     }
-    ui.add(eframe::egui::Separator::default().spacing(10.0));
+    popup_menu::separator(ui);
     let discard_blocker = app.discard_blocker();
     item(
         ui,
@@ -346,7 +343,7 @@ fn file_context_menu(ui: &mut Ui, app: &SannyGitApp, index: usize) -> Option<Fil
         discard_blocker.is_none(),
         discard_blocker.unwrap_or(""),
     );
-    ui.add(eframe::egui::Separator::default().spacing(10.0));
+    popup_menu::separator(ui);
     let selected = app.selected_change_indices();
     for (label, text) in [
         (

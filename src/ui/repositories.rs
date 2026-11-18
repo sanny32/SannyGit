@@ -1,5 +1,6 @@
 use super::controls::dialog_style::DialogResponse;
 use super::controls::icons::{self, Icon};
+use super::controls::popup_menu;
 use super::controls::tooltips::TooltipResponse;
 use crate::{
     app::{RepositoryJob, SannyGitApp},
@@ -320,7 +321,7 @@ fn repository_row(
         })
     };
     let mut action = None;
-    response.context_menu(|ui| {
+    popup_menu::context_menu(&response, palette).show(|ui| {
         ui.set_min_width(240.0);
         let idle = enabled.contains(&MenuAction::NewWindow);
         let mut item = |ui: &mut Ui, label: &str, available: bool, selected_action| {
@@ -344,7 +345,7 @@ fn repository_row(
             idle,
             RepositoryAction::NewWindow,
         );
-        ui.menu_button("Open", |ui| {
+        popup_menu::submenu(ui, "Open", |ui| {
             let label = if cfg!(target_os = "macos") {
                 "Reveal in Finder"
             } else if cfg!(target_os = "windows") {
@@ -362,7 +363,7 @@ fn repository_row(
             active && enabled.contains(&MenuAction::CloseRepository),
             RepositoryAction::Menu(MenuAction::CloseRepository),
         );
-        ui.separator();
+        popup_menu::separator(ui);
         item(ui, "Commit…", active && idle, RepositoryAction::Commit);
         for (label, command) in [
             ("Log", MenuAction::ReloadHistory),
@@ -377,15 +378,15 @@ fn repository_row(
                 RepositoryAction::Menu(command),
             );
         }
-        ui.separator();
+        popup_menu::separator(ui);
         item(
             ui,
             "Refresh",
             active && enabled.contains(&MenuAction::Refresh),
             RepositoryAction::Menu(MenuAction::Refresh),
         );
-        ui.separator();
-        ui.menu_button("Move To", |ui| {
+        popup_menu::separator(ui);
+        popup_menu::submenu(ui, "Move To", |ui| {
             if ui.button("Ungrouped").clicked() {
                 *move_to = Some((repository.path.clone(), None));
                 ui.close();
@@ -402,9 +403,9 @@ fn repository_row(
                 .disabled_help_text("Not implemented yet");
         }
         item(ui, "Remove…", idle, RepositoryAction::Remove);
-        ui.separator();
+        popup_menu::separator(ui);
         item(ui, "Copy Path", true, RepositoryAction::CopyPath);
-        ui.separator();
+        popup_menu::separator(ui);
         item(
             ui,
             "Settings…",

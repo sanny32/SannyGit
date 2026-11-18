@@ -202,6 +202,7 @@ impl ThemeChoice {
             style.interaction.selectable_labels = false;
             style.spacing.item_spacing = egui::vec2(4.0, 2.0);
             style.spacing.button_padding = egui::vec2(5.0, 2.0);
+            style.spacing.menu_margin = egui::Margin::symmetric(10, 6);
             style.spacing.icon_width = 14.0;
             style.spacing.icon_spacing = 4.0;
             style.spacing.text_edit_width = 180.0;

@@ -1,5 +1,6 @@
 use super::controls::dialog_style::DialogResponse;
 use super::controls::icons::{self, Icon};
+use super::controls::popup_menu;
 use super::controls::tooltips::TooltipResponse;
 use crate::{
     app::SannyGitApp,
@@ -228,7 +229,7 @@ fn branch_group(
             ));
             response.widget_info(|| eframe::egui::WidgetInfo::selected(eframe::egui::Role::Button, true, selected_group.is_none() && *selected == branch.full_name, &branch.name));
             if kind == RefKind::Local {
-                response.context_menu(|ui| {
+                popup_menu::context_menu(&response, palette).show(|ui| {
                     if ui
                         .add_enabled(requested.rename_allowed, Button::new("Rename…"))
                         .disabled_help_text(
@@ -244,7 +245,7 @@ fn branch_group(
                         .clicked() { requested.action = Some(BranchRequest::Delete(branch.full_name.clone())); ui.close(); }
                 });
             } else if kind == RefKind::Tag {
-                response.context_menu(|ui| {
+                popup_menu::context_menu(&response, palette).show(|ui| {
                     if ui.add_enabled(requested.rename_allowed, Button::new("Push Tag…"))
                         .disabled_help_text("Refresh branches and wait for the current operation")
                         .clicked() { requested.action = Some(BranchRequest::PushTag(branch.full_name.clone())); ui.close(); }
@@ -266,7 +267,7 @@ fn branch_group(
         selected.clear();
     }
     if kind == RefKind::Tag {
-        group.header_response.context_menu(|ui| {
+        popup_menu::context_menu(&group.header_response, palette).show(|ui| {
             if ui.button("Add Tag…").clicked() {
                 add_tag_requested = true;
                 ui.close();

@@ -3,6 +3,7 @@
 pub(super) mod dialog_style;
 pub(super) mod editable_combobox;
 pub(super) mod icons;
+pub(super) mod popup_menu;
 pub(super) mod tooltips;
 
 use eframe::egui::{Align, Layout, Response, Sense, Ui, UiBuilder, Vec2};
