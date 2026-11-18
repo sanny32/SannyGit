@@ -101,7 +101,7 @@ enum WorkerResult {
 }
 
 use crate::{
-    git,
+    git, logging,
     models::{ChangeFile, Commit, Repository},
     theme::{InterfaceStyle, Palette, ThemeChoice, INTERFACE_STYLE_STORAGE_KEY, THEME_STORAGE_KEY},
     ui,
@@ -120,6 +120,7 @@ pub enum SettingsPage {
     General,
     Appearance,
     DateTime,
+    Logging,
     Git,
     Remote,
     Llm,
@@ -353,6 +354,13 @@ impl SannyGitApp {
 
         let mut app = Self::with_theme(theme);
         app.preferences = preferences;
+        if let Err(error) = logging::configure(app.preferences.log_level) {
+            app.error = Some(error);
+        }
+        logging::record(
+            logging::Level::Info,
+            format_args!("SannyGit {} started", env!("CARGO_PKG_VERSION")),
+        );
         app.welcome_pending = app.preferences.show_welcome;
         app.interface_style = interface_style;
         app.applied_interface_style = interface_style;
@@ -383,8 +391,6 @@ impl SannyGitApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, llm_models::STORAGE_KEY))
             .unwrap_or_default();
-        app.llm_models.log_path =
-            eframe::storage_dir("SannyGit").map(|directory| directory.join("sannygit.log"));
         if let Some(storage) = creation_context.storage {
             app.restore_commit_drafts(storage);
         }
@@ -1854,6 +1860,14 @@ impl SannyGitApp {
                 outcome,
                 update,
             } => {
+                if outcome.is_ok() {
+                    let event = if staged {
+                        "Index staged"
+                    } else {
+                        "Index unstaged"
+                    };
+                    logging::record(logging::Level::Info, format_args!("{event}"));
+                }
                 self.apply_index_update(update, staged, outcome);
             }
             WorkerResult::DiscardBatchPrepared {
@@ -1993,6 +2007,10 @@ impl SannyGitApp {
                 }
                 match result {
                     Ok(message) => {
+                        logging::record(
+                            logging::Level::Info,
+                            format_args!("Commit message generated"),
+                        );
                         self.commit_message = message;
                         self.status = "Commit message generated".into();
                     }
@@ -2003,6 +2021,7 @@ impl SannyGitApp {
                 }
             }
             WorkerResult::Repository(Ok(snapshot)) => {
+                logging::record(logging::Level::Info, format_args!("Repository opened"));
                 self.apply_snapshot(snapshot);
             }
             WorkerResult::Repository(Err(error)) => {
@@ -2024,6 +2043,9 @@ impl SannyGitApp {
                     "File restored from index" | "Untracked file deleted" | "Files discarded"
                 );
                 let operation_succeeded = outcome.is_ok();
+                if operation_succeeded {
+                    logging::record(logging::Level::Info, format_args!("{success}"));
+                }
                 if matches!(success, "Merge complete" | "Rebase complete") && operation_succeeded {
                     self.merge_dialog = None;
                 }

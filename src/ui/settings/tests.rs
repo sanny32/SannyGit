@@ -572,6 +572,7 @@ fn clicking_tree_labels_and_row_backgrounds_selects_the_page() {
                 (SettingsPage::Git, "Git"),
                 (SettingsPage::Remote, "Remote"),
                 (SettingsPage::DateTime, "Date & Time"),
+                (SettingsPage::Logging, "Logging"),
                 (SettingsPage::Llm, "AI"),
                 (SettingsPage::CommitMessages, "Commit messages"),
             ] {
@@ -714,7 +715,7 @@ fn thumbnails_load_and_support_image_and_radio_selection() {
 }
 
 #[test]
-fn appearance_changes_apply_on_ok_and_cancel_discards_them() {
+fn preferences_changes_apply_on_ok_and_cancel_discards_them() {
     for button in ["Cancel", "OK"] {
         let context = egui::Context::default();
         crate::theme::install_fonts(&context);
@@ -729,6 +730,7 @@ fn appearance_changes_apply_on_ok_and_cancel_discards_them() {
         app.settings_window.preferences.file_double_click =
             crate::preferences::FileDoubleClick::ToggleStage;
         app.settings_window.preferences.date_format = crate::preferences::DateFormat::DayMonthYear;
+        app.settings_window.preferences.log_level = Level::Off;
         let render = |app: &mut SannyGitApp, events| {
             context.run_ui(
                 RawInput {
@@ -784,6 +786,12 @@ fn appearance_changes_apply_on_ok_and_cancel_discards_them() {
             }
         );
         assert_eq!(app.preferences.show_welcome, button != "OK");
+        let log_level = if button == "OK" {
+            Level::Off
+        } else {
+            Level::Info
+        };
+        assert_eq!(app.preferences.log_level, log_level);
         assert_eq!(
             app.preferences.file_double_click,
             if button == "OK" {
@@ -803,6 +811,7 @@ fn appearance_changes_apply_on_ok_and_cancel_discards_them() {
         app.open_settings();
         assert_eq!(app.settings_window.interface_style, style);
         assert_eq!(app.settings_window.theme, theme);
+        assert_eq!(app.settings_window.preferences.log_level, log_level);
     }
 }
 
@@ -851,6 +860,60 @@ fn filled_rect_count(shapes: &[ClippedShape], color: egui::Color32) -> usize {
 }
 
 #[test]
+fn logging_path_shares_a_row_with_its_label_and_copy_button() {
+    let Some(path) = logging::path() else {
+        return;
+    };
+    let path = path.to_string_lossy();
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        for size in [Vec2::new(740.0, 420.0), Vec2::new(680.0, 380.0)] {
+            let context = egui::Context::default();
+            crate::theme::install_fonts(&context);
+            theme.apply(&context);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.settings_window.page = SettingsPage::Logging;
+            let mut output = context.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                    ..Default::default()
+                },
+                |ui| window_contents(ui, &mut app),
+            );
+            output.textures_delta.clear();
+            let bounds = |label: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.job.text == label => Some(
+                            text.galley
+                                .rect
+                                .translate(text.pos.to_vec2())
+                                .intersect(shape.clip_rect),
+                        ),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("Missing {label} at {size:?} in {theme:?}"))
+            };
+            let level = bounds("Log level:");
+            let file = bounds("Log file:");
+            let path = bounds(&path);
+            let copy = bounds("Copy path");
+            assert_eq!(level.left(), file.left());
+            let selection = bounds("Information");
+            assert!(
+                (path.left() - selection.left()).abs() < 10.0,
+                "Path {path:?} and level {selection:?} should start in the same column"
+            );
+            assert!((file.center().y - path.center().y).abs() < 2.0);
+            assert!((path.center().y - copy.center().y).abs() < 2.0);
+            assert!(file.right() < path.left() && path.right() < copy.left());
+            assert!(copy.right() < size.x);
+        }
+    }
+}
+
+#[test]
 fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
         let context = egui::Context::default();
@@ -862,6 +925,7 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
             (SettingsPage::General, "Confirmations"),
             (SettingsPage::Appearance, "Color theme:"),
             (SettingsPage::DateTime, "Time format:"),
+            (SettingsPage::Logging, "Log level:"),
             (SettingsPage::Git, "Path to Git executable:"),
             (SettingsPage::Remote, "Automatic fetch"),
             (SettingsPage::Llm, "Endpoint:"),

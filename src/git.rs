@@ -1,5 +1,8 @@
 //! Git command execution and parsing. Called only by the application's background workers.
-use crate::models::{ChangeFile, ChangeKind, Repository};
+use crate::{
+    logging::{self, Level},
+    models::{ChangeFile, ChangeKind, Repository},
+};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -206,6 +209,37 @@ fn execute(
     } else {
         diagnostics::operation(args)
     };
+    let started = Instant::now();
+    let result = execute_command(path, args, input, timeout, cancel, mode, operation);
+    let milliseconds = started.elapsed().as_millis();
+    match &result {
+        Ok(output) => logging::record(
+            Level::Debug,
+            format_args!(
+                "Git {operation} finished in {milliseconds} ms (exit code {:?})",
+                output.status.code()
+            ),
+        ),
+        Err(error) => logging::record(
+            Level::Debug,
+            format_args!(
+                "Git {operation} failed in {milliseconds} ms ({:?}, exit code {:?})",
+                error.kind, error.exit_code
+            ),
+        ),
+    }
+    result
+}
+
+fn execute_command(
+    path: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+    timeout: Duration,
+    cancel: Option<&AtomicBool>,
+    mode: CommandMode,
+    operation: &'static str,
+) -> Result<CommandOutput, CommandError> {
     let fail = |kind, message: String| CommandError::new(operation, kind, message);
     if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
         return Err(fail(FailureKind::Cancelled, "Operation cancelled".into()));

@@ -8,6 +8,7 @@ mod discard;
 mod git;
 mod history;
 mod llm;
+mod logging;
 mod menu;
 mod merge;
 #[cfg(test)]
@@ -73,7 +74,7 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
-    eframe::run_native(
+    let result = eframe::run_native(
         "SannyGit",
         options,
         Box::new(|creation_context| {
@@ -88,7 +89,17 @@ fn main() -> eframe::Result<()> {
             }
             Ok(Box::new(app))
         }),
-    )
+    );
+    if result.is_ok() {
+        logging::record(logging::Level::Info, format_args!("Application closed"));
+    } else {
+        logging::record(
+            logging::Level::Error,
+            format_args!("Application terminated with an error"),
+        );
+    }
+    logging::shutdown();
+    result
 }
 
 fn initial_window_viewport(

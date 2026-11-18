@@ -1,4 +1,5 @@
 use super::SannyGitApp;
+use crate::logging::{self, Level};
 use std::collections::{BTreeMap, VecDeque};
 
 #[derive(Default)]
@@ -10,6 +11,11 @@ pub struct ErrorDialogs {
 impl SannyGitApp {
     /// Retain diagnostics used for retry state, but present each new error once.
     pub fn collect_errors(&mut self) {
+        if let Some(error) = logging::take_error() {
+            if !self.error_dialogs.pending.contains(&error) {
+                self.error_dialogs.pending.push_back(error);
+            }
+        }
         let mut current = BTreeMap::new();
         for (source, error) in [
             ("application", self.error.as_deref()),
@@ -48,6 +54,12 @@ impl SannyGitApp {
             if self.error_dialogs.observed.get(source) != Some(error)
                 && !self.error_dialogs.pending.contains(error)
             {
+                let source = if source.starts_with("settings:") {
+                    "repository settings"
+                } else {
+                    source
+                };
+                logging::record(Level::Error, format_args!("Error reported in {source}"));
                 self.error_dialogs.pending.push_back(error.clone());
             }
         }

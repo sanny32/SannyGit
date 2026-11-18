@@ -1,4 +1,7 @@
-use crate::tracking::{self, Status};
+use crate::{
+    logging::{self, Level},
+    tracking::{self, Status},
+};
 use std::{
     path::PathBuf,
     sync::{
@@ -126,6 +129,7 @@ impl Monitor {
                     self.cancel = None;
                     self.checking = false;
                     if error.is_some() {
+                        logging::record(Level::Warn, format_args!("Automatic fetch failed"));
                         self.error = error;
                     }
                     if fetched {

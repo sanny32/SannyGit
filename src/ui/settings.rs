@@ -2,6 +2,7 @@ use super::controls::dialog_style::DialogResponse;
 use super::controls::tooltips::TooltipResponse;
 use crate::{
     app::{RepositoryLlmTab, SannyGitApp, SettingsPage},
+    logging::{self, Level},
     theme::{semibold_family, InterfaceStyle, Palette, ThemeChoice},
 };
 use eframe::egui::{
@@ -186,6 +187,7 @@ fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                             |ui, app| {
                                 entry(ui, app, SettingsPage::Appearance, "Appearance");
                                 entry(ui, app, SettingsPage::DateTime, "Date & Time");
+                                entry(ui, app, SettingsPage::Logging, "Logging");
                             },
                         );
                         section(ui, app, SettingsPage::Git, "Git", |ui, app| {
@@ -415,6 +417,47 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 );
             });
         }
+        SettingsPage::Logging => {
+            heading(ui, "Logging");
+            group(ui, palette, "Application log", |ui| {
+                let label = |ui: &mut Ui, text| {
+                    ui.horizontal(|ui| {
+                        ui.set_min_width(82.0);
+                        ui.label(text);
+                    });
+                };
+                let level = &mut app.settings_window.preferences.log_level;
+                ui.horizontal(|ui| {
+                    label(ui, "Log level:");
+                    egui::ComboBox::from_id_salt("preferences.logging.level")
+                        .selected_text(level.label())
+                        .width(160.0)
+                        .show_ui(ui, |ui| {
+                            for option in Level::ALL {
+                                ui.selectable_value(level, option, option.label());
+                            }
+                        })
+                        .response
+                        .help_text("Debug includes Git command timings and exit codes");
+                });
+                if let Some(path) = logging::path() {
+                    let path = path.to_string_lossy();
+                    egui::Sides::new().shrink_left().show(
+                        ui,
+                        |ui| {
+                            label(ui, "Log file:");
+                            ui.add(egui::Label::new(path.as_ref()).truncate())
+                                .help_text(path.as_ref());
+                        },
+                        |ui| {
+                            if ui.button("Copy path").clicked() {
+                                ui.ctx().copy_text(path.to_string());
+                            }
+                        },
+                    );
+                }
+            });
+        }
         SettingsPage::Git => {
             heading(ui, "Git executable");
             group(ui, palette, "Command", |ui| {
@@ -478,14 +521,22 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     }
 }
 
-fn apply_settings(app: &mut SannyGitApp) -> Result<(), String> {
+#[derive(Debug)]
+enum SettingsError {
+    Credential(String),
+    Logging(String),
+}
+
+fn apply_settings(app: &mut SannyGitApp) -> Result<(), SettingsError> {
     if let Some(path) = &app.settings_window.llm_repository {
         if let Some(draft) = app.settings_window.llm_repositories.get(path) {
             let previous = app
                 .repository_llm_configs
                 .get(path)
                 .unwrap_or(&app.llm_config);
-            draft.save_secret(previous, Some(path))?;
+            draft
+                .save_secret(previous, Some(path))
+                .map_err(SettingsError::Credential)?;
             app.repository_llm_configs
                 .insert(path.clone(), draft.config.clone());
         } else {
@@ -498,7 +549,18 @@ fn apply_settings(app: &mut SannyGitApp) -> Result<(), String> {
             app.repository_llm_instructions.remove(path);
         }
     } else {
-        app.settings_window.llm.save_secret(&app.llm_config, None)?;
+        app.settings_window
+            .llm
+            .save_secret(&app.llm_config, None)
+            .map_err(SettingsError::Credential)?;
+        let log_level = app.settings_window.preferences.log_level;
+        if log_level != app.preferences.log_level {
+            logging::configure(log_level).map_err(SettingsError::Logging)?;
+            logging::record(
+                Level::Info,
+                format_args!("Log level set to {}", log_level.label()),
+            );
+        }
         app.theme = app.settings_window.theme;
         app.preferences = app.settings_window.preferences.clone();
         app.interface_style = app.settings_window.interface_style;
@@ -509,7 +571,15 @@ fn apply_settings(app: &mut SannyGitApp) -> Result<(), String> {
     Ok(())
 }
 
-fn report_settings_error(app: &mut SannyGitApp, error: String) {
+fn report_settings_error(app: &mut SannyGitApp, error: SettingsError) {
+    let error = match error {
+        SettingsError::Credential(error) => error,
+        SettingsError::Logging(error) => {
+            app.settings_window.page = SettingsPage::Logging;
+            app.error = Some(error);
+            return;
+        }
+    };
     app.settings_window.page = SettingsPage::Llm;
     app.settings_window.llm_repository_tab = RepositoryLlmTab::Model;
     let draft = match app.settings_window.llm_repository.as_deref() {

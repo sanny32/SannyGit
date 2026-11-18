@@ -473,6 +473,10 @@ impl SannyGitApp {
             }),
             ResultMessage::Window(result) | ResultMessage::Editor(result) => result,
             ResultMessage::Open(result) => result.map(|snapshot| {
+                crate::logging::record(
+                    crate::logging::Level::Info,
+                    format_args!("Repository opened"),
+                );
                 self.apply_snapshot(snapshot);
                 self.manager.dialog = None;
             }),

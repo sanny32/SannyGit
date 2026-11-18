@@ -87,6 +87,7 @@ pub struct Preferences {
     pub time_format: TimeFormat,
     pub verbose_dates: bool,
     pub skip_sync_confirmation: bool,
+    pub log_level: crate::logging::Level,
 }
 
 impl Default for Preferences {
@@ -102,6 +103,7 @@ impl Default for Preferences {
             time_format: TimeFormat::default(),
             verbose_dates: false,
             skip_sync_confirmation: false,
+            log_level: crate::logging::Level::default(),
         }
     }
 }
@@ -188,6 +190,7 @@ mod tests {
             staged_only_after_staging: false,
             verbose_dates: true,
             skip_sync_confirmation: true,
+            log_level: crate::logging::Level::Debug,
             git_executable: "/Applications/Git Tools/git".into(),
             ..Default::default()
         };

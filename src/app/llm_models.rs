@@ -1,11 +1,11 @@
-use crate::llm::Config;
+use crate::{
+    llm::Config,
+    logging::{self, Level},
+};
 use eframe::egui::Context;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    fs::{self, OpenOptions},
-    io::{self, Write},
-    path::{Path, PathBuf},
     sync::mpsc::{self, Receiver},
 };
 
@@ -23,8 +23,6 @@ enum ModelLoad {
 #[serde(default)]
 pub struct ModelCatalog {
     entries: BTreeMap<String, ModelList>,
-    #[serde(skip)]
-    pub(super) log_path: Option<PathBuf>,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -50,7 +48,7 @@ impl ModelCatalog {
 
     pub fn update(&mut self) {
         for models in self.entries.values_mut() {
-            models.update(self.log_path.as_deref());
+            models.update();
         }
     }
 
@@ -88,7 +86,6 @@ impl ModelCatalog {
         context: &Context,
         load: ModelLoad,
     ) {
-        let log_path = self.log_path.clone();
         let models = self.entry(config, repository);
         // Replace the receiver so a response using older credentials cannot
         // overwrite a newer refresh. Keep cached options until success.
@@ -114,10 +111,10 @@ impl ModelCatalog {
                 context.request_repaint();
             }) {
             Ok(_) => models.receiver = Some(receiver),
-            Err(error) => models.record_error(
-                log_path.as_deref(),
-                format!("Cannot start model list worker: {error}"),
-            ),
+            Err(error) => {
+                logging::record(Level::Warn, format_args!("Cannot start model list worker"));
+                models.error = Some(format!("Cannot start model list worker: {error}"));
+            }
         }
     }
 }
@@ -127,7 +124,7 @@ impl ModelList {
         self.receiver.is_some()
     }
 
-    fn update(&mut self, log_path: Option<&Path>) {
+    fn update(&mut self) {
         let Some(receiver) = &self.receiver else {
             return;
         };
@@ -144,42 +141,12 @@ impl ModelList {
                 self.options = models;
                 self.error = None;
             }
-            Err(error) => self.record_error(log_path, error),
-        }
-    }
-
-    fn record_error(&mut self, log_path: Option<&Path>, error: String) {
-        let line = format!(
-            "{} [WARN] Model list: {}\n",
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            error.replace(['\r', '\n'], " ")
-        );
-        match log_path {
-            Some(path) => {
-                if let Err(log_error) = append_log(path, &line) {
-                    let _ = write!(
-                        io::stderr().lock(),
-                        "Cannot write SannyGit log: {log_error}\n{line}"
-                    );
-                }
-            }
-            None => {
-                let _ = io::stderr().lock().write_all(line.as_bytes());
+            Err(error) => {
+                logging::record(Level::Warn, format_args!("Model list refresh failed"));
+                self.error = Some(error);
             }
         }
-        self.error = Some(error);
     }
-}
-
-fn append_log(path: &Path, line: &str) -> io::Result<()> {
-    if let Some(directory) = path.parent() {
-        fs::create_dir_all(directory)?;
-    }
-    OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?
-        .write_all(line.as_bytes())
 }
 
 #[cfg(test)]
@@ -286,34 +253,23 @@ mod tests {
         assert!(!saved.contains(&config.api_key));
         assert!(!saved.contains("transient error"));
         let mut restored: ModelCatalog = serde_json::from_str(&saved).unwrap();
-        let log_path = std::env::temp_dir().join(format!(
-            "sannygit-model-catalog-{}-{}.log",
-            std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap(),
-        ));
         let models = restored.entry(&config, None);
         assert_eq!(models.options, ["cached-model"]);
         assert!(!models.attempted);
         let (sender, receiver) = mpsc::channel();
         models.receiver = Some(receiver);
-        models.update(Some(&log_path));
+        models.update();
         assert!(models.loading());
         assert_eq!(models.options, ["cached-model"]);
         sender.send(Err("HTTP 401".into())).unwrap();
-        models.update(Some(&log_path));
-        models.update(Some(&log_path));
+        models.update();
         assert!(!models.loading());
         assert_eq!(models.options, ["cached-model"]);
         assert_eq!(models.error.as_deref(), Some("HTTP 401"));
-        let log = fs::read_to_string(&log_path).unwrap();
-        fs::remove_file(log_path).unwrap();
-        assert_eq!(log.lines().count(), 1);
-        assert!(log.contains("[WARN] Model list: HTTP 401"));
-        assert!(!log.contains(&config.api_key));
         let (sender, receiver) = mpsc::channel();
         models.receiver = Some(receiver);
         sender.send(Ok(vec!["updated-model".into()])).unwrap();
-        models.update(None);
+        models.update();
         assert_eq!(models.options, ["updated-model"]);
         assert!(models.error.is_none());
         assert_eq!(config.model, crate::llm::DEFAULT_MODEL);
