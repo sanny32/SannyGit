@@ -87,6 +87,7 @@ pub struct Snapshot {
     pub repository: Repository,
     pub branch: String,
     pub changes: Vec<ChangeFile>,
+    pub merging: bool,
 }
 
 pub(crate) fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -416,6 +417,8 @@ fn command_error(operation: &str) -> String {
     // Do not parse localized diagnostics or echo private URLs and hook output.
     let reason = if operation == "commit" {
         "Check your Git identity, signing configuration and commit hooks. Refresh before retrying."
+    } else if operation == "merge" {
+        "Check local changes, repository permissions and Git identity. Refresh before retrying."
     } else if operation == "clone" {
         "Check the URL, destination, network access, credential helpers and SSH configuration. A partial destination may remain."
     } else if matches!(operation, "fetch" | "push") {
@@ -447,7 +450,7 @@ pub fn set_staged_paths(root: &Path, paths: &[String], staged: bool) -> Result<(
     if paths.is_empty() {
         return Err("Select files first.".into());
     }
-    require_no_operation(root)?;
+    let merging = check_operation(root, staged)?;
     // Staging needs fresh file states, not repository/branch discovery.
     let status = load_changes(root)?;
     let by_path: BTreeMap<_, _> = status.iter().map(|c| (c.path.as_str(), c)).collect();
@@ -461,14 +464,14 @@ pub fn set_staged_paths(root: &Path, paths: &[String], staged: bool) -> Result<(
         .collect::<Result<Vec<_>, _>>()?;
     if changes
         .iter()
-        .any(|change| change.kind == ChangeKind::Conflicted)
+        .any(|change| change.kind == ChangeKind::Conflicted && !merging)
     {
         return Err("Resolve conflicts outside SannyGit before staging this file.".into());
     }
-    if changes
-        .iter()
-        .any(|change| (staged && !change.unstaged) || (!staged && !change.staged))
-    {
+    if changes.iter().any(|change| {
+        (staged && !change.unstaged && change.kind != ChangeKind::Conflicted)
+            || (!staged && !change.staged)
+    }) {
         return Err("The file's staging state has changed. Refresh before retrying.".into());
     }
     // --revs-only succeeds with empty output for an unborn HEAD; other command
@@ -622,12 +625,22 @@ fn check_amend_head(root: &Path, expected_head: &str) -> Result<(), String> {
 }
 
 /// Resolve markers through Git so linked worktrees use their own operation state.
-/// SannyGit has no continue/abort workflow yet; leave unfinished operations to Git.
 pub(crate) fn require_no_operation(root: &Path) -> Result<(), String> {
+    check_operation(root, false).map(|_| ())
+}
+
+fn operation_directory(root: &Path) -> Result<PathBuf, String> {
+    let directory = text(run(root, &["rev-parse", "--absolute-git-dir"])?)?;
+    Ok(PathBuf::from(
+        directory.strip_suffix('\n').unwrap_or(&directory),
+    ))
+}
+
+pub(crate) fn check_operation(root: &Path, allow_merge: bool) -> Result<bool, String> {
     // These operation markers belong to the per-worktree Git directory, not
     // the shared common directory. Resolve it once, including for linked trees.
-    let directory = text(run(root, &["rev-parse", "--absolute-git-dir"])?)?;
-    let directory = Path::new(directory.strip_suffix('\n').unwrap_or(&directory));
+    let directory = operation_directory(root)?;
+    let mut merging = false;
     for marker in [
         "MERGE_HEAD",
         "CHERRY_PICK_HEAD",
@@ -638,11 +651,12 @@ pub(crate) fn require_no_operation(root: &Path) -> Result<(), String> {
     ] {
         match directory.join(marker).try_exists() {
             Ok(false) => {}
+            Ok(true) if allow_merge && marker == "MERGE_HEAD" => merging = true,
             Ok(true) => return Err("Finish the in-progress merge, rebase, cherry-pick or revert outside SannyGit before retrying this action.".into()),
             Err(error) => return Err(format!("Could not check unfinished Git operations: {error}")),
         }
     }
-    Ok(())
+    Ok(merging)
 }
 
 /// Porcelain status omits ignored files; reject collisions before Git can
@@ -658,16 +672,40 @@ pub(crate) fn require_no_ignored_collisions(root: &Path, target: &str) -> Result
             "-z",
         ],
     )?)?;
-    if !ignored.is_empty() {
+    require_no_path_collisions(root, target, &ignored, "Ignored local files")
+}
+
+pub(crate) fn require_no_path_collisions(
+    root: &Path,
+    target: &str,
+    local_paths: &str,
+    file_kind: &str,
+) -> Result<(), String> {
+    if !local_paths.is_empty() {
         let paths = text(run(root, &["ls-tree", "-r", "--name-only", "-z", target])?)?;
-        if ignored_collision(&ignored, &paths) {
-            return Err("Ignored files would be overwritten by the selected commit. Move them out of the way before retrying.".into());
+        let collisions = path_collisions(local_paths, &paths);
+        if !collisions.is_empty() {
+            const DISPLAY_LIMIT: usize = 20;
+            let mut message = format!(
+                "{file_kind} overlap paths in the selected commit. Move the listed files outside the repository and retry.\n\nGit diagnostic:\n"
+            );
+            for path in collisions.iter().take(DISPLAY_LIMIT) {
+                let _ = writeln!(message, "{path:?}");
+            }
+            if collisions.len() > DISPLAY_LIMIT {
+                let _ = write!(
+                    message,
+                    "\n{} more paths.",
+                    collisions.len() - DISPLAY_LIMIT
+                );
+            }
+            return Err(message);
         }
     }
     Ok(())
 }
 
-fn ignored_collision(ignored: &str, target_paths: &str) -> bool {
+fn path_collisions<'a>(local_paths: &'a str, target_paths: &str) -> Vec<&'a str> {
     let normalize = |path: &str| {
         if cfg!(windows) {
             path.to_lowercase()
@@ -675,28 +713,28 @@ fn ignored_collision(ignored: &str, target_paths: &str) -> bool {
             path.to_owned()
         }
     };
-    let ignored: BTreeSet<_> = ignored.split_terminator('\0').map(normalize).collect();
-    for path in target_paths.split_terminator('\0').map(normalize) {
-        let mut ancestor = path.as_str();
-        loop {
-            if ignored.contains(ancestor) {
-                return true;
+    let targets: BTreeSet<_> = target_paths.split_terminator('\0').map(normalize).collect();
+    local_paths
+        .split_terminator('\0')
+        .filter(|path| {
+            let path = normalize(path);
+            let mut ancestor = path.as_str();
+            loop {
+                if targets.contains(ancestor) {
+                    return true;
+                }
+                let Some((parent, _)) = ancestor.rsplit_once('/') else {
+                    break;
+                };
+                ancestor = parent;
             }
-            let Some((parent, _)) = ancestor.rsplit_once('/') else {
-                break;
-            };
-            ancestor = parent;
-        }
-        let prefix = format!("{path}/");
-        if ignored
-            .range(prefix.clone()..)
-            .next()
-            .is_some_and(|entry| entry.starts_with(&prefix))
-        {
-            return true;
-        }
-    }
-    false
+            let prefix = format!("{path}/");
+            targets
+                .range(prefix.clone()..)
+                .next()
+                .is_some_and(|entry| entry.starts_with(&prefix))
+        })
+        .collect()
 }
 
 fn commit_with_mode(
@@ -706,7 +744,7 @@ fn commit_with_mode(
     contents: CommitContents,
 ) -> Result<(), String> {
     validate_message(message)?;
-    require_no_operation(root)?;
+    let merging = check_operation(root, !amend)?;
     let snapshot = load(root)?;
     if snapshot
         .changes
@@ -715,10 +753,14 @@ fn commit_with_mode(
     {
         return Err("Resolve all conflicts before committing.".into());
     }
-    if snapshot.changes.is_empty() && !amend {
+    if snapshot.changes.is_empty() && !amend && !merging {
         return Err("There are no changes to commit.".into());
     }
-    if contents == CommitContents::Staged && !amend && !snapshot.changes.iter().any(|c| c.staged) {
+    if contents == CommitContents::Staged
+        && !amend
+        && !merging
+        && !snapshot.changes.iter().any(|c| c.staged)
+    {
         return Err("There are no staged changes to commit.".into());
     }
     if contents == CommitContents::All {
@@ -764,6 +806,10 @@ pub fn load(path: &Path) -> Result<Snapshot, String> {
         Err(error) => return Err(error.to_string()),
     };
     let changes = load_changes(&path)?;
+    let merging = operation_directory(&path)?
+        .join("MERGE_HEAD")
+        .try_exists()
+        .map_err(|error| format!("Could not check merge state: {error}"))?;
     Ok(Snapshot {
         repository: Repository {
             name: path
@@ -774,6 +820,7 @@ pub fn load(path: &Path) -> Result<Snapshot, String> {
         },
         branch,
         changes,
+        merging,
     })
 }
 

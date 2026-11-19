@@ -13,13 +13,20 @@ pub fn head(root: &Path) -> Result<String, String> {
         .map(|value| value.trim().to_owned())
 }
 
+pub fn abort(root: &Path) -> Result<(), String> {
+    if !git::check_operation(root, true)? {
+        return Err("There is no merge in progress. Refresh the working tree.".into());
+    }
+    git::run(root, &["merge", "--abort"]).map(|_| ())
+}
+
 pub fn execute(
     root: &Path,
     expected_head: &str,
     expected_branch: &str,
     target: &str,
     mode: Mode,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if !matches!(target.len(), 40 | 64) || !target.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("Select a valid commit before merging.".into());
     }
@@ -32,6 +39,14 @@ pub fn execute(
         return Err("The current branch changed. Close and reopen Merge before retrying.".into());
     }
     if !snapshot.changes.is_empty() {
+        let untracked = snapshot
+            .changes
+            .iter()
+            .filter(|change| change.kind == crate::models::ChangeKind::Untracked)
+            .map(|change| change.path.as_str())
+            .collect::<Vec<_>>()
+            .join("\0");
+        git::require_no_path_collisions(root, target, &untracked, "Untracked files")?;
         return Err("Commit or stash local changes before merging.".into());
     }
     // --no-overwrite-ignore alone does not protect every merge strategy.
@@ -47,16 +62,29 @@ pub fn execute(
         ],
         Mode::WorkingTree => vec![
             "merge",
-            "--squash",
+            "--no-ff",
             "--no-commit",
             "--no-autostash",
             "--no-overwrite-ignore",
             target,
         ],
     };
-    git::run(root, &args).map(|_| ()).map_err(|error| {
-        format!("{error}\nIf conflicts occurred, resolve them outside SannyGit; finish or abort an unfinished merge with Git before retrying.")
-    })
+    match git::run(root, &args) {
+        Ok(_) => Ok(false),
+        Err(error) => {
+            let snapshot = git::load(root)?;
+            if snapshot.merging
+                && snapshot
+                    .changes
+                    .iter()
+                    .any(|change| change.kind == crate::models::ChangeKind::Conflicted)
+            {
+                Ok(true)
+            } else {
+                Err(error)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -88,7 +116,8 @@ mod tests {
             let index = std::fs::read(repo.0.join(".git/index")).unwrap();
             assert!(git::load(&repo.0).unwrap().changes.is_empty());
 
-            assert!(execute(&repo.0, &before, "main", &target, mode).is_err());
+            let error = execute(&repo.0, &before, "main", &target, mode).unwrap_err();
+            assert!(error.contains("\"feature\""), "{error}");
 
             assert_eq!(
                 std::fs::read(repo.0.join("feature")).unwrap(),
@@ -98,6 +127,24 @@ mod tests {
             assert_eq!(head(&repo.0).unwrap(), before);
             git::require_no_operation(&repo.0).unwrap();
         }
+    }
+
+    #[test]
+    fn reports_untracked_paths_that_block_the_merge() {
+        let (repo, before, target) = fixture();
+        repo.write("feature", "local contents\n");
+        repo.write("unrelated", "keep\n");
+        let error = execute(&repo.0, &before, "main", &target, Mode::WorkingTree).unwrap_err();
+        assert!(error.starts_with("Untracked files overlap"));
+        assert_eq!(
+            error.split_once("\n\nGit diagnostic:\n").unwrap().1.trim(),
+            "\"feature\""
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("feature")).unwrap(),
+            "local contents\n"
+        );
+        assert_eq!(head(&repo.0).unwrap(), before);
     }
 
     #[test]
@@ -112,19 +159,20 @@ mod tests {
     }
 
     #[test]
-    fn working_tree_squashes_without_moving_head_and_can_be_committed() {
+    fn working_tree_leaves_a_merge_to_commit_without_moving_head() {
         let (repo, before, target) = fixture();
         execute(&repo.0, &before, "main", &target, Mode::WorkingTree).unwrap();
         assert_eq!(head(&repo.0).unwrap(), before);
+        assert!(git::load(&repo.0).unwrap().merging);
         assert!(git::load(&repo.0)
             .unwrap()
             .changes
             .iter()
             .any(|file| file.path == "feature" && file.staged));
-        git::commit(&repo.0, "squashed", git::CommitContents::Staged).unwrap();
+        git::commit(&repo.0, "merged", git::CommitContents::Staged).unwrap();
         assert_eq!(
             repo.git(&["show", "-s", "--format=%P", "HEAD"]).trim(),
-            before
+            format!("{before} {target}")
         );
     }
 
@@ -163,7 +211,7 @@ mod tests {
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "diverge"]);
         let before = head(&repo.0).unwrap();
-        assert!(execute(&repo.0, &before, "main", &target, Mode::Commit).is_err());
+        assert!(execute(&repo.0, &before, "main", &target, Mode::Commit).unwrap());
         assert_eq!(head(&repo.0).unwrap(), before);
         assert!(git::load(&repo.0)
             .unwrap()

@@ -27,20 +27,24 @@ fn staging_round_trip_command_budget() {
         start.elapsed(),
         counter.get()
     );
-    // Three commands to stage, four to unstage, and three for each UI refresh.
-    assert_eq!(counter.get(), 65);
+    // Three commands to stage, four to unstage, and four for each UI refresh,
+    // including discovery of the worktree-specific merge marker.
+    assert_eq!(counter.get(), 75);
     assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"edited\n");
 }
 
 #[test]
 fn ignored_collisions_compare_literal_paths_and_directory_boundaries() {
-    assert!(ignored_collision("a b\n.txt\0", "a b\n.txt\0"));
-    assert!(ignored_collision("dir/file\0", "dir\0"));
-    assert!(ignored_collision("dir\0", "dir/file\0"));
-    assert!(!ignored_collision("directory/file\0", "dir\0"));
-    assert!(!ignored_collision("dir/file\0", "dir/other\0"));
-    assert!(!ignored_collision("", "dir\0"));
-    assert_eq!(ignored_collision("NAME\0", "name\0"), cfg!(windows));
+    assert_eq!(path_collisions("a b\n.txt\0", "a b\n.txt\0"), ["a b\n.txt"]);
+    assert_eq!(path_collisions("dir/file\0", "dir\0"), ["dir/file"]);
+    assert_eq!(path_collisions("dir\0", "dir/file\0"), ["dir"]);
+    assert!(path_collisions("directory/file\0", "dir\0").is_empty());
+    assert!(path_collisions("dir/file\0", "dir/other\0").is_empty());
+    assert!(path_collisions("", "dir\0").is_empty());
+    assert_eq!(
+        !path_collisions("NAME\0", "name\0").is_empty(),
+        cfg!(windows)
+    );
 }
 
 #[test]
@@ -681,7 +685,6 @@ fn previews_conflict_against_ours_without_combined_diff() {
         ChangeKind::Conflicted
     );
     let index_before = std::fs::read(repo.0.join(".git/index")).unwrap();
-    assert!(set_staged(&repo.0, "file", true).is_err());
     assert!(commit(&repo.0, "Must not commit conflict", CommitContents::All).is_err());
     assert_eq!(
         std::fs::read(repo.0.join(".git/index")).unwrap(),
@@ -886,17 +889,21 @@ fn unfinished_operations_preserve_index_worktree_and_head_in_linked_worktrees() 
                 std::fs::write(&marker_path, &head).unwrap();
             }
             for mode in [CommitContents::All, CommitContents::Staged] {
-                assert!(commit(root, "Blocked", mode)
-                    .unwrap_err()
-                    .contains("Finish"));
+                if marker != "MERGE_HEAD" {
+                    assert!(commit(root, "Blocked", mode)
+                        .unwrap_err()
+                        .contains("Finish"));
+                }
                 assert!(amend_commit(root, "Blocked", head.trim(), mode)
                     .unwrap_err()
                     .contains("Finish"));
             }
             assert!(amend_message(root).unwrap_err().contains("Finish"));
-            assert!(set_staged(root, "file", true)
-                .unwrap_err()
-                .contains("Finish"));
+            if marker != "MERGE_HEAD" {
+                assert!(set_staged(root, "file", true)
+                    .unwrap_err()
+                    .contains("Finish"));
+            }
             assert!(set_staged(root, "file", false)
                 .unwrap_err()
                 .contains("Finish"));

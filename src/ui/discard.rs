@@ -1,6 +1,7 @@
 use super::controls::dialog_style::DialogResponse;
 use super::controls::{dialog_style, icons::Icon, tooltips::TooltipResponse};
 use crate::app::SannyGitApp;
+use crate::discard::Action;
 use eframe::egui::{self, RichText};
 
 pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
@@ -14,12 +15,19 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let mut reload = false;
     let mut submit = false;
     let multiple = dialog.paths.len() > 1;
-    let title = if multiple {
+    let removing = dialog.action == Action::Remove;
+    let title = if multiple && removing {
+        "Remove Selected Files"
+    } else if multiple {
         "Discard Selected Files"
     } else {
         dialog.action.label()
     };
-    let description = if multiple {
+    let description = if multiple && removing {
+        "Delete the selected tracked files from the working tree and stage their removal. Local edits and any conflict stages for these paths will be lost."
+    } else if multiple && app.merging {
+        "Restore staged and conflicted paths to HEAD, restore unstaged edits from the index, and delete untracked files. Paths absent from HEAD may be removed."
+    } else if multiple {
         "Restore tracked files from the index and permanently delete untracked files. Unstaged edits are lost; staged contents are preserved. Review every selected path before confirming."
     } else {
         dialog.action.explanation()
@@ -52,7 +60,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             } else if dialog.running {
                 ("Operation in progress…", palette.muted)
             } else if multiple && dialog.prepared.is_some() {
-                ("Selected files reviewed. The index will be preserved.", palette.muted)
+                ("Selected files reviewed.", palette.muted)
             } else if let Some(prepared) = &dialog.prepared {
                 (prepared.summary.as_str(), palette.muted)
             } else {

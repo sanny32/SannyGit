@@ -9,10 +9,12 @@ use crate::{
 use eframe::egui::{Align, Align2, Color32, FontId, Layout, Rect, RichText, Sense, Ui, Vec2};
 use egui_extras::{Column, TableBuilder};
 
+const FILTER_WIDTH: f32 = 366.0;
+
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
-    let tight = ui.available_width() < 420.0;
+    let tight = ui.available_width() < FILTER_WIDTH + 150.0;
     let filter_height = if tight { 50.0 } else { 30.0 };
     super::header(ui, filter_height, palette, |ui| {
         if tight {
@@ -31,24 +33,62 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 );
                 ui.add_space(4.0);
                 ui.allocate_ui_with_layout(
-                    Vec2::new(270.0, 22.0),
+                    Vec2::new(FILTER_WIDTH, 22.0),
                     Layout::left_to_right(Align::Center),
                     |ui| filters(ui, app, palette),
                 );
             });
         }
     });
+    if app.merging {
+        super::header(ui, 30.0, palette, |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui
+                    .add_enabled(
+                        app.abort_merge_allowed(),
+                        eframe::egui::Button::new("Abort"),
+                    )
+                    .help_text("Abort the current merge")
+                    .disabled_help_text(
+                        "Wait for the current operation or refresh the working tree",
+                    )
+                    .clicked()
+                {
+                    app.open_abort_merge();
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    icons::paint(ui, Icon::Warning, palette.warning, 16.0);
+                    ui.add(eframe::egui::Label::new("Merge in progress").truncate());
+                });
+            });
+        });
+    }
     let operations_enabled =
         !app.busy() && app.state_current && app.repositories.get(app.selected_repository).is_some();
     let mut staging_request = None;
     let mut context_request = None;
-    let visible = app
+    let sort_id = eframe::egui::Id::unique("files.status_sort");
+    let status_sort = ui.data(|data| data.get_temp::<bool>(sort_id));
+    let mut visible = app
         .changes
         .iter()
         .enumerate()
         .filter(|(_, change)| filter_matches(app.change_filter, change.kind))
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
+    if let Some(ascending) = status_sort {
+        visible.sort_by(|&left, &right| {
+            let order = app.changes[left]
+                .kind
+                .code()
+                .cmp(app.changes[right].kind.code());
+            if ascending {
+                order
+            } else {
+                order.reverse()
+            }
+        });
+    }
     let focus_id = eframe::egui::Id::unique("files.selection.focus");
     // Keep list keyboard ownership separate from the transient row widget IDs.
     if ui.input(|input| {
@@ -116,7 +156,18 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 column_separator(ui, "file", &mut status_width, -1.0, 64.0..=120.0, palette);
             });
             header.col(|ui| {
-                ui.label("Status");
+                let label = match status_sort {
+                    None => "Status",
+                    Some(true) => "Status ↑",
+                    Some(false) => "Status ↓",
+                };
+                if ui.add(eframe::egui::Button::new(label).frame(false))
+                    .help_text("Sort by file status")
+                    .clicked()
+                {
+                    ui.data_mut(|data| data.insert_temp(sort_id, status_sort != Some(true)));
+                    ui.ctx().request_repaint();
+                }
             });
         })
         .body(|mut body| {
@@ -124,8 +175,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             body.rows(row_height, visible.len(), |mut row| {
                 let index = visible[row.index()];
                 let change = &app.changes[index];
-                let can_toggle = operations_enabled && change.kind != ChangeKind::Conflicted;
                 let toggle_staged = !change.staged;
+                let can_toggle = app.staging_allowed(index, toggle_staged) && change.kind != ChangeKind::Conflicted;
                 row.set_selected(app.change_is_selected(index));
                 let mut row_rect = Rect::NOTHING;
                 row.col(|ui| {
@@ -133,15 +184,19 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     ui.spacing_mut().interact_size.y = row_height;
                     ui.add_space(6.0);
                     let mut checked = change.staged;
-                    let tooltip = if change.kind == ChangeKind::Conflicted {
+                    let tooltip = if change.kind == ChangeKind::Conflicted && app.merging {
+                        "After resolving the conflict, use Stage in the file menu"
+                    } else if change.kind == ChangeKind::Conflicted {
                         "Resolve this conflict outside SannyGit before staging"
                     } else if !operations_enabled {
                         "Wait for the current operation or refresh the repository"
+                    } else if change.staged && app.merging {
+                        "Use Discard to restore the pre-merge version of this file"
                     } else if change.staged && change.unstaged {
                         "Some changes are staged. Click to unstage; use Stage to include the remaining changes"
                     } else if change.staged { "Unstage this file (preserve working-tree contents)" }
                     else { "Stage all changes in this file" };
-                    if ui.add_enabled(operations_enabled && change.kind != ChangeKind::Conflicted,
+                    if ui.add_enabled(can_toggle,
                         eframe::egui::Checkbox::without_text(&mut checked))
                         .help_text(tooltip).disabled_help_text(tooltip).changed() {
                         staging_request = Some((index, !change.staged));
@@ -226,6 +281,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             FileAction::Stage => app.set_selected_staged(true),
             FileAction::Unstage => app.set_selected_staged(false),
             FileAction::Discard => app.open_discard(),
+            FileAction::Remove => app.open_remove(),
         }
     }
 }
@@ -295,6 +351,7 @@ enum FileAction {
     Stage,
     Unstage,
     Discard,
+    Remove,
 }
 
 fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<FileAction>> {
@@ -319,7 +376,7 @@ fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<F
             FileAction::Stage,
         )
         .help(
-            "Select a suitable file after refreshing; conflicts must be resolved outside SannyGit",
+            "Stage selected changes. For a merge conflict, stage after editing the file to resolve it.",
         ),
         E::item(
             "Unstage",
@@ -336,6 +393,8 @@ fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<F
             FileAction::Discard,
         )
         .help(app.discard_blocker().unwrap_or("")),
+        E::item("Remove…", app.remove_blocker().is_none(), FileAction::Remove)
+            .help(app.remove_blocker().unwrap_or("Delete the selected tracked files and stage their removal")),
         E::Separator,
     ];
     let selected = app.selected_change_indices();
@@ -449,13 +508,14 @@ fn changes_title(ui: &mut Ui, count: usize) {
 }
 
 fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
-    let width_scale = (ui.available_width() / 270.0).min(1.0);
+    let width_scale = (ui.available_width() / FILTER_WIDTH).min(1.0);
     ui.spacing_mut().item_spacing.x = 0.0;
     for (filter, label, width) in [
         (ChangeFilter::All, "All", 34.0),
         (ChangeFilter::Modified, "Modified", 88.0),
         (ChangeFilter::Added, "Added", 72.0),
         (ChangeFilter::Deleted, "Deleted", 76.0),
+        (ChangeFilter::Conflicted, "Conflicted", 96.0),
     ] {
         let count = app
             .changes
@@ -507,7 +567,7 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             ui.painter().rect_filled(
                 badge,
                 3.0,
-                if filter == ChangeFilter::Deleted {
+                if matches!(filter, ChangeFilter::Deleted | ChangeFilter::Conflicted) {
                     palette.removed_background
                 } else {
                     palette.border
@@ -554,6 +614,7 @@ fn filter_matches(filter: ChangeFilter, kind: ChangeKind) -> bool {
         ChangeFilter::Modified => kind == ChangeKind::Modified,
         ChangeFilter::Added => kind == ChangeKind::Added,
         ChangeFilter::Deleted => kind == ChangeKind::Deleted,
+        ChangeFilter::Conflicted => kind == ChangeKind::Conflicted,
     }
 }
 fn status_color(kind: ChangeKind, palette: Palette) -> Color32 {
@@ -569,6 +630,98 @@ mod tests {
     use super::*;
     use crate::theme::{install_fonts, ThemeChoice};
     use eframe::egui::{Context, Pos2, RawInput};
+
+    #[test]
+    fn filters_conflicts_and_reverses_status_order_without_losing_selection() {
+        use eframe::egui::{Event, Modifiers, PointerButton};
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let ctx = Context::default();
+            install_fonts(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            theme.apply(&ctx);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.changes = crate::mock_data::changes();
+            app.changes[0].kind = ChangeKind::Conflicted;
+            app.selected_change = 0;
+            let conflict = app.changes[0].path.clone();
+            let added = app.changes[3].path.clone();
+            let render = |app: &mut SannyGitApp, events| {
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(480.0, 360.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| show(ui, app),
+                );
+                output.textures_delta.clear();
+                output
+            };
+            let find = |output: &eframe::egui::FullOutput, label: &str| {
+                output.shapes.iter().find_map(|shape| match &shape.shape {
+                    eframe::egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+            };
+            let click = |app: &mut SannyGitApp, pos| {
+                for pressed in [true, false] {
+                    render(
+                        app,
+                        vec![
+                            Event::PointerMoved(pos),
+                            Event::PointerButton {
+                                pos,
+                                button: PointerButton::Primary,
+                                pressed,
+                                modifiers: Modifiers::NONE,
+                            },
+                        ],
+                    );
+                }
+                render(app, vec![])
+            };
+            let output = render(&mut app, vec![]);
+            let output = click(&mut app, find(&output, "Status").unwrap());
+            assert!(find(&output, &added).unwrap().y < find(&output, &conflict).unwrap().y);
+            assert_eq!(app.selected_change, 0);
+            let output = click(&mut app, find(&output, "Status ↑").unwrap());
+            assert!(find(&output, &added).unwrap().y > find(&output, &conflict).unwrap().y);
+            assert_eq!(app.selected_change, 0);
+            let output = click(&mut app, find(&output, "Conflicted").unwrap());
+            assert_eq!(app.change_filter, ChangeFilter::Conflicted);
+            assert!(find(&output, &conflict).is_some());
+            assert!(find(&output, &added).is_none());
+        }
+    }
+
+    #[test]
+    fn merge_banner_stays_visible_during_a_refresh() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
+                let ctx = Context::default();
+                install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.merging = true;
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                        ..Default::default()
+                    },
+                    |ui| show(ui, &mut app),
+                );
+                output.textures_delta.clear();
+                for label in ["Merge in progress", "Abort"] {
+                    assert!(output.shapes.iter().any(|shape| {
+                        matches!(&shape.shape, eframe::egui::Shape::Text(text) if text.galley.job.text == label)
+                    }), "{theme:?} {size:?} {label}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn modifier_clicks_select_ranges_and_right_click_preserves_the_group() {

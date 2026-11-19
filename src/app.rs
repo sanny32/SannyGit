@@ -113,6 +113,7 @@ pub enum ChangeFilter {
     Modified,
     Added,
     Deleted,
+    Conflicted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -276,6 +277,7 @@ pub struct SannyGitApp {
     pub discard_dialog: Option<discard::Dialog>,
     pub ref_dialog: Option<ref_management::Dialog>,
     pub merge_dialog: Option<merge::Dialog>,
+    pub abort_merge_dialog: Option<String>,
     pub skip_push_confirmation: bool,
     pub new_branch_name: String,
     pub new_tag_name: String,
@@ -314,6 +316,7 @@ pub struct SannyGitApp {
     loaded_diff: Option<usize>,
     pub diff_preview: Option<crate::models::DiffPreview>,
     pub state_current: bool,
+    pub merging: bool,
     pub history_all_branches: bool,
     pub history_edges: Vec<crate::models::HistoryEdge>,
     pub history_max_lane: usize,
@@ -538,6 +541,7 @@ impl SannyGitApp {
             discard_dialog: None,
             ref_dialog: None,
             merge_dialog: None,
+            abort_merge_dialog: None,
             skip_push_confirmation: false,
             new_branch_name: String::new(),
             new_tag_name: String::new(),
@@ -576,6 +580,7 @@ impl SannyGitApp {
             loaded_diff: None,
             diff_preview: None,
             state_current: false,
+            merging: false,
             history_all_branches: false,
             history_edges: Vec::new(),
             history_max_lane: 0,
@@ -633,6 +638,7 @@ impl SannyGitApp {
             || self.discard_dialog.is_some()
             || self.ref_dialog.is_some()
             || self.merge_dialog.is_some()
+            || self.abort_merge_dialog.is_some()
             || self.remote_checkout.is_some()
             || self.branch_dialog_open
             || self.rename_branch_dialog.is_some()
@@ -1079,6 +1085,7 @@ impl SannyGitApp {
             self.assign_group(&path, self.manager.preferences.selected_group.clone());
         }
         self.current_branch = snapshot.branch;
+        self.merging = snapshot.merging;
         let retained_diff = if same_repository && same_branch && self.selected_diff().is_some() {
             self.changes
                 .get_mut(self.selected_change)
@@ -1136,6 +1143,7 @@ impl SannyGitApp {
             self.discard_dialog = None;
             self.ref_dialog = None;
             self.merge_dialog = None;
+            self.abort_merge_dialog = None;
             self.new_branch_name.clear();
             self.commits.clear();
             self.history_session.clear_view();
@@ -1636,8 +1644,13 @@ impl SannyGitApp {
             && self.state_current
             && self.repositories.get(self.selected_repository).is_some()
             && self.changes.get(index).is_some_and(|c| {
-                c.kind != crate::models::ChangeKind::Conflicted
-                    && if staged { c.unstaged } else { c.staged }
+                if c.kind == crate::models::ChangeKind::Conflicted {
+                    self.merging && staged
+                } else if staged {
+                    c.unstaged
+                } else {
+                    !self.merging && c.staged
+                }
             })
     }
 
@@ -1678,6 +1691,8 @@ impl SannyGitApp {
             None
         } else if !self.state_current || !self.refs_current {
             Some("Refresh the repository before amending")
+        } else if self.merging {
+            Some("Finish the merge before amending")
         } else if !self.branch_head_exists {
             Some("There is no commit to amend")
         } else {
@@ -1718,10 +1733,13 @@ impl SannyGitApp {
             Some("Resolve all conflicts before committing")
         } else if self.amend && self.amend_head.is_none() {
             Some("Load the last commit before amending")
-        } else if self.changes.is_empty() && !self.amend {
+        } else if self.merging && self.amend {
+            Some("Turn off Amend to finish the merge")
+        } else if self.changes.is_empty() && !self.amend && !self.merging {
             Some("There are no changes to commit")
         } else if self.commit_contents == git::CommitContents::Staged
             && !self.amend
+            && !self.merging
             && !self.changes.iter().any(|c| c.staged)
         {
             Some("There are no staged changes to commit")
@@ -2097,13 +2115,24 @@ impl SannyGitApp {
                 );
                 let discarding = matches!(
                     success,
-                    "File restored from index" | "Untracked file deleted" | "Files discarded"
+                    "File restored from index"
+                        | "Untracked file deleted"
+                        | "Files discarded"
+                        | "Files removed"
+                        | "Merge changes discarded"
                 );
                 let operation_succeeded = outcome.is_ok();
                 if operation_succeeded {
                     logging::record(logging::Level::Info, format_args!("{success}"));
                 }
-                if matches!(success, "Merge complete" | "Rebase complete") && operation_succeeded {
+                if (matches!(
+                    success,
+                    "Merge complete"
+                        | "Merge started. Resolve conflicts in the working tree"
+                        | "Merge ready to review and commit"
+                        | "Rebase complete"
+                )) && operation_succeeded
+                {
                     self.merge_dialog = None;
                 }
                 if operation_succeeded
@@ -2360,6 +2389,7 @@ impl eframe::App for SannyGitApp {
             && self.discard_dialog.is_none()
             && self.ref_dialog.is_none()
             && self.merge_dialog.is_none()
+            && self.abort_merge_dialog.is_none()
             && self.remote_checkout.is_none();
         self.tracking.update(
             root,

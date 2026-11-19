@@ -1,4 +1,4 @@
-//! Destructive operations on exactly one reviewed path; never change the index.
+//! Destructive file operations on reviewed working copies and index entries.
 use crate::{git, models::ChangeKind};
 use std::{
     io::Read,
@@ -12,6 +12,8 @@ const SNAPSHOT_LIMIT: u64 = 2 * 1024 * 1024;
 pub enum Action {
     Restore,
     DeleteUntracked,
+    RestoreHead,
+    Remove,
 }
 
 impl Action {
@@ -19,12 +21,16 @@ impl Action {
         match self {
             Self::Restore => "Restore File",
             Self::DeleteUntracked => "Delete File",
+            Self::RestoreHead => "Discard Merge Changes",
+            Self::Remove => "Remove File",
         }
     }
     pub fn explanation(self) -> &'static str {
         match self {
             Self::Restore => "Replace this file's working copy with its index version. Unstaged edits are lost. Staged contents and other files are kept. Use Unstage separately to remove changes from the index.",
             Self::DeleteUntracked => "Delete this untracked file or symbolic link directly from disk, bypassing the Trash. The index does not protect its current contents. Staged contents and other paths are kept. A link's target is not deleted.",
+            Self::RestoreHead => "Restore this path to its pre-merge version in HEAD. Its working copy, staged changes and conflict stages will be replaced. A path absent from HEAD will be removed.",
+            Self::Remove => "Delete this tracked file from the working tree and stage its removal. Local edits and any conflict stages for this path will be lost.",
         }
     }
 }
@@ -54,6 +60,7 @@ pub struct Prepared {
     index: Vec<u8>,
     status: Vec<u8>,
     file: FileState,
+    merging: bool,
 }
 
 fn normal_directory(metadata: &std::fs::Metadata) -> bool {
@@ -161,26 +168,44 @@ fn index_entry(root: &Path, path: &str) -> Result<Vec<u8>, String> {
     if entry.is_empty() {
         return Ok(entry);
     }
-    let record = entry.strip_suffix(&[0]).ok_or("Truncated index entry")?;
-    let tab = record
-        .iter()
-        .position(|byte| *byte == b'\t')
-        .ok_or("Invalid index entry")?;
-    let header = &record[..tab];
-    let name = &record[tab + 1..];
-    let fields: Vec<_> = header.split(|byte| *byte == b' ').collect();
-    if name != path.as_bytes() || fields.len() != 3 || fields[2] != b"0" {
-        return Err("Select one non-conflicted file, not a directory.".into());
-    }
-    if !matches!(fields[0], b"100644" | b"100755" | b"120000") {
-        return Err("Discarding submodules or unsupported index modes is not supported.".into());
+    let records = entry.strip_suffix(&[0]).ok_or("Truncated index entry")?;
+    for record in records.split(|byte| *byte == 0) {
+        let tab = record
+            .iter()
+            .position(|byte| *byte == b'\t')
+            .ok_or("Invalid index entry")?;
+        let header = &record[..tab];
+        let name = &record[tab + 1..];
+        let fields: Vec<_> = header.split(|byte| *byte == b' ').collect();
+        if name != path.as_bytes()
+            || fields.len() != 3
+            || !matches!(fields[2], b"0" | b"1" | b"2" | b"3")
+        {
+            return Err("Select one file, not a directory.".into());
+        }
+        if !matches!(fields[0], b"100644" | b"100755" | b"120000") {
+            return Err(
+                "Discarding submodules or unsupported index modes is not supported.".into(),
+            );
+        }
     }
     Ok(entry)
 }
 
 pub fn prepare(root: &Path, path: &str) -> Result<Prepared, String> {
+    prepare_action(root, path, false, false)
+}
+
+pub(crate) fn prepare_action(
+    root: &Path,
+    path: &str,
+    remove: bool,
+    merging: bool,
+) -> Result<Prepared, String> {
     let target = safe_path(root, path)?;
-    git::require_no_operation(root)?;
+    if git::check_operation(root, merging)? != merging {
+        return Err("The merge state changed. Refresh and review the selected files again.".into());
+    }
     let snapshot = git::load(root)?;
     let changes: Vec<_> = snapshot
         .changes
@@ -190,14 +215,38 @@ pub fn prepare(root: &Path, path: &str) -> Result<Prepared, String> {
     if changes.is_empty() {
         return Err("This file no longer has changes. Refresh before retrying.".into());
     }
-    if changes
-        .iter()
-        .any(|change| change.kind == ChangeKind::Conflicted)
+    if !merging
+        && changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::Conflicted)
     {
         return Err("Resolve conflicts outside SannyGit before discarding changes.".into());
     }
     let index = index_entry(root, path)?;
-    let action = if index.is_empty()
+    let action = if remove {
+        if index.is_empty()
+            && !changes
+                .iter()
+                .any(|change| change.kind == ChangeKind::Deleted && change.staged)
+        {
+            return Err("Select a tracked file to remove.".into());
+        }
+        if index.is_empty() && file_state(&target)?.contents != Contents::Missing {
+            return Err("The staged deletion has a new working copy. Review that untracked file separately.".into());
+        }
+        Action::Remove
+    } else if merging
+        && changes
+            .iter()
+            .any(|change| change.staged || change.kind == ChangeKind::Conflicted)
+    {
+        if changes.iter().any(|change| change.original_path.is_some()) {
+            return Err(
+                "Review both paths of a merge rename before restoring them with Git.".into(),
+            );
+        }
+        Action::RestoreHead
+    } else if index.is_empty()
         && changes
             .iter()
             .any(|change| change.kind == ChangeKind::Untracked)
@@ -213,7 +262,7 @@ pub fn prepare(root: &Path, path: &str) -> Result<Prepared, String> {
         return Err("The untracked file no longer exists. Refresh before retrying.".into());
     }
     let summary = match &file.contents {
-        Contents::Missing => "Missing file; its index version will be restored.".into(),
+        Contents::Missing => "The working copy is missing.".into(),
         Contents::File(bytes) => format!("{} bytes in the current working copy.", bytes.len()),
         Contents::Link(target) => format!(
             "Symbolic link to {:?}; the target will not be followed.",
@@ -225,8 +274,9 @@ pub fn prepare(root: &Path, path: &str) -> Result<Prepared, String> {
         action,
         summary,
         file,
+        merging,
         index,
-        head: git::run(root, &["rev-parse", "--revs-only", "HEAD"])?,
+        head: git::run(root, &["rev-parse", "--revs-only", "HEAD", "MERGE_HEAD"])?,
         status: git::run(
             root,
             &[
@@ -242,7 +292,13 @@ pub fn prepare(root: &Path, path: &str) -> Result<Prepared, String> {
 }
 
 pub fn execute(root: &Path, expected: &Prepared) -> Result<(), String> {
-    if prepare(root, &expected.path)? != *expected {
+    if prepare_action(
+        root,
+        &expected.path,
+        expected.action == Action::Remove,
+        expected.merging,
+    )? != *expected
+    {
         return Err(
             "The file, index or HEAD changed after review. Reload details and confirm again."
                 .into(),
@@ -250,6 +306,28 @@ pub fn execute(root: &Path, expected: &Prepared) -> Result<(), String> {
     }
     let target = safe_path(root, &expected.path)?;
     match expected.action {
+        Action::RestoreHead => {
+            return git::run(
+                root,
+                &[
+                    "restore",
+                    "--source=HEAD",
+                    "--staged",
+                    "--worktree",
+                    "--no-recurse-submodules",
+                    "--",
+                    &expected.path,
+                ],
+            )
+            .map(|_| ());
+        }
+        Action::Remove => {
+            return git::run(
+                root,
+                &["rm", "-f", "--ignore-unmatch", "--", &expected.path],
+            )
+            .map(|_| ());
+        }
         Action::Restore => {
             git::run(root, &["restore", "--worktree", "--no-recurse-submodules", "--", &expected.path])
             .map_err(|error| format!("File restoration did not complete: {error}. Inspect the refreshed file before retrying."))?;
@@ -284,7 +362,13 @@ pub fn execute_many(root: &Path, expected: &[Prepared]) -> Result<(), String> {
         return Err("Select files first.".into());
     }
     for entry in expected {
-        if prepare(root, &entry.path)? != *entry {
+        if prepare_action(
+            root,
+            &entry.path,
+            entry.action == Action::Remove,
+            entry.merging,
+        )? != *entry
+        {
             return Err(format!("{} changed after review. Reload details and confirm again. No files were discarded.", entry.path));
         }
     }

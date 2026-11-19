@@ -164,6 +164,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     discard::show(ui.ctx(), app);
     ref_management::show(ui.ctx(), app);
     merge::show(ui.ctx(), app);
+    merge::show_abort(ui.ctx(), app);
     welcome(ui, app);
     about::show(ui.ctx(), app);
     status_bar::show(ui, app);
@@ -416,6 +417,11 @@ fn show_errors(ui: &mut Ui, app: &mut SannyGitApp) {
     app.collect_errors();
     let palette = app.palette();
     if let Some(error) = app.error_dialogs.pending.front().cloned() {
+        let (summary, details) = error
+            .split_once("\n\nGit diagnostic:\n")
+            .map_or((error.as_str(), None), |(summary, details)| {
+                (summary, Some(details.trim_end()))
+            });
         let mut dismiss = false;
         dialog_style::modal(ui.ctx(), palette, "application.error").show(ui.ctx(), |ui| {
             ui.set_width(460.0);
@@ -434,7 +440,26 @@ fn show_errors(ui: &mut Ui, app: &mut SannyGitApp) {
                     .id_salt("application.error.message")
                     .max_height(240.0)
                     .show(ui, |ui| {
-                        ui.add(eframe::egui::Label::new(error).wrap().selectable(true));
+                        ui.add(eframe::egui::Label::new(summary).wrap().selectable(true));
+                        if let Some(details) = details {
+                            ui.add_space(12.0);
+                            ui.label("Git details");
+                            ui.add_space(4.0);
+                            eframe::egui::Frame::new()
+                                .fill(palette.header)
+                                .stroke((1.0, palette.border))
+                                .inner_margin(8)
+                                .show(ui, |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    ui.add(
+                                        eframe::egui::Label::new(
+                                            eframe::egui::RichText::new(details).monospace(),
+                                        )
+                                        .wrap()
+                                        .selectable(true),
+                                    );
+                                });
+                        }
                     });
             });
             dialog_style::section(ui, palette.header, Margin::symmetric(18, 12), |ui| {
@@ -965,11 +990,9 @@ mod tests {
                         render(&mut app, vec![]);
                     }
                     let (before, _) = render(&mut app, vec![]);
-                    let error = concat!(
-                        "LLM API returned HTTP 404. ",
-                        "Check the endpoint, model, API key and provider limits."
-                    );
-                    app.error = Some(error.into());
+                    let summary = "Untracked files overlap paths in the selected commit.";
+                    let details = "\".github/workflows/build-test.yml\"";
+                    app.error = Some(format!("{summary}\n\nGit diagnostic:\n{details}"));
                     for _ in 0..3 {
                         render(&mut app, vec![]);
                     }
@@ -982,7 +1005,7 @@ mod tests {
                             "Error moved a panel in {theme:?}: {before:?} -> {after:?}"
                         );
                     }
-                    for label in ["Attention required", error, "OK"] {
+                    for label in ["Attention required", summary, "Git details", details, "OK"] {
                         assert!(
                             output.shapes.iter().any(|shape| {
                                 matches!(&shape.shape, eframe::egui::Shape::Text(text)
@@ -1046,7 +1069,9 @@ mod tests {
                         _ => None,
                     }).collect::<Vec<_>>();
                     assert!(shown.contains(&"Attention required"));
-                    assert!(shown.contains(&error.as_str()));
+                    let (summary, details) = error.split_once("\n\nGit diagnostic:\n").unwrap();
+                    assert!(shown.contains(&summary));
+                    assert!(shown.contains(&details.trim_end()));
                     assert!(error.contains("exit code: 128"));
                     for text in shown {
                         for hidden in ["alice", "hunter2", "abc123", "unlabelled-value"] {

@@ -127,8 +127,42 @@ fn load(root: &Path, operation: Operation) -> Result<Snapshot, String> {
 }
 
 impl SannyGitApp {
+    pub fn abort_merge_allowed(&self) -> bool {
+        self.merging
+            && self.state_current
+            && !self.busy()
+            && self.repositories.get(self.selected_repository).is_some()
+    }
+
+    pub fn open_abort_merge(&mut self) {
+        if self.abort_merge_allowed() {
+            self.abort_merge_dialog =
+                Some(self.repositories[self.selected_repository].path.clone());
+        }
+    }
+
+    pub fn confirm_abort_merge(&mut self) {
+        let Some(root) = self.abort_merge_dialog.take() else {
+            return;
+        };
+        if !self.abort_merge_allowed() || self.repositories[self.selected_repository].path != root {
+            return;
+        }
+        if self.start_worker(move || {
+            let root = Path::new(&root);
+            WorkerResult::Operation {
+                committed: false,
+                success: "Merge aborted",
+                outcome: merge::abort(root),
+                snapshot: crate::git::load(root),
+            }
+        }) {
+            self.status = "Aborting merge…".into();
+        }
+    }
+
     pub fn merge_allowed(&self) -> bool {
-        self.branch_base_blocker().is_none() && self.branch_head_exists
+        !self.merging && self.branch_base_blocker().is_none() && self.branch_head_exists
     }
 
     pub fn open_merge(&mut self) {
@@ -261,18 +295,29 @@ impl SannyGitApp {
         let branch = snapshot.branch.clone();
         let target = target.clone();
         let operation = dialog.operation;
-        if self.start_worker(move || WorkerResult::Operation {
-            committed: false,
-            success: if operation == Operation::Rebase {
-                "Rebase complete"
-            } else {
-                "Merge complete"
-            },
-            outcome: match mode {
-                Some(mode) => merge::execute(Path::new(&root), &head, &branch, &target, mode),
-                None => crate::rebase::execute(Path::new(&root), &head, &branch, &target),
-            },
-            snapshot: crate::git::load(Path::new(&root)),
+        if self.start_worker(move || {
+            let root = Path::new(&root);
+            let result = match mode {
+                Some(mode) => merge::execute(root, &head, &branch, &target, mode),
+                None => crate::rebase::execute(root, &head, &branch, &target).map(|()| false),
+            };
+            let snapshot = crate::git::load(root);
+            let success = match (mode, &result) {
+                (None, _) => "Rebase complete",
+                (_, Ok(true)) => "Merge started. Resolve conflicts in the working tree",
+                (Some(merge::Mode::WorkingTree), _)
+                    if snapshot.as_ref().is_ok_and(|s| s.merging) =>
+                {
+                    "Merge ready to review and commit"
+                }
+                _ => "Merge complete",
+            };
+            WorkerResult::Operation {
+                committed: false,
+                success,
+                outcome: result.map(|_| ()),
+                snapshot,
+            }
         }) {
             self.status = if operation == Operation::Rebase {
                 "Rebasing…"
@@ -390,6 +435,122 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn conflicted_merge_can_discard_remove_and_commit_from_the_working_tree() {
+        let repo = crate::test_support::TempRepo::new();
+        for path in ["discard", "remove", "edit"] {
+            repo.write(path, "base\n");
+        }
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "base"]);
+        repo.git(&["checkout", "-b", "feature"]);
+        for path in ["discard", "remove", "edit", "clean"] {
+            repo.write(path, "theirs\n");
+        }
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "theirs"]);
+        let target = merge::head(&repo.0).unwrap();
+        repo.git(&["checkout", "main"]);
+        for path in ["discard", "remove", "edit"] {
+            repo.write(path, "ours\n");
+        }
+        repo.git(&["commit", "-am", "ours"]);
+        let before = merge::head(&repo.0).unwrap();
+
+        let mut app = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
+        app.apply_snapshot(crate::git::load(&repo.0).unwrap());
+        app.refs_current = true;
+        app.branch_head_exists = true;
+        app.open_merge();
+        wait(&mut app);
+        app.merge_dialog.as_mut().unwrap().selected = Some(target.clone());
+        app.submit_merge(merge::Mode::WorkingTree);
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(app.merge_dialog.is_none() && app.merging);
+        assert!(app
+            .changes
+            .iter()
+            .any(|file| file.path == "clean" && file.staged));
+        assert_eq!(merge::head(&repo.0).unwrap(), before);
+
+        for (path, remove) in [("discard", false), ("remove", true)] {
+            app.selected_paths.clear();
+            app.selected_change = app
+                .changes
+                .iter()
+                .position(|file| file.path == path)
+                .unwrap();
+            if remove {
+                app.open_remove();
+            } else {
+                app.open_discard();
+            }
+            wait(&mut app);
+            let dialog = app.discard_dialog.as_mut().unwrap();
+            assert!(dialog.prepared.is_some(), "{:?}", dialog.error);
+            dialog.confirmed = true;
+            app.confirm_discard();
+            wait(&mut app);
+            assert!(app.error.is_none(), "{:?}", app.error);
+            assert!(app.discard_dialog.is_none());
+        }
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("discard")).unwrap(),
+            "ours\n"
+        );
+        assert!(!repo.0.join("remove").exists());
+        repo.write("edit", "resolved\n");
+        app.selected_paths.clear();
+        app.selected_change = app
+            .changes
+            .iter()
+            .position(|file| file.path == "edit")
+            .unwrap();
+        app.set_selected_staged(true);
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        app.commit_message = "Resolved merge".into();
+        app.create_commit();
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(!app.merging);
+        assert_eq!(
+            repo.git(&["show", "-s", "--format=%P", "HEAD"]).trim(),
+            format!("{before} {target}")
+        );
+    }
+
+    #[test]
+    fn abort_merge_restores_the_working_tree_after_confirmation() {
+        let repo = crate::test_support::TempRepo::new();
+        repo.write("base", "base\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "base"]);
+        let before = merge::head(&repo.0).unwrap();
+        repo.git(&["checkout", "-b", "feature"]);
+        repo.write("feature", "feature\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "feature"]);
+        repo.git(&["checkout", "main"]);
+        repo.git(&["merge", "--no-ff", "--no-commit", "feature"]);
+
+        let mut app = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
+        app.apply_snapshot(crate::git::load(&repo.0).unwrap());
+        app.open_abort_merge();
+        assert!(app.modal_dialog_open());
+        assert!(crate::git::load(&repo.0).unwrap().merging);
+        app.confirm_abort_merge();
+        wait(&mut app);
+
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(app.abort_merge_dialog.is_none() && !app.merging);
+        assert!(app.changes.is_empty());
+        assert_eq!(app.status, "Merge aborted");
+        assert_eq!(merge::head(&repo.0).unwrap(), before);
+        assert!(!repo.0.join("feature").exists());
     }
 
     #[test]

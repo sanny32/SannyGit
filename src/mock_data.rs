@@ -361,6 +361,9 @@ pub fn discard_dialog(
             repo.write("new", "untracked\n");
             "new"
         }
+        crate::discard::Action::RestoreHead | crate::discard::Action::Remove => {
+            panic!("This fixture only prepares ordinary discard actions")
+        }
     };
     let prepared = crate::discard::prepare(&repo.0, path).unwrap();
     let dialog = crate::app::discard::Dialog {

@@ -16,6 +16,14 @@ pub struct Dialog {
 
 impl SannyGitApp {
     pub fn discard_blocker(&self) -> Option<&'static str> {
+        self.file_action_blocker(false)
+    }
+
+    pub fn remove_blocker(&self) -> Option<&'static str> {
+        self.file_action_blocker(true)
+    }
+
+    fn file_action_blocker(&self, remove: bool) -> Option<&'static str> {
         if self.busy() {
             Some("Wait for the current operation to finish")
         } else if self.repositories.get(self.selected_repository).is_none() {
@@ -27,9 +35,22 @@ impl SannyGitApp {
         } else {
             for index in self.selected_change_indices() {
                 let change = &self.changes[index];
-                if change.kind == ChangeKind::Conflicted {
+                if remove && change.kind == ChangeKind::Untracked {
+                    return Some("Select tracked files to remove");
+                }
+                if change.kind == ChangeKind::Conflicted && !self.merging {
                     return Some("Resolve conflicts outside SannyGit");
-                } else if !change.unstaged && change.kind != ChangeKind::Untracked {
+                }
+                if !remove && self.merging && change.original_path.is_some() {
+                    return Some(
+                        "Review both paths of a merge rename before restoring them with Git",
+                    );
+                }
+                if !remove
+                    && !self.merging
+                    && !change.unstaged
+                    && change.kind != ChangeKind::Untracked
+                {
                     return Some("Only staged changes remain in a selected file; use Unstage separately before discarding");
                 }
             }
@@ -38,7 +59,15 @@ impl SannyGitApp {
     }
 
     pub fn open_discard(&mut self) {
-        if self.discard_blocker().is_some() {
+        self.open_file_action(false);
+    }
+
+    pub fn open_remove(&mut self) {
+        self.open_file_action(true);
+    }
+
+    fn open_file_action(&mut self, remove: bool) {
+        if self.file_action_blocker(remove).is_some() {
             return;
         }
         let selected = self.selected_change_indices();
@@ -46,7 +75,11 @@ impl SannyGitApp {
         self.discard_dialog = Some(Dialog {
             root: self.repositories[self.selected_repository].path.clone(),
             path: change.path.clone(),
-            action: if change.kind == ChangeKind::Untracked {
+            action: if remove {
+                backend::Action::Remove
+            } else if self.merging && (change.staged || change.kind == ChangeKind::Conflicted) {
+                backend::Action::RestoreHead
+            } else if change.kind == ChangeKind::Untracked {
                 backend::Action::DeleteUntracked
             } else {
                 backend::Action::Restore
@@ -78,12 +111,21 @@ impl SannyGitApp {
         dialog.error = None;
         let root = dialog.root.clone();
         let path = dialog.path.clone();
+        let merging = self.merging;
+        let remove = dialog.action == backend::Action::Remove;
+        let prepare = move |root: &PathBuf, path: &str| {
+            if merging || remove {
+                backend::prepare_action(root, path, remove, merging)
+            } else {
+                backend::prepare(root, path)
+            }
+        };
         if dialog.paths.len() > 1 {
             let paths = dialog.paths.clone();
             self.start_worker(move || WorkerResult::DiscardBatchPrepared {
                 result: paths
                     .iter()
-                    .map(|path| backend::prepare(&PathBuf::from(&root), path))
+                    .map(|path| prepare(&PathBuf::from(&root), path))
                     .collect(),
                 root,
                 paths,
@@ -91,7 +133,7 @@ impl SannyGitApp {
             return;
         }
         if !self.start_worker(move || WorkerResult::DiscardPrepared {
-            result: backend::prepare(&PathBuf::from(&root), &path),
+            result: prepare(&PathBuf::from(&root), &path),
             root,
             path,
         }) {
@@ -142,12 +184,16 @@ impl SannyGitApp {
         self.status = "Discard operation in progress…".into();
         if !self.start_worker(move || WorkerResult::Operation {
             committed: false,
-            success: if entries.len() > 1 {
+            success: if prepared.action == backend::Action::Remove {
+                "Files removed"
+            } else if entries.len() > 1 {
                 "Files discarded"
             } else {
                 match prepared.action {
                     backend::Action::Restore => "File restored from index",
                     backend::Action::DeleteUntracked => "Untracked file deleted",
+                    backend::Action::RestoreHead => "Merge changes discarded",
+                    backend::Action::Remove => "Files removed",
                 }
             },
             outcome: backend::execute_many(&root, &entries),

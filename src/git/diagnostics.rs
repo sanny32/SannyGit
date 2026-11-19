@@ -129,6 +129,7 @@ pub(super) fn operation(mut args: &[&str]) -> &'static str {
         Some("log") => "log",
         Some("ls-files") => "ls-files",
         Some("ls-remote") => "ls-remote",
+        Some("merge") => "merge",
         Some("push") => "push",
         Some("restore") => "restore",
         Some("rev-list") => "rev-list",

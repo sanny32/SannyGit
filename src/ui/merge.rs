@@ -19,6 +19,40 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 const COMMIT_ROW_HEIGHT: f32 = 22.0;
 const GRAPH_LANE_WIDTH: f32 = 14.0;
 
+pub fn show_abort(ctx: &egui::Context, app: &mut SannyGitApp) {
+    if app.abort_merge_dialog.is_none() {
+        return;
+    }
+    let palette = app.palette();
+    let mut cancel = false;
+    let mut abort = false;
+    dialog_style::modal(ctx, palette, "merge.abort").show(ctx, |ui| {
+        ui.set_width(440.0);
+        dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        dialog_style::header_with_icon(
+            ui,
+            palette,
+            "Abort merge?",
+            "Git will attempt to restore the working tree and index to their state before the merge. Conflict resolutions and changes made during the merge may be lost.",
+            Icon::Warning,
+        );
+        dialog_style::section(ui, palette.panel, egui::Margin::symmetric(12, 10), |ui| {
+            dialog_style::button_row(ui, |ui| {
+                cancel = ui.add(dialog_style::button("Cancel")).dialog_cancel();
+                abort = ui
+                    .add_enabled(app.abort_merge_allowed(), dialog_style::button("Abort Merge"))
+                    .clicked();
+            });
+        });
+    });
+    if cancel {
+        app.abort_merge_dialog = None;
+    } else if abort {
+        app.confirm_abort_merge();
+    }
+}
+
 pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let Some(mut dialog) = app.merge_dialog.take() else {
         return;
@@ -65,7 +99,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 if operation == Operation::Rebase {
                     rebase = ui.add_enabled(enabled, dialog_style::primary("Rebase HEAD to", palette)).help_text("Replay HEAD commits onto the selected commit. Rewrites commit history; commit or stash local changes first.").clicked();
                 } else {
-                    if ui.add_enabled(enabled, dialog_style::primary("Merge to Working Tree", palette)).help_text("Squash the selected commit into the index and working tree without creating a commit. Review the result and commit separately.").clicked() { submit = Some(Mode::WorkingTree); }
+                    if ui.add_enabled(enabled, dialog_style::primary("Merge to Working Tree", palette)).help_text("Start the merge and leave it open. Review changes and resolve conflicts before creating the merge commit.").clicked() { submit = Some(Mode::WorkingTree); }
                     if ui.add_enabled(enabled, dialog_style::button("Create Merge-Commit")).help_text("Merge the selected commit and create a merge commit, even when a fast-forward is possible. Uses your Git identity, hooks and signing configuration.").clicked() { submit = Some(Mode::Commit); }
                 }
             });

@@ -122,9 +122,9 @@ impl SannyGitApp {
             && !self.busy()
             && self.state_current
             && self.repositories.get(self.selected_repository).is_some()
-            && selected
-                .iter()
-                .all(|&i| self.changes[i].kind != ChangeKind::Conflicted)
+            && selected.iter().all(|&i| {
+                self.changes[i].kind != ChangeKind::Conflicted || (self.merging && staged)
+            })
             && selected.iter().any(|&i| self.staging_allowed(i, staged))
     }
 
