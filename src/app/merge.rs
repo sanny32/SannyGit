@@ -153,7 +153,7 @@ impl SannyGitApp {
             filter: String::new(),
             branches_open: false,
             include_tracked: true,
-            include_head: operation == Operation::Rebase,
+            include_head: true,
         });
         if !self.start_worker(move || WorkerResult::MergeDetails {
             result: load(Path::new(&root), operation),
@@ -177,7 +177,9 @@ impl SannyGitApp {
                     .refs
                     .iter()
                     .filter(|entry| {
-                        entry.full_name == self.selected_branch && entry.kind != RefKind::Tag
+                        entry.kind != RefKind::Tag
+                            && (dialog.operation == Operation::Merge
+                                || entry.full_name == self.selected_branch)
                     })
                     .map(|entry| entry.full_name.clone())
                     .collect();
@@ -205,6 +207,17 @@ impl SannyGitApp {
                     })
                     .map(|entry| entry.hash.clone());
                 dialog.snapshot = Some(snapshot);
+                if dialog.operation == Operation::Merge {
+                    let visible = dialog.visible();
+                    dialog.selected = dialog.snapshot.as_ref().and_then(|snapshot| {
+                        snapshot
+                            .history
+                            .commits
+                            .iter()
+                            .find(|commit| visible.contains(&commit.hash))
+                            .map(|commit| commit.hash.clone())
+                    });
+                }
             }
             Err(error) => self.error = Some(error),
         }
@@ -332,6 +345,51 @@ mod tests {
             repo.git(&["show", "-s", "--format=%P", "HEAD"]).trim(),
             target
         );
+    }
+
+    #[test]
+    fn merge_opens_with_other_branches_visible_and_executes_both_modes() {
+        for mode in [merge::Mode::Commit, merge::Mode::WorkingTree] {
+            let repo = crate::test_support::TempRepo::new();
+            repo.write("base", "base\n");
+            crate::git::commit(&repo.0, "base", crate::git::CommitContents::All).unwrap();
+            let before = merge::head(&repo.0).unwrap();
+            repo.git(&["checkout", "-b", "feature"]);
+            repo.write("feature", "feature\n");
+            crate::git::commit(&repo.0, "feature", crate::git::CommitContents::All).unwrap();
+            let target = merge::head(&repo.0).unwrap();
+            repo.git(&["checkout", "main"]);
+
+            let mut app = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
+            app.apply_snapshot(crate::git::load(&repo.0).unwrap());
+            app.refs_current = true;
+            app.branch_head_exists = true;
+            app.selected_branch = "refs/heads/main".into();
+            app.open_merge();
+            wait(&mut app);
+            let dialog = app.merge_dialog.as_ref().unwrap();
+            assert!(dialog.visible().contains(&target));
+            assert_eq!(dialog.selected.as_ref(), Some(&target));
+            assert_eq!(merge::head(&repo.0).unwrap(), before);
+            app.submit_merge(mode);
+            wait(&mut app);
+
+            assert!(app.error.is_none(), "{:?}", app.error);
+            assert!(app.merge_dialog.is_none());
+            match mode {
+                merge::Mode::Commit => assert_eq!(
+                    repo.git(&["show", "-s", "--format=%P", "HEAD"]).trim(),
+                    format!("{before} {target}")
+                ),
+                merge::Mode::WorkingTree => {
+                    assert_eq!(merge::head(&repo.0).unwrap(), before);
+                    assert!(app
+                        .changes
+                        .iter()
+                        .any(|file| file.path == "feature" && file.staged));
+                }
+            }
+        }
     }
 
     #[test]

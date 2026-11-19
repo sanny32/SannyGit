@@ -42,7 +42,10 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             ui.spacing_mut().item_spacing.y = 6.0;
             ui.horizontal(|ui| {
                 ui.add_sized([ui.available_width() - 94.0, 24.0], super::controls::singleline(&mut dialog.filter).hint_text("Filter loaded commits…"));
-                if ui.add_enabled(dialog.snapshot.is_some() && !busy, Button::new("Branches…").min_size(egui::vec2(86.0, 24.0))).clicked() {
+                let branches_button = Button::new("Branches…")
+                    .wrap_mode(egui::TextWrapMode::Extend)
+                    .min_size(egui::vec2(86.0, 24.0));
+                if ui.add_enabled(dialog.snapshot.is_some() && !busy, branches_button).clicked() {
                     dialog.branches_open = true;
                 }
             });
