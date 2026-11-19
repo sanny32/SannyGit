@@ -1119,13 +1119,20 @@ mod tests {
                             _ => None,
                         })
                         .min_by(|left, right| {
-                            left.y.total_cmp(&right.y).then_with(|| {
+                            let horizontal_order = || {
                                 if rightmost {
                                     right.x.total_cmp(&left.x)
                                 } else {
                                     left.x.total_cmp(&right.x)
                                 }
-                            })
+                            };
+                            // Within a row, glyph alignment must not decide which
+                            // of the duplicate compact navigation labels is selected.
+                            if toolbar_y.is_some() {
+                                horizontal_order()
+                            } else {
+                                left.y.total_cmp(&right.y).then_with(horizontal_order)
+                            }
                         })
                         .unwrap_or_else(|| panic!("missing or clipped {label} at {size:?}"))
                 };
@@ -1184,7 +1191,10 @@ mod tests {
                 let mut previous = f32::NEG_INFINITY;
                 for caption in captions {
                     let current = position(caption, Some(save.y), false);
-                    assert!(previous < current.x);
+                    assert!(
+                        previous < current.x,
+                        "{caption} at {current:?} follows x={previous} at {size:?}"
+                    );
                     previous = current.x;
                 }
                 let conflict_next = if compact { "Next" } else { "Next Conflict" };
