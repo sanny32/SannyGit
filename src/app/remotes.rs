@@ -347,9 +347,11 @@ mod tests {
             pull: Default::default(),
         });
         assert!(app.remote_confirmation_hidden());
+        assert!(!app.modal_dialog_open());
         app.apply_remote_info(Operation::Push, Err("Cannot read configuration".into()));
         assert!(app.network_dialog.is_none());
         assert_eq!(app.error.as_deref(), Some("Cannot read configuration"));
+        assert!(app.modal_dialog_open());
     }
 
     #[test]

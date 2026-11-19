@@ -628,7 +628,7 @@ impl SannyGitApp {
             || self.welcome_open
             || self.about_dialog
             || self.manager.dialog.is_some()
-            || self.network_dialog.is_some()
+            || (self.network_dialog.is_some() && !self.remote_confirmation_hidden())
             || self.stash_dialog.is_some()
             || self.discard_dialog.is_some()
             || self.ref_dialog.is_some()

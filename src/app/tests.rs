@@ -575,6 +575,12 @@ fn skipped_push_and_sync_preserve_errors_for_modal_reporting() {
                         pull: Default::default(),
                     });
                     assert_eq!(app.remote_confirmation_hidden(), skip);
+                    app.state_current = true;
+                    assert!(app.remote_allowed());
+                    let (_sender, receiver) = mpsc::channel();
+                    app.worker = Some(receiver);
+                    assert_eq!(app.modal_dialog_open(), !skip);
+                    assert!(!app.remote_allowed());
                     deliver(
                         &mut app,
                         WorkerResult::Operation {
@@ -601,6 +607,7 @@ fn skipped_push_and_sync_preserve_errors_for_modal_reporting() {
                     );
                     assert_eq!(app.network_dialog.is_some(), !skip && failed);
                     assert_eq!(app.error.is_some(), failed || refresh_failed);
+                    assert_eq!(app.modal_dialog_open(), failed || refresh_failed);
                     if !failed {
                         assert!(app.status.starts_with(operation.success()));
                         assert!(!app.status.contains("Push failed"));
