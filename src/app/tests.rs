@@ -1618,10 +1618,63 @@ fn welcome_waits_for_restore_and_only_opens_without_an_active_repository() {
     assert!(!app.welcome_open);
 }
 
+fn double_click_working_tree_file(
+    app: &mut SannyGitApp,
+    context: &egui::Context,
+    path: &str,
+    start: f64,
+) {
+    use egui::{Event, Modifiers, PointerButton};
+
+    let render = |app: &mut SannyGitApp, time, events| {
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(1100.0, 700.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| ui::show(ui, app),
+        );
+        output.textures_delta.clear();
+        output
+    };
+    render(app, start - 0.5, vec![]);
+    render(app, start - 0.4, vec![]);
+    let output = render(app, start - 0.3, vec![]);
+    let target = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.job.text == path => {
+                Some(text.pos + text.galley.size() / 2.0)
+            }
+            _ => None,
+        })
+        .unwrap();
+    for (step, pressed) in [true, false, true, false].into_iter().enumerate() {
+        render(
+            app,
+            start + step as f64 * 0.05,
+            vec![
+                Event::PointerMoved(target),
+                Event::PointerButton {
+                    pos: target,
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+    }
+}
+
 #[test]
 fn double_click_staging_setting_changes_only_the_index() {
     use crate::preferences::FileDoubleClick;
-    use egui::{Event, Modifiers, PointerButton};
     for mode in [FileDoubleClick::ShowDiff, FileDoubleClick::ToggleStage] {
         let repo = crate::test_support::TempRepo::new();
         std::fs::write(repo.0.join("example.txt"), "Keep working-tree content\n").unwrap();
@@ -1632,53 +1685,8 @@ fn double_click_staging_setting_changes_only_the_index() {
         crate::theme::install_fonts(&context);
         egui_extras::install_image_loaders(&context);
         ThemeChoice::Light.apply(&context);
-        let render = |app: &mut SannyGitApp, time, events| {
-            let mut output = context.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        Vec2::new(1100.0, 700.0),
-                    )),
-                    time: Some(time),
-                    events,
-                    ..Default::default()
-                },
-                |ui| ui::show(ui, app),
-            );
-            output.textures_delta.clear();
-            output
-        };
         for round in 0..2 {
-            let start = 1.0 + round as f64;
-            let mut output = render(&mut app, start - 0.5, vec![]);
-            for _ in 0..2 {
-                output = render(&mut app, start - 0.4, vec![]);
-            }
-            let target = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) if text.galley.job.text == "example.txt" => {
-                        Some(text.pos + text.galley.size() / 2.0)
-                    }
-                    _ => None,
-                })
-                .unwrap();
-            for (step, pressed) in [true, false, true, false].into_iter().enumerate() {
-                render(
-                    &mut app,
-                    start + step as f64 * 0.05,
-                    vec![
-                        Event::PointerMoved(target),
-                        Event::PointerButton {
-                            pos: target,
-                            button: PointerButton::Primary,
-                            pressed,
-                            modifiers: Modifiers::NONE,
-                        },
-                    ],
-                );
-            }
+            double_click_working_tree_file(&mut app, &context, "example.txt", 1.0 + round as f64);
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             while app.busy() && std::time::Instant::now() < deadline {
                 std::thread::sleep(std::time::Duration::from_millis(5));
@@ -1699,6 +1707,72 @@ fn double_click_staging_setting_changes_only_the_index() {
     }
 }
 
+#[test]
+fn double_clicking_a_conflicted_file_opens_the_solver_in_both_modes() {
+    use crate::preferences::FileDoubleClick;
+
+    let repo = crate::test_support::TempRepo::new();
+    repo.write("conflict.txt", "ours\n");
+    let ours = repo.git(&["hash-object", "-w", "conflict.txt"]);
+    repo.write("conflict.txt", "theirs\n");
+    let theirs = repo.git(&["hash-object", "-w", "conflict.txt"]);
+    let stages = format!(
+        "100644 {} 2\tconflict.txt\n100644 {} 3\tconflict.txt\n",
+        ours.trim(),
+        theirs.trim()
+    );
+    git::run_with_input(
+        &repo.0,
+        &["update-index", "--index-info"],
+        Some(stages.as_bytes()),
+    )
+    .unwrap();
+    let working = "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> incoming\n";
+    repo.write("conflict.txt", working);
+    repo.write("another.txt", "Keep this file unchanged\n");
+    let index = git::run(&repo.0, &["ls-files", "--stage", "-z"]).unwrap();
+
+    for mode in [FileDoubleClick::ShowDiff, FileDoubleClick::ToggleStage] {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.apply_snapshot(git::load(&repo.0).unwrap());
+        let other = app
+            .changes
+            .iter()
+            .position(|change| change.path == "another.txt")
+            .unwrap();
+        app.select_change(other, false, false, &[other]);
+        app.preferences.file_double_click = mode;
+        let context = egui::Context::default();
+        crate::theme::install_fonts(&context);
+        egui_extras::install_image_loaders(&context);
+        ThemeChoice::Light.apply(&context);
+        double_click_working_tree_file(&mut app, &context, "conflict.txt", 1.0);
+        let dialog = app
+            .conflict_dialog
+            .as_ref()
+            .expect("double-click must open Conflict Solver");
+        assert!(dialog.action == crate::conflict::Action::Edit);
+        assert_eq!(dialog.path, "conflict.txt");
+        let result = app
+            .worker
+            .as_ref()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        app.worker = None;
+        app.apply_worker_result(result);
+        let dialog = app.conflict_dialog.as_ref().unwrap();
+        assert_eq!(dialog.review.as_ref().unwrap().conflicts.len(), 1);
+        assert_eq!(
+            git::run(&repo.0, &["ls-files", "--stage", "-z"]).unwrap(),
+            index
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("conflict.txt")).unwrap(),
+            working
+        );
+    }
+}
 #[test]
 fn modern_layout_fits_both_sizes_and_color_themes_without_loading_jumps() {
     for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {

@@ -3,6 +3,7 @@
 mod app;
 mod branches;
 mod clone_source;
+mod conflict;
 mod diff;
 mod discard;
 mod git;

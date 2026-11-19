@@ -1,3 +1,4 @@
+pub mod conflict;
 pub mod discard;
 mod errors;
 mod file_selection;
@@ -25,6 +26,7 @@ use std::{
 };
 
 enum WorkerResult {
+    ConflictReview(Result<Box<crate::conflict::Review>, String>),
     Index {
         staged: bool,
         outcome: Result<(), String>,
@@ -277,6 +279,7 @@ pub struct SannyGitApp {
     pub discard_dialog: Option<discard::Dialog>,
     pub ref_dialog: Option<ref_management::Dialog>,
     pub merge_dialog: Option<merge::Dialog>,
+    pub conflict_dialog: Option<conflict::Dialog>,
     pub abort_merge_dialog: Option<String>,
     pub skip_push_confirmation: bool,
     pub new_branch_name: String,
@@ -541,6 +544,7 @@ impl SannyGitApp {
             discard_dialog: None,
             ref_dialog: None,
             merge_dialog: None,
+            conflict_dialog: None,
             abort_merge_dialog: None,
             skip_push_confirmation: false,
             new_branch_name: String::new(),
@@ -624,9 +628,8 @@ impl SannyGitApp {
         self.worker.is_some()
     }
 
-    /// A modal dialog owns interaction with the main window; the workspace is
-    /// dimmed while any of these is open. The commit details history window is
-    /// a non-modal secondary window and deliberately stays out of this list.
+    /// A modal dialog owns interaction with the main window. Secondary windows
+    /// like commit details and Conflict Solver remain independent.
     pub fn modal_dialog_open(&self) -> bool {
         self.settings_window.open
             || self.open_dialog
@@ -638,6 +641,10 @@ impl SannyGitApp {
             || self.discard_dialog.is_some()
             || self.ref_dialog.is_some()
             || self.merge_dialog.is_some()
+            || self
+                .conflict_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.action != crate::conflict::Action::Edit)
             || self.abort_merge_dialog.is_some()
             || self.remote_checkout.is_some()
             || self.branch_dialog_open
@@ -1143,6 +1150,9 @@ impl SannyGitApp {
             self.discard_dialog = None;
             self.ref_dialog = None;
             self.merge_dialog = None;
+            if !self.conflict_solver_open() {
+                self.conflict_dialog = None;
+            }
             self.abort_merge_dialog = None;
             self.new_branch_name.clear();
             self.commits.clear();
@@ -1916,6 +1926,13 @@ impl SannyGitApp {
                 }
                 self.status = "Operation failed".into();
                 self.finish_discard(false);
+                if self
+                    .conflict_dialog
+                    .as_ref()
+                    .is_some_and(|dialog| dialog.review.is_none())
+                {
+                    self.conflict_dialog = None;
+                }
                 self.ref_worker_failed();
                 if self.remote_confirmation_hidden() {
                     self.finish_hidden_remote();
@@ -1930,6 +1947,7 @@ impl SannyGitApp {
 
     fn apply_worker_result(&mut self, result: WorkerResult) {
         match result {
+            WorkerResult::ConflictReview(result) => self.finish_conflict_review(result),
             WorkerResult::Index {
                 staged,
                 outcome,
@@ -2251,6 +2269,11 @@ impl SannyGitApp {
                 if discarding {
                     self.finish_discard(operation_succeeded);
                 }
+                if operation_succeeded
+                    && matches!(success, "Conflict resolved" | "Conflict recreated")
+                {
+                    self.conflict_dialog = None;
+                }
                 if managing_refs {
                     self.finish_ref_operation(success, operation_succeeded);
                 }
@@ -2389,6 +2412,7 @@ impl eframe::App for SannyGitApp {
             && self.discard_dialog.is_none()
             && self.ref_dialog.is_none()
             && self.merge_dialog.is_none()
+            && self.conflict_dialog.is_none()
             && self.abort_merge_dialog.is_none()
             && self.remote_checkout.is_none();
         self.tracking.update(

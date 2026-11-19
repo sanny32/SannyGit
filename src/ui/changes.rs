@@ -72,7 +72,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let operations_enabled =
         !app.busy() && app.state_current && app.repositories.get(app.selected_repository).is_some();
     let mut staging_request = None;
-    let mut context_request = None;
+    let mut file_request = None;
     let sort_id = eframe::egui::Id::unique("files.status_sort");
     let status_sort = ui.data(|data| data.get_temp::<bool>(sort_id));
     let mut visible = app
@@ -181,8 +181,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             body.rows(row_height, visible.len(), |mut row| {
                 let index = visible[row.index()];
                 let change = &app.changes[index];
+                let conflicted = change.kind == ChangeKind::Conflicted;
                 let toggle_staged = !change.staged;
-                let can_toggle = app.staging_allowed(index, toggle_staged) && change.kind != ChangeKind::Conflicted;
+                let can_toggle = app.staging_allowed(index, toggle_staged) && !conflicted;
                 row.set_selected(app.change_is_selected(index));
                 let mut row_rect = Rect::NOTHING;
                 row.col(|ui| {
@@ -190,10 +191,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     ui.spacing_mut().interact_size.y = row_height;
                     ui.add_space(6.0);
                     let mut checked = change.staged;
-                    let tooltip = if change.kind == ChangeKind::Conflicted && app.merging {
-                        "After resolving the conflict, use Stage in the file menu"
-                    } else if change.kind == ChangeKind::Conflicted {
-                        "Resolve this conflict outside SannyGit before staging"
+                    let tooltip = if conflicted {
+                        "Double-click the file to open Conflict Solver"
                     } else if !operations_enabled {
                         "Wait for the current operation or refresh the repository"
                     } else if change.staged && app.merging {
@@ -258,13 +257,16 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     click_handled = true;
                 }
                 if let Some(action) = popup_menu::context(&response, palette, || file_context_menu(app, index)) {
-                    context_request = Some((index, action));
+                    file_request = Some((index, action));
                 }
-                if response.double_clicked()
-                    && app.preferences.file_double_click == crate::preferences::FileDoubleClick::ToggleStage
-                    && can_toggle
-                {
-                    staging_request = Some((index, toggle_staged));
+                if response.double_clicked() {
+                    if conflicted {
+                        file_request = Some((index, FileAction::Conflict(crate::conflict::Action::Edit)));
+                    } else if can_toggle
+                        && app.preferences.file_double_click == crate::preferences::FileDoubleClick::ToggleStage
+                    {
+                        staging_request = Some((index, toggle_staged));
+                    }
                 }
             });
         });
@@ -276,7 +278,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             app.set_staged(index, staged);
         }
     }
-    if let Some((index, action)) = context_request {
+    if let Some((index, action)) = file_request {
         app.selected_change = index;
         match action {
             FileAction::ShowChanges => {}
@@ -288,6 +290,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             FileAction::Unstage => app.set_selected_staged(false),
             FileAction::Discard => app.open_discard(),
             FileAction::Remove => app.open_remove(),
+            FileAction::Conflict(action) => app.open_conflict(index, action),
         }
     }
 }
@@ -358,13 +361,14 @@ enum FileAction {
     Unstage,
     Discard,
     Remove,
+    Conflict(crate::conflict::Action),
 }
 
 fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<FileAction>> {
     use popup_menu::Entry as E;
-    if app.changes.get(index).is_none() {
+    let Some(change) = app.changes.get(index) else {
         return Vec::new();
-    }
+    };
     let repository = app.repositories.get(app.selected_repository);
     let mut entries = vec![
         E::item("Show Changes", true, FileAction::ShowChanges),
@@ -390,19 +394,58 @@ fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<F
             FileAction::Unstage,
         )
         .help(
-            "Select a suitable file after refreshing; conflicts must be resolved outside SannyGit",
+            "Select a staged file after refreshing",
         ),
         E::Separator,
+    ];
+    use crate::conflict::Action;
+    if change.kind == ChangeKind::Conflicted {
+        entries.push(E::item(
+            Action::Edit.label(),
+            app.can_open_conflict(index, Action::Edit),
+            FileAction::Conflict(Action::Edit),
+        ));
+    }
+    if change.kind == ChangeKind::Conflicted || change.staged {
+        let actions = if change.kind == ChangeKind::Conflicted {
+            &[Action::Ours, Action::Theirs, Action::Recreate][..]
+        } else {
+            &[Action::Recreate][..]
+        };
+        entries.push(E::submenu(
+            "Resolve",
+            actions
+                .iter()
+                .map(|&action| {
+                    E::item(
+                        action.label(),
+                        app.can_open_conflict(index, action),
+                        FileAction::Conflict(action),
+                    )
+                    .help(action.description())
+                })
+                .collect(),
+        ));
+        entries.push(E::Separator);
+    }
+    entries.extend([
         E::item(
             "Discard…",
             app.discard_blocker().is_none(),
             FileAction::Discard,
         )
         .help(app.discard_blocker().unwrap_or("")),
-        E::item("Remove…", app.remove_blocker().is_none(), FileAction::Remove)
-            .help(app.remove_blocker().unwrap_or("Delete the selected tracked files and stage their removal")),
+        E::item(
+            "Remove…",
+            app.remove_blocker().is_none(),
+            FileAction::Remove,
+        )
+        .help(
+            app.remove_blocker()
+                .unwrap_or("Delete the selected tracked files and stage their removal"),
+        ),
         E::Separator,
-    ];
+    ]);
     let selected = app.selected_change_indices();
     for (label, text) in [
         (

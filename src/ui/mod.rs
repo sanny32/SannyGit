@@ -6,6 +6,7 @@ mod branches;
 mod changes;
 mod clone_dialog;
 mod commit_panel;
+mod conflict;
 mod controls;
 mod diff_view;
 mod discard;
@@ -165,6 +166,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     ref_management::show(ui.ctx(), app);
     merge::show(ui.ctx(), app);
     merge::show_abort(ui.ctx(), app);
+    conflict::show(ui.ctx(), app);
     welcome(ui, app);
     about::show(ui.ctx(), app);
     status_bar::show(ui, app);
@@ -201,7 +203,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if app.interface_style == crate::theme::InterfaceStyle::Modern {
         modern_workspace(ui, app);
         if !app.settings_window.open
-            && (context.embed_viewports() || (!app.commit_details_open && !app.about_dialog))
+            && (context.embed_viewports()
+                || (!app.commit_details_open && !app.about_dialog && !app.conflict_solver_open()))
         {
             show_errors(ui, app);
         }
@@ -262,7 +265,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 .show(ui, |ui| diff_view::show(ui, app));
         });
     if !app.settings_window.open
-        && (context.embed_viewports() || (!app.commit_details_open && !app.about_dialog))
+        && (context.embed_viewports()
+            || (!app.commit_details_open && !app.about_dialog && !app.conflict_solver_open()))
     {
         show_errors(ui, app);
     }
@@ -481,6 +485,46 @@ mod tests {
     use super::*;
     use crate::theme::ThemeChoice;
     use eframe::egui::{pos2, vec2, Context, Event, Modifiers, PointerButton, RawInput, Rect};
+
+    #[test]
+    fn conflict_solver_leaves_workspace_enabled_and_conflict_confirmations_are_modal() {
+        use crate::{app::conflict::Dialog, conflict::Action};
+
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [vec2(1100.0, 700.0), vec2(1536.0, 1024.0)] {
+                let ctx = Context::default();
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                for (action, open_dialog) in [
+                    (Some(Action::Edit), false),
+                    (Some(Action::Edit), true),
+                    (Some(Action::Ours), false),
+                    (None, false),
+                ] {
+                    app.open_dialog = open_dialog;
+                    app.conflict_dialog =
+                        action.map(|action| Dialog::new(Default::default(), "file".into(), action));
+                    let modal = open_dialog || action == Some(Action::Ours);
+                    let mut output = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            show(ui, &mut app);
+                            assert_eq!(ui.is_enabled(), !modal);
+                            if modal {
+                                assert!(ui.opacity() < 1.0);
+                            } else {
+                                assert_eq!(ui.opacity(), 1.0);
+                            }
+                        },
+                    );
+                    output.textures_delta.clear();
+                }
+            }
+        }
+    }
 
     #[test]
     fn welcome_fits_supported_sizes_and_keeps_geometry_when_selecting_actions() {

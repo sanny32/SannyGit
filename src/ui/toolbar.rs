@@ -24,6 +24,29 @@ fn action_button(
     palette: Palette,
     width: f32,
 ) -> Response {
+    toolbar_button(
+        ui,
+        (label, ui_font_size()),
+        enabled,
+        palette,
+        width,
+        false,
+        |ui, rect, color| {
+            icons::image(icon, color, rect.width()).paint_at(ui, rect);
+        },
+    )
+}
+
+pub(super) fn toolbar_button(
+    ui: &mut Ui,
+    caption: (&str, f32),
+    enabled: bool,
+    palette: Palette,
+    width: f32,
+    selected: bool,
+    paint_icon: impl FnOnce(&Ui, Rect, eframe::egui::Color32),
+) -> Response {
+    let (label, font_size) = caption;
     let response = ui.add_enabled(
         enabled,
         Button::new("")
@@ -31,7 +54,12 @@ fn action_button(
             .min_size(Vec2::new(width, TOOLBAR_BUTTON_HEIGHT)),
     );
     response.widget_info(|| {
-        eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, enabled, label)
+        eframe::egui::WidgetInfo::selected(
+            eframe::egui::Role::Button,
+            response.enabled(),
+            selected,
+            label,
+        )
     });
 
     let hover_progress = ui.ctx().animate_bool_with_time_and_easing(
@@ -47,13 +75,25 @@ fn action_button(
         eframe::egui::emath::easing::quadratic_out,
     );
 
-    if enabled && (hover_progress > 0.0 || press_progress > 0.0) {
-        let fill = palette
-            .header
-            .lerp_to_gamma(palette.hover, hover_progress)
-            .lerp_to_gamma(palette.selection, press_progress);
-        ui.painter()
-            .rect_filled(response.rect.shrink(1.0), 3.0, fill);
+    if selected || hover_progress > 0.0 || press_progress > 0.0 || response.has_focus() {
+        let rect = response.rect.shrink(1.0);
+        let fill = if selected {
+            palette.selection
+        } else {
+            palette
+                .header
+                .lerp_to_gamma(palette.hover, hover_progress)
+                .lerp_to_gamma(palette.selection, press_progress)
+        };
+        ui.painter().rect_filled(rect, 3.0, fill);
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                rect,
+                3.0,
+                (1.0, palette.accent),
+                eframe::egui::StrokeKind::Inside,
+            );
+        }
     }
 
     let color = if enabled && palette.panel_radius > 0 {
@@ -65,7 +105,7 @@ fn action_button(
     };
     let press_offset = Vec2::new(0.0, press_progress);
     let icon_size = TOOLBAR_ICON_SIZE * (1.0 - 0.07 * press_progress);
-    icons::image(icon, color, icon_size).paint_at(
+    paint_icon(
         ui,
         Rect::from_center_size(
             response.rect.center_top()
@@ -73,12 +113,13 @@ fn action_button(
                 + press_offset,
             Vec2::splat(icon_size),
         ),
+        color,
     );
     ui.painter().text(
         response.rect.center_top() + Vec2::new(0.0, TOOLBAR_BUTTON_PADDING_Y + 24.0) + press_offset,
         Align2::CENTER_TOP,
         label,
-        FontId::proportional(ui_font_size()),
+        FontId::proportional(font_size),
         if enabled { palette.text } else { palette.muted },
     );
     response

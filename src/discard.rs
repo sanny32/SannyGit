@@ -36,15 +36,15 @@ impl Action {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Contents {
+pub(crate) enum Contents {
     Missing,
     File(Vec<u8>),
     Link(PathBuf),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct FileState {
-    contents: Contents,
+pub(crate) struct FileState {
+    pub(crate) contents: Contents,
     modified: Option<SystemTime>,
     readonly: bool,
     #[cfg(unix)]
@@ -80,7 +80,7 @@ fn normal_directory(metadata: &std::fs::Metadata) -> bool {
     true
 }
 
-fn safe_path(root: &Path, name: &str) -> Result<PathBuf, String> {
+pub(crate) fn safe_path(root: &Path, name: &str) -> Result<PathBuf, String> {
     if name.is_empty()
         || name.contains('\0')
         || Path::new(name)
@@ -112,7 +112,7 @@ fn safe_path(root: &Path, name: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn file_state(path: &Path) -> Result<FileState, String> {
+pub(crate) fn file_state(path: &Path) -> Result<FileState, String> {
     let metadata = match path.symlink_metadata() {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -163,7 +163,7 @@ fn file_state(path: &Path) -> Result<FileState, String> {
     })
 }
 
-fn index_entry(root: &Path, path: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn index_entry(root: &Path, path: &str) -> Result<Vec<u8>, String> {
     let entry = git::run(root, &["ls-files", "--stage", "-z", "--", path])?;
     if entry.is_empty() {
         return Ok(entry);

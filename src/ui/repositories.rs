@@ -7,7 +7,7 @@ use crate::{
     menu::MenuAction,
     theme::semibold_family,
 };
-use eframe::egui::{Align, CollapsingHeader, Layout, RichText, ScrollArea, Ui};
+use eframe::egui::{Align, CollapsingHeader, Layout, RichText, ScrollArea, TextStyle, Ui};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
@@ -241,6 +241,7 @@ fn repository_row(
     enabled: &[MenuAction],
 ) -> Option<RepositoryAction> {
     let active = selected == index;
+    let modern = palette.panel_radius > 0;
     let selected_row = highlighted
         .as_deref()
         .map_or(active, |path| path == repository.path);
@@ -273,7 +274,7 @@ fn repository_row(
                 );
                 icon_response.help_text("Unresolved conflicts");
             }
-            let name = RichText::new(&repository.name).color(if active {
+            let name = RichText::new(&repository.name).color(if active || modern {
                 palette.text
             } else {
                 palette.muted
@@ -294,9 +295,19 @@ fn repository_row(
                 .size()
                 .x;
             let width = (ui.available_width() - suffix_width - 4.0).max(20.0);
+            let name_height = ui.text_style_height(&TextStyle::Body);
+            let mut path_font = TextStyle::Body.resolve(ui.style());
+            path_font.size -= 2.0;
+            let text_height = if modern {
+                name_height
+                    + ui.spacing().item_spacing.y
+                    + ui.fonts_mut(|f| f.row_height(&path_font))
+            } else {
+                20.0
+            };
             ui.allocate_ui_with_layout(
-                eframe::egui::vec2(width, if palette.panel_radius > 0 { 38.0 } else { 20.0 }),
-                if palette.panel_radius > 0 {
+                eframe::egui::vec2(width, text_height),
+                if modern {
                     Layout::top_down(Align::Min)
                 } else {
                     Layout::left_to_right(Align::Center).with_main_align(Align::Min)
@@ -318,24 +329,35 @@ fn repository_row(
                             eframe::egui::FontId::proportional(crate::theme::ui_font_size()),
                             palette.outgoing,
                         );
-                        ui.horizontal(|ui| {
-                            let name_width = ui.available_width()
-                                - marker.size().x
-                                - ui.spacing().item_spacing.x;
-                            ui.scope(|ui| {
-                                ui.set_max_width(name_width.max(0.0));
-                                ui.add(name);
-                            });
-                            ui.add(eframe::egui::Label::new(marker))
-                                .help_text("Merge in progress");
-                        });
+                        let height = if modern {
+                            name_height
+                        } else {
+                            ui.available_height()
+                        };
+                        ui.allocate_ui_with_layout(
+                            eframe::egui::vec2(ui.available_width(), height),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                let name_width = ui.available_width()
+                                    - marker.size().x
+                                    - ui.spacing().item_spacing.x;
+                                ui.scope(|ui| {
+                                    ui.set_max_width(name_width.max(0.0));
+                                    ui.add(name);
+                                });
+                                ui.add(eframe::egui::Label::new(marker))
+                                    .help_text("Merge in progress");
+                            },
+                        );
                     } else {
                         ui.add(name);
                     }
-                    if palette.panel_radius > 0 {
+                    if modern {
                         ui.add(
                             eframe::egui::Label::new(
-                                RichText::new(&repository.path).small().color(palette.muted),
+                                RichText::new(&repository.path)
+                                    .font(path_font)
+                                    .color(palette.muted),
                             )
                             .truncate()
                             .show_tooltip_when_elided(false),
@@ -596,14 +618,20 @@ mod tests {
 
     #[test]
     fn name_stays_next_to_icon_with_tracking_counts() {
-        for theme in [
-            crate::theme::ThemeChoice::Light,
-            crate::theme::ThemeChoice::Dark,
+        use crate::theme::{InterfaceStyle, ThemeChoice};
+
+        for (theme, interface) in [
+            (ThemeChoice::Light, InterfaceStyle::Classic),
+            (ThemeChoice::Dark, InterfaceStyle::Classic),
+            (ThemeChoice::Light, InterfaceStyle::Modern),
+            (ThemeChoice::Dark, InterfaceStyle::Modern),
         ] {
             for width in [190.0, 260.0, 350.0] {
                 let ctx = Context::default();
                 crate::theme::install_fonts(&ctx);
-                theme.apply(&ctx);
+                theme.apply_style(&ctx, interface);
+                let palette = interface.palette(theme);
+                let modern = interface == InterfaceStyle::Modern;
                 let repository = crate::models::Repository {
                     name: "SannyGit".into(),
                     path: "/test/repository".into(),
@@ -622,6 +650,7 @@ mod tests {
                             ..Default::default()
                         },
                         |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
                             left = ui.next_widget_position().x;
                             repository_row(
                                 ui,
@@ -633,11 +662,11 @@ mod tests {
                                 true,
                                 Some(("↑1 ↓1", "Upstream: origin/main")),
                                 &mut highlighted,
-                                theme.palette(),
+                                palette,
                                 &[],
                                 &mut requested,
                                 &mut move_to,
-                                24.0,
+                                if modern { 44.0 } else { 24.0 },
                                 &[],
                             );
                         },
@@ -662,18 +691,35 @@ mod tests {
                         "Name detached from icon: {:?} at width {width}",
                         name.pos
                     );
-                    assert!(text.iter().any(|t| t.galley.job.text == "↑1 ↓1"));
                     let marker = text
                         .iter()
                         .find(|t| t.galley.job.text == "<merging>")
                         .unwrap();
                     assert!(marker.pos.x > name.pos.x && marker.pos.x < name.pos.x + 85.0);
                     assert!((marker.pos.y - name.pos.y).abs() < 2.0);
+                    let tracking = text.iter().find(|t| t.galley.job.text == "↑1 ↓1").unwrap();
+                    let text_center = if modern {
+                        let path = text
+                            .iter()
+                            .find(|t| t.galley.job.text == repository.path)
+                            .unwrap();
+                        assert_eq!(name.pos.x, path.pos.x);
+                        let name_format = &name.galley.job.sections[0].format;
+                        let path_format = &path.galley.job.sections[0].format;
+                        assert!(path_format.font_id.size < name_format.font_id.size);
+                        assert_eq!(name_format.color, palette.text);
+                        assert_eq!(path_format.color, palette.muted);
+                        (name.pos.y + path.pos.y + path.galley.size().y) / 2.0
+                    } else {
+                        name.pos.y + name.galley.size().y / 2.0
+                    };
+                    let tracking_center = tracking.pos.y + tracking.galley.size().y / 2.0;
+                    assert!((text_center - tracking_center).abs() < 2.0);
                     let conflict = text.iter().find(|t| t.galley.job.text == "!").unwrap();
                     assert!(conflict.pos.x < name.pos.x);
                     assert!(output.shapes.iter().any(|shape| {
                         matches!(&shape.shape, eframe::egui::Shape::Rect(rect)
-                            if rect.fill == theme.palette().removed_text
+                            if rect.fill == palette.removed_text
                                 && rect.rect.size() == Vec2::splat(10.0))
                     }));
                     assert!(!text.iter().any(|t| t.galley.job.text.contains("(main)")));
