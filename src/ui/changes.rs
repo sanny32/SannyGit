@@ -10,6 +10,7 @@ use eframe::egui::{Align, Align2, Color32, FontId, Layout, Rect, RichText, Sense
 use egui_extras::{Column, TableBuilder};
 
 const FILTER_WIDTH: f32 = 366.0;
+const MERGE_BANNER_HEIGHT: f32 = 36.0;
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
@@ -41,7 +42,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         }
     });
     if app.merging {
-        super::header(ui, 30.0, palette, |ui| {
+        let banner_palette = Palette {
+            header: palette.warning_background,
+            panel_radius: 0,
+            ..palette
+        };
+        super::header(ui, MERGE_BANNER_HEIGHT, banner_palette, |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui
                     .add_enabled(
@@ -706,6 +712,7 @@ mod tests {
                 theme.apply(&ctx);
                 let mut app = SannyGitApp::with_theme(theme);
                 app.merging = true;
+                app.interface_style = crate::theme::InterfaceStyle::Modern;
                 let mut output = ctx.run_ui(
                     RawInput {
                         screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
@@ -714,6 +721,12 @@ mod tests {
                     |ui| show(ui, &mut app),
                 );
                 output.textures_delta.clear();
+                assert!(output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, eframe::egui::Shape::Rect(rect)
+                        if rect.fill == app.palette().warning_background
+                            && rect.rect.height() == MERGE_BANNER_HEIGHT
+                            && rect.corner_radius == eframe::egui::CornerRadius::ZERO)
+                }));
                 for label in ["Merge in progress", "Abort"] {
                     assert!(output.shapes.iter().any(|shape| {
                         matches!(&shape.shape, eframe::egui::Shape::Text(text) if text.galley.job.text == label)

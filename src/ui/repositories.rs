@@ -73,6 +73,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let badge = app.tracking.badge();
     let tracking_help = app.tracking.description();
     let branch_status = Some((badge.as_str(), tracking_help.as_str()));
+    let conflicted = app
+        .changes
+        .iter()
+        .any(|change| change.kind == crate::models::ChangeKind::Conflicted);
     let height = if palette.panel_radius > 0 { 44.0 } else { 24.0 };
     let mut requested = None;
     let mut move_to = None;
@@ -123,6 +127,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                     .copied()
                                     .map_or(Icon::Repository, Icon::for_provider),
                                 app.selected_repository,
+                                app.merging,
+                                conflicted,
                                 branch_status,
                                 &mut app.manager.highlighted_repository,
                                 palette,
@@ -157,6 +163,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         .copied()
                         .map_or(Icon::Repository, Icon::for_provider),
                     app.selected_repository,
+                    app.merging,
+                    conflicted,
                     branch_status,
                     &mut app.manager.highlighted_repository,
                     palette,
@@ -221,6 +229,8 @@ fn repository_row(
     repository: &crate::models::Repository,
     icon: Icon,
     selected: usize,
+    merging: bool,
+    conflicted: bool,
     branch_status: Option<(&str, &str)>,
     highlighted: &mut Option<String>,
     palette: crate::theme::Palette,
@@ -236,8 +246,7 @@ fn repository_row(
         .map_or(active, |path| path == repository.path);
     let response =
         super::controls::selectable_row_with_outset(ui, selected_row, height, 8.0, |ui| {
-            icons::paint(
-                ui,
+            let icon_response = ui.add(icons::image(
                 icon,
                 if active && branch_status.is_some_and(|(badge, _)| badge.contains(['↑', '↓']))
                 {
@@ -248,7 +257,22 @@ fn repository_row(
                     palette.muted
                 },
                 16.0,
-            );
+            ));
+            if active && conflicted {
+                let badge = eframe::egui::Rect::from_min_size(
+                    icon_response.rect.right_bottom() - eframe::egui::Vec2::splat(10.0),
+                    eframe::egui::Vec2::splat(10.0),
+                );
+                ui.painter().rect_filled(badge, 2.0, palette.removed_text);
+                ui.painter().text(
+                    badge.center(),
+                    eframe::egui::Align2::CENTER_CENTER,
+                    "!",
+                    eframe::egui::FontId::new(9.0, semibold_family()),
+                    palette.editor,
+                );
+                icon_response.help_text("Unresolved conflicts");
+            }
             let name = RichText::new(&repository.name).color(if active {
                 palette.text
             } else {
@@ -279,17 +303,35 @@ fn repository_row(
                 },
                 |ui| {
                     ui.set_min_width(width);
-                    ui.add(
-                        eframe::egui::Label::new(if active {
-                            name.family(semibold_family())
-                        } else {
-                            name
-                        })
-                        .halign(Align::Min)
-                        .truncate()
-                        .show_tooltip_when_elided(false)
-                        .sense(eframe::egui::Sense::hover()),
-                    );
+                    let name = eframe::egui::Label::new(if active {
+                        name.family(semibold_family())
+                    } else {
+                        name
+                    })
+                    .halign(Align::Min)
+                    .truncate()
+                    .show_tooltip_when_elided(false)
+                    .sense(eframe::egui::Sense::hover());
+                    if active && merging {
+                        let marker = ui.painter().layout_no_wrap(
+                            "<merging>".into(),
+                            eframe::egui::FontId::proportional(crate::theme::ui_font_size()),
+                            palette.outgoing,
+                        );
+                        ui.horizontal(|ui| {
+                            let name_width = ui.available_width()
+                                - marker.size().x
+                                - ui.spacing().item_spacing.x;
+                            ui.scope(|ui| {
+                                ui.set_max_width(name_width.max(0.0));
+                                ui.add(name);
+                            });
+                            ui.add(eframe::egui::Label::new(marker))
+                                .help_text("Merge in progress");
+                        });
+                    } else {
+                        ui.add(name);
+                    }
                     if palette.panel_radius > 0 {
                         ui.add(
                             eframe::egui::Label::new(
@@ -465,6 +507,8 @@ mod tests {
                                 &repository,
                                 Icon::Repository,
                                 if active { 0 } else { usize::MAX },
+                                false,
+                                false,
                                 None,
                                 &mut highlighted,
                                 theme.palette(),
@@ -585,6 +629,8 @@ mod tests {
                                 &repository,
                                 Icon::Repository,
                                 0,
+                                true,
+                                true,
                                 Some(("↑1 ↓1", "Upstream: origin/main")),
                                 &mut highlighted,
                                 theme.palette(),
@@ -617,6 +663,19 @@ mod tests {
                         name.pos
                     );
                     assert!(text.iter().any(|t| t.galley.job.text == "↑1 ↓1"));
+                    let marker = text
+                        .iter()
+                        .find(|t| t.galley.job.text == "<merging>")
+                        .unwrap();
+                    assert!(marker.pos.x > name.pos.x && marker.pos.x < name.pos.x + 85.0);
+                    assert!((marker.pos.y - name.pos.y).abs() < 2.0);
+                    let conflict = text.iter().find(|t| t.galley.job.text == "!").unwrap();
+                    assert!(conflict.pos.x < name.pos.x);
+                    assert!(output.shapes.iter().any(|shape| {
+                        matches!(&shape.shape, eframe::egui::Shape::Rect(rect)
+                            if rect.fill == theme.palette().removed_text
+                                && rect.rect.size() == Vec2::splat(10.0))
+                    }));
                     assert!(!text.iter().any(|t| t.galley.job.text.contains("(main)")));
                     output.textures_delta.clear();
                 }
@@ -669,6 +728,8 @@ mod tests {
                             &repository,
                             Icon::Repository,
                             usize::MAX,
+                            false,
+                            false,
                             None,
                             &mut highlighted,
                             theme.palette(),
