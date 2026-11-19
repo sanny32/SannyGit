@@ -152,8 +152,6 @@ fn pull_confirmation(
         "Review the options and retry."
     } else if !loaded {
         "Loading remotes…"
-    } else if busy {
-        app.status.as_str()
     } else if dialog
         .state
         .as_ref()

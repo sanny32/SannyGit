@@ -213,7 +213,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         search_dialog(ui.ctx(), app);
         return;
     }
-    if app.busy() && app.manager.cancel.is_some() {
+    if app.busy() && app.manager.cancel.is_some() && !app.pull_in_progress {
         Window::new("Repository operation")
             .anchor(
                 eframe::egui::Align2::CENTER_CENTER,

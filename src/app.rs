@@ -271,6 +271,7 @@ pub struct SannyGitApp {
     pub tag_dialog_open: bool,
     pub remote_checkout: Option<RemoteCheckoutDialog>,
     pub network_dialog: Option<remotes::RemoteDialog>,
+    pub pull_in_progress: bool,
     pub stash_dialog: Option<stash::Dialog>,
     pub discard_dialog: Option<discard::Dialog>,
     pub ref_dialog: Option<ref_management::Dialog>,
@@ -307,6 +308,7 @@ pub struct SannyGitApp {
     worker: Option<Receiver<WorkerResult>>,
     history_worker: Option<Receiver<WorkerResult>>,
     diff_worker: Option<Receiver<WorkerResult>>,
+    diff_refresh_pending: bool,
     commit_preview_worker: Option<Receiver<WorkerResult>>,
     working_tree: working_tree::Monitor,
     loaded_diff: Option<usize>,
@@ -531,6 +533,7 @@ impl SannyGitApp {
             tag_dialog_open: false,
             remote_checkout: None,
             network_dialog: None,
+            pull_in_progress: false,
             stash_dialog: None,
             discard_dialog: None,
             ref_dialog: None,
@@ -567,6 +570,7 @@ impl SannyGitApp {
             worker: None,
             history_worker: None,
             diff_worker: None,
+            diff_refresh_pending: false,
             commit_preview_worker: None,
             working_tree: working_tree::Monitor::default(),
             loaded_diff: None,
@@ -695,7 +699,11 @@ impl SannyGitApp {
             self.history_pending = true;
         }
         if self.diff_worker.take().is_some() {
-            self.loaded_diff = None;
+            if self.selected_diff().is_some() {
+                self.diff_refresh_pending = true;
+            } else {
+                self.loaded_diff = None;
+            }
         }
         if self.commit_preview_worker.take().is_some() {
             if self.commit_files.is_none() {
@@ -1038,7 +1046,8 @@ impl SannyGitApp {
         self.invalidate_worktree_availability();
         self.invalidate_view_reads();
         self.refs_worker = None;
-        if self.current_branch != snapshot.branch {
+        let same_branch = self.current_branch == snapshot.branch;
+        if !same_branch {
             self.tracking.branch_changed();
         } else {
             self.tracking.invalidate();
@@ -1070,17 +1079,32 @@ impl SannyGitApp {
             self.assign_group(&path, self.manager.preferences.selected_group.clone());
         }
         self.current_branch = snapshot.branch;
+        let retained_diff = if same_repository && same_branch && self.selected_diff().is_some() {
+            self.changes
+                .get_mut(self.selected_change)
+                .map(|change| std::mem::take(&mut change.diff))
+        } else {
+            None
+        };
         self.changes = snapshot.changes;
         self.update_commit_contents_after_refresh(!same_repository);
-        self.selected_change = if same_repository {
+        let retained_selection = if same_repository {
             selected.and_then(|path| self.changes.iter().position(|c| c.path == path))
         } else {
             None
+        };
+        self.selected_change = retained_selection
+            .or_else(|| (!self.changes.is_empty()).then_some(0))
+            .unwrap_or(usize::MAX);
+        if let (Some(index), Some(diff)) = (retained_selection, retained_diff) {
+            self.loaded_diff = Some(index);
+            self.changes[index].diff = diff;
+            self.diff_refresh_pending = true;
+        } else {
+            self.loaded_diff = None;
+            self.diff_preview = None;
+            self.diff_refresh_pending = false;
         }
-        .or_else(|| (!self.changes.is_empty()).then_some(0))
-        .unwrap_or(usize::MAX);
-        self.loaded_diff = None;
-        self.diff_preview = None;
         self.open_dialog = false;
         if !same_repository {
             self.selected_paths.clear();
@@ -1851,6 +1875,7 @@ impl SannyGitApp {
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.worker = None;
+                self.pull_in_progress = false;
                 self.generating_commit_message = false;
                 self.generation_cancel = None;
                 self.manager.cancel = None;
@@ -1881,6 +1906,7 @@ impl SannyGitApp {
             }
         };
         self.worker = None;
+        self.pull_in_progress = false;
         self.apply_worker_result(result);
     }
 
@@ -2227,7 +2253,9 @@ impl SannyGitApp {
     }
 
     fn load_selected_diff(&mut self, context: &eframe::egui::Context) {
-        if self.busy() || self.loaded_diff == Some(self.selected_change) {
+        if self.busy()
+            || (!self.diff_refresh_pending && self.loaded_diff == Some(self.selected_change))
+        {
             return;
         }
         let Some(change) = self.changes.get(self.selected_change) else {
@@ -2241,18 +2269,24 @@ impl SannyGitApp {
         let kind = change.kind;
         let original_path = change.original_path.clone();
         let index = self.selected_change;
-        self.diff_preview = None;
-        if let Some(previous) = self.loaded_diff.and_then(|i| self.changes.get_mut(i)) {
-            previous.diff = String::new();
+        let retain_preview = self.selected_diff().is_some();
+        self.diff_refresh_pending = false;
+        if !retain_preview {
+            self.diff_preview = None;
+            if let Some(previous) = self.loaded_diff.and_then(|i| self.changes.get_mut(i)) {
+                previous.diff = String::new();
+            }
         }
         self.loaded_diff = Some(index);
         self.diff_worker = None;
-        if self.error.is_none()
+        if !retain_preview
+            && self.error.is_none()
             && !self.status.starts_with("Push ")
             && !self.status.starts_with("Stash ")
             && !matches!(
                 self.status.as_str(),
                 "Commit created"
+                    | "Pull complete"
                     | "Index updated"
                     | "File staged"
                     | "File restored from index"

@@ -248,6 +248,9 @@ impl SannyGitApp {
             if self.remote_confirmation_hidden() {
                 self.finish_hidden_remote();
             }
+        } else if operation == Operation::Pull {
+            self.pull_in_progress = true;
+            self.network_dialog = None;
         }
     }
 }

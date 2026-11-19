@@ -286,7 +286,7 @@ impl SannyGitApp {
         self.changes = snapshot.changes;
         self.update_commit_contents_after_refresh(false);
         // Row indices and file contents may have changed during the read.
-        self.diff_worker = None;
+        self.diff_refresh_pending |= self.diff_worker.take().is_some() && previous_diff;
         self.selected_change = index
             .or_else(|| (!self.changes.is_empty()).then_some(0))
             .unwrap_or(usize::MAX);
@@ -303,6 +303,7 @@ impl SannyGitApp {
         } else {
             self.loaded_diff = None;
             self.diff_preview = None;
+            self.diff_refresh_pending = false;
         }
     }
 
@@ -319,6 +320,7 @@ impl SannyGitApp {
                     }
                     change.diff = patch;
                     self.loaded_diff = Some(self.selected_change);
+                    self.diff_refresh_pending = false;
                 }
                 Err(error) => return Err(error),
             }

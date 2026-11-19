@@ -1236,6 +1236,59 @@ fn disconnected_view_readers_keep_drafts_and_report_modal_errors() {
 }
 
 #[test]
+fn pull_keeps_the_selected_diff_visible_until_its_replacement_is_ready() {
+    let repo = crate::test_support::TempRepo::new();
+    repo.write("selected.txt", "old contents\n");
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.apply_snapshot(git::load(&repo.0).unwrap());
+    let ctx = egui::Context::default();
+
+    app.load_selected_diff(&ctx);
+    let first_result = app
+        .diff_worker
+        .take()
+        .unwrap()
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .unwrap();
+    app.apply_worker_result(first_result);
+    let old_preview = app.selected_diff().unwrap().lines.as_ptr();
+
+    repo.write("selected.txt", "new contents\n");
+    repo.write("earlier.txt", "another file\n");
+    deliver(
+        &mut app,
+        WorkerResult::Operation {
+            committed: false,
+            success: "Pull complete",
+            outcome: Ok(()),
+            snapshot: git::load(&repo.0),
+        },
+    );
+    assert_eq!(app.changes[app.selected_change].path, "selected.txt");
+    assert_eq!(app.selected_diff().unwrap().lines.as_ptr(), old_preview);
+
+    app.load_selected_diff(&ctx);
+    assert_eq!(app.status, "Pull complete");
+    assert_eq!(app.selected_diff().unwrap().lines.as_ptr(), old_preview);
+    let updated_result = app
+        .diff_worker
+        .take()
+        .unwrap()
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .unwrap();
+    app.apply_worker_result(updated_result);
+    assert!(app.selected_diff().is_some());
+    assert!(app.changes[app.selected_change]
+        .diff
+        .contains("+new contents"));
+
+    std::fs::remove_file(repo.0.join("selected.txt")).unwrap();
+    app.apply_snapshot(git::load(&repo.0).unwrap());
+    assert_eq!(app.changes[app.selected_change].path, "earlier.txt");
+    assert!(app.selected_diff().is_none());
+}
+
+#[test]
 fn diff_reader_wakes_ui_after_publishing_result() {
     let app = SannyGitApp::with_theme(ThemeChoice::Light);
     let context = eframe::egui::Context::default();
@@ -1469,6 +1522,63 @@ fn visible_text_count(shapes: &[ClippedShape], expected: &str) -> usize {
 
 fn visible_text(shapes: &[ClippedShape], expected: &str) -> bool {
     visible_text_count(shapes, expected) > 0
+}
+
+#[test]
+fn pull_shows_progress_in_the_status_bar_without_a_progress_window() {
+    let repo = crate::test_support::TempRepo::new();
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.repositories.push(crate::models::Repository {
+        name: "Test".into(),
+        path: repo.0.to_string_lossy().into_owned(),
+    });
+    app.selected_repository = 0;
+    app.state_current = true;
+    app.network_dialog = Some(RemoteDialog {
+        operation: crate::remotes::Operation::Pull,
+        state: Some(crate::remotes::State {
+            remotes: vec!["origin".into()],
+            branch: Some("main".into()),
+            ..Default::default()
+        }),
+        remote: "origin".into(),
+        branch: "main".into(),
+        set_upstream: false,
+        dont_show_again: false,
+        pull: Default::default(),
+    });
+    app.run_remote();
+    assert!(app.busy());
+    assert!(app.network_dialog.is_none());
+    assert!(app.manager.cancel.is_some());
+
+    let ctx = egui::Context::default();
+    for frame in 0..4 {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(1100.0, 700.0),
+                )),
+                ..Default::default()
+            },
+            |ui| ui::show(ui, &mut app),
+        );
+        output.textures_delta.clear();
+        if frame == 3 {
+            assert!(!visible_text(&output.shapes, "Repository operation"));
+            assert!(!visible_text(&output.shapes, "Cancel operation"));
+            assert!(visible_text(&output.shapes, "Pull in progress…"));
+        }
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.busy() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        app.poll_worker();
+    }
+    assert!(!app.pull_in_progress);
 }
 
 #[test]
