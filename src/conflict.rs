@@ -1105,6 +1105,18 @@ mod tests {
                 };
                 render(&mut app, Vec::new());
                 let output = render(&mut app, Vec::new());
+                // The underlying workspace also paints an "All" filter. Match
+                // the solver's label within Save's scroll clip.
+                let toolbar_clip = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        Shape::Text(text) if text.galley.job.text == "Save" => {
+                            Some(shape.clip_rect)
+                        }
+                        _ => None,
+                    })
+                    .expect("missing solver Save button");
                 let position = |label, toolbar_y: Option<f32>, rightmost: bool| {
                     output
                         .shapes
@@ -1113,8 +1125,9 @@ mod tests {
                             Shape::Text(text) if text.galley.job.text == label => {
                                 let rect = text.galley.rect.translate(text.pos.to_vec2());
                                 (bounds.intersect(shape.clip_rect).contains_rect(rect)
-                                    && toolbar_y.is_none_or(|y| (rect.center().y - y).abs() < 2.0))
-                                .then(|| rect.center())
+                                    && toolbar_y.is_none_or(|y| (rect.center().y - y).abs() < 2.0)
+                                    && (label != "All" || shape.clip_rect == toolbar_clip))
+                                    .then(|| rect.center())
                             }
                             _ => None,
                         })
