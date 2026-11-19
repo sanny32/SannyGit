@@ -467,18 +467,35 @@ fn paint_tool_icon(
         }
         ToolIcon::Take { first, both } => {
             let accent = if enabled { palette.incoming } else { color };
-            document_icon(ui, panel(0.38, 0.10, 0.62, 0.90), color, color);
-            for (side, y) in [(first, if both { 0.34 } else { 0.5 }), (1 - first, 0.68)]
+            let outline = if enabled { palette.text } else { color };
+            painter.line_segment([point(0.50, 0.10), point(0.50, 0.90)], (1.5, outline));
+            for (order, (side, y)) in [(first, if both { 0.26 } else { 0.50 }), (1 - first, 0.74)]
                 .into_iter()
                 .take(if both { 2 } else { 1 })
+                .enumerate()
             {
-                let (start, end) = if side == 0 {
-                    (0.06, 0.46)
-                } else {
-                    (0.94, 0.54)
-                };
-                let origin = point(start, y);
-                painter.arrow(origin, point(end, y) - origin, (1.6, accent));
+                let x = |left| if side == 0 { left } else { 1.0 - left };
+                let start = x(if both { 0.21 } else { 0.06 });
+                let shoulder = x(0.32);
+                painter.line_segment([point(start, y), point(shoulder, y)], (1.7, accent));
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        point(x(0.45), y),
+                        point(shoulder, y - 0.13),
+                        point(shoulder, y + 0.13),
+                    ],
+                    accent,
+                    egui::Stroke::NONE,
+                ));
+                if both {
+                    painter.text(
+                        point(x(0.05), y),
+                        egui::Align2::CENTER_CENTER,
+                        if order == 0 { "1" } else { "2" },
+                        egui::FontId::monospace(8.5),
+                        outline,
+                    );
+                }
             }
         }
         ToolIcon::Panes(layout) => {
@@ -712,6 +729,7 @@ fn change_navigation(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, busy
         false,
     ) {
         dialog.change_row = Some(row);
+        dialog.conflict_navigation_row = Some(row);
         dialog.jump_to_row = Some(row);
         if let Some(conflict) = dialog
             .comparison
@@ -724,27 +742,26 @@ fn change_navigation(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, busy
 }
 
 fn conflict_navigation(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, busy: bool) {
-    let count = dialog.edits.len();
-    let enabled = !busy && count > 0 && dialog.draft.is_none() && !dialog.show_base;
-    let targets = if let Some(row) = dialog.change_row {
-        dialog.comparison.as_ref().map_or([None; 2], |comparison| {
-            [
-                comparison
-                    .conflict_rows
-                    .iter()
-                    .rposition(|range| range.start < row),
-                comparison
-                    .conflict_rows
-                    .iter()
-                    .position(|range| range.start > row),
-            ]
-        })
-    } else {
+    let enabled = !busy && dialog.draft.is_none() && !dialog.show_base;
+    let row_height = ui.text_style_height(&egui::TextStyle::Monospace) + 4.0;
+    let viewport_row = (dialog.scroll_y[0] / row_height) as usize;
+    let targets = dialog.comparison.as_ref().map_or([None; 2], |comparison| {
+        let row = dialog.conflict_navigation_row.unwrap_or(viewport_row);
+        let unresolved = comparison.conflict_rows.iter().zip(&dialog.edits);
         [
-            dialog.selected.checked_sub(1),
-            (dialog.selected + 1 < count).then_some(dialog.selected + 1),
+            unresolved
+                .clone()
+                .rposition(|(range, edit)| range.end <= row && edit.is_none()),
+            unresolved.enumerate().find_map(|(index, (range, edit))| {
+                let after = if dialog.conflict_navigation_row.is_some() {
+                    range.start > row
+                } else {
+                    range.end > row
+                };
+                (after && edit.is_none()).then_some(index)
+            }),
         ]
-    };
+    });
     let labels = if style.compact {
         ["Prev.", "Next"]
     } else {
@@ -976,6 +993,9 @@ fn documents(ui: &mut Ui, dialog: &mut Dialog, palette: Palette) {
     }
     if let Some(offset) = event.scroll {
         dialog.scroll_y[0] = offset;
+        if jump.is_none() {
+            dialog.conflict_navigation_row = None;
+        }
         ui.ctx().request_repaint();
     }
     if below {
@@ -991,6 +1011,9 @@ fn documents(ui: &mut Ui, dialog: &mut Dialog, palette: Palette) {
         );
         if let Some(offset) = result.scroll {
             dialog.scroll_y[1] = offset;
+            if jump.is_none() {
+                dialog.conflict_navigation_row = None;
+            }
             ui.ctx().request_repaint();
         }
         event.merge(result);
@@ -998,6 +1021,11 @@ fn documents(ui: &mut Ui, dialog: &mut Dialog, palette: Palette) {
     if let Some(index) = event.selected {
         dialog.selected = index;
         dialog.change_row = None;
+        dialog.conflict_navigation_row = dialog
+            .comparison
+            .as_ref()
+            .and_then(|comparison| comparison.conflict_rows.get(index))
+            .map(|range| range.start);
     }
     if let Some(position) = event.cursor_position.or(navigated_position) {
         if dialog.cursor_position != Some(position) {

@@ -1243,6 +1243,12 @@ mod tests {
                         "{caption} did not switch layout"
                     );
                 }
+                click(&mut app, next_conflict);
+                let dialog = app.conflict_dialog.as_ref().unwrap();
+                assert_eq!(
+                    dialog.conflict_navigation_row,
+                    Some(dialog.comparison.as_ref().unwrap().conflict_rows[0].start)
+                );
                 click(&mut app, position(change_prev, Some(save.y), false));
                 assert_eq!(app.conflict_dialog.as_ref().unwrap().change_row, Some(0));
                 click(&mut app, position(take_left, Some(save.y), false));

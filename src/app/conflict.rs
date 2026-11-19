@@ -40,6 +40,7 @@ pub struct Dialog {
     alternate_comparison: Option<Comparison>,
     alternate_scroll: [f32; 2],
     pub change_row: Option<usize>,
+    pub conflict_navigation_row: Option<usize>,
     pub jump_to_row: Option<usize>,
     pub scroll_y: [f32; 2],
     pub initial_window_geometry: Option<WindowGeometry>,
@@ -73,6 +74,7 @@ impl Dialog {
             alternate_comparison: None,
             alternate_scroll: [0.0; 2],
             change_row: None,
+            conflict_navigation_row: None,
             jump_to_row: None,
             scroll_y: [0.0; 2],
             initial_window_geometry: None,
@@ -88,7 +90,6 @@ impl Dialog {
             .resize_with(review.conflicts.len(), || None);
         self.review = Some(review);
         self.update_comparison();
-        self.go_to_conflict(0);
     }
 
     pub fn go_to_conflict(&mut self, index: usize) {
@@ -99,9 +100,11 @@ impl Dialog {
             .as_ref()
             .and_then(|comparison| comparison.conflict_rows.get(index))
             .map(|rows| rows.start);
+        self.conflict_navigation_row = self.jump_to_row;
     }
 
     pub fn update_comparison(&mut self) {
+        self.conflict_navigation_row = None;
         let Some(review) = &self.review else {
             return;
         };
@@ -135,6 +138,7 @@ impl Dialog {
         self.show_base = !self.show_base;
         self.cursor_position = Some((1, 1));
         self.change_row = None;
+        self.conflict_navigation_row = None;
         self.jump_to_row = None;
     }
 
