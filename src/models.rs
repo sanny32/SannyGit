@@ -59,6 +59,7 @@ pub struct BranchRef {
     pub full_name: String,
     pub hash: String,
     pub upstream: Option<String>,
+    pub tag_subject: Option<String>,
     pub current: bool,
     pub kind: RefKind,
 }

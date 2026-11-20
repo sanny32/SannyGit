@@ -7,7 +7,10 @@ use crate::{
     models::{BranchRef, RefKind},
     theme::{semibold_family, Palette},
 };
-use eframe::egui::{Align, CollapsingHeader, Layout, RichText, ScrollArea, TextEdit, Ui, Vec2};
+use eframe::egui::{
+    self, text::LayoutJob, Align, CollapsingHeader, FontSelection, Layout, RichText, ScrollArea,
+    TextEdit, Ui, Vec2,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum BranchRequest {
@@ -239,18 +242,27 @@ fn branch_group(
                             palette.text,
                             14.0,
                         );
-                        ui.add(
-                            eframe::egui::Label::new(if branch.current {
-                                RichText::new(&branch.name)
-                                    .text_style(eframe::egui::TextStyle::Body)
-                                    .family(semibold_family())
-                            } else {
-                                RichText::new(&branch.name)
-                                    .text_style(eframe::egui::TextStyle::Body)
-                            })
+                        let name = RichText::new(&branch.name).text_style(egui::TextStyle::Body);
+                        let name = if branch.current {
+                            name.family(semibold_family())
+                        } else {
+                            name
+                        };
+                        let text = if let Some(subject) = &branch.tag_subject {
+                            let mut text = LayoutJob::default();
+                            name.append_to(&mut text, ui.style(), FontSelection::Default, Align::Center);
+                            RichText::new(format!(" - {subject}"))
+                                .text_style(egui::TextStyle::Body)
+                                .color(palette.muted.lerp_to_gamma(palette.text, 0.25))
+                                .append_to(&mut text, ui.style(), FontSelection::Default, Align::Center);
+                            egui::WidgetText::from(text)
+                        } else {
+                            egui::WidgetText::from(name)
+                        };
+                        let label = egui::Label::new(text)
                             .show_tooltip_when_elided(false)
-                            .sense(eframe::egui::Sense::hover()),
-                        );
+                            .sense(egui::Sense::hover());
+                        ui.add(if kind == RefKind::Tag { label.truncate() } else { label });
                         if branch.current {
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 icons::paint(ui, Icon::Star, palette.accent, 14.0)
@@ -259,13 +271,18 @@ fn branch_group(
                     },
                 )
                 .help_text(format!(
-                    "{}\nObject: {}{}{}",
+                    "{}\nObject: {}{}{}{}",
                     branch.full_name,
                     branch.hash,
                     branch
                         .upstream
                         .as_ref()
                         .map(|s| format!("\nUpstream: {s}"))
+                        .unwrap_or_default(),
+                    branch
+                        .tag_subject
+                        .as_ref()
+                        .map(|subject| format!("\n{subject}"))
                         .unwrap_or_default(),
                     match kind {
                         RefKind::Local => "\nDouble-click to switch",
@@ -966,6 +983,7 @@ mod tests {
                     name: "feature".into(),
                     full_name: "refs/heads/feature".into(),
                     hash: "a".repeat(40),
+                    tag_subject: None,
                     upstream: None,
                     current: false,
                     kind: RefKind::Local,
@@ -1028,6 +1046,7 @@ mod tests {
                 name: "feature".into(),
                 full_name: "refs/heads/feature".into(),
                 hash: "a".repeat(40),
+                tag_subject: None,
                 upstream: None,
                 current: false,
                 kind: RefKind::Local,
@@ -1101,6 +1120,7 @@ mod tests {
                     name: "target".into(),
                     full_name: format!("{prefix}/target"),
                     hash: "a".repeat(40),
+                    tag_subject: None,
                     upstream: None,
                     current: false,
                     kind,
@@ -1180,6 +1200,7 @@ mod tests {
                 name: "feature".into(),
                 full_name: "refs/heads/feature".into(),
                 hash: "a".repeat(40),
+                tag_subject: None,
                 upstream: None,
                 current: false,
                 kind: RefKind::Local,
@@ -1242,6 +1263,7 @@ mod tests {
                 name: "feature".into(),
                 full_name: "refs/heads/feature".into(),
                 hash: "a".repeat(40),
+                tag_subject: None,
                 upstream: None,
                 current: false,
                 kind: RefKind::Local,

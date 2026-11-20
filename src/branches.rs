@@ -14,7 +14,7 @@ pub fn load(root: &Path) -> Result<RefSnapshot, String> {
             "for-each-ref",
             "--sort=refname",
             "--count=5001",
-            "--format=%(refname)%00%(objectname)%00%(upstream)%00%(HEAD)%00%(symref)%00",
+            "--format=%(refname)%00%(objectname)%00%(upstream)%00%(HEAD)%00%(symref)%00%(if:equals=tag)%(objecttype)%(then)%(contents:subject)%(end)%00",
             "refs/heads/",
             "refs/remotes/",
             "refs/tags/",
@@ -42,11 +42,14 @@ fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
         let record = record
             .strip_suffix(&[0])
             .ok_or("Malformed Git ref record")?;
-        let fields: Vec<_> = record
-            .split(|b| *b == 0)
+        let mut parts = record.splitn(6, |b| *b == 0);
+        let fields: Vec<_> = parts
+            .by_ref()
+            .take(5)
             .map(|s| std::str::from_utf8(s).map_err(|_| "Non-UTF-8 ref names are not supported"))
             .collect::<Result<_, _>>()?;
-        if fields.len() != 5 {
+        let subject = parts.next().ok_or("Malformed Git ref record")?;
+        if subject.contains(&0) {
             return Err("Malformed Git ref record".into());
         }
         if !seen.insert(fields[0]) {
@@ -74,7 +77,15 @@ fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
         if name.is_empty() {
             return Err("Empty Git ref name".into());
         }
+        let tag_subject = if kind == RefKind::Tag {
+            let subject = String::from_utf8_lossy(subject);
+            let subject = subject.trim();
+            (!subject.is_empty()).then(|| subject.to_owned())
+        } else {
+            None
+        };
         refs.push(BranchRef {
+            tag_subject,
             name: name.into(),
             full_name: fields[0].into(),
             hash: fields[1].into(),

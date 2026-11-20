@@ -464,7 +464,13 @@ fn lists_current_local_remote_upstream_and_annotated_tags_without_writes() {
     ]);
     repo.git(&["branch", "--set-upstream-to=origin/main", "main"]);
     repo.git(&["tag", "lightweight"]);
-    repo.git(&["tag", "-a", "release", "-m", "Release"]);
+    repo.git(&[
+        "tag",
+        "-a",
+        "release",
+        "-m",
+        "Версия 1.0\ncontinued\n\nDetails",
+    ]);
     let index = std::fs::read(repo.0.join(".git/index")).unwrap();
     let snapshot = load(&repo.0).unwrap();
     assert!(snapshot.has_head);
@@ -485,6 +491,21 @@ fn lists_current_local_remote_upstream_and_annotated_tags_without_writes() {
             .count(),
         2
     );
+    assert_eq!(
+        snapshot
+            .refs
+            .iter()
+            .find(|r| r.name == "release")
+            .unwrap()
+            .tag_subject
+            .as_deref(),
+        Some("Версия 1.0 continued")
+    );
+    assert!(snapshot
+        .refs
+        .iter()
+        .filter(|r| r.name != "release")
+        .all(|r| r.tag_subject.is_none()));
     assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
 }
 
@@ -752,7 +773,7 @@ fn validates_names_rejects_duplicates_and_handles_unborn_head() {
 
 #[test]
 fn rejects_malformed_ref_records_and_bounds_ref_count() {
-    let record = format!("refs/heads/main\0{}\0\0*\0\0\n", "a".repeat(40));
+    let record = format!("refs/heads/main\0{}\0\0*\0\0\0\n", "a".repeat(40));
     assert_eq!(parse(record.as_bytes()).unwrap()[0].name, "main");
     assert!(parse(&record.as_bytes()[..record.len() - 1]).is_err());
     assert!(parse(b"short\0\n").is_err());
@@ -762,7 +783,7 @@ fn rejects_malformed_ref_records_and_bounds_ref_count() {
     bytes[12] = 255;
     assert!(parse(&bytes).is_err());
     let many: String = (0..=REF_LIMIT)
-        .map(|i| format!("refs/heads/b{i}\0{}\0\0 \0\0\n", "a".repeat(40)))
+        .map(|i| format!("refs/heads/b{i}\0{}\0\0 \0\0\0\n", "a".repeat(40)))
         .collect();
     assert!(parse(many.as_bytes()).is_err_and(|error| error.contains("5,000")));
 }

@@ -53,6 +53,7 @@ pub fn refs() -> Vec<BranchRef> {
             name: name.into(),
             full_name: format!("{prefix}{name}"),
             hash: "a".repeat(40),
+            tag_subject: None,
             upstream: if kind == RefKind::Local {
                 Some(format!("origin/{name}"))
             } else {
@@ -219,6 +220,7 @@ pub fn merge_dialog() -> crate::app::merge::Dialog {
             name: "main".into(),
             full_name: "refs/heads/main".into(),
             hash: commits[1].hash.clone(),
+            tag_subject: None,
             upstream: Some("origin/main".into()),
             current: true,
             kind: RefKind::Local,
@@ -227,6 +229,7 @@ pub fn merge_dialog() -> crate::app::merge::Dialog {
             name: "feature".into(),
             full_name: "refs/heads/feature".into(),
             hash: commits[2].hash.clone(),
+            tag_subject: None,
             upstream: None,
             current: false,
             kind: RefKind::Local,
@@ -235,6 +238,7 @@ pub fn merge_dialog() -> crate::app::merge::Dialog {
             name: "origin/main".into(),
             full_name: "refs/remotes/origin/main".into(),
             hash: commits[0].hash.clone(),
+            tag_subject: None,
             upstream: None,
             current: false,
             kind: RefKind::Remote,

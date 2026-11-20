@@ -1114,6 +1114,7 @@ fn remote_checkout_uses_current_tracking_branch_or_shows_choices() {
     app.selected_branch = "refs/remotes/origin/new-topic".into();
     app.refs.push(crate::models::BranchRef {
         full_name: app.selected_branch.clone(),
+        tag_subject: None,
         name: "origin/new-topic".into(),
         hash: "a".repeat(40),
         upstream: None,
