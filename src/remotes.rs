@@ -413,5 +413,134 @@ pub fn push_tag(root: &Path, expected: &TagPushPreview, cancel: &AtomicBool) -> 
     .map(|_| ())
 }
 
+#[derive(Clone)]
+pub struct TagDeletePreview {
+    full_name: String,
+    oid: String,
+    pub remotes: Vec<String>,
+    config: crate::remote_config::Snapshot,
+}
+
+pub fn preview_tag_delete(root: &Path, full_name: &str) -> Result<TagDeletePreview, String> {
+    let refs = branches::load(root)?;
+    let tag = refs
+        .refs
+        .iter()
+        .find(|entry| entry.kind == RefKind::Tag && entry.full_name == full_name)
+        .ok_or("The selected tag no longer exists. Refresh branches and tags.")?;
+    let config = crate::remote_config::load(root)?;
+    Ok(TagDeletePreview {
+        full_name: tag.full_name.clone(),
+        oid: tag.hash.clone(),
+        remotes: config
+            .entries
+            .iter()
+            .map(|remote| remote.name.clone())
+            .collect(),
+        config,
+    })
+}
+
+fn check_tag_delete(root: &Path, expected: &TagDeletePreview) -> Result<(), String> {
+    if !branches::load(root)?.refs.iter().any(|tag| {
+        tag.kind == RefKind::Tag && tag.full_name == expected.full_name && tag.hash == expected.oid
+    }) {
+        return Err("The local tag changed after review. Reload details and confirm again.".into());
+    }
+    Ok(())
+}
+
+pub fn delete_tag(
+    root: &Path,
+    expected: &TagDeletePreview,
+    also_remote: bool,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    check_tag_delete(root, expected)?;
+    let mut removed = 0;
+    let result = (|| {
+        if also_remote {
+            let mut destinations = Vec::new();
+            for remote in &expected.remotes {
+                let (endpoint, config) = crate::remote_config::push_endpoint(root, remote)?;
+                if config != expected.config {
+                    return Err("The remote configuration changed after review. Reload details and confirm again.".into());
+                }
+                let listed = git::text(git::run_controlled(
+                    root,
+                    &["ls-remote", "--refs", "--", &endpoint, &expected.full_name],
+                    Duration::from_secs(60),
+                    Some(cancel),
+                )?)?;
+                let advertised = listed
+                    .lines()
+                    .filter_map(|line| line.split_once('\t'))
+                    .find(|(_, reference)| *reference == expected.full_name);
+                let Some((oid, _)) = advertised else {
+                    continue;
+                };
+                if oid != expected.oid {
+                    return Err(format!(
+                        "Remote '{remote}' has a different object for this tag. Its tag was kept."
+                    ));
+                }
+                if !destinations
+                    .iter()
+                    .any(|(_, existing)| existing == &endpoint)
+                {
+                    destinations.push((remote, endpoint));
+                }
+            }
+            for (remote, endpoint) in destinations {
+                check_tag_delete(root, expected)?;
+                if crate::remote_config::load(root)? != expected.config {
+                    return Err("The remote configuration changed after review. Reload details and confirm again.".into());
+                }
+                git::run_controlled(
+                    root,
+                    &[
+                        "push",
+                        "--porcelain",
+                        "--no-mirror",
+                        "--no-follow-tags",
+                        "--recurse-submodules=no",
+                        &format!("--force-with-lease={}:{}", expected.full_name, expected.oid),
+                        "--",
+                        &endpoint,
+                        &format!(":{}", expected.full_name),
+                    ],
+                    Duration::from_secs(600),
+                    Some(cancel),
+                )
+                .map_err(|error| {
+                    format!("Could not delete the tag from remote '{remote}'.\n{error}")
+                })?;
+                removed += 1;
+            }
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err("Tag deletion cancelled.".into());
+            }
+        }
+        git::run(
+            root,
+            &[
+                "update-ref",
+                "--no-deref",
+                "-d",
+                &expected.full_name,
+                &expected.oid,
+            ],
+        )
+        .map(|_| ())
+    })();
+    result.map_err(|error| {
+        if removed == 0 {
+            error
+        } else {
+            format!("The tag was deleted from {removed} remote destination(s). Local deletion did not complete.\n{error}")
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests;

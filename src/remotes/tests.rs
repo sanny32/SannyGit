@@ -2,6 +2,82 @@ use super::*;
 use crate::test_support::TempRepo;
 use std::{fs, path::PathBuf};
 
+#[test]
+fn tag_delete_defaults_to_local_and_can_delete_from_all_reviewed_remotes() {
+    let repo = TempRepo::new();
+    repo.write("file", "base\n");
+    repo.git(&["add", "file"]);
+    repo.git(&["commit", "-m", "base"]);
+    repo.git(&["tag", "-a", "release", "-m", "release notes"]);
+    repo.git(&["branch", "release"]);
+    let reference = "refs/tags/release";
+    let oid = repo.git(&["rev-parse", reference]);
+    let origin = repo.0.join("origin.git");
+    let backup = repo.0.join("backup.git");
+    for (name, remote) in [("origin", &origin), ("backup", &backup)] {
+        repo.git(&["init", "--bare", remote.to_str().unwrap()]);
+        repo.git(&["remote", "add", name, remote.to_str().unwrap()]);
+        repo.git(&["push", name, reference, "refs/heads/release"]);
+    }
+    let cancel = AtomicBool::new(false);
+    let first = preview_tag_delete(&repo.0, reference).unwrap();
+    delete_tag(&repo.0, &first, false, &cancel).unwrap();
+    assert!(repo.git(&["tag", "--list"]).is_empty());
+    for remote in [&origin, &backup] {
+        assert_eq!(
+            git::text(git::run(remote, &["rev-parse", reference]).unwrap()).unwrap(),
+            oid
+        );
+    }
+    repo.git(&[
+        "fetch",
+        "--no-tags",
+        "origin",
+        "refs/tags/release:refs/tags/release",
+    ]);
+    let reviewed = preview_tag_delete(&repo.0, reference).unwrap();
+    delete_tag(&repo.0, &reviewed, true, &cancel).unwrap();
+    assert!(repo.git(&["tag", "--list"]).is_empty());
+    assert_eq!(repo.git(&["branch", "--list", "release"]).trim(), "release");
+    for remote in [&origin, &backup] {
+        assert!(git::run(remote, &["tag", "--list"]).unwrap().is_empty());
+        assert!(git::run(remote, &["rev-parse", "--verify", "refs/heads/release"]).is_ok());
+    }
+}
+
+#[test]
+fn tag_delete_rejects_stale_local_and_remote_objects_before_removing_any_ref() {
+    let repo = TempRepo::new();
+    repo.git(&["commit", "--allow-empty", "-m", "base"]);
+    repo.git(&["tag", "release"]);
+    let reference = "refs/tags/release";
+    let original = repo.git(&["rev-parse", reference]);
+    let origin = repo.0.join("origin.git");
+    let backup = repo.0.join("backup.git");
+    for (name, remote) in [("origin", &origin), ("backup", &backup)] {
+        repo.git(&["init", "--bare", remote.to_str().unwrap()]);
+        repo.git(&["remote", "add", name, remote.to_str().unwrap()]);
+        repo.git(&["push", name, reference]);
+    }
+    let reviewed = preview_tag_delete(&repo.0, reference).unwrap();
+    let cancel = AtomicBool::new(false);
+    repo.git(&["commit", "--allow-empty", "-m", "different object"]);
+    repo.git(&["tag", "-f", "release"]);
+    assert!(delete_tag(&repo.0, &reviewed, false, &cancel)
+        .unwrap_err()
+        .contains("local tag changed"));
+    repo.git(&["push", "--force", "origin", reference]);
+    repo.git(&["tag", "-f", "release", original.trim()]);
+    assert!(delete_tag(&repo.0, &reviewed, true, &cancel)
+        .unwrap_err()
+        .contains("different object"));
+    assert_eq!(repo.git(&["rev-parse", reference]), original);
+    assert_eq!(
+        git::text(git::run(&backup, &["rev-parse", reference]).unwrap()).unwrap(),
+        original
+    );
+}
+
 fn command(root: &Path, args: &[&str]) -> Vec<u8> {
     let mut configured = vec!["-c", "core.autocrlf=false"];
     configured.extend_from_slice(args);

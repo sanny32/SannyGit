@@ -14,6 +14,7 @@ enum BranchRequest {
     Switch(String),
     Rename(String),
     Delete(String),
+    DeleteTag(String),
     PushTag(String),
     PushTagTo(String),
     MergeTag(String),
@@ -124,6 +125,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             BranchRequest::Delete(target) => {
                 app.selected_branch = target;
                 app.open_delete_branch();
+            }
+            BranchRequest::DeleteTag(target) => {
+                app.selected_branch = target;
+                app.open_delete_tag();
             }
             BranchRequest::PushTag(target) => {
                 app.selected_branch = target;
@@ -389,7 +394,12 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
         .help(
             "Reset requires an existing HEAD, fresh repository data and no operation in progress",
         ),
-        unavailable("Delete…"),
+        E::item(
+            "Delete…",
+            requested.tag_push_allowed,
+            BranchRequest::DeleteTag(tag.full_name.clone()),
+        )
+        .help("Refresh the repository and wait for the current operation"),
         E::Separator,
         E::item("Copy", true, BranchRequest::CopyTagName(tag.name.clone())),
         unavailable("Copy Message"),

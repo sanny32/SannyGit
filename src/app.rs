@@ -2151,6 +2151,7 @@ impl SannyGitApp {
                 let managing_refs = matches!(
                     success,
                     "Branch deleted"
+                        | "Tag deleted"
                         | "Tag pushed"
                         | "Reset complete"
                         | "Remote configuration updated"
@@ -2368,6 +2369,7 @@ impl SannyGitApp {
                     | "File restored from index"
                     | "Untracked file deleted"
                     | "Branch deleted"
+                    | "Tag deleted"
                     | "Reset complete"
                     | "Tag pushed"
                     | "Remote configuration updated"

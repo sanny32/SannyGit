@@ -46,6 +46,11 @@ pub enum Kind {
         source: String,
         prepared: Option<branches::DeletePreview>,
     },
+    DeleteTag {
+        source: String,
+        prepared: Option<remotes::TagDeletePreview>,
+        also_remote: bool,
+    },
     Tag {
         source: String,
         names: Vec<String>,
@@ -77,6 +82,10 @@ pub enum ResultMessage {
         source: String,
         result: Result<branches::DeletePreview, String>,
     },
+    DeleteTag {
+        source: String,
+        result: Result<remotes::TagDeletePreview, String>,
+    },
     Tag {
         source: String,
         names: Vec<String>,
@@ -92,9 +101,16 @@ pub enum ResultMessage {
 
 enum LoadRequest {
     Delete(String),
+    DeleteTag(String),
     Tag(String, String),
     Reset(String),
     Remotes,
+}
+
+enum RefAction {
+    DeleteBranch(branches::DeletePreview),
+    DeleteTag(remotes::TagDeletePreview, bool),
+    PushTag(remotes::TagPushPreview),
 }
 
 fn tag_details(root: &std::path::Path, source: String, selected: String) -> ResultMessage {
@@ -162,6 +178,16 @@ impl SannyGitApp {
             source: self.selected_branch.clone(),
             prepared: None,
         });
+    }
+
+    pub fn open_delete_tag(&mut self) {
+        if self.push_tag_blocker().is_none() {
+            self.open_ref_dialog(Kind::DeleteTag {
+                source: self.selected_branch.clone(),
+                prepared: None,
+                also_remote: false,
+            });
+        }
     }
 
     pub fn open_push_tag(&mut self) {
@@ -348,6 +374,14 @@ impl SannyGitApp {
             dialog.status = "Loading details…".into();
             match &mut dialog.kind {
                 Kind::Delete { prepared, .. } => *prepared = None,
+                Kind::DeleteTag {
+                    prepared,
+                    also_remote,
+                    ..
+                } => {
+                    *prepared = None;
+                    *also_remote = false;
+                }
                 Kind::Tag { prepared, .. } => *prepared = None,
                 Kind::Reset {
                     prepared,
@@ -382,6 +416,7 @@ impl SannyGitApp {
         let root = dialog.root.clone();
         let target = match &dialog.kind {
             Kind::Delete { source, .. } => LoadRequest::Delete(source.clone()),
+            Kind::DeleteTag { source, .. } => LoadRequest::DeleteTag(source.clone()),
             Kind::Tag { source, remote, .. } => LoadRequest::Tag(source.clone(), remote.clone()),
             Kind::Reset { source, .. } => LoadRequest::Reset(source.clone()),
             Kind::AddTagRemote => return,
@@ -392,6 +427,10 @@ impl SannyGitApp {
             let result = match target {
                 LoadRequest::Delete(source) => ResultMessage::Delete {
                     result: branches::preview_delete(&path, &source),
+                    source,
+                },
+                LoadRequest::DeleteTag(source) => ResultMessage::DeleteTag {
+                    result: remotes::preview_tag_delete(&path, &source),
                     source,
                 },
                 LoadRequest::Tag(source, remote) => tag_details(&path, source, remote),
@@ -427,20 +466,28 @@ impl SannyGitApp {
             return;
         }
         let root = PathBuf::from(&dialog.root);
-        let (deletion, tag) = match &dialog.kind {
+        let action = match &dialog.kind {
             Kind::Delete {
                 prepared: Some(prepared),
                 ..
-            } => (Some(prepared.clone()), None),
+            } => RefAction::DeleteBranch(prepared.clone()),
+            Kind::DeleteTag {
+                prepared: Some(prepared),
+                also_remote,
+                ..
+            } => RefAction::DeleteTag(prepared.clone(), *also_remote),
             Kind::Tag {
                 prepared: Some(prepared),
                 remote,
                 ..
-            } if prepared.remote == *remote => (None, Some(prepared.clone())),
+            } if prepared.remote == *remote => RefAction::PushTag(prepared.clone()),
             _ => return,
         };
         let cancel = Arc::new(AtomicBool::new(false));
-        if tag.is_some() {
+        if matches!(
+            action,
+            RefAction::PushTag(_) | RefAction::DeleteTag(_, true)
+        ) {
             self.manager.cancel = Some(cancel.clone());
         }
         dialog.running = true;
@@ -449,15 +496,17 @@ impl SannyGitApp {
         self.error = None;
         self.status = "Ref operation in progress…".into();
         if !self.start_worker(move || {
-            let (outcome, success) = if let Some(prepared) = deletion {
-                (branches::delete(&root, &prepared), "Branch deleted")
-            } else if let Some(prepared) = tag {
-                (remotes::push_tag(&root, &prepared, &cancel), "Tag pushed")
-            } else {
-                (
-                    Err("Reload details before retrying.".into()),
-                    "Ref operation",
-                )
+            let (outcome, success) = match action {
+                RefAction::DeleteBranch(prepared) => {
+                    (branches::delete(&root, &prepared), "Branch deleted")
+                }
+                RefAction::DeleteTag(prepared, also_remote) => (
+                    remotes::delete_tag(&root, &prepared, also_remote, &cancel),
+                    "Tag deleted",
+                ),
+                RefAction::PushTag(prepared) => {
+                    (remotes::push_tag(&root, &prepared, &cancel), "Tag pushed")
+                }
             };
             WorkerResult::Operation {
                 committed: false,
@@ -597,6 +646,18 @@ impl SannyGitApp {
         };
         match (&mut dialog.kind, result) {
             (
+                Kind::DeleteTag {
+                    source, prepared, ..
+                },
+                ResultMessage::DeleteTag {
+                    source: requested,
+                    result,
+                },
+            ) if *source == requested => match result {
+                Ok(details) => *prepared = Some(details),
+                Err(error) => dialog.error = Some(error),
+            },
+            (
                 Kind::Delete { source, prepared },
                 ResultMessage::Delete {
                     source: requested,
@@ -666,7 +727,7 @@ impl SannyGitApp {
     }
 
     pub(super) fn finish_ref_operation(&mut self, success: &str, succeeded: bool) {
-        if success == "Tag pushed" {
+        if matches!(success, "Tag pushed" | "Tag deleted") {
             self.manager.cancel = None;
         }
         if success == "Remote configuration updated" {
@@ -697,6 +758,14 @@ impl SannyGitApp {
             dialog.error = self.error.clone();
             match &mut dialog.kind {
                 Kind::Delete { prepared, .. } => *prepared = None,
+                Kind::DeleteTag {
+                    prepared,
+                    also_remote,
+                    ..
+                } => {
+                    *prepared = None;
+                    *also_remote = false;
+                }
                 Kind::Tag { prepared, .. } => *prepared = None,
                 Kind::Reset {
                     prepared,
@@ -749,6 +818,32 @@ mod tests {
         app.refs_current = true;
         app.commit_message = "Keep commit draft".into();
         (repo, app)
+    }
+
+    #[test]
+    fn delete_tag_waits_for_confirmation_and_keeps_the_commit_draft() {
+        let (repo, mut app) = opened();
+        app.selected_branch = "refs/tags/chosen".into();
+        app.open_delete_tag();
+        wait(&mut app);
+        app.run_ref_action();
+        assert!(!app.busy());
+        assert_eq!(repo.git(&["tag", "--list", "chosen"]).trim(), "chosen");
+        assert!(matches!(
+            app.ref_dialog.as_ref().unwrap().kind,
+            Kind::DeleteTag {
+                also_remote: false,
+                ..
+            }
+        ));
+        app.ref_dialog.as_mut().unwrap().confirmed = true;
+        app.run_ref_action();
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert_eq!(app.status, "Tag deleted");
+        assert!(app.ref_dialog.is_none());
+        assert!(repo.git(&["tag", "--list", "chosen"]).is_empty());
+        assert_eq!(app.commit_message, "Keep commit draft");
     }
 
     #[test]

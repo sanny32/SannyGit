@@ -19,6 +19,10 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let palette = app.palette();
     let (id, title, description, icon, width) = match &dialog.kind {
         Kind::Delete { .. } => ("ref.delete", "Delete Local Branch", "Delete a local branch only after it is fully merged into the current HEAD. No force deletion; current and worktree branches are protected.", Icon::Branch, 580.0),
+        Kind::DeleteTag { .. } => {
+            show_tag_delete(ctx, app, dialog);
+            return;
+        }
         Kind::Tag { .. } => ("ref.tag.push", "Push Selected Tag", "Push exactly one tag object to one reviewed push address. Other branches and tags are not sent. Existing remote tags are not replaced.", Icon::Tag, 580.0),
         Kind::AddTagRemote => ("ref.tag.add_remote", "Add a Remote?", "Configure a remote for this repository, then run Push again to send the tag.", Icon::Tag, 440.0),
         Kind::Reset { advanced: Some(_), choose_changes: false, .. } => {
@@ -156,7 +160,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 Kind::Remotes(editor) => {
                     config_change = remote_editor(ui, editor, busy, current);
                 }
-                Kind::AddTagRemote | Kind::Reset { .. } => {}
+                Kind::AddTagRemote | Kind::Reset { .. } | Kind::DeleteTag { .. } => {}
             }
             let message = if dialog.running {
                 app.status.as_str()
@@ -185,7 +189,10 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 let ready = match &dialog.kind {
                     Kind::Delete { prepared, .. } => prepared.is_some(),
                     Kind::Tag { prepared, .. } => prepared.is_some(),
-                    Kind::AddTagRemote | Kind::Reset { .. } | Kind::Remotes(_) => false,
+                    Kind::AddTagRemote
+                    | Kind::Reset { .. }
+                    | Kind::Remotes(_)
+                    | Kind::DeleteTag { .. } => false,
                 };
                 if !matches!(dialog.kind, Kind::Remotes(_))
                     && ui
@@ -244,6 +251,89 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     }
     if let Some(remove) = config_change {
         app.change_remote(remove);
+    }
+}
+
+fn show_tag_delete(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Dialog) {
+    let Kind::DeleteTag {
+        source,
+        prepared,
+        also_remote,
+    } = &mut dialog.kind
+    else {
+        return;
+    };
+    let busy = app.busy();
+    let palette = app.palette();
+    let remotes = prepared
+        .as_ref()
+        .map_or(&[][..], |preview| preview.remotes.as_slice());
+    let label = match remotes {
+        [remote] => format!("Delete from remote '{remote}'"),
+        _ => "Delete from all remotes".into(),
+    };
+    let name = source.strip_prefix("refs/tags/").unwrap_or(source);
+    let mut close = false;
+    let mut reload = false;
+    let mut submit = false;
+    dialog_style::modal(ctx, palette, "ref.tag.delete").show(ctx, |ui| {
+        ui.set_width(430.0);
+        dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        dialog_style::header_with_icon(
+            ui,
+            palette,
+            "Delete Tag",
+            "This will remove the selected tag from the local repository.",
+            Icon::Warning,
+        );
+        dialog_style::section(ui, palette.panel, egui::Margin::symmetric(18, 8), |ui| {
+            ui.spacing_mut().item_spacing.y = 3.0;
+            line(ui, format!("Tag: {name}"), palette.text);
+            ui.add_enabled_ui(!busy, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                ui.add_visible(
+                    !remotes.is_empty(),
+                    egui::Checkbox::new(also_remote, &label),
+                )
+                .help_text(label);
+            });
+            let status = if dialog.running {
+                "Deleting tag…"
+            } else if busy {
+                "Checking tag…"
+            } else {
+                ""
+            };
+            dialog_style::text_line(ui, RichText::new(status).color(palette.muted), 18.0);
+        });
+        dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
+            dialog_style::button_row(ui, |ui| {
+                close = ui
+                    .add_enabled(!busy, dialog_style::button("Cancel"))
+                    .dialog_close();
+                if !busy && prepared.is_none() && dialog.error.is_some() {
+                    reload = ui.add(dialog_style::button("Reload Details")).clicked();
+                } else {
+                    submit = ui
+                        .add_enabled(
+                            !busy && app.state_current && prepared.is_some(),
+                            dialog_style::primary("Delete", palette),
+                        )
+                        .clicked();
+                }
+            });
+        });
+    });
+    if !close {
+        dialog.confirmed = submit;
+        app.ref_dialog = Some(dialog);
+    }
+    if reload {
+        app.reload_ref_dialog();
+    }
+    if submit && !close {
+        app.run_ref_action();
     }
 }
 
@@ -654,6 +744,81 @@ mod tests {
     };
 
     #[test]
+    fn tag_delete_keeps_its_layout_and_enter_defaults_to_cancel() {
+        let repo = crate::test_support::TempRepo::new();
+        repo.git(&["commit", "--allow-empty", "-m", "base"]);
+        repo.git(&["tag", "release"]);
+        repo.git(&["remote", "add", "origin", "https://example.test/repo"]);
+        let source = "refs/tags/release";
+        let prepared = crate::remotes::preview_tag_delete(&repo.0, source).unwrap();
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                let ctx = egui::Context::default();
+                install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.state_current = true;
+                app.ref_dialog = Some(Dialog {
+                    root: repo.0.to_string_lossy().into_owned(),
+                    kind: Kind::DeleteTag {
+                        source: source.into(),
+                        prepared: None,
+                        also_remote: false,
+                    },
+                    confirmed: false,
+                    running: false,
+                    reload_pending: false,
+                    error: None,
+                    status: String::new(),
+                });
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                let render = |app: &mut SannyGitApp, events| {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| show(ui.ctx(), app),
+                    );
+                    output.textures_delta.clear();
+                    output
+                };
+                for _ in 0..3 {
+                    render(&mut app, Vec::new());
+                }
+                let id = egui::Id::unique("ref.tag.delete");
+                let loading = ctx.memory(|memory| memory.area_rect(id)).unwrap();
+                if let Kind::DeleteTag { prepared: slot, .. } =
+                    &mut app.ref_dialog.as_mut().unwrap().kind
+                {
+                    *slot = Some(prepared.clone());
+                }
+                let ready = render(&mut app, Vec::new());
+                assert_eq!(ctx.memory(|memory| memory.area_rect(id)).unwrap(), loading);
+                assert!(screen.contains_rect(loading));
+                assert!(ready.shapes.iter().any(|shape| matches!(
+                    &shape.shape, egui::Shape::Text(text) if text.galley.text() == "Delete from remote 'origin'"
+                )));
+                render(
+                    &mut app,
+                    vec![egui::Event::Key {
+                        key: egui::Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+                assert!(app.ref_dialog.is_none());
+                assert!(!app.busy());
+            }
+        }
+        assert_eq!(repo.git(&["tag", "--list"]).trim(), "release");
+    }
+
+    #[test]
     fn advanced_reset_stays_compact_when_switching_modes() {
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
             for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
@@ -793,7 +958,9 @@ mod tests {
                                         editor.url = "https://dummy-user:dummy-password@example.test/repo?private-query".into();
                                     }
                                 }
-                                Kind::AddTagRemote | Kind::Reset { .. } => {}
+                                Kind::AddTagRemote
+                                | Kind::Reset { .. }
+                                | Kind::DeleteTag { .. } => {}
                             }
                             for frame in 0..4 {
                                 let mut output = ctx.run_ui(
