@@ -204,7 +204,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         modern_workspace(ui, app);
         if !app.settings_window.open
             && (context.embed_viewports()
-                || (!app.commit_details_open && !app.about_dialog && !app.conflict_solver_open()))
+                || (!app.history_window().commit_details_open
+                    && !app.about_dialog
+                    && !app.conflict_solver_open()))
         {
             show_errors(ui, app);
         }
@@ -266,7 +268,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         });
     if !app.settings_window.open
         && (context.embed_viewports()
-            || (!app.commit_details_open && !app.about_dialog && !app.conflict_solver_open()))
+            || (!app.history_window().commit_details_open
+                && !app.about_dialog
+                && !app.conflict_solver_open()))
     {
         show_errors(ui, app);
     }
@@ -781,7 +785,7 @@ mod tests {
                 app.repositories = crate::mock_data::repositories();
                 app.selected_repository = 0;
                 app.changes = crate::mock_data::changes();
-                app.commits = crate::mock_data::commits();
+                app.history.commits = crate::mock_data::commits();
                 app.refs = crate::mock_data::refs();
                 app.current_branch = "main".into();
                 let render = |app: &mut SannyGitApp, events: Vec<Event>| {
@@ -857,11 +861,11 @@ mod tests {
                 // Simulate the loading/empty view of another repository.
                 app.selected_repository = 1;
                 app.changes.clear();
-                app.commits.clear();
+                app.history.commits.clear();
                 app.refs.clear();
                 app.current_branch.clear();
                 app.refs_loading = true;
-                app.history_loading = true;
+                app.history.history_loading = true;
                 for _ in 0..10 {
                     let after = render(&mut app, vec![]);
                     assert_eq!(before.len(), after.len());
@@ -911,7 +915,7 @@ mod tests {
             app.repositories = crate::mock_data::repositories();
             app.selected_repository = 0;
             app.changes = crate::mock_data::changes();
-            app.commits = crate::mock_data::commits();
+            app.history.commits = crate::mock_data::commits();
             let ctx = Context::default();
             crate::theme::install_fonts(&ctx);
             egui_extras::install_image_loaders(&ctx);
@@ -973,7 +977,7 @@ mod tests {
             restored_app.repositories = crate::mock_data::repositories();
             restored_app.selected_repository = 0;
             restored_app.changes = crate::mock_data::changes();
-            restored_app.commits = crate::mock_data::commits();
+            restored_app.history.commits = crate::mock_data::commits();
             for _ in 0..3 {
                 render(&restored_ctx, &mut restored_app, vec![]);
             }

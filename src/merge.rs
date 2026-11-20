@@ -6,6 +6,7 @@ use std::path::Path;
 pub enum Mode {
     Commit,
     WorkingTree,
+    FastForward,
 }
 
 pub fn head(root: &Path) -> Result<String, String> {
@@ -52,22 +53,31 @@ pub fn execute(
     }
     // --no-overwrite-ignore alone does not protect every merge strategy.
     git::require_no_ignored_collisions(root, target)?;
-    let mut args = match mode {
-        Mode::Commit => vec![
-            "merge",
-            "--no-ff",
-            "--no-edit",
-            "--no-autostash",
-            "--no-overwrite-ignore",
-        ],
-        Mode::WorkingTree => vec![
-            "merge",
-            "--no-ff",
-            "--no-commit",
-            "--no-autostash",
-            "--no-overwrite-ignore",
-        ],
-    };
+    if mode == Mode::FastForward {
+        return git::run(
+            root,
+            &[
+                "merge",
+                "--ff-only",
+                "--no-autostash",
+                "--no-overwrite-ignore",
+                "--",
+                target,
+            ],
+        )
+        .map(|_| false);
+    }
+    let mut args = vec![
+        "merge",
+        "--no-ff",
+        if mode == Mode::Commit {
+            "--no-edit"
+        } else {
+            "--no-commit"
+        },
+        "--no-autostash",
+        "--no-overwrite-ignore",
+    ];
     // Use the branch name for the message while merging the reviewed object ID.
     let refs = branches::load(root)?;
     let mut matching = refs
@@ -126,6 +136,17 @@ mod tests {
         let target = head(&repo.0).unwrap();
         repo.git(&["checkout", "main"]);
         (repo, before, target)
+    }
+
+    #[test]
+    fn fast_forward_moves_head_without_creating_a_merge_commit() {
+        let (repo, before, target) = fixture();
+        execute(&repo.0, &before, "main", &target, "", Mode::FastForward).unwrap();
+        assert_eq!(head(&repo.0).unwrap(), target);
+        assert_eq!(
+            repo.git(&["show", "-s", "--format=%P", "HEAD"]).trim(),
+            before
+        );
     }
 
     #[test]

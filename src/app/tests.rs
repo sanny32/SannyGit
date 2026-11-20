@@ -118,7 +118,7 @@ fn modal_dialog_open_tracks_dialog_states_but_not_the_history_window() {
     assert!(app.modal_dialog_open());
     app.error = None;
     // The commit details history window is non-modal and must not dim the workspace.
-    app.commit_details_open = true;
+    app.history.commit_details_open = true;
     assert!(!app.modal_dialog_open());
 }
 
@@ -318,7 +318,7 @@ fn repository_error_retains_view_and_refresh_preserves_selection() {
     deliver(&mut app, WorkerResult::Repository(Ok(snapshot)));
     assert_eq!(app.changes[app.selected_change].path, selected);
     assert_eq!(app.current_branch, "real-branch");
-    assert!(app.commits.is_empty());
+    assert!(app.history.commits.is_empty());
 }
 
 #[test]
@@ -794,9 +794,9 @@ fn operation_outcomes_remain_distinct_from_refresh_and_cancellation() {
                     app.selected_repository = 0;
                     app.changes = crate::mock_data::changes();
                     app.selected_change = 2;
-                    app.commits = crate::mock_data::commits();
-                    app.selected_commit = Some(app.commits[1].hash.clone());
-                    let selected_commit = app.selected_commit.clone();
+                    app.history.commits = crate::mock_data::commits();
+                    app.history.selected_commit = Some(app.history.commits[1].hash.clone());
+                    let selected_commit = app.history.selected_commit.clone();
                     let selected_path = app.changes[2].path.clone();
                     app.commit_message = "Keep on failure".into();
                     app.state_current = false;
@@ -832,7 +832,7 @@ fn operation_outcomes_remain_distinct_from_refresh_and_cancellation() {
                         },
                     );
                     assert_eq!(app.state_current, !refresh_failed);
-                    assert_eq!(app.selected_commit, selected_commit);
+                    assert_eq!(app.history.selected_commit, selected_commit);
                     assert_eq!(app.changes[app.selected_change].path, selected_path);
                     assert_eq!(
                         app.commit_message.is_empty(),
@@ -910,15 +910,15 @@ fn history_errors_retain_rows_and_late_commit_previews_are_discarded() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
-    app.commits = crate::mock_data::commits();
+    app.history.commits = crate::mock_data::commits();
     app.state_current = true;
-    let selected = app.commits[0].hash.clone();
+    let selected = app.history.commits[0].hash.clone();
     app.select_commit(selected.clone());
     let path = app.repositories[0].path.clone();
-    let count = app.commits.len();
+    let count = app.history.commits.len();
     let preview_path = app.repositories[0].path.clone();
-    let preview_generation = app.commit_preview_generation;
-    app.selected_commit_file = Some("root".into());
+    let preview_generation = app.history.commit_preview_generation;
+    app.history.selected_commit_file = Some("root".into());
     deliver(
         &mut app,
         WorkerResult::History {
@@ -929,7 +929,7 @@ fn history_errors_retain_rows_and_late_commit_previews_are_discarded() {
             result: Err("Late history result".into()),
         },
     );
-    assert_eq!(app.commits.len(), count);
+    assert_eq!(app.history.commits.len(), count);
     deliver(
         &mut app,
         WorkerResult::History {
@@ -940,8 +940,8 @@ fn history_errors_retain_rows_and_late_commit_previews_are_discarded() {
             result: Err("Cannot read history".into()),
         },
     );
-    assert_eq!(app.commits.len(), count);
-    assert!(app.history_error.is_some());
+    assert_eq!(app.history.commits.len(), count);
+    assert!(app.history.history_error.is_some());
     assert!(app.state_current);
     deliver(
         &mut app,
@@ -953,8 +953,8 @@ fn history_errors_retain_rows_and_late_commit_previews_are_discarded() {
             result: Err("Stale preview".into()),
         },
     );
-    assert!(app.commit_preview_error.is_none());
-    assert!(app.commit_preview.is_none());
+    assert!(app.history.commit_preview_error.is_none());
+    assert!(app.history.commit_preview.is_none());
     deliver(
         &mut app,
         WorkerResult::CommitPatch {
@@ -967,7 +967,7 @@ fn history_errors_retain_rows_and_late_commit_previews_are_discarded() {
             )),
         },
     );
-    assert_eq!(app.commit_preview.as_ref().unwrap().added, 1);
+    assert_eq!(app.history.commit_preview.as_ref().unwrap().added, 1);
 }
 
 #[test]
@@ -1147,8 +1147,8 @@ fn branch_reload_keeps_controls_and_loaded_content_stable() {
                 let mut app = SannyGitApp::with_theme(theme);
                 app.interface_style = style;
                 app.apply_snapshot(git::load(&repo.0).unwrap());
-                app.history_pending = false;
-                app.history_loading = false;
+                app.history.history_pending = false;
+                app.history.history_loading = false;
                 app.refs_pending = false;
                 app.refs_loading = false;
                 app.refs_current = true;
@@ -1159,7 +1159,7 @@ fn branch_reload_keeps_controls_and_loaded_content_stable() {
                 app.diff_preview = Some(crate::models::DiffPreview::new("+changed"));
                 app.commit_message = "Keep this draft".into();
                 let preview = app.diff_preview.as_ref().unwrap().lines.as_ptr();
-                let history_generation = app.history_session.generation;
+                let history_generation = app.history.history_session.generation;
                 let ctx = egui::Context::default();
                 crate::theme::install_fonts(&ctx);
                 egui_extras::install_image_loaders(&ctx);
@@ -1197,7 +1197,7 @@ fn branch_reload_keeps_controls_and_loaded_content_stable() {
                 loop {
                     assert!(!app.busy());
                     assert!(app.state_current && app.refs_current);
-                    assert!(!app.history_pending && !app.history_loading);
+                    assert!(!app.history.history_pending && !app.history.history_loading);
                     let mut output = ctx.run_ui(
                         egui::RawInput {
                             screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
@@ -1217,7 +1217,7 @@ fn branch_reload_keeps_controls_and_loaded_content_stable() {
                 assert!(!app.refs_loading && !app.refs_pending);
                 assert_eq!(app.commit_message, "Keep this draft");
                 assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
-                assert_eq!(app.history_session.generation, history_generation);
+                assert_eq!(app.history.history_session.generation, history_generation);
             }
         }
     }
@@ -1228,19 +1228,19 @@ fn disconnected_view_readers_keep_drafts_and_report_modal_errors() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
     app.commit_message = "Keep draft".into();
     app.changes = crate::mock_data::changes();
-    app.history_loading = true;
+    app.history.history_loading = true;
     for slot in [
-        &mut app.history_worker,
+        &mut app.history.history_worker,
         &mut app.diff_worker,
-        &mut app.commit_preview_worker,
+        &mut app.history.commit_preview_worker,
     ] {
         let (sender, receiver) = mpsc::channel();
         *slot = Some(receiver);
         drop(sender);
     }
     app.poll_view_reads();
-    assert!(!app.history_loading && !app.busy());
-    assert!(app.history_error.is_some() && app.commit_preview_error.is_some());
+    assert!(!app.history.history_loading && !app.busy());
+    assert!(app.history.history_error.is_some() && app.history.commit_preview_error.is_some());
     assert!(app.error.is_some());
     assert!(!app.changes.is_empty());
     assert_eq!(app.commit_message, "Keep draft");
@@ -1352,8 +1352,8 @@ fn panel_reads_keep_repository_actions_available_and_reject_superseded_results()
                 app.branch_head_exists = refs.has_head;
                 app.refs = refs.refs;
                 app.refs_current = true;
-                app.history_loading = false;
-                app.history_pending = false;
+                app.history.history_loading = false;
+                app.history.history_pending = false;
                 app.commit_message = "Keep draft".into();
                 let actions = |app: &SannyGitApp| {
                     [
@@ -1408,9 +1408,9 @@ fn panel_reads_keep_repository_actions_available_and_reject_superseded_results()
                 app.reload_history();
                 app.load_history();
                 app.load_selected_diff(&ctx);
-                assert!(app.history_worker.is_some() && app.diff_worker.is_some());
+                assert!(app.history.history_worker.is_some() && app.diff_worker.is_some());
                 let deadline = Instant::now() + Duration::from_secs(10);
-                while app.history_worker.is_some() || app.diff_worker.is_some() {
+                while app.history.history_worker.is_some() || app.diff_worker.is_some() {
                     assert!(Instant::now() < deadline);
                     assert!(!app.busy());
                     assert_eq!(actions(&app), before);
@@ -1420,11 +1420,11 @@ fn panel_reads_keep_repository_actions_available_and_reject_superseded_results()
                 }
                 assert!(app.selected_diff().unwrap().added > 0);
                 assert!(app.changes[app.selected_change].diff.contains("+changed"));
-                app.select_commit(app.commits[0].hash.clone());
+                app.select_commit(app.history.commits[0].hash.clone());
                 for _ in 0..2 {
                     app.load_commit_preview();
-                    assert!(app.commit_preview_worker.is_some());
-                    while app.commit_preview_worker.is_some() {
+                    assert!(app.history.commit_preview_worker.is_some());
+                    while app.history.commit_preview_worker.is_some() {
                         assert!(Instant::now() < deadline);
                         assert!(!app.busy());
                         assert_eq!(actions(&app), before);
@@ -1432,16 +1432,16 @@ fn panel_reads_keep_repository_actions_available_and_reject_superseded_results()
                         std::thread::sleep(Duration::from_millis(5));
                     }
                 }
-                assert_eq!(app.commit_files.as_ref().unwrap()[0].path, "file");
-                assert!(app.commit_preview.as_ref().unwrap().added > 0);
+                assert_eq!(app.history.commit_files.as_ref().unwrap()[0].path, "file");
+                assert!(app.history.commit_preview.as_ref().unwrap().added > 0);
                 assert_eq!(app.commit_message, "Keep draft");
 
                 app.reload_history();
                 app.load_history();
-                let cancel = app.history_session.cancel.clone().unwrap();
+                let cancel = app.history.history_session.cancel.clone().unwrap();
                 app.start_worker(|| WorkerResult::Repository(Err("Read failed".into())));
                 assert!(cancel.load(Ordering::Relaxed));
-                assert!(app.history_worker.is_none() && app.history_pending);
+                assert!(app.history.history_worker.is_none() && app.history.history_pending);
                 assert!(app.busy());
             }
         }
@@ -1788,7 +1788,7 @@ fn modern_layout_fits_both_sizes_and_color_themes_without_loading_jumps() {
             app.interface_style = InterfaceStyle::Modern;
             app.repositories = crate::mock_data::repositories();
             app.changes = crate::mock_data::changes();
-            app.commits = crate::mock_data::commits();
+            app.history.commits = crate::mock_data::commits();
             app.refs = crate::mock_data::refs();
             app.current_branch = "main".into();
             app.selected_change = 2;
@@ -1854,9 +1854,9 @@ fn modern_layout_fits_both_sizes_and_color_themes_without_loading_jumps() {
             };
             let before = panels();
             app.changes.clear();
-            app.commits.clear();
+            app.history.commits.clear();
             app.refs_loading = true;
-            app.history_loading = true;
+            app.history.history_loading = true;
             for _ in 0..3 {
                 render(&mut app);
             }
@@ -1948,9 +1948,9 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
             app.repositories = crate::mock_data::repositories();
             app.changes = crate::mock_data::changes();
             let history = crate::history::prepare(crate::mock_data::commits(), false);
-            app.commits = history.commits;
-            app.history_edges = history.edges;
-            app.history_max_lane = history.max_lane;
+            app.history.commits = history.commits;
+            app.history.history_edges = history.edges;
+            app.history.history_max_lane = history.max_lane;
             app.refs = crate::mock_data::refs();
             app.refs_current = true;
             app.branch_head_exists = true;
@@ -1986,8 +1986,8 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
                 visible_text(&output.shapes, "Initial commit"),
                 "History is clipped at {size:?}"
             );
-            app.select_commit(app.commits.last().unwrap().hash.clone());
-            app.commit_preview = Some(crate::models::DiffPreview::new(
+            app.select_commit(app.history.commits.last().unwrap().hash.clone());
+            app.history.commit_preview = Some(crate::models::DiffPreview::new(
                 "@@ -0,0 +1 @@\n+Read-only commit preview",
             ));
             for _ in 0..3 {
@@ -2004,7 +2004,7 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
                 app.worker.is_none(),
                 "Rendering history must not run Git commands"
             );
-            app.commit_details_open = false;
+            app.history.commit_details_open = false;
             app.current_branch = "main".into();
             app.branch_dialog_open = true;
             app.new_branch_name = "feature/new-ui".into();
@@ -2179,11 +2179,11 @@ fn commit_file_selection_retains_list_after_errors_and_rejects_stale_results() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
-    app.commits = crate::mock_data::commits();
-    let hash = app.commits[0].hash.clone();
+    app.history.commits = crate::mock_data::commits();
+    let hash = app.history.commits[0].hash.clone();
     app.select_commit(hash.clone());
     let path = app.repositories[0].path.clone();
-    let generation = app.commit_preview_generation;
+    let generation = app.history.commit_preview_generation;
     let list = vec![
         crate::history::CommitFile {
             status: "A".into(),
@@ -2205,7 +2205,7 @@ fn commit_file_selection_retains_list_after_errors_and_rejects_stale_results() {
             result: Ok(list.clone()),
         },
     );
-    assert_eq!(app.selected_commit_file.as_deref(), Some("large"));
+    assert_eq!(app.history.selected_commit_file.as_deref(), Some("large"));
     deliver(
         &mut app,
         WorkerResult::CommitPatch {
@@ -2222,9 +2222,9 @@ fn commit_file_selection_retains_list_after_errors_and_rejects_stale_results() {
         "Diff exceeds limit"
     );
     app.select_commit_file("small".into());
-    assert_eq!(app.commit_files.as_ref().unwrap(), &list);
-    assert!(app.commit_preview_error.is_none());
-    let current = app.commit_preview_generation;
+    assert_eq!(app.history.commit_files.as_ref().unwrap(), &list);
+    assert!(app.history.commit_preview_error.is_none());
+    let current = app.history.commit_preview_generation;
     for (worker_path, worker_generation, file) in [
         (path.clone(), generation, "large"),
         ("other repository".into(), current, "small"),
@@ -2240,7 +2240,7 @@ fn commit_file_selection_retains_list_after_errors_and_rejects_stale_results() {
                 result: Err("Stale diff".into()),
             },
         );
-        assert!(app.commit_preview_error.is_none());
+        assert!(app.history.commit_preview_error.is_none());
     }
     deliver(
         &mut app,
@@ -2252,11 +2252,11 @@ fn commit_file_selection_retains_list_after_errors_and_rejects_stale_results() {
             result: Ok(crate::models::DiffPreview::new("@@ -0,0 +1 @@\n+small")),
         },
     );
-    assert_eq!(app.commit_preview.as_ref().unwrap().added, 1);
+    assert_eq!(app.history.commit_preview.as_ref().unwrap().added, 1);
     app.retry_commit_preview();
-    assert_eq!(app.commit_files.as_ref().unwrap(), &list);
-    assert!(app.commit_preview.is_some());
-    app.select_commit(app.commits[1].hash.clone());
+    assert_eq!(app.history.commit_files.as_ref().unwrap(), &list);
+    assert!(app.history.commit_preview.is_some());
+    app.select_commit(app.history.commits[1].hash.clone());
     deliver(
         &mut app,
         WorkerResult::CommitFiles {
@@ -2266,8 +2266,8 @@ fn commit_file_selection_retains_list_after_errors_and_rejects_stale_results() {
             result: Ok(list),
         },
     );
-    assert!(app.commit_files.is_none());
-    assert!(app.commit_preview.is_none());
+    assert!(app.history.commit_files.is_none());
+    assert!(app.history.commit_preview.is_none());
 }
 
 fn commit_message_result(result: Result<String, String>) -> WorkerResult {

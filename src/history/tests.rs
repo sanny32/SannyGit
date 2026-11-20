@@ -2,7 +2,39 @@ use super::*;
 use crate::test_support::{linear_repo, TempRepo};
 
 fn first(root: &Path, all: bool, limit: usize) -> Page {
-    first_with_limits(root, all, 2, &[], 2, limit, &AtomicBool::new(false)).unwrap()
+    first_with_limits(
+        root,
+        Scope::Branches(all),
+        2,
+        &[],
+        2,
+        limit,
+        &AtomicBool::new(false),
+    )
+    .unwrap()
+}
+
+#[test]
+fn tag_history_pages_keep_the_target_and_reject_a_moved_tag() {
+    let repo = linear_repo(6);
+    let oldest = repo.git(&["rev-parse", "HEAD~5"]);
+    repo.git(&["tag", "old", oldest.trim()]);
+    let cancel = AtomicBool::new(false);
+    let tag = "refs/tags/old";
+    let limited = first_with_limits(&repo.0, Scope::Tag(tag), 2, &[], 2, 3, &cancel).unwrap();
+    assert!(limited.cursor.at_limit());
+    assert_eq!(limited.history.commits.last().unwrap().hash, oldest.trim());
+
+    repo.git(&["tag", "-f", "old", "HEAD"]);
+    let page = first_with_limits(&repo.0, Scope::Tag(tag), 2, &[], 2, 10, &cancel).unwrap();
+    assert!(page.cursor.has_more());
+    repo.git(&["tag", "unrelated-metadata", "HEAD~"]);
+    assert!(more(&repo.0, &page.cursor, page.history.commits.clone(), &cancel).is_ok());
+    repo.git(&["tag", "-f", "old", "HEAD~"]);
+    let error = more(&repo.0, &page.cursor, page.history.commits, &cancel)
+        .err()
+        .unwrap();
+    assert!(error.contains("History changed"));
 }
 
 #[test]
@@ -81,7 +113,7 @@ fn changed_head_requires_reload_and_reload_keeps_requested_old_commit() {
     .contains("History changed"));
     let refreshed = first_with_limits(
         &repo.0,
-        false,
+        Scope::Branches(false),
         2,
         std::slice::from_ref(&selected),
         2,
@@ -166,7 +198,7 @@ fn snapshot_limits_empty_repositories_and_mismatched_prefixes_are_explicit() {
     .is_err());
     assert!(first_with_limits(
         &repo.0,
-        false,
+        Scope::Branches(false),
         1,
         &[],
         0,
@@ -294,7 +326,7 @@ fn head_change_during_message_read_is_detected_before_the_page_is_published() {
         let script = format!("#!/bin/sh\nchange=0\nfor arg in \"$@\"; do if [ \"$arg\" = log ]; then change=1; fi; done\ngit \"$@\"\nresult=$?\nif [ \"$change\" = 1 ]; then git update-ref HEAD {}; fi\nexit \"$result\"\n", next.trim());
         std::fs::write(&wrapper, script).unwrap(); std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
         git::set_executable(wrapper.to_string_lossy().into_owned());
-        let error = first_with_limits(&repo.0, false, 2, &[], 2, HISTORY_LIMIT, &AtomicBool::new(false)).err().unwrap();
+        let error = first_with_limits(&repo.0, Scope::Branches(false), 2, &[], 2, HISTORY_LIMIT, &AtomicBool::new(false)).err().unwrap();
         assert!(error.contains("History changed"));
     }).join().unwrap();
 }

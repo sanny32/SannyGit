@@ -45,6 +45,11 @@ enum WorkerResult {
         root: String,
         result: Box<ref_management::ResultMessage>,
     },
+    TagPushSelection {
+        root: String,
+        source: String,
+        preferred_remote: Option<String>,
+    },
     DiscardPrepared {
         root: String,
         path: String,
@@ -104,7 +109,7 @@ enum WorkerResult {
 
 use crate::{
     git, logging,
-    models::{ChangeFile, Commit, Repository},
+    models::{ChangeFile, Repository},
     theme::{InterfaceStyle, Palette, ThemeChoice, INTERFACE_STYLE_STORAGE_KEY, THEME_STORAGE_KEY},
     ui,
 };
@@ -287,7 +292,8 @@ pub struct SannyGitApp {
     pub new_tag_message: String,
     pub switch_to_new_branch: bool,
     pub changes: Vec<ChangeFile>,
-    pub commits: Vec<Commit>,
+    pub history: history::View,
+    tag_log: Option<history::View>,
     pub selected_repository: usize,
     pub selected_change: usize,
     pub selected_paths: std::collections::BTreeSet<String>,
@@ -295,7 +301,6 @@ pub struct SannyGitApp {
     pub selected_branch: String,
     pub selected_ref_group: Option<crate::models::RefKind>,
     pub change_filter: ChangeFilter,
-    pub journal_filter: String,
     pub current_branch: String,
     pub commit_message: String,
     pub commit_contents: git::CommitContents,
@@ -311,33 +316,14 @@ pub struct SannyGitApp {
     pub error_dialogs: errors::ErrorDialogs,
     pub status: String,
     worker: Option<Receiver<WorkerResult>>,
-    history_worker: Option<Receiver<WorkerResult>>,
     diff_worker: Option<Receiver<WorkerResult>>,
     diff_refresh_pending: bool,
-    commit_preview_worker: Option<Receiver<WorkerResult>>,
     working_tree: working_tree::Monitor,
     loaded_diff: Option<usize>,
     pub diff_preview: Option<crate::models::DiffPreview>,
     pub state_current: bool,
     pub merging: bool,
     merge_default_message: Option<String>,
-    pub history_all_branches: bool,
-    pub history_edges: Vec<crate::models::HistoryEdge>,
-    pub history_max_lane: usize,
-    pub history_truncated: bool,
-    pub history_loading: bool,
-    pub history_error: Option<String>,
-    history_pending: bool,
-    history_session: history::Session,
-    pub selected_commit: Option<String>,
-    pub commit_details_open: bool,
-    pub commit_preview: Option<crate::models::DiffPreview>,
-    pub commit_preview_error: Option<String>,
-    loaded_commit: Option<String>,
-    pub commit_files: Option<Vec<crate::history::CommitFile>>,
-    pub selected_commit_file: Option<String>,
-    loaded_commit_file: Option<String>,
-    commit_preview_generation: u64,
 }
 
 impl SannyGitApp {
@@ -557,7 +543,8 @@ impl SannyGitApp {
             new_tag_message: String::new(),
             switch_to_new_branch: true,
             changes: Vec::new(),
-            commits: Vec::new(),
+            history: history::View::default(),
+            tag_log: None,
             selected_repository: usize::MAX,
             selected_change: usize::MAX,
             selected_paths: Default::default(),
@@ -565,7 +552,6 @@ impl SannyGitApp {
             selected_branch: String::new(),
             selected_ref_group: None,
             change_filter: ChangeFilter::All,
-            journal_filter: String::new(),
             current_branch: String::new(),
             commit_message: String::new(),
             commit_contents: git::CommitContents::default(),
@@ -581,33 +567,14 @@ impl SannyGitApp {
             error_dialogs: Default::default(),
             status: "Ready".into(),
             worker: None,
-            history_worker: None,
             diff_worker: None,
             diff_refresh_pending: false,
-            commit_preview_worker: None,
             working_tree: working_tree::Monitor::default(),
             loaded_diff: None,
             diff_preview: None,
             state_current: false,
             merging: false,
             merge_default_message: None,
-            history_all_branches: false,
-            history_edges: Vec::new(),
-            history_max_lane: 0,
-            history_truncated: false,
-            history_loading: false,
-            history_error: None,
-            history_pending: false,
-            history_session: history::Session::default(),
-            selected_commit: None,
-            commit_details_open: false,
-            commit_preview: None,
-            commit_preview_error: None,
-            loaded_commit: None,
-            commit_files: None,
-            selected_commit_file: None,
-            loaded_commit_file: None,
-            commit_preview_generation: 0,
         }
     }
     pub fn selected_diff(&self) -> Option<&crate::models::DiffPreview> {
@@ -710,12 +677,9 @@ impl SannyGitApp {
     }
 
     fn invalidate_view_reads(&mut self) {
-        if self.history_worker.take().is_some() {
-            if let Some(cancel) = self.history_session.cancel.take() {
-                cancel.store(true, Ordering::Relaxed);
-            }
-            self.history_session.generation = self.history_session.generation.wrapping_add(1);
-            self.history_pending = true;
+        self.history.invalidate_reads();
+        if let Some(view) = &mut self.tag_log {
+            view.invalidate_reads();
         }
         if self.diff_worker.take().is_some() {
             if self.selected_diff().is_some() {
@@ -723,13 +687,6 @@ impl SannyGitApp {
             } else {
                 self.loaded_diff = None;
             }
-        }
-        if self.commit_preview_worker.take().is_some() {
-            if self.commit_files.is_none() {
-                self.loaded_commit = None;
-            }
-            self.loaded_commit_file = None;
-            self.commit_preview_generation = self.commit_preview_generation.wrapping_add(1);
         }
     }
 
@@ -748,15 +705,9 @@ impl SannyGitApp {
     }
 
     fn poll_view_reads(&mut self) {
-        if let Some(result) = Self::poll_reader(&mut self.history_worker) {
-            match result {
-                Ok(result) => self.apply_worker_result(result),
-                Err(error) => {
-                    self.history_loading = false;
-                    self.history_session.cancel = None;
-                    self.history_error = Some(error);
-                }
-            }
+        self.poll_history_reads();
+        if self.tag_log.is_some() {
+            self.with_history_window(|app| app.poll_history_reads());
         }
         if let Some(result) = Self::poll_reader(&mut self.diff_worker) {
             match result {
@@ -764,10 +715,23 @@ impl SannyGitApp {
                 Err(error) => self.error = Some(error),
             }
         }
-        if let Some(result) = Self::poll_reader(&mut self.commit_preview_worker) {
+    }
+
+    fn poll_history_reads(&mut self) {
+        if let Some(result) = Self::poll_reader(&mut self.history.history_worker) {
             match result {
                 Ok(result) => self.apply_worker_result(result),
-                Err(error) => self.commit_preview_error = Some(error),
+                Err(error) => {
+                    self.history.history_loading = false;
+                    self.history.history_session.cancel = None;
+                    self.history.history_error = Some(error);
+                }
+            }
+        }
+        if let Some(result) = Self::poll_reader(&mut self.history.commit_preview_worker) {
+            match result {
+                Ok(result) => self.apply_worker_result(result),
+                Err(error) => self.history.commit_preview_error = Some(error),
             }
         }
     }
@@ -940,7 +904,7 @@ impl SannyGitApp {
         use eframe::egui::Event;
 
         if self.modal_dialog_open()
-            || self.commit_details_open
+            || self.history_window().commit_details_open
             || context.memory(|memory| memory.top_modal_layer().is_some())
             || eframe::egui::Popup::is_any_open(context)
         {
@@ -1136,6 +1100,7 @@ impl SannyGitApp {
         self.refs_error = None;
         self.queue_history_reload();
         if !same_repository {
+            self.close_tag_log();
             self.clear_commit_preview();
             self.manager.dialog = None;
             self.manager.worktrees.clear();
@@ -1160,16 +1125,18 @@ impl SannyGitApp {
             }
             self.abort_merge_dialog = None;
             self.new_branch_name.clear();
-            self.commits.clear();
-            self.history_session.clear_view();
-            self.history_edges.clear();
-            self.history_max_lane = 0;
-            self.history_truncated = false;
-            self.selected_commit = None;
-            self.commit_details_open = false;
-            self.commit_preview_error = None;
+            self.history.commits.clear();
+            self.history.history_session.clear_view();
+            self.history.history_edges.clear();
+            self.history.history_max_lane = 0;
+            self.history.history_truncated = false;
+            self.history.selected_commit = None;
+            self.history.commit_details_open = false;
+            self.history.commit_preview_error = None;
             self.load_commit_draft();
-            self.journal_filter.clear();
+            self.history.journal_filter.clear();
+        } else if self.tag_log.is_some() {
+            self.with_history_window(|app| app.queue_history_reload());
         }
         self.update_merge_message(snapshot.merging, snapshot.merge_message, same_repository);
         self.status = if self.changes.is_empty() {
@@ -1224,7 +1191,11 @@ impl SannyGitApp {
     }
 
     fn load_refs(&mut self) {
-        if self.busy() || self.history_pending || self.refs_worker.is_some() || !self.refs_pending {
+        if self.busy()
+            || self.history.history_pending
+            || self.refs_worker.is_some()
+            || !self.refs_pending
+        {
             return;
         }
         let Some(repository) = self.repositories.get(self.selected_repository) else {
@@ -1408,7 +1379,7 @@ impl SannyGitApp {
         if push {
             self.manager.cancel = Some(cancel.clone());
         }
-        if !self.start_worker(move || WorkerResult::Operation {
+        if self.start_worker(move || WorkerResult::Operation {
             committed: false,
             success: if push {
                 "Tag created and pushed"
@@ -1421,8 +1392,9 @@ impl SannyGitApp {
                 crate::branches::create_tag(&root, &name, &message)
             },
             snapshot: git::load(&root),
-        }) && push
-        {
+        }) {
+            self.tag_dialog_open = false;
+        } else if push {
             self.manager.cancel = None;
         }
     }
@@ -1560,65 +1532,72 @@ impl SannyGitApp {
     }
 
     fn clear_commit_preview(&mut self) {
-        self.commit_preview_worker = None;
-        self.commit_preview = None;
-        self.commit_preview_error = None;
-        self.loaded_commit = None;
-        self.commit_files = None;
-        self.selected_commit_file = None;
-        self.loaded_commit_file = None;
-        self.commit_preview_generation = self.commit_preview_generation.wrapping_add(1);
+        self.history.commit_preview_worker = None;
+        self.history.commit_preview = None;
+        self.history.commit_preview_error = None;
+        self.history.loaded_commit = None;
+        self.history.commit_files = None;
+        self.history.selected_commit_file = None;
+        self.history.loaded_commit_file = None;
+        self.history.commit_preview_generation =
+            self.history.commit_preview_generation.wrapping_add(1);
     }
 
     pub fn select_commit(&mut self, hash: String) {
-        if !self.commits.iter().any(|c| c.hash == hash) {
+        if !self.history.commits.iter().any(|c| c.hash == hash) {
             return;
         }
-        if self.selected_commit.as_ref() != Some(&hash) {
+        if self.history.selected_commit.as_ref() != Some(&hash) {
             self.clear_commit_preview();
         }
-        self.selected_commit = Some(hash);
-        self.commit_details_open = true;
+        self.history.selected_commit = Some(hash);
+        self.history.commit_details_open = true;
     }
 
     pub fn select_commit_file(&mut self, path: String) {
         if !self
+            .history
             .commit_files
             .as_ref()
             .is_some_and(|files| files.iter().any(|f| f.path == path))
-            || self.selected_commit_file.as_ref() == Some(&path)
+            || self.history.selected_commit_file.as_ref() == Some(&path)
         {
             return;
         }
-        self.selected_commit_file = Some(path);
-        self.commit_preview_worker = None;
-        self.commit_preview = None;
-        self.commit_preview_error = None;
-        self.loaded_commit_file = None;
-        self.commit_preview_generation = self.commit_preview_generation.wrapping_add(1);
+        self.history.selected_commit_file = Some(path);
+        self.history.commit_preview_worker = None;
+        self.history.commit_preview = None;
+        self.history.commit_preview_error = None;
+        self.history.loaded_commit_file = None;
+        self.history.commit_preview_generation =
+            self.history.commit_preview_generation.wrapping_add(1);
     }
 
     pub fn retry_commit_preview(&mut self) {
         if self.busy() {
             return;
         }
-        self.commit_preview_worker = None;
-        if self.commit_files.is_none() {
-            self.loaded_commit = None;
+        self.history.commit_preview_worker = None;
+        if self.history.commit_files.is_none() {
+            self.history.loaded_commit = None;
         }
-        self.loaded_commit_file = None;
-        self.commit_preview_error = None;
-        self.commit_preview_generation = self.commit_preview_generation.wrapping_add(1);
+        self.history.loaded_commit_file = None;
+        self.history.commit_preview_error = None;
+        self.history.commit_preview_generation =
+            self.history.commit_preview_generation.wrapping_add(1);
     }
 
     fn load_commit_preview(&mut self) {
-        if self.busy() || self.commit_preview_worker.is_some() || !self.commit_details_open {
+        if self.busy()
+            || self.history.commit_preview_worker.is_some()
+            || !self.history.commit_details_open
+        {
             return;
         }
-        let Some(hash) = self.selected_commit.clone() else {
+        let Some(hash) = self.history.selected_commit.clone() else {
             return;
         };
-        let Some(commit) = self.commits.iter().find(|c| c.hash == hash) else {
+        let Some(commit) = self.history.commits.iter().find(|c| c.hash == hash) else {
             return;
         };
         let parent = commit.parents.first().cloned();
@@ -1627,36 +1606,37 @@ impl SannyGitApp {
         };
         let path = repository.path.clone();
         let root = PathBuf::from(&path);
-        let generation = self.commit_preview_generation;
-        if self.loaded_commit.as_ref() != Some(&hash) {
-            self.loaded_commit = Some(hash.clone());
+        let generation = self.history.commit_preview_generation;
+        if self.history.loaded_commit.as_ref() != Some(&hash) {
+            self.history.loaded_commit = Some(hash.clone());
             match self.spawn_reader(None, move || WorkerResult::CommitFiles {
                 result: crate::history::files(&root, &hash, parent.as_deref()),
                 path,
                 hash,
                 generation,
             }) {
-                Ok(receiver) => self.commit_preview_worker = Some(receiver),
-                Err(error) => self.commit_preview_error = Some(error),
+                Ok(receiver) => self.history.commit_preview_worker = Some(receiver),
+                Err(error) => self.history.commit_preview_error = Some(error),
             }
             return;
         }
         let Some(file) = self
+            .history
             .commit_files
             .as_ref()
             .and_then(|files| {
                 files
                     .iter()
-                    .find(|file| Some(&file.path) == self.selected_commit_file.as_ref())
+                    .find(|file| Some(&file.path) == self.history.selected_commit_file.as_ref())
             })
             .cloned()
         else {
             return;
         };
-        if self.loaded_commit_file.as_ref() == Some(&file.path) {
+        if self.history.loaded_commit_file.as_ref() == Some(&file.path) {
             return;
         }
-        self.loaded_commit_file = Some(file.path.clone());
+        self.history.loaded_commit_file = Some(file.path.clone());
         match self.spawn_reader(None, move || WorkerResult::CommitPatch {
             result: crate::history::file_patch(&root, &hash, parent.as_deref(), &file)
                 .map(|patch| crate::models::DiffPreview::new(&patch)),
@@ -1665,8 +1645,8 @@ impl SannyGitApp {
             hash,
             generation,
         }) {
-            Ok(receiver) => self.commit_preview_worker = Some(receiver),
-            Err(error) => self.commit_preview_error = Some(error),
+            Ok(receiver) => self.history.commit_preview_worker = Some(receiver),
+            Err(error) => self.history.commit_preview_error = Some(error),
         }
     }
 
@@ -1674,8 +1654,8 @@ impl SannyGitApp {
         self.repositories
             .get(self.selected_repository)
             .is_some_and(|repo| repo.path == path)
-            && self.selected_commit.as_deref() == Some(hash)
-            && self.commit_preview_generation == generation
+            && self.history.selected_commit.as_deref() == Some(hash)
+            && self.history.commit_preview_generation == generation
     }
 
     pub fn staging_allowed(&self, index: usize, staged: bool) -> bool {
@@ -1942,16 +1922,16 @@ impl SannyGitApp {
                     self.refs_current = false;
                     self.refs_error = self.error.clone();
                 }
-                if self.history_loading && !self.history_pending {
-                    self.history_loading = false;
-                    self.history_session.cancel = None;
-                    self.history_error = self.error.clone();
+                if self.history.history_loading && !self.history.history_pending {
+                    self.history.history_loading = false;
+                    self.history.history_session.cancel = None;
+                    self.history.history_error = self.error.clone();
                 }
-                if self.commit_details_open
-                    && self.loaded_commit.is_some()
-                    && self.commit_preview.is_none()
+                if self.history.commit_details_open
+                    && self.history.loaded_commit.is_some()
+                    && self.history.commit_preview.is_none()
                 {
-                    self.commit_preview_error = self.error.clone();
+                    self.history.commit_preview_error = self.error.clone();
                 }
                 self.status = "Operation failed".into();
                 self.finish_discard(false);
@@ -1999,6 +1979,11 @@ impl SannyGitApp {
             } => self.apply_discard_batch(root, paths, result),
             WorkerResult::MergeDetails { root, result } => self.apply_merge_details(root, result),
             WorkerResult::RefDetails { root, result } => self.apply_ref_details(root, *result),
+            WorkerResult::TagPushSelection {
+                root,
+                source,
+                preferred_remote,
+            } => self.apply_tag_push_selection(root, source, preferred_remote),
             WorkerResult::DiscardPrepared { root, path, result } => {
                 self.apply_discard_prepared(root, path, result)
             }
@@ -2063,11 +2048,12 @@ impl SannyGitApp {
                 if self.commit_preview_matches(&path, &hash, generation) {
                     match result {
                         Ok(files) => {
-                            self.selected_commit_file = files.first().map(|file| file.path.clone());
-                            self.commit_files = Some(files);
-                            self.commit_preview_error = None;
+                            self.history.selected_commit_file =
+                                files.first().map(|file| file.path.clone());
+                            self.history.commit_files = Some(files);
+                            self.history.commit_preview_error = None;
                         }
-                        Err(error) => self.commit_preview_error = Some(error),
+                        Err(error) => self.history.commit_preview_error = Some(error),
                     }
                 }
             }
@@ -2079,14 +2065,14 @@ impl SannyGitApp {
                 result,
             } => {
                 if self.commit_preview_matches(&path, &hash, generation)
-                    && self.selected_commit_file.as_ref() == Some(&file)
+                    && self.history.selected_commit_file.as_ref() == Some(&file)
                 {
                     match result {
                         Ok(preview) => {
-                            self.commit_preview = Some(preview);
-                            self.commit_preview_error = None;
+                            self.history.commit_preview = Some(preview);
+                            self.history.commit_preview_error = None;
                         }
-                        Err(error) => self.commit_preview_error = Some(error),
+                        Err(error) => self.history.commit_preview_error = Some(error),
                     }
                 }
             }
@@ -2158,7 +2144,10 @@ impl SannyGitApp {
             } => {
                 let managing_refs = matches!(
                     success,
-                    "Branch deleted" | "Tag pushed" | "Remote configuration updated"
+                    "Branch deleted"
+                        | "Tag pushed"
+                        | "Reset complete"
+                        | "Remote configuration updated"
                 );
                 let discarding = matches!(
                     success,
@@ -2373,6 +2362,7 @@ impl SannyGitApp {
                     | "File restored from index"
                     | "Untracked file deleted"
                     | "Branch deleted"
+                    | "Reset complete"
                     | "Tag pushed"
                     | "Remote configuration updated"
                     | "Branch switched"
@@ -2430,8 +2420,8 @@ impl eframe::App for SannyGitApp {
         let allow_tracking = !self.busy()
             && !self.refs_pending
             && !self.refs_loading
-            && !self.history_pending
-            && !self.history_loading
+            && !self.history.history_pending
+            && !self.history.history_loading
             && self.state_current
             && !self.open_dialog
             && !self.welcome_open
@@ -2455,7 +2445,7 @@ impl eframe::App for SannyGitApp {
             self.refs_pending = true;
             self.refs_loading = true;
             self.refs_current = false;
-            if self.history_all_branches {
+            if self.history.history_all_branches {
                 self.queue_history_reload();
             }
         }
@@ -2487,6 +2477,12 @@ impl eframe::App for SannyGitApp {
         self.load_refs();
         self.load_history();
         self.load_commit_preview();
+        if self.tag_log.is_some() {
+            self.with_history_window(|app| {
+                app.load_history();
+                app.load_commit_preview();
+            });
+        }
         self.check_working_tree(ui.ctx());
         #[cfg(target_os = "macos")]
         if let Some(menu) = &self.native_menu {
@@ -2494,9 +2490,12 @@ impl eframe::App for SannyGitApp {
         }
         if self.busy()
             || self.refs_worker.is_some()
-            || self.history_worker.is_some()
+            || self.history.history_worker.is_some()
             || self.diff_worker.is_some()
-            || self.commit_preview_worker.is_some()
+            || self.history.commit_preview_worker.is_some()
+            || self.tag_log.as_ref().is_some_and(|view| {
+                view.history_worker.is_some() || view.commit_preview_worker.is_some()
+            })
         {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(50));
@@ -2504,10 +2503,11 @@ impl eframe::App for SannyGitApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.close_tag_log();
         if let Some(cancel) = &self.generation_cancel {
             cancel.store(true, Ordering::Relaxed);
         }
-        if let Some(cancel) = &self.history_session.cancel {
+        if let Some(cancel) = &self.history.history_session.cancel {
             cancel.store(true, Ordering::Relaxed);
         }
         self.tracking.cancel();

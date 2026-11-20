@@ -95,6 +95,21 @@ pub(crate) fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     run_controlled(path, args, TIMEOUT, None)
 }
 
+pub(crate) fn is_ancestor(path: &Path, ancestor: &str, descendant: &str) -> Result<bool, String> {
+    match execute(
+        path,
+        &["merge-base", "--is-ancestor", ancestor, descendant],
+        None,
+        TIMEOUT,
+        None,
+        CommandMode::Normal,
+    ) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind == FailureKind::Exit && error.exit_code == Some(1) => Ok(false),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 pub(crate) fn run_controlled(
     path: &Path,
     args: &[&str],

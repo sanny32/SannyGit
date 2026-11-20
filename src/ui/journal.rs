@@ -16,6 +16,16 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     rows(ui, app, false);
 }
 
+fn history_viewport() -> ViewportId {
+    ViewportId::from_hash_of("sannygit.history")
+}
+
+pub(super) fn focus_history(ctx: &egui::Context) {
+    if !ctx.embed_viewports() {
+        ctx.send_viewport_cmd_to(history_viewport(), ViewportCommand::Focus);
+    }
+}
+
 fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
     let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -30,8 +40,8 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
         ui.add_space(8.0);
         let search_width = (ui.available_width() - 360.0).clamp(60.0, 240.0);
         let search = ui.add_enabled(
-            !app.commits.is_empty(),
-            crate::ui::controls::singleline(&mut app.journal_filter)
+            !app.history.commits.is_empty(),
+            crate::ui::controls::singleline(&mut app.history.journal_filter)
                 .min_size(Vec2::ZERO)
                 .hint_text("Search loaded commits…")
                 .desired_width(search_width)
@@ -39,22 +49,28 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
         );
         ui.spacing_mut().interact_size.y = search.rect.height();
         ui.spacing_mut().button_padding.y = 2.0;
-        let mut all = app.history_all_branches;
-        ui.add_enabled_ui(!app.busy(), |ui| {
-            ComboBox::from_id_salt("journal.scope")
-                .width(100.0)
-                .selected_text(if all {
-                    "All branches"
-                } else {
-                    "Current branch"
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut all, false, "Current branch");
-                    ui.selectable_value(&mut all, true, "All branches");
-                });
-        });
-        if all != app.history_all_branches {
-            app.history_all_branches = all;
+        let mut all = app.history.history_all_branches;
+        if let Some(tag) = app.history.tag_name() {
+            let scope = format!("HEAD + {tag}");
+            ui.add_sized([110.0, search.rect.height()], Label::new(&scope).truncate())
+                .help_text(scope);
+        } else {
+            ui.add_enabled_ui(!app.busy(), |ui| {
+                ComboBox::from_id_salt("journal.scope")
+                    .width(100.0)
+                    .selected_text(if all {
+                        "All branches"
+                    } else {
+                        "Current branch"
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut all, false, "Current branch");
+                        ui.selectable_value(&mut all, true, "All branches");
+                    });
+            });
+        }
+        if all != app.history.history_all_branches {
+            app.history.history_all_branches = all;
             app.reload_history();
         }
         if ui
@@ -85,13 +101,13 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
                 app.load_more_history();
             }
         }
-        let (status, help, color) = if app.history_error.is_some() {
+        let (status, help, color) = if app.history.history_error.is_some() {
             (
                 "History unavailable".into(),
                 String::from("Reload to retry; displayed rows are from the previous load."),
                 palette.removed_text,
             )
-        } else if app.history_loading {
+        } else if app.history.history_loading {
             (
                 "Loading…".into(),
                 "Loading history; existing rows remain available.".into(),
@@ -101,9 +117,9 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
             ("Cancelled".into(), notice.into(), palette.muted)
         } else {
             (
-                if app.history_at_limit() { format!("{} (limit)", app.commits.len()) }
-                else if app.history_truncated { format!("{}+ loaded", app.commits.len()) }
-                else { format!("{} commits", app.commits.len()) },
+                if app.history_at_limit() { format!("{} (limit)", app.history.commits.len()) }
+                else if app.history.history_truncated { format!("{}+ loaded", app.history.commits.len()) }
+                else { format!("{} commits", app.history.commits.len()) },
                 "500 commits per page; 10,000 loaded commits maximum. Search applies to loaded history only. More retains existing rows; Reload updates the snapshot.".into(),
                 palette.muted,
             )
@@ -123,11 +139,12 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
     } else {
         app.take_history_scroll()
     };
-    if app.commits.is_empty() {
+    if app.history.commits.is_empty() {
         return;
     }
-    let filter = app.journal_filter.trim().to_lowercase();
+    let filter = app.history.journal_filter.trim().to_lowercase();
     let visible: Vec<_> = app
+        .history
         .commits
         .iter()
         .enumerate()
@@ -163,9 +180,13 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
     if offset.is_some() {
         ui.style_mut().scroll_animation = eframe::egui::style::ScrollAnimation::none();
     }
-    let reveal = history_window
-        .then(|| ui.data_mut(|data| data.remove_temp::<String>(egui::Id::unique("history.reveal"))))
-        .flatten();
+    let reveal = if history_window && app.history.tag.is_some() {
+        app.history.reveal_commit.take()
+    } else if history_window {
+        ui.data_mut(|data| data.remove_temp::<String>(egui::Id::unique("history.reveal")))
+    } else {
+        None
+    };
     super::controls::table_resize_style(ui, palette);
     let mut table = TableBuilder::new(ui)
         .id_salt("journal.commits")
@@ -227,7 +248,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
             body.ui_mut().style_mut().interaction.selectable_labels = false;
             body.rows(20.0, visible.len(), |mut row| {
                 let (original, commit) = visible[row.index()];
-                row.set_selected(app.selected_commit.as_ref() == Some(&commit.hash));
+                row.set_selected(app.history.selected_commit.as_ref() == Some(&commit.hash));
                 row.col(|ui| {
                     ui.add_space(6.0);
                     graph(ui, app, original, filter.is_empty(), palette);
@@ -288,12 +309,15 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
         }
     }
     if let Some(hash) = selected {
-        let details_open = app.commit_details_open;
+        if open_details && !history_window {
+            app.close_tag_log();
+        }
+        let details_open = app.history.commit_details_open;
         if open_details && !details_open {
             ui.data_mut(|data| data.insert_temp(egui::Id::unique("history.reveal"), hash.clone()));
         }
         app.select_commit(hash);
-        app.commit_details_open = details_open || open_details;
+        app.history.commit_details_open = details_open || open_details;
     }
 }
 
@@ -303,7 +327,7 @@ fn graph(ui: &mut Ui, app: &SannyGitApp, index: usize, connected: bool, palette:
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     // Appending older branches must not move already visible graph nodes.
     let step = 14.0;
-    if app.history_max_lane as f32 * step + 12.0 > rect.width() {
+    if app.history.history_max_lane as f32 * step + 12.0 > rect.width() {
         response.clone().help_text("Additional graph lanes are outside the column. Drag the graph column separator to widen it, or open Commit details to inspect all parents.");
     }
     let position = |row: usize, lane: usize| {
@@ -318,7 +342,7 @@ fn graph(ui: &mut Ui, app: &SannyGitApp, index: usize, connected: bool, palette:
             parent,
             child_lane,
             parent_lane,
-        } in &app.history_edges
+        } in &app.history.history_edges
         {
             if *child <= index && *parent >= index {
                 let color = if *child_lane == 0 {
@@ -334,7 +358,7 @@ fn graph(ui: &mut Ui, app: &SannyGitApp, index: usize, connected: bool, palette:
     } else {
         response.help_text("Graph connections are hidden while filtering");
     }
-    let commit = &app.commits[index];
+    let commit = &app.history.commits[index];
     painter.circle_filled(
         position(index, commit.lane),
         3.5,
@@ -352,7 +376,8 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
     let position_id = egui::Id::unique("history.initial_position");
     let shown_id = egui::Id::unique("history.viewport_shown");
     let geometry_id = egui::Id::unique("history.viewport_geometry");
-    if !app.commit_details_open || app.selected_commit.is_none() {
+    let view = app.history_window();
+    if !view.commit_details_open || (view.selected_commit.is_none() && view.tag.is_none()) {
         ui.data_mut(|data| {
             data.remove::<Option<egui::Pos2>>(position_id);
             data.remove::<bool>(shown_id);
@@ -363,20 +388,30 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
         .repositories
         .get(app.selected_repository)
         .map_or("Repository", |repository| repository.name.as_str());
-    let title = format!("SannyGit — {name} — History");
+    let history_title = view
+        .tag_name()
+        .map_or_else(|| "History".to_owned(), |tag| format!("Log: {tag}"));
+    let title = format!("SannyGit — {name} — {history_title}");
     let ctx = ui.ctx().clone();
     if ctx.embed_viewports() {
         let mut open = true;
-        Window::new("Repository history")
-            .id(egui::Id::unique("journal.details"))
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .collapsible(false)
-            .open(&mut open)
-            .default_size([1000.0, 600.0])
-            .min_size([900.0, 540.0])
-            .max_size(ctx.content_rect().size() - Vec2::splat(40.0))
-            .show(&ctx, |ui| history_contents(ui, app));
-        app.commit_details_open = open;
+        Window::new(
+            view.tag_name()
+                .map_or("Repository history", |_| history_title.as_str()),
+        )
+        .id(egui::Id::unique("journal.details"))
+        .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+        .collapsible(false)
+        .open(&mut open)
+        .default_size([1000.0, 600.0])
+        .min_size([900.0, 540.0])
+        .max_size(ctx.content_rect().size() - Vec2::splat(40.0))
+        .show(&ctx, |ui| {
+            app.with_history_window(|app| history_contents(ui, app))
+        });
+        if !open {
+            app.close_history_window();
+        }
         return;
     }
     let saved_geometry =
@@ -411,38 +446,32 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
     } else if let Some(position) = position {
         builder = builder.with_position(position);
     }
-    ctx.show_viewport_immediate(
-        ViewportId::from_hash_of("sannygit.history"),
-        builder,
-        |ui, _class| {
-            if ui.input(|input| input.viewport().close_requested()) {
-                #[cfg(target_os = "windows")]
-                crate::native_window::cancel_first_presentation(ui.ctx());
-                app.commit_details_open = false;
-                ui.ctx().send_viewport_cmd(ViewportCommand::Close);
-                return;
-            }
-            remember_viewport_geometry(ui, geometry_id);
-            crate::theme::paint_native_background(ui, app.palette());
+    ctx.show_viewport_immediate(history_viewport(), builder, |ui, _class| {
+        if ui.input(|input| input.viewport().close_requested()) {
             #[cfg(target_os = "windows")]
-            if let Err(error) = crate::native_window::finish_first_presentation(ui.ctx()) {
+            crate::native_window::cancel_first_presentation(ui.ctx());
+            app.close_history_window();
+            ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+            return;
+        }
+        remember_viewport_geometry(ui, geometry_id);
+        crate::theme::paint_native_background(ui, app.palette());
+        #[cfg(target_os = "windows")]
+        if let Err(error) = crate::native_window::finish_first_presentation(ui.ctx()) {
+            app.error = Some(error.to_string());
+        }
+        app.with_history_window(|app| history_contents(ui, app));
+        super::show_errors(ui, app);
+        // Immediate viewport commands run after painting and swapping.
+        if !ui.data(|data| data.get_temp::<bool>(shown_id).unwrap_or(false)) {
+            ui.data_mut(|data| data.insert_temp(shown_id, true));
+            #[cfg(target_os = "windows")]
+            if let Err(error) = crate::native_window::prepare_child_presentation(ui.ctx(), &title) {
                 app.error = Some(error.to_string());
             }
-            history_contents(ui, app);
-            super::show_errors(ui, app);
-            // Immediate viewport commands run after painting and swapping.
-            if !ui.data(|data| data.get_temp::<bool>(shown_id).unwrap_or(false)) {
-                ui.data_mut(|data| data.insert_temp(shown_id, true));
-                #[cfg(target_os = "windows")]
-                if let Err(error) =
-                    crate::native_window::prepare_child_presentation(ui.ctx(), &title)
-                {
-                    app.error = Some(error.to_string());
-                }
-                ui.ctx().send_viewport_cmd(ViewportCommand::Visible(true));
-            }
-        },
-    );
+            ui.ctx().send_viewport_cmd(ViewportCommand::Visible(true));
+        }
+    });
 }
 
 /// Geometry of the native history window, restored on reopen like the main
@@ -505,10 +534,14 @@ fn history_panels(ui: &mut Ui, app: &mut SannyGitApp) {
     Panel::top("history.header")
         .frame(Frame::new().fill(palette.panel))
         .show(ui, |ui| {
+            let title = app.history.tag_name().map_or_else(
+                || "Repository history".to_owned(),
+                |tag| format!("Log: {tag}"),
+            );
             super::controls::dialog_style::header(
                 ui,
                 palette,
-                "Repository history",
+                &title,
                 "Browse commits, changed files and their diffs.",
             );
         });
@@ -529,11 +562,12 @@ fn history_panels(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.selectable_value(&mut side_by_side, false, "Unified");
                 ui.selectable_value(&mut side_by_side, true, "Side by Side");
                 let path = app
+                    .history
                     .selected_commit_file
                     .as_deref()
                     .unwrap_or("Select a file");
                 ui.add(Label::new(path).truncate()).help_text(path);
-                if let Some(preview) = &app.commit_preview {
+                if let Some(preview) = &app.history.commit_preview {
                     ui.label(
                         RichText::new(format!("+{}", preview.added)).color(palette.added_text),
                     );
@@ -542,10 +576,10 @@ fn history_panels(ui: &mut Ui, app: &mut SannyGitApp) {
                     );
                 }
             });
-            if let Some(preview) = &app.commit_preview {
+            if let Some(preview) = &app.history.commit_preview {
                 let id = format!(
                     "history:{:?}:{:?}",
-                    app.selected_commit, app.selected_commit_file
+                    app.history.selected_commit, app.history.selected_commit_file
                 );
                 if side_by_side {
                     super::diff_view::render_side_by_side(ui, preview, palette, &id);
@@ -589,9 +623,10 @@ fn history_panels(ui: &mut Ui, app: &mut SannyGitApp) {
 fn metadata(ui: &mut Ui, app: &SannyGitApp) {
     let palette = app.palette();
     let Some(commit) = app
+        .history
         .commits
         .iter()
-        .find(|commit| Some(&commit.hash) == app.selected_commit.as_ref())
+        .find(|commit| Some(&commit.hash) == app.history.selected_commit.as_ref())
     else {
         return;
     };
@@ -658,12 +693,17 @@ fn metadata(ui: &mut Ui, app: &SannyGitApp) {
                         RichText::new("Merge changes against first parent").color(palette.muted),
                     );
                 }
-                let refs = app
+                let mut refs = app
                     .refs
                     .iter()
                     .filter(|reference| reference.hash == commit.hash)
                     .map(|reference| reference.name.as_str())
                     .collect::<Vec<_>>();
+                if let Some(tag) = app.history.tag_name().filter(|tag| {
+                    app.history.tag_commit() == Some(commit.hash.as_str()) && !refs.contains(tag)
+                }) {
+                    refs.push(tag);
+                }
                 if !refs.is_empty() {
                     ui.add_space(8.0);
                     ui.add(
@@ -694,16 +734,18 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
         );
         retry = ui
             .add_enabled(
-                app.commit_preview_error.is_some() && !app.busy(),
+                app.history.commit_preview_error.is_some() && !app.busy(),
                 Button::new("Retry"),
             )
             .clicked();
-        let status = if app.commit_preview_error.is_some() {
+        let status = if app.history.commit_preview_error.is_some() {
             "Preview unavailable"
-        } else if let Some(files) = &app.commit_files {
+        } else if app.history.selected_commit.is_none() {
+            "Select a commit"
+        } else if let Some(files) = &app.history.commit_files {
             if files.is_empty() {
                 "No changed files"
-            } else if app.commit_preview.is_none() {
+            } else if app.history.commit_preview.is_none() {
                 "Loading file diff…"
             } else {
                 ""
@@ -716,6 +758,7 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
     ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
     let query = filter.trim().to_lowercase();
     let files = app
+        .history
         .commit_files
         .iter()
         .flatten()
@@ -745,7 +788,7 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
             body.rows(22.0, files.len(), |mut row| {
                 let file = files[row.index()];
                 let (directory, name) = file.path.rsplit_once('/').unwrap_or(("", &file.path));
-                row.set_selected(app.selected_commit_file.as_ref() == Some(&file.path));
+                row.set_selected(app.history.selected_commit_file.as_ref() == Some(&file.path));
                 row.col(|ui| {
                     ui.add_space(6.0);
                     ui.add(icons::image(
@@ -897,7 +940,7 @@ mod tests {
                 after > before + 16.0,
                 "Column did not resize: {before} -> {after}"
             );
-            app.selected_commit = Some("another commit".into());
+            app.history.selected_commit = Some("another commit".into());
             assert_eq!(column_x(&render(&mut app, vec![])), after);
         }
     }
@@ -908,8 +951,8 @@ mod tests {
         install_fonts(&ctx);
         egui_extras::install_image_loaders(&ctx);
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-        app.commits = crate::mock_data::commits();
-        let hash = app.commits[0].hash.clone();
+        app.history.commits = crate::mock_data::commits();
+        let hash = app.history.commits[0].hash.clone();
         app.select_commit(hash.clone());
         let render = |events| {
             let mut output = ctx.run_ui(
@@ -969,7 +1012,7 @@ mod tests {
                 egui_extras::install_image_loaders(&ctx);
                 theme.apply(&ctx);
                 let mut app = SannyGitApp::with_theme(theme);
-                app.commit_files = Some(
+                app.history.commit_files = Some(
                     crate::mock_data::changes()
                         .into_iter()
                         .take(2)
@@ -980,7 +1023,7 @@ mod tests {
                         })
                         .collect(),
                 );
-                let selected = app.commit_files.as_ref().unwrap()[1].path.clone();
+                let selected = app.history.commit_files.as_ref().unwrap()[1].path.clone();
                 let render = |app: &mut SannyGitApp, events| {
                     let mut output = ctx.run_ui(
                         RawInput {
@@ -1028,7 +1071,7 @@ mod tests {
                     );
                 }
                 assert_eq!(
-                    app.selected_commit_file.as_ref(),
+                    app.history.selected_commit_file.as_ref(),
                     Some(&selected),
                     "{theme:?}: {label}"
                 );
@@ -1050,8 +1093,8 @@ mod tests {
                 render(&mut app, vec![Event::Text("app.rs".into())]);
                 let output = render(&mut app, vec![]);
                 assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "main.rs")));
-                assert_eq!(app.selected_commit_file.as_ref(), Some(&selected));
-                assert_eq!(app.commit_files.as_ref().unwrap().len(), 2);
+                assert_eq!(app.history.selected_commit_file.as_ref(), Some(&selected));
+                assert_eq!(app.history.commit_files.as_ref().unwrap().len(), 2);
             }
         }
     }
@@ -1067,8 +1110,8 @@ mod tests {
                     theme.apply(&ctx);
                     let mut app = SannyGitApp::with_theme(theme);
                     app.interface_style = style;
-                    app.commits = crate::mock_data::commits();
-                    app.select_commit(app.commits[0].hash.clone());
+                    app.history.commits = crate::mock_data::commits();
+                    app.select_commit(app.history.commits[0].hash.clone());
                     let render = |app: &mut SannyGitApp| {
                         let mut output = ctx.run_ui(
                             RawInput {
@@ -1083,24 +1126,28 @@ mod tests {
                     let mut baseline = None;
                     for stage in 0..6 {
                         match stage {
-                            1 => app.commit_preview_error = Some("Long diagnostic ".repeat(100)),
+                            1 => {
+                                app.history.commit_preview_error =
+                                    Some("Long diagnostic ".repeat(100))
+                            }
                             2 => {
                                 app.retry_commit_preview();
-                                app.commit_files = Some(vec![crate::history::CommitFile {
+                                app.history.commit_files = Some(vec![crate::history::CommitFile {
                                     status: "A".into(),
                                     path: "file.txt".into(),
                                     original_path: None,
                                 }]);
-                                app.selected_commit_file = Some("file.txt".into());
+                                app.history.selected_commit_file = Some("file.txt".into());
                             }
                             3 => {
-                                app.commit_preview = Some(crate::models::DiffPreview::new(
+                                app.history.commit_preview = Some(crate::models::DiffPreview::new(
                                     &"+preview line\n".repeat(500),
                                 ))
                             }
                             4 => {
-                                app.commit_preview = None;
-                                app.commit_preview_error = Some("File diff limit ".repeat(100));
+                                app.history.commit_preview = None;
+                                app.history.commit_preview_error =
+                                    Some("File diff limit ".repeat(100));
                             }
                             5 => app.retry_commit_preview(),
                             _ => {}
@@ -1120,8 +1167,11 @@ mod tests {
                         assert!(rect.width() <= size.x && rect.height() <= size.y);
                         assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("Long diagnostic") || text.galley.job.text.contains("File diff limit"))));
                         if stage >= 2 {
-                            assert_eq!(app.selected_commit_file.as_deref(), Some("file.txt"));
-                            assert_eq!(app.commit_files.as_ref().unwrap().len(), 1);
+                            assert_eq!(
+                                app.history.selected_commit_file.as_deref(),
+                                Some("file.txt")
+                            );
+                            assert_eq!(app.history.commit_files.as_ref().unwrap().len(), 1);
                         }
                     }
                 }
@@ -1146,10 +1196,10 @@ mod tests {
                     app.state_current = true;
                     let mut commits = crate::mock_data::long_history();
                     let tail = commits.split_off(60);
-                    app.commits = commits;
-                    app.history_max_lane = 1;
-                    app.selected_commit = Some(app.commits[20].hash.clone());
-                    let selected = app.selected_commit.clone();
+                    app.history.commits = commits;
+                    app.history.history_max_lane = 1;
+                    app.history.selected_commit = Some(app.history.commits[20].hash.clone());
+                    let selected = app.history.selected_commit.clone();
                     let mut time = 0.0;
                     let mut render = |app: &mut SannyGitApp, events| {
                         time += 0.1;
@@ -1231,8 +1281,8 @@ mod tests {
                     app.cancel_history();
                     let output = render(&mut app, vec![]);
                     assert_eq!(rows(&output), baseline);
-                    app.commits.extend(tail);
-                    app.history_max_lane = 6;
+                    app.history.commits.extend(tail);
+                    app.history.history_max_lane = 6;
                     for _ in 0..3 {
                         let output = render(&mut app, vec![]);
                         assert_eq!(
@@ -1245,7 +1295,7 @@ mod tests {
                             graph,
                             "Graph nodes moved when later lanes were added"
                         );
-                        assert_eq!(app.selected_commit, selected);
+                        assert_eq!(app.history.selected_commit, selected);
                     }
                 }
             }
@@ -1266,9 +1316,9 @@ mod tests {
                     app.interface_style = style;
                     app.repositories = crate::mock_data::repositories();
                     app.selected_repository = 0;
-                    app.commits = crate::mock_data::long_history();
-                    app.selected_commit = Some(app.commits[10].hash.clone());
-                    let selected = app.selected_commit.clone();
+                    app.history.commits = crate::mock_data::long_history();
+                    app.history.selected_commit = Some(app.history.commits[10].hash.clone());
+                    let selected = app.history.selected_commit.clone();
                     let mut time = 0.0;
                     let mut render = |app: &mut SannyGitApp, events| {
                         time += 0.1;
@@ -1346,18 +1396,19 @@ mod tests {
                         .any(|(label, _)| label.starts_with("History ")));
                     for stage in 0..5 {
                         match stage {
-                            0 => app.history_loading = true,
+                            0 => app.history.history_loading = true,
                             1 => {
-                                app.history_loading = false;
-                                app.history_error = Some("Cannot read history. ".repeat(100));
+                                app.history.history_loading = false;
+                                app.history.history_error =
+                                    Some("Cannot read history. ".repeat(100));
                             }
                             2 => app.reload_history(),
                             3 => {
-                                app.history_loading = false;
-                                app.history_error = Some("History reload cancelled".into());
+                                app.history.history_loading = false;
+                                app.history.history_error = Some("History reload cancelled".into());
                             }
                             _ => {
-                                app.history_error = None;
+                                app.history.history_error = None;
                             }
                         }
                         for _ in 0..3 {
@@ -1371,7 +1422,7 @@ mod tests {
                                 assert!((*position - *before_position).length() < 1.0,
                                     "History moved at stage {stage}: {theme:?} {style:?} {size:?}: {label} {before_position:?} -> {position:?}");
                             }
-                            assert_eq!(app.selected_commit, selected);
+                            assert_eq!(app.history.selected_commit, selected);
                         }
                     }
                 }
@@ -1392,7 +1443,7 @@ mod tests {
                 install_fonts(&context);
                 theme.apply(&context);
                 let mut app = SannyGitApp::with_theme(theme);
-                app.commits = crate::mock_data::commits();
+                app.history.commits = crate::mock_data::commits();
                 let render = |app: &mut SannyGitApp, events| {
                     context.run_ui(
                         RawInput {
@@ -1434,11 +1485,11 @@ mod tests {
                     output.textures_delta.clear();
                 }
                 assert_eq!(
-                    app.selected_commit.as_deref(),
+                    app.history.selected_commit.as_deref(),
                     Some("a1b2c3d"),
                     "Click on {label} in {theme:?}"
                 );
-                assert!(!app.commit_details_open);
+                assert!(!app.history.commit_details_open);
                 for pressed in [true, false] {
                     let mut output = render(
                         &mut app,
@@ -1455,10 +1506,10 @@ mod tests {
                     output.textures_delta.clear();
                 }
                 assert!(
-                    app.commit_details_open,
+                    app.history.commit_details_open,
                     "Double click on {label} in {theme:?}"
                 );
-                assert_eq!(app.selected_commit.as_deref(), Some("a1b2c3d"));
+                assert_eq!(app.history.selected_commit.as_deref(), Some("a1b2c3d"));
             }
         }
     }
@@ -1471,9 +1522,10 @@ mod tests {
             egui_extras::install_image_loaders(&ctx);
             theme.apply(&ctx);
             let mut app = SannyGitApp::with_theme(theme);
-            app.commits = crate::mock_data::commits();
-            app.selected_commit = Some(app.commits[0].hash.clone());
-            app.commit_preview = Some(crate::models::DiffPreview::new("@@ -1 +1 @@\n-old\n+new\n"));
+            app.history.commits = crate::mock_data::commits();
+            app.history.selected_commit = Some(app.history.commits[0].hash.clone());
+            app.history.commit_preview =
+                Some(crate::models::DiffPreview::new("@@ -1 +1 @@\n-old\n+new\n"));
             let render = |app: &mut SannyGitApp, events| {
                 let mut output = ctx.run_ui(
                     RawInput {

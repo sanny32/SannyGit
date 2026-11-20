@@ -2,9 +2,10 @@ use super::controls::dialog_style::DialogResponse;
 use super::controls::{dialog_style, icons::Icon, tooltips::TooltipResponse};
 use crate::{
     app::{
-        ref_management::{Kind, RemoteEditor},
+        ref_management::{Dialog, Kind, RemoteEditor},
         SannyGitApp,
     },
+    branches::ResetMode,
     remote_config,
 };
 use eframe::egui::{self, Button, ComboBox, RichText};
@@ -19,17 +20,39 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let (id, title, description, icon, width) = match &dialog.kind {
         Kind::Delete { .. } => ("ref.delete", "Delete Local Branch", "Delete a local branch only after it is fully merged into the current HEAD. No force deletion; current and worktree branches are protected.", Icon::Branch, 580.0),
         Kind::Tag { .. } => ("ref.tag.push", "Push Selected Tag", "Push exactly one tag object to one reviewed push address. Other branches and tags are not sent. Existing remote tags are not replaced.", Icon::Tag, 580.0),
+        Kind::AddTagRemote => ("ref.tag.add_remote", "Add a Remote?", "Configure a remote for this repository, then run Push again to send the tag.", Icon::Tag, 440.0),
+        Kind::Reset { .. } => {
+            show_tag_reset(ctx, app, dialog);
+            return;
+        }
         Kind::Remotes(_) => ("remote.manager", "Manage Remotes", "Edit fetch and push URLs for this repository.", Icon::Repository, 620.0),
     };
     let mut close = false;
     let mut reload = false;
     let mut submit = false;
+    let mut add_remote = false;
     let mut config_change = None;
+    let needs_remote = matches!(dialog.kind, Kind::AddTagRemote);
     dialog_style::modal(ctx, palette, id).show(ctx, |ui| {
         ui.set_width(width);
         dialog_style::setup(ui);
         ui.spacing_mut().item_spacing.y = 0.0;
         dialog_style::header_with_icon(ui, palette, title, description, icon);
+        if needs_remote {
+            dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
+                dialog_style::button_row(ui, |ui| {
+                    add_remote = ui
+                        .add_enabled(
+                            !busy && current,
+                            dialog_style::primary("Add Remote", palette),
+                        )
+                        .dialog_accept();
+                    let cancel = ui.add(dialog_style::button("Cancel")).dialog_cancel();
+                    close = add_remote || cancel;
+                });
+            });
+            return;
+        }
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             if !matches!(dialog.kind, Kind::Remotes(_)) {
@@ -129,6 +152,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 Kind::Remotes(editor) => {
                     config_change = remote_editor(ui, editor, busy, current);
                 }
+                Kind::AddTagRemote | Kind::Reset { .. } => {}
             }
             let message = if dialog.running {
                 app.status.as_str()
@@ -157,7 +181,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 let ready = match &dialog.kind {
                     Kind::Delete { prepared, .. } => prepared.is_some(),
                     Kind::Tag { prepared, .. } => prepared.is_some(),
-                    Kind::Remotes(_) => false,
+                    Kind::AddTagRemote | Kind::Reset { .. } | Kind::Remotes(_) => false,
                 };
                 if !matches!(dialog.kind, Kind::Remotes(_))
                     && ui
@@ -205,6 +229,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     if !close {
         app.ref_dialog = Some(dialog);
     }
+    if add_remote {
+        app.open_remote_manager();
+    }
     if reload {
         app.reload_ref_dialog();
     }
@@ -213,6 +240,115 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     }
     if let Some(remove) = config_change {
         app.change_remote(remove);
+    }
+}
+
+fn show_tag_reset(ctx: &egui::Context, app: &mut SannyGitApp, dialog: Dialog) {
+    let Kind::Reset {
+        source,
+        prepared,
+        choose_changes,
+    } = &dialog.kind
+    else {
+        return;
+    };
+    let palette = app.palette();
+    let busy = app.busy();
+    let enabled = !busy && app.state_current && prepared.is_some();
+    let name = source.strip_prefix("refs/tags/").unwrap_or(source);
+    let target = match prepared {
+        Some(prepared) => format!(
+            "{name} · {}",
+            prepared.target.get(..8).unwrap_or(&prepared.target)
+        ),
+        None => name.to_owned(),
+    };
+    let mut close = false;
+    let mut reload = false;
+    let mut mode = None;
+    dialog_style::modal(ctx, palette, "ref.tag.reset").show(ctx, |ui| {
+        ui.set_width(490.0);
+        dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        dialog_style::header_with_icon(
+            ui,
+            palette,
+            "Reset to Tag",
+            "Move HEAD, the index and the working tree to the tag’s commit.",
+            Icon::Warning,
+        );
+        dialog_style::section(ui, palette.panel, egui::Margin::symmetric(18, 10), |ui| {
+            line(ui, format!("Target: {target}"), palette.text);
+            let details = if dialog.running {
+                "Resetting HEAD…"
+            } else if *choose_changes {
+                "Save the staged and unstaged changes to a stash, or discard them."
+            } else if prepared.is_none() && busy {
+                "Checking the tag and working tree…"
+            } else {
+                "Reset will discard any staged and unstaged changes unless you save them."
+            };
+            line(ui, details.into(), palette.text);
+            line(
+                ui,
+                "Untracked or ignored files in the way may be overwritten or removed.".into(),
+                palette.muted,
+            );
+        });
+        dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
+            dialog_style::button_row(ui, |ui| {
+                let step = ui.make_persistent_id("reset.choose_changes");
+                let entering_choices = ui.data_mut(|data| {
+                    let was_choosing = data.get_temp::<bool>(step).unwrap_or_default();
+                    data.insert_temp(step, *choose_changes);
+                    *choose_changes && !was_choosing
+                });
+                close = ui
+                    .add_enabled(!busy, dialog_style::button("Cancel"))
+                    .dialog_cancel();
+                if *choose_changes {
+                    if ui
+                        .push_id("reset.discard", |ui| {
+                            ui.add_enabled(enabled, dialog_style::button("Discard"))
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        mode = Some(ResetMode::Discard);
+                    }
+                    let save = ui
+                        .push_id("reset.save_stash", |ui| {
+                            ui.add_enabled(enabled, dialog_style::primary("Save Stash", palette))
+                        })
+                        .inner;
+                    if entering_choices && enabled {
+                        save.request_focus();
+                    }
+                    if save.dialog_accept() {
+                        mode = Some(ResetMode::SaveStash);
+                    }
+                } else if !busy && prepared.is_none() && dialog.error.is_some() {
+                    reload = ui.add(dialog_style::button("Reload Details")).clicked();
+                } else if ui
+                    .push_id("reset.confirm", |ui| {
+                        ui.add_enabled(enabled, dialog_style::primary("Reset", palette))
+                    })
+                    .inner
+                    .dialog_accept()
+                {
+                    mode = Some(ResetMode::Clean);
+                }
+            });
+        });
+    });
+    if !close {
+        app.ref_dialog = Some(dialog);
+    }
+    if reload {
+        app.reload_ref_dialog();
+    }
+    if let Some(mode) = mode {
+        app.confirm_tag_reset(mode);
     }
 }
 
@@ -454,6 +590,7 @@ mod tests {
                                         editor.url = "https://dummy-user:dummy-password@example.test/repo?private-query".into();
                                     }
                                 }
+                                Kind::AddTagRemote | Kind::Reset { .. } => {}
                             }
                             for frame in 0..4 {
                                 let mut output = ctx.run_ui(

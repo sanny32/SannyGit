@@ -359,16 +359,16 @@ mod tests {
         app.refs_current = true;
         app.refs_pending = false;
         app.refs_loading = false;
-        app.history_pending = false;
-        app.history_loading = false;
-        app.loaded_commit = Some("commit-to-keep".into());
-        let generation = app.history_session.generation;
+        app.history.history_pending = false;
+        app.history.history_loading = false;
+        app.history.loaded_commit = Some("commit-to-keep".into());
+        let generation = app.history.history_session.generation;
         let (history_sender, history_receiver) = mpsc::channel();
-        app.history_worker = Some(history_receiver);
+        app.history.history_worker = Some(history_receiver);
         let (refs_sender, refs_receiver) = mpsc::channel();
         app.refs_worker = Some(refs_receiver);
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        app.history_session.cancel = Some(cancel.clone());
+        app.history.history_session.cancel = Some(cancel.clone());
 
         // Editing an unselected file must retain the parsed selected preview.
         // Group edits must refresh its staged/unstaged sections without clearing it.
@@ -409,10 +409,10 @@ mod tests {
             assert_eq!(app.change_filter, super::super::ChangeFilter::Modified);
             assert!(app.refs_current);
             assert!(!app.refs_pending && !app.refs_loading);
-            assert!(!app.history_pending && !app.history_loading);
-            assert_eq!(app.history_session.generation, generation);
-            assert_eq!(app.loaded_commit.as_deref(), Some("commit-to-keep"));
-            assert!(app.history_worker.is_some() && app.refs_worker.is_some());
+            assert!(!app.history.history_pending && !app.history.history_loading);
+            assert_eq!(app.history.history_session.generation, generation);
+            assert_eq!(app.history.loaded_commit.as_deref(), Some("commit-to-keep"));
+            assert!(app.history.history_worker.is_some() && app.refs_worker.is_some());
             assert!(!cancel.load(std::sync::atomic::Ordering::Relaxed));
         }
         drop((history_sender, refs_sender));
@@ -464,7 +464,7 @@ mod tests {
         let repo = TempRepo::new();
         let mut app = opened(&repo);
         app.refs_pending = false;
-        app.history_pending = false;
+        app.history.history_pending = false;
         repo.git(&["symbolic-ref", "HEAD", "refs/heads/other"]);
         app.apply_index_update(
             Update::read(app.repositories[0].path.clone(), None),
@@ -472,7 +472,7 @@ mod tests {
             Ok(()),
         );
         assert_eq!(app.current_branch, "other");
-        assert!(app.refs_pending && app.history_pending);
+        assert!(app.refs_pending && app.history.history_pending);
     }
 
     fn refresh(app: &mut SannyGitApp) {
@@ -520,14 +520,14 @@ mod tests {
         app.commit_message = "Keep draft".into();
         let preview = app.diff_preview.as_ref().unwrap().lines.as_ptr();
         app.refs_pending = false;
-        app.history_pending = false;
+        app.history.history_pending = false;
         app.refresh();
         assert!(!app.busy());
         assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
         refresh(&mut app);
         assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
         assert_eq!(app.commit_message, "Keep draft");
-        assert!(app.refs_pending && app.history_pending);
+        assert!(app.refs_pending && app.history.history_pending);
 
         app.state_current = false;
         app.refresh();

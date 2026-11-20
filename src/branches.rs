@@ -442,5 +442,119 @@ pub fn delete(root: &Path, expected: &DeletePreview) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone)]
+pub struct ResetPreview {
+    pub tag: String,
+    pub target: String,
+    pub has_tracked_changes: bool,
+    tag_oid: String,
+    branch: String,
+    head: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ResetMode {
+    Clean,
+    SaveStash,
+    Discard,
+}
+
+pub fn preview_reset(root: &Path, tag: &str) -> Result<ResetPreview, String> {
+    git::require_no_operation(root)?;
+    let refs = load(root)?;
+    let source = refs
+        .refs
+        .iter()
+        .find(|entry| entry.full_name == tag && entry.kind == RefKind::Tag)
+        .ok_or("The selected tag no longer exists. Refresh branches and tags.")?;
+    let revision = format!("{}^{{commit}}", source.hash);
+    let target = git::text(
+        git::run(
+            root,
+            &["rev-parse", "--verify", "--end-of-options", &revision],
+        )
+        .map_err(|error| {
+            format!(
+                "Could not resolve tag '{}' to a commit.\n{error}",
+                source.name
+            )
+        })?,
+    )?;
+    let head = git::text(git::run(root, &["rev-parse", "--verify", "HEAD^{commit}"])?)?;
+    let (head, target) = (head.trim(), target.trim());
+    if [head, target].iter().any(|oid| {
+        !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }) {
+        return Err("Git returned an invalid commit object ID.".into());
+    }
+    let snapshot = git::load(root)?;
+    Ok(ResetPreview {
+        tag: tag.to_owned(),
+        target: target.to_owned(),
+        tag_oid: source.hash.clone(),
+        branch: snapshot.branch,
+        head: head.to_owned(),
+        has_tracked_changes: snapshot
+            .changes
+            .iter()
+            .any(|change| change.kind != crate::models::ChangeKind::Untracked),
+    })
+}
+
+fn check_reset(root: &Path, expected: &ResetPreview) -> Result<ResetPreview, String> {
+    let current = preview_reset(root, &expected.tag)?;
+    if current.tag_oid != expected.tag_oid
+        || current.target != expected.target
+        || current.branch != expected.branch
+        || current.head != expected.head
+    {
+        return Err(
+            "The tag, HEAD or current branch changed. Reload details and confirm Reset again."
+                .into(),
+        );
+    }
+    Ok(current)
+}
+
+pub fn reset_tag(root: &Path, expected: &ResetPreview, mode: ResetMode) -> Result<(), String> {
+    let current = check_reset(root, expected)?;
+    if mode == ResetMode::Clean && current.has_tracked_changes {
+        return Err(
+            "Tracked changes appeared before Reset. Reload details to review how to handle them."
+                .into(),
+        );
+    }
+    let stash_saved = mode == ResetMode::SaveStash && current.has_tracked_changes;
+    if stash_saved {
+        let prepared = crate::stash::preview_save(root, false)?;
+        check_reset(root, expected)?;
+        crate::stash::save(root, "SannyGit: automatic stash on Reset", &prepared)?;
+    }
+    let result = (|| {
+        if stash_saved && check_reset(root, expected)?.has_tracked_changes {
+            return Err(
+                "Tracked changes appeared after saving the stash. Reload details before retrying."
+                    .into(),
+            );
+        }
+        git::run(
+            root,
+            &[
+                "reset",
+                "--hard",
+                "--no-recurse-submodules",
+                &expected.target,
+                "--",
+            ],
+        )
+        .map(|_| ())
+    })();
+    if stash_saved {
+        result.map_err(|error| format!("The stash was saved, but Reset did not complete.\n{error}"))
+    } else {
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests;

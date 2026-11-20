@@ -15,6 +15,10 @@ enum BranchRequest {
     Rename(String),
     Delete(String),
     PushTag(String),
+    PushTagTo(String),
+    MergeTag(String),
+    LogTag(String),
+    ResetTag(String),
     CopyTagName(String),
     Unavailable,
 }
@@ -23,8 +27,12 @@ enum BranchRequest {
 struct BranchRequests {
     action: Option<BranchRequest>,
     rename_allowed: bool,
+    tag_add_allowed: bool,
     tag_push_allowed: bool,
     tag_checkout_allowed: bool,
+    tag_merge_allowed: bool,
+    tag_log_allowed: bool,
+    tag_reset_allowed: bool,
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -72,8 +80,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let tag_push_allowed = refs_current && app.repositories.get(app.selected_repository).is_some();
     let mut requested = BranchRequests {
         rename_allowed: refs_current,
+        tag_add_allowed: !app.busy(),
         tag_push_allowed,
         tag_checkout_allowed: tag_push_allowed && app.changes.is_empty(),
+        tag_merge_allowed: app.merge_allowed(),
+        tag_log_allowed: !app.busy() && app.repositories.get(app.selected_repository).is_some(),
+        tag_reset_allowed: app.tag_reset_allowed(),
         ..Default::default()
     };
     let mut add_tag_requested = false;
@@ -114,7 +126,24 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             }
             BranchRequest::PushTag(target) => {
                 app.selected_branch = target;
+                app.push_selected_tag();
+            }
+            BranchRequest::PushTagTo(target) => {
+                app.selected_branch = target;
                 app.open_push_tag();
+            }
+            BranchRequest::MergeTag(target) => {
+                app.selected_branch = target.clone();
+                app.open_merge_tag(target);
+            }
+            BranchRequest::LogTag(target) => {
+                app.selected_branch = target.clone();
+                app.open_tag_log(target);
+                super::journal::focus_history(ui.ctx());
+            }
+            BranchRequest::ResetTag(target) => {
+                app.selected_branch = target.clone();
+                app.open_tag_reset(target);
             }
             BranchRequest::Rename(target) => {
                 app.selected_branch = target;
@@ -285,7 +314,10 @@ fn branch_group(
     }
     if kind == RefKind::Tag {
         add_tag_requested = popup_menu::context(&group.header_response, palette, || {
-            vec![popup_menu::Entry::item("Add Tag…", true, ())]
+            vec![
+                popup_menu::Entry::item("Add Tag…", requested.tag_add_allowed, ())
+                    .help("Wait for the current operation to finish"),
+            ]
         })
         .is_some();
     }
@@ -307,19 +339,43 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
         )
         .help("Refresh the repository and ensure the working tree is clean"),
         E::Separator,
-        unavailable("Merge…"),
-        E::Separator,
-        unavailable("Push"),
         E::item(
-            "Push To…",
+            "Merge…",
+            requested.tag_merge_allowed,
+            BranchRequest::MergeTag(tag.full_name.clone()),
+        )
+        .help(
+            "Merge requires an existing HEAD, fresh repository data and no operation in progress",
+        ),
+        E::Separator,
+        E::item(
+            "Push",
             requested.tag_push_allowed,
             BranchRequest::PushTag(tag.full_name.clone()),
         )
         .help("Refresh the repository and wait for the current operation"),
+        E::item(
+            "Push To…",
+            requested.tag_push_allowed,
+            BranchRequest::PushTagTo(tag.full_name.clone()),
+        )
+        .help("Refresh the repository and wait for the current operation"),
         E::Separator,
-        unavailable("Log"),
+        E::item(
+            "Log",
+            requested.tag_log_allowed,
+            BranchRequest::LogTag(tag.full_name.clone()),
+        )
+        .help("Wait for the current operation to finish"),
         E::Separator,
-        unavailable("Reset…"),
+        E::item(
+            "Reset…",
+            requested.tag_reset_allowed,
+            BranchRequest::ResetTag(tag.full_name.clone()),
+        )
+        .help(
+            "Reset requires an existing HEAD, fresh repository data and no operation in progress",
+        ),
         unavailable("Reset Advanced…"),
         unavailable("Delete…"),
         E::Separator,
@@ -409,8 +465,8 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             },
         );
     });
-    app.tag_dialog_open = keep;
     if !keep {
+        app.tag_dialog_open = false;
         app.new_tag_name.clear();
         app.new_tag_message.clear();
     }

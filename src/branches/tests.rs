@@ -10,6 +10,88 @@ fn committed_repo() -> TempRepo {
 }
 
 #[test]
+fn reset_handles_tracked_changes_and_preserves_unrelated_untracked_files() {
+    for mode in [ResetMode::SaveStash, ResetMode::Discard] {
+        let repo = committed_repo();
+        repo.git(&["commit", "--allow-empty", "-m", "before reset"]);
+        let before = repo.git(&["rev-parse", "HEAD"]);
+        repo.git(&["switch", "-c", "release", "HEAD~"]);
+        repo.write("collision", "target file\n");
+        repo.git(&["add", "collision"]);
+        repo.git(&["commit", "-m", "release"]);
+        repo.git(&["tag", "-a", "-m", "release tag", "v1"]);
+        let tagged = repo.git(&["rev-parse", "HEAD"]);
+        repo.git(&["switch", "main"]);
+        repo.write("file", "staged\n");
+        repo.git(&["add", "file"]);
+        repo.write("file", "unstaged\n");
+        repo.write("collision", "an untracked file in the way\n");
+        repo.write("keep", "unrelated\n");
+
+        let preview = preview_reset(&repo.0, "refs/tags/v1").unwrap();
+        assert!(preview.has_tracked_changes);
+        assert_eq!(preview.target, tagged.trim());
+        assert_eq!(repo.git(&["rev-parse", "HEAD"]), before);
+        reset_tag(&repo.0, &preview, mode).unwrap();
+
+        assert_eq!(repo.git(&["rev-parse", "HEAD"]), tagged);
+        assert_eq!(
+            repo.git(&["symbolic-ref", "--short", "HEAD"]).trim(),
+            "main"
+        );
+        assert_eq!(repo.git(&["status", "--porcelain"]).trim(), "?? keep");
+        assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"base\n");
+        assert_eq!(
+            std::fs::read(repo.0.join("collision")).unwrap(),
+            b"target file\n"
+        );
+        assert_eq!(std::fs::read(repo.0.join("keep")).unwrap(), b"unrelated\n");
+        if mode == ResetMode::SaveStash {
+            assert_eq!(repo.git(&["show", "stash@{0}:file"]).trim(), "unstaged");
+            assert_eq!(repo.git(&["show", "stash@{0}^2:file"]).trim(), "staged");
+            assert!(
+                repo.git(&["stash", "show", "--include-untracked", "--name-only"])
+                    .trim()
+                    == "file"
+            );
+        } else {
+            assert!(repo.git(&["stash", "list"]).is_empty());
+        }
+    }
+}
+
+#[test]
+fn reset_rejects_stale_tag_branch_and_new_changes_before_moving_head() {
+    let repo = committed_repo();
+    repo.git(&["tag", "v1"]);
+    repo.git(&["commit", "--allow-empty", "-m", "before reset"]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    let preview = preview_reset(&repo.0, "refs/tags/v1").unwrap();
+    assert!(!preview.has_tracked_changes);
+    repo.git(&["switch", "-c", "other"]);
+    assert!(reset_tag(&repo.0, &preview, ResetMode::Clean)
+        .unwrap_err()
+        .contains("changed"));
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]), before);
+    repo.git(&["switch", "main"]);
+    repo.git(&["tag", "-f", "v1"]);
+    assert!(reset_tag(&repo.0, &preview, ResetMode::Clean)
+        .unwrap_err()
+        .contains("changed"));
+    repo.git(&["tag", "-f", "v1", "HEAD~"]);
+
+    repo.write("file", "new work\n");
+    assert!(reset_tag(&repo.0, &preview, ResetMode::Clean)
+        .unwrap_err()
+        .contains("Tracked changes appeared"));
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]), before);
+    assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"new work\n");
+    repo.write("file", "base\n");
+    reset_tag(&repo.0, &preview, ResetMode::Clean).unwrap();
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), preview.target);
+}
+
+#[test]
 fn delete_removes_only_a_reviewed_merged_branch_and_preserves_dirty_index_and_files() {
     let repo = committed_repo();
     repo.git(&["branch", "merged"]);

@@ -20,8 +20,20 @@ impl SannyGitApp {
         for (source, error) in [
             ("application", self.error.as_deref()),
             ("branches", self.refs_error.as_deref()),
-            ("history", self.history_error.as_deref()),
-            ("commit diff", self.commit_preview_error.as_deref()),
+            ("history", self.history.history_error.as_deref()),
+            ("commit diff", self.history.commit_preview_error.as_deref()),
+            (
+                "tag history",
+                self.tag_log
+                    .as_ref()
+                    .and_then(|view| view.history_error.as_deref()),
+            ),
+            (
+                "tag commit diff",
+                self.tag_log
+                    .as_ref()
+                    .and_then(|view| view.commit_preview_error.as_deref()),
+            ),
             // Periodic background fetch failures stay in the tracking monitor:
             // they surface as the "?" badge and its tooltip, not as a modal.
             ("working tree", self.working_tree.error.as_deref()),
@@ -98,7 +110,7 @@ mod tests {
     fn simultaneous_errors_are_queued_deduplicated_and_retained_until_dismissed() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.error = Some("Operation failed".into());
-        app.history_error = app.error.clone();
+        app.history.history_error = app.error.clone();
         app.refs_error = Some("Cannot load branches".into());
         app.collect_errors();
         assert_eq!(app.error_dialogs.pending.len(), 2);
@@ -110,10 +122,10 @@ mod tests {
         app.dismiss_error();
         app.collect_errors();
         assert!(app.error_dialogs.pending.is_empty());
-        assert!(app.history_error.is_some());
-        app.history_error = None;
+        assert!(app.history.history_error.is_some());
+        app.history.history_error = None;
         app.collect_errors();
-        app.history_error = Some("Operation failed".into());
+        app.history.history_error = Some("Operation failed".into());
         app.collect_errors();
         assert_eq!(app.error_dialogs.pending.len(), 1);
     }
@@ -122,7 +134,7 @@ mod tests {
     fn settings_and_preview_errors_reach_the_queue_without_model_list_errors() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
         app.settings_window.llm.secret_error = Some("Credential access failed".into());
-        app.commit_preview_error = Some("Commit diff failed".into());
+        app.history.commit_preview_error = Some("Commit diff failed".into());
         app.llm_models.entry(&app.llm_config, None).error = Some("Model list failed".into());
         app.collect_errors();
         assert_eq!(app.error_dialogs.pending.len(), 2);

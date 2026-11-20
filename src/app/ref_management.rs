@@ -2,7 +2,10 @@ use super::{SannyGitApp, WorkerResult};
 use crate::{branches, git, models::RefKind, remote_config, remotes};
 use std::{
     path::PathBuf,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 #[derive(Default)]
@@ -49,6 +52,12 @@ pub enum Kind {
         remote: String,
         prepared: Option<remotes::TagPushPreview>,
     },
+    AddTagRemote,
+    Reset {
+        source: String,
+        prepared: Option<branches::ResetPreview>,
+        choose_changes: bool,
+    },
     Remotes(RemoteEditor),
 }
 
@@ -73,12 +82,17 @@ pub enum ResultMessage {
         remote: String,
         result: Result<Option<remotes::TagPushPreview>, String>,
     },
+    Reset {
+        source: String,
+        result: Result<branches::ResetPreview, String>,
+    },
     Remotes(Result<remote_config::Snapshot, String>),
 }
 
 enum LoadRequest {
     Delete(String),
     Tag(String, String),
+    Reset(String),
     Remotes,
 }
 
@@ -153,12 +167,107 @@ impl SannyGitApp {
         if self.push_tag_blocker().is_some() {
             return;
         }
+        self.open_tag_push_to(self.selected_branch.clone(), String::new());
+    }
+
+    fn open_tag_push_to(&mut self, source: String, remote: String) {
         self.open_ref_dialog(Kind::Tag {
-            source: self.selected_branch.clone(),
+            source,
             names: Vec::new(),
-            remote: String::new(),
+            remote,
             prepared: None,
         });
+    }
+
+    pub fn push_selected_tag(&mut self) {
+        if self.branch_base_blocker().is_some() {
+            return;
+        }
+        let Some(tag) = self
+            .refs
+            .iter()
+            .find(|entry| entry.full_name == self.selected_branch && entry.kind == RefKind::Tag)
+        else {
+            return;
+        };
+        let source = tag.full_name.clone();
+        let oid = tag.hash.clone();
+        let root = self.repositories[self.selected_repository].path.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
+        self.error = None;
+        if self.start_worker(move || {
+            let path = PathBuf::from(&root);
+            let outcome = match remotes::load(&path) {
+                Ok(state) => {
+                    let remote = match state.remotes.as_slice() {
+                        [only] => Some(only),
+                        names => names.iter().find(|name| *name == "origin"),
+                    };
+                    let Some(remote) = remote else {
+                        let preferred_remote = (!state.remotes.is_empty())
+                            .then(|| state.upstream_or_origin().unwrap_or_default().to_owned());
+                        return WorkerResult::TagPushSelection {
+                            root,
+                            source,
+                            preferred_remote,
+                        };
+                    };
+                    remotes::preview_tag_push(&path, &source, remote).and_then(|preview| {
+                        if preview.oid != oid {
+                            return Err(
+                                "The selected tag changed. Refresh branches and retry.".into()
+                            );
+                        }
+                        remotes::push_tag(&path, &preview, &worker_cancel)
+                    })
+                }
+                Err(error) => Err(error),
+            };
+            WorkerResult::Operation {
+                committed: false,
+                success: "Tag pushed",
+                outcome,
+                snapshot: git::load(&path),
+            }
+        }) {
+            self.manager.cancel = Some(cancel);
+            self.status = "Pushing tag…".into();
+        }
+    }
+
+    pub(super) fn apply_tag_push_selection(
+        &mut self,
+        root: String,
+        source: String,
+        preferred_remote: Option<String>,
+    ) {
+        if self
+            .manager
+            .cancel
+            .take()
+            .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+        {
+            self.status = "Tag push cancelled".into();
+            return;
+        }
+        if !self
+            .repositories
+            .get(self.selected_repository)
+            .is_some_and(|repo| repo.path == root)
+        {
+            return;
+        }
+        self.status = match &preferred_remote {
+            Some(_) => "Choose a remote for the tag",
+            None => "No configured remotes",
+        }
+        .into();
+        if let Some(remote) = preferred_remote {
+            self.open_tag_push_to(source, remote);
+        } else {
+            self.open_ref_dialog(Kind::AddTagRemote);
+        }
     }
 
     pub fn open_remote_manager(&mut self) {
@@ -177,13 +286,34 @@ impl SannyGitApp {
         }));
     }
 
+    pub fn tag_reset_allowed(&self) -> bool {
+        self.branch_head_exists && !self.merging && self.branch_base_blocker().is_none()
+    }
+
+    pub fn open_tag_reset(&mut self, source: String) {
+        if !self.tag_reset_allowed()
+            || !self
+                .refs
+                .iter()
+                .any(|entry| entry.kind == RefKind::Tag && entry.full_name == source)
+        {
+            return;
+        }
+        self.open_ref_dialog(Kind::Reset {
+            source,
+            prepared: None,
+            choose_changes: false,
+        });
+    }
+
     fn open_ref_dialog(&mut self, kind: Kind) {
+        let reload_pending = !matches!(kind, Kind::AddTagRemote);
         self.ref_dialog = Some(Dialog {
             root: self.repositories[self.selected_repository].path.clone(),
             kind,
             confirmed: false,
             running: false,
-            reload_pending: true,
+            reload_pending,
             error: None,
             status: "Loading details…".into(),
         });
@@ -203,6 +333,15 @@ impl SannyGitApp {
             match &mut dialog.kind {
                 Kind::Delete { prepared, .. } => *prepared = None,
                 Kind::Tag { prepared, .. } => *prepared = None,
+                Kind::Reset {
+                    prepared,
+                    choose_changes,
+                    ..
+                } => {
+                    *prepared = None;
+                    *choose_changes = false;
+                }
+                Kind::AddTagRemote => dialog.reload_pending = false,
                 Kind::Remotes(editor) => {
                     editor.current = false;
                     editor.confirm_remove = false;
@@ -228,6 +367,8 @@ impl SannyGitApp {
         let target = match &dialog.kind {
             Kind::Delete { source, .. } => LoadRequest::Delete(source.clone()),
             Kind::Tag { source, remote, .. } => LoadRequest::Tag(source.clone(), remote.clone()),
+            Kind::Reset { source, .. } => LoadRequest::Reset(source.clone()),
+            Kind::AddTagRemote => return,
             Kind::Remotes(_) => LoadRequest::Remotes,
         };
         if !self.start_worker(move || {
@@ -238,6 +379,10 @@ impl SannyGitApp {
                     source,
                 },
                 LoadRequest::Tag(source, remote) => tag_details(&path, source, remote),
+                LoadRequest::Reset(source) => ResultMessage::Reset {
+                    result: branches::preview_reset(&path, &source),
+                    source,
+                },
                 LoadRequest::Remotes => ResultMessage::Remotes(remote_config::load(&path)),
             };
             WorkerResult::RefDetails {
@@ -306,6 +451,56 @@ impl SannyGitApp {
             }
         }) {
             self.manager.cancel = None;
+            self.ref_worker_failed();
+        }
+    }
+
+    pub fn confirm_tag_reset(&mut self, mode: branches::ResetMode) {
+        if self.busy() || !self.state_current {
+            return;
+        }
+        let Some(dialog) = &mut self.ref_dialog else {
+            return;
+        };
+        if dialog.running
+            || !self
+                .repositories
+                .get(self.selected_repository)
+                .is_some_and(|repo| repo.path == dialog.root)
+        {
+            return;
+        }
+        let Kind::Reset {
+            prepared: Some(prepared),
+            choose_changes,
+            ..
+        } = &mut dialog.kind
+        else {
+            return;
+        };
+        if mode != branches::ResetMode::Clean && !*choose_changes
+            || mode == branches::ResetMode::Clean && *choose_changes
+        {
+            return;
+        }
+        if mode == branches::ResetMode::Clean && prepared.has_tracked_changes {
+            *choose_changes = true;
+            return;
+        }
+        let root = PathBuf::from(&dialog.root);
+        let prepared = prepared.clone();
+        dialog.running = true;
+        dialog.error = None;
+        self.state_current = false;
+        self.error = None;
+        self.status = "Resetting HEAD…".into();
+        if !self.start_worker(move || WorkerResult::Operation {
+            committed: false,
+            success: "Reset complete",
+            outcome: branches::reset_tag(&root, &prepared, mode),
+            snapshot: git::load(&root),
+        }) {
+            self.state_current = true;
             self.ref_worker_failed();
         }
     }
@@ -432,6 +627,18 @@ impl SannyGitApp {
                     dialog.error = Some(error);
                 }
             },
+            (
+                Kind::Reset {
+                    source, prepared, ..
+                },
+                ResultMessage::Reset {
+                    source: requested,
+                    result,
+                },
+            ) if *source == requested => match result {
+                Ok(details) => *prepared = Some(details),
+                Err(error) => dialog.error = Some(error),
+            },
             _ => {}
         }
     }
@@ -469,6 +676,15 @@ impl SannyGitApp {
             match &mut dialog.kind {
                 Kind::Delete { prepared, .. } => *prepared = None,
                 Kind::Tag { prepared, .. } => *prepared = None,
+                Kind::Reset {
+                    prepared,
+                    choose_changes,
+                    ..
+                } => {
+                    *prepared = None;
+                    *choose_changes = false;
+                }
+                Kind::AddTagRemote => {}
                 Kind::Remotes(editor) => {
                     editor.current = false;
                     editor.confirm_remove = false;
@@ -511,6 +727,40 @@ mod tests {
         app.refs_current = true;
         app.commit_message = "Keep commit draft".into();
         (repo, app)
+    }
+
+    #[test]
+    fn tag_reset_waits_for_the_dirty_worktree_decision() {
+        let (repo, mut app) = opened();
+        repo.git(&["commit", "--allow-empty", "-m", "before reset"]);
+        let before = repo.git(&["rev-parse", "HEAD"]);
+        repo.write("file", "dirty\n");
+        app.open_tag_reset("refs/tags/chosen".into());
+        wait(&mut app);
+        app.confirm_tag_reset(branches::ResetMode::Discard);
+        assert!(!app.busy());
+        app.confirm_tag_reset(branches::ResetMode::Clean);
+        assert!(!app.busy());
+        assert!(matches!(
+            app.ref_dialog.as_ref().unwrap().kind,
+            Kind::Reset {
+                choose_changes: true,
+                ..
+            }
+        ));
+        assert_eq!(repo.git(&["rev-parse", "HEAD"]), before);
+        assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"dirty\n");
+
+        app.confirm_tag_reset(branches::ResetMode::Discard);
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(app.ref_dialog.is_none());
+        assert_eq!(app.status, "Reset complete");
+        assert_eq!(
+            repo.git(&["rev-parse", "HEAD"]),
+            repo.git(&["rev-parse", "refs/tags/chosen"])
+        );
+        assert_eq!(app.commit_message, "Keep commit draft");
     }
 
     #[test]
@@ -619,6 +869,85 @@ mod tests {
     }
 
     #[test]
+    fn direct_tag_push_prefers_origin_and_can_use_a_sole_remote() {
+        let (repo, mut app) = opened();
+        let origin = repo.0.join("origin.git");
+        let team = repo.0.join("team.git");
+        for (name, path) in [("origin", &origin), ("team", &team)] {
+            repo.git(&["init", "--bare", path.to_str().unwrap()]);
+            repo.git(&["remote", "add", name, path.to_str().unwrap()]);
+        }
+        repo.git(&["push", "-u", "team", "HEAD"]);
+        repo.git(&["config", "remote.pushDefault", "team"]);
+        repo.git(&["tag", "other"]);
+        app.selected_branch = "refs/tags/chosen".into();
+
+        app.push_selected_tag();
+        assert!(app.busy());
+        assert!(app.ref_dialog.is_none());
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(app.ref_dialog.is_none());
+        assert_eq!(app.status, "Tag pushed");
+        assert_eq!(
+            git::text(git::run(&origin, &["for-each-ref", "--format=%(refname)"]).unwrap())
+                .unwrap()
+                .trim(),
+            "refs/tags/chosen"
+        );
+        assert!(git::run(&team, &["tag", "--list"]).unwrap().is_empty());
+
+        repo.git(&["remote", "remove", "origin"]);
+        app.refs_current = true;
+        app.push_selected_tag();
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(app.ref_dialog.is_none());
+        assert_eq!(
+            git::text(git::run(&team, &["tag", "--list"]).unwrap())
+                .unwrap()
+                .trim(),
+            "chosen"
+        );
+        assert_eq!(app.commit_message, "Keep commit draft");
+    }
+
+    #[test]
+    fn direct_tag_push_requests_configuration_or_remote_choice_when_needed() {
+        let (repo, mut app) = opened();
+        app.selected_branch = "refs/tags/chosen".into();
+        app.push_selected_tag();
+        wait(&mut app);
+        assert!(matches!(
+            app.ref_dialog.as_ref().unwrap().kind,
+            Kind::AddTagRemote
+        ));
+        app.ref_dialog = None;
+
+        let remote = repo.0.join("team.git");
+        repo.git(&["init", "--bare", remote.to_str().unwrap()]);
+        repo.git(&["remote", "add", "team", remote.to_str().unwrap()]);
+        repo.git(&["remote", "add", "archive", remote.to_str().unwrap()]);
+        repo.git(&["push", "-u", "team", "HEAD"]);
+        app.refs_current = true;
+        app.push_selected_tag();
+        wait(&mut app);
+        let dialog = app.ref_dialog.as_ref().unwrap();
+        let Kind::Tag {
+            remote: selected,
+            prepared,
+            ..
+        } = &dialog.kind
+        else {
+            panic!("Expected the tag destination dialog");
+        };
+        assert_eq!(selected, "team");
+        assert_eq!(prepared.as_ref().unwrap().full_name, "refs/tags/chosen");
+        assert!(!dialog.confirmed);
+        assert!(git::run(&remote, &["tag", "--list"]).unwrap().is_empty());
+    }
+
+    #[test]
     fn add_tag_and_push_sends_only_the_new_tag_to_the_upstream_remote() {
         let (repo, mut app) = opened();
         let remote = repo.0.join("remote.git");
@@ -630,8 +959,9 @@ mod tests {
         app.new_tag_name = "release".into();
         app.new_tag_message = "Release notes".into();
         app.create_tag(true);
-        wait(&mut app);
         assert!(!app.tag_dialog_open);
+        assert!(app.busy());
+        wait(&mut app);
         assert!(app.error.is_none());
         assert_eq!(
             repo.git(&["cat-file", "-t", "refs/tags/release"]).trim(),
@@ -657,7 +987,7 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("Configure an upstream"));
-        assert!(app.tag_dialog_open);
+        assert!(!app.tag_dialog_open);
         assert_eq!(app.new_tag_name, "release");
         assert!(repo.git(&["tag", "--list", "release"]).is_empty());
         assert!(git::text(git::run(&remote, &["tag", "--list"]).unwrap())

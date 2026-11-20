@@ -27,6 +27,8 @@ struct Basis {
 pub struct Cursor {
     basis: Basis,
     all_branches: bool,
+    tag: Option<String>,
+    tag_commit: Option<String>,
     ids: Vec<String>,
     next: usize,
     capped: bool,
@@ -42,6 +44,9 @@ impl Cursor {
     }
     pub fn all_branches(&self) -> bool {
         self.all_branches
+    }
+    pub fn tag_commit(&self) -> Option<&str> {
+        self.tag_commit.as_deref()
     }
     pub fn at_limit(&self) -> bool {
         self.capped && !self.has_more()
@@ -83,7 +88,7 @@ fn boundary(root: &Path, name: &str, cancel: &AtomicBool) -> Result<Vec<u8>, Str
     Ok(bytes)
 }
 
-fn basis(root: &Path, all: bool, cancel: &AtomicBool) -> Result<Basis, String> {
+fn basis(root: &Path, all: bool, tag: Option<&str>, cancel: &AtomicBool) -> Result<Basis, String> {
     let head = git::text(run(root, &["rev-parse", "--revs-only", "HEAD"], cancel)?)?
         .trim()
         .to_owned();
@@ -98,6 +103,7 @@ fn basis(root: &Path, all: bool, cancel: &AtomicBool) -> Result<Basis, String> {
     ];
     if !all {
         args.push("refs/replace/");
+        args.extend(tag);
     }
     let refs = run(root, &args, cancel)?;
     if refs
@@ -117,7 +123,7 @@ fn basis(root: &Path, all: bool, cancel: &AtomicBool) -> Result<Basis, String> {
 }
 
 fn verify(root: &Path, cursor: &Cursor, cancel: &AtomicBool) -> Result<(), String> {
-    if basis(root, cursor.all_branches, cancel)? != cursor.basis {
+    if basis(root, cursor.all_branches, cursor.tag.as_deref(), cancel)? != cursor.basis {
         return Err("History changed (HEAD, refs or history boundaries). Reload before loading more; existing rows are retained.".into());
     }
     Ok(())
@@ -131,12 +137,44 @@ pub fn reload(
     keep: &[String],
     cancel: &AtomicBool,
 ) -> Result<Page, String> {
-    first_with_limits(root, all, requested, keep, PAGE_SIZE, HISTORY_LIMIT, cancel)
+    first_with_limits(
+        root,
+        Scope::Branches(all),
+        requested,
+        keep,
+        PAGE_SIZE,
+        HISTORY_LIMIT,
+        cancel,
+    )
+}
+
+pub fn reload_tag(
+    root: &Path,
+    tag: &str,
+    requested: usize,
+    keep: &[String],
+    cancel: &AtomicBool,
+) -> Result<Page, String> {
+    first_with_limits(
+        root,
+        Scope::Tag(tag),
+        requested,
+        keep,
+        PAGE_SIZE,
+        HISTORY_LIMIT,
+        cancel,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum Scope<'a> {
+    Branches(bool),
+    Tag(&'a str),
 }
 
 fn first_with_limits(
     root: &Path,
-    all: bool,
+    scope: Scope<'_>,
     requested: usize,
     keep: &[String],
     page_size: usize,
@@ -146,7 +184,31 @@ fn first_with_limits(
     if page_size == 0 || page_size > PAGE_SIZE || limit == 0 || limit > HISTORY_LIMIT {
         return Err("Invalid history page limits".into());
     }
-    let initial = basis(root, all, cancel)?;
+    let (all, tag) = match scope {
+        Scope::Branches(all) => (all, None),
+        Scope::Tag(tag) => (false, Some(tag)),
+    };
+    let initial = basis(root, all, tag, cancel)?;
+    let tag_commit = tag
+        .map(|tag| -> Result<String, String> {
+            let revision = tag
+                .strip_prefix("refs/tags/")
+                .filter(|name| !name.is_empty())
+                .ok_or("Select a tag to open its history.")?;
+            let revision = format!("refs/tags/{revision}^{{commit}}");
+            let output = run(
+                root,
+                &["rev-parse", "--verify", "--end-of-options", &revision],
+                cancel,
+            )
+            .map_err(|error| format!("Could not resolve tag '{tag}' to a commit.\n{error}"))?;
+            let commit = git::text(output)?.trim().to_owned();
+            if !valid_hash(&commit) {
+                return Err("Git returned an invalid tag commit ID.".into());
+            }
+            Ok(commit)
+        })
+        .transpose()?;
     let count = format!("--max-count={}", limit + 1);
     let mut args = vec!["rev-list", "--topo-order", &count];
     if all {
@@ -155,8 +217,9 @@ fn first_with_limits(
     if !initial.head.is_empty() {
         args.push(&initial.head);
     }
+    args.extend(tag_commit.as_deref());
     args.push("--");
-    let output = if initial.head.is_empty() && !all {
+    let output = if initial.head.is_empty() && !all && tag_commit.is_none() {
         String::new()
     } else {
         git::text(run(root, &args, cancel)?)?
@@ -171,8 +234,17 @@ fn first_with_limits(
     }
     let capped = ids.len() > limit;
     ids.truncate(limit);
+    if let Some(target) = tag_commit.as_ref().filter(|target| !ids.contains(target)) {
+        if !capped {
+            return Err("The selected tag is missing from the history snapshot.".into());
+        }
+        // Keep the tag selectable even when the bounded topological walk ends before it.
+        ids.pop();
+        ids.push(target.clone());
+    }
     let selected_end = keep
         .iter()
+        .chain(tag_commit.iter())
         .filter_map(|id| ids.iter().position(|hash| hash == id))
         .map(|index| index + 1)
         .max()
@@ -181,6 +253,8 @@ fn first_with_limits(
     let cursor = Cursor {
         basis: initial,
         all_branches: all,
+        tag: tag.map(str::to_owned),
+        tag_commit,
         ids,
         next: 0,
         capped,
@@ -268,7 +342,7 @@ pub fn load(root: &Path, all: bool) -> Result<History, String> {
 fn load_limited(root: &Path, all: bool, limit: usize) -> Result<History, String> {
     first_with_limits(
         root,
-        all,
+        Scope::Branches(all),
         limit,
         &[],
         limit,

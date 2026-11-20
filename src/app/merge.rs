@@ -14,6 +14,13 @@ pub struct Snapshot {
     pub branch: String,
     pub refs: Vec<BranchRef>,
     pub history: History,
+    pub tag: Option<TagTarget>,
+}
+
+pub struct TagTarget {
+    pub commit: String,
+    pub fast_forward: bool,
+    pub already_merged: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +57,7 @@ pub struct Dialog {
     pub operation: Operation,
     pub root: String,
     pub snapshot: Option<Snapshot>,
+    pub tag: Option<String>,
     pub selected: Option<String>,
     pub shown: HashSet<String>,
     pub filter: String,
@@ -101,17 +109,42 @@ impl Dialog {
     }
 }
 
-fn load(root: &Path, operation: Operation) -> Result<Snapshot, String> {
+fn load(root: &Path, operation: Operation, tag: Option<&str>) -> Result<Snapshot, String> {
     let head = merge::head(root)?;
     let branch = crate::git::load(root)?.branch;
     let refs = branches::load(root)?.refs;
-    let page = history::reload(
-        root,
-        true,
-        history::HISTORY_LIMIT,
-        &[],
-        &AtomicBool::new(false),
-    )?;
+    let (tag, history) = if let Some(full_name) = tag {
+        let tag = refs
+            .iter()
+            .find(|entry| entry.kind == RefKind::Tag && entry.full_name == full_name)
+            .ok_or("The selected tag no longer exists. Refresh branches and tags.")?;
+        let revision = format!("{}^{{commit}}", tag.hash);
+        let output = crate::git::run(
+            root,
+            &["rev-parse", "--verify", "--end-of-options", &revision],
+        )
+        .map_err(|error| format!("Could not resolve tag '{}' to a commit.\n{error}", tag.name))?;
+        let commit = crate::git::text(output)?.trim().to_owned();
+        let already_merged = crate::git::is_ancestor(root, &commit, &head)?;
+        let fast_forward = !already_merged && crate::git::is_ancestor(root, &head, &commit)?;
+        (
+            Some(TagTarget {
+                commit,
+                fast_forward,
+                already_merged,
+            }),
+            history::prepare(Vec::new(), false),
+        )
+    } else {
+        let page = history::reload(
+            root,
+            true,
+            history::HISTORY_LIMIT,
+            &[],
+            &AtomicBool::new(false),
+        )?;
+        (None, page.history)
+    };
     if merge::head(root)? != head {
         return Err(format!(
             "HEAD changed while loading. Reopen {}.",
@@ -122,7 +155,8 @@ fn load(root: &Path, operation: Operation) -> Result<Snapshot, String> {
         head,
         branch,
         refs,
-        history: page.history,
+        history,
+        tag,
     })
 }
 
@@ -166,14 +200,18 @@ impl SannyGitApp {
     }
 
     pub fn open_merge(&mut self) {
-        self.open_commit_picker(Operation::Merge);
+        self.open_commit_picker(Operation::Merge, None);
+    }
+
+    pub fn open_merge_tag(&mut self, tag: String) {
+        self.open_commit_picker(Operation::Merge, Some(tag));
     }
 
     pub fn open_rebase(&mut self) {
-        self.open_commit_picker(Operation::Rebase);
+        self.open_commit_picker(Operation::Rebase, None);
     }
 
-    fn open_commit_picker(&mut self, operation: Operation) {
+    fn open_commit_picker(&mut self, operation: Operation, tag: Option<String>) {
         if !self.merge_allowed() {
             return;
         }
@@ -182,6 +220,7 @@ impl SannyGitApp {
             operation,
             root: root.clone(),
             snapshot: None,
+            tag: tag.clone(),
             selected: None,
             shown: HashSet::new(),
             filter: String::new(),
@@ -190,7 +229,7 @@ impl SannyGitApp {
             include_head: true,
         });
         if !self.start_worker(move || WorkerResult::MergeDetails {
-            result: load(Path::new(&root), operation),
+            result: load(Path::new(&root), operation, tag.as_deref()),
             root,
         }) {
             self.merge_dialog = None;
@@ -206,6 +245,9 @@ impl SannyGitApp {
             return;
         };
         match result {
+            Ok(snapshot) if snapshot.tag.is_some() => {
+                dialog.snapshot = Some(snapshot);
+            }
             Ok(snapshot) => {
                 dialog.shown = snapshot
                     .refs
@@ -278,18 +320,26 @@ impl SannyGitApp {
         ) {
             return;
         }
-        let (Some(snapshot), Some(target)) = (&dialog.snapshot, &dialog.selected) else {
+        let Some(snapshot) = &dialog.snapshot else {
             return;
         };
-        if target == &snapshot.head
-            || !snapshot
-                .history
-                .commits
-                .iter()
-                .any(|commit| &commit.hash == target)
-        {
+        let target = if let Some(tag) = &snapshot.tag {
+            (!tag.already_merged && (mode != Some(merge::Mode::FastForward) || tag.fast_forward))
+                .then_some(&tag.commit)
+        } else {
+            dialog.selected.as_ref().filter(|target| {
+                mode != Some(merge::Mode::FastForward)
+                    && *target != &snapshot.head
+                    && snapshot
+                        .history
+                        .commits
+                        .iter()
+                        .any(|commit| &commit.hash == *target)
+            })
+        };
+        let Some(target) = target else {
             return;
-        }
+        };
         let root = dialog.root.clone();
         let head = snapshot.head.clone();
         let branch = snapshot.branch.clone();
@@ -394,6 +444,47 @@ mod tests {
     }
 
     #[test]
+    fn tag_merge_reviews_the_tag_commit_and_keeps_it_pinned() {
+        let repo = crate::test_support::TempRepo::new();
+        repo.write("base", "base\n");
+        crate::git::commit(&repo.0, "base", crate::git::CommitContents::All).unwrap();
+        let before = merge::head(&repo.0).unwrap();
+        repo.git(&["checkout", "-b", "feature"]);
+        repo.write("feature", "feature\n");
+        crate::git::commit(&repo.0, "feature", crate::git::CommitContents::All).unwrap();
+        let target = merge::head(&repo.0).unwrap();
+        repo.git(&["tag", "lightweight"]);
+        repo.git(&["tag", "-a", "-m", "Release", "annotated"]);
+        repo.git(&["checkout", "main"]);
+        repo.git(&["branch", "-D", "feature"]);
+
+        let mut app = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
+        app.apply_snapshot(crate::git::load(&repo.0).unwrap());
+        app.refs_current = true;
+        app.branch_head_exists = true;
+        for name in ["lightweight", "annotated"] {
+            app.open_merge_tag(format!("refs/tags/{name}"));
+            wait(&mut app);
+            assert!(app.error.is_none(), "{:?}", app.error);
+            let dialog = app.merge_dialog.as_ref().unwrap();
+            let tag = dialog.snapshot.as_ref().unwrap().tag.as_ref().unwrap();
+            assert_eq!(tag.commit, target);
+            assert!(tag.fast_forward);
+            assert!(!tag.already_merged);
+            assert_eq!(merge::head(&repo.0).unwrap(), before);
+        }
+
+        repo.git(&["tag", "-f", "annotated", &before]);
+        app.submit_merge(merge::Mode::Commit);
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert_eq!(
+            repo.git(&["show", "-s", "--format=%P", "HEAD"]).trim(),
+            format!("{before} {target}")
+        );
+    }
+
+    #[test]
     fn merge_opens_with_other_branches_visible_and_executes_both_modes() {
         for mode in [merge::Mode::Commit, merge::Mode::WorkingTree] {
             let repo = crate::test_support::TempRepo::new();
@@ -445,6 +536,7 @@ mod tests {
                         .iter()
                         .any(|file| file.path == "feature" && file.staged));
                 }
+                merge::Mode::FastForward => unreachable!(),
             }
         }
     }

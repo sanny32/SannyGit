@@ -662,6 +662,7 @@ impl SannyGitApp {
         self.amend_draft = None;
         self.open_dialog = false;
         self.selected_repository = usize::MAX;
+        self.close_tag_log();
         self.invalidate_view_reads();
         self.tracking.invalidate();
         self.selected_change = usize::MAX;
@@ -670,14 +671,14 @@ impl SannyGitApp {
         self.current_branch.clear();
         self.changes.clear();
         self.refs.clear();
-        self.commits.clear();
-        self.history_edges.clear();
-        self.history_max_lane = 0;
-        self.history_truncated = false;
-        self.history_loading = false;
-        self.history_pending = false;
-        self.history_session.clear_view();
-        self.history_error = None;
+        self.history.commits.clear();
+        self.history.history_edges.clear();
+        self.history.history_max_lane = 0;
+        self.history.history_truncated = false;
+        self.history.history_loading = false;
+        self.history.history_pending = false;
+        self.history.history_session.clear_view();
+        self.history.history_error = None;
         self.refs_current = false;
         self.refs_worker = None;
         self.refs_loading = false;
@@ -698,14 +699,14 @@ impl SannyGitApp {
         self.selected_ref_group = None;
         self.loaded_diff = None;
         self.diff_preview = None;
-        self.selected_commit = None;
-        self.commit_details_open = false;
+        self.history.selected_commit = None;
+        self.history.commit_details_open = false;
         self.clear_commit_preview();
         self.state_current = false;
         self.commit_message.clear();
         self.merge_default_message = None;
         self.merging = false;
-        self.journal_filter.clear();
+        self.history.journal_filter.clear();
         self.manager.dialog = None;
         self.manager.worktrees.clear();
         self.manager.settings = None;
@@ -1164,7 +1165,7 @@ mod tests {
         }];
         app.selected_repository = 0;
         app.changes = crate::mock_data::changes();
-        app.commits = crate::mock_data::commits();
+        app.history.commits = crate::mock_data::commits();
         app.refs = crate::mock_data::refs();
         app.commit_message = "Draft".into();
         app.manager.group_name = "Work".into();
@@ -1178,7 +1179,7 @@ mod tests {
         app.confirm_remove_repository();
         assert!(app.repositories.is_empty());
         assert_eq!(app.selected_repository, usize::MAX);
-        assert!(app.changes.is_empty() && app.commits.is_empty() && app.refs.is_empty());
+        assert!(app.changes.is_empty() && app.history.commits.is_empty() && app.refs.is_empty());
         assert!(app.commit_message.is_empty());
         assert!(app.manager.preferences.groups[0].paths.is_empty());
         assert!(app.manager.highlighted_repository.is_none());
@@ -1253,7 +1254,7 @@ mod tests {
         app.repositories = crate::mock_data::repositories();
         app.selected_repository = 0;
         app.changes = crate::mock_data::changes();
-        app.commits = crate::mock_data::commits();
+        app.history.commits = crate::mock_data::commits();
         app.refs = crate::mock_data::refs();
         app.current_branch = "main".into();
         app.manager.group_name = "Work".into();
@@ -1277,8 +1278,8 @@ mod tests {
             })
             .is_err());
         assert_eq!(app.selected_repository, usize::MAX);
-        assert!(app.changes.is_empty() && app.refs.is_empty() && app.commits.is_empty());
-        assert!(!app.history_pending && !app.refs_pending);
+        assert!(app.changes.is_empty() && app.refs.is_empty() && app.history.commits.is_empty());
+        assert!(!app.history.history_pending && !app.refs_pending);
         assert!(!app.state_current);
         assert!(app.commit_message.is_empty());
         assert_eq!(app.repositories.len(), 4);

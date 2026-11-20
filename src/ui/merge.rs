@@ -59,6 +59,17 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     };
     let palette = app.palette();
     let busy = app.busy();
+    if let Some(tag) = &dialog.tag {
+        let name = tag.strip_prefix("refs/tags/").unwrap_or(tag);
+        let (close, mode) = tag_confirmation(ctx, &dialog, name, busy, palette);
+        if !close {
+            app.merge_dialog = Some(dialog);
+        }
+        if let Some(mode) = mode {
+            app.submit_merge(mode);
+        }
+        return;
+    }
     let mut close = false;
     let mut submit = None;
     let mut rebase = false;
@@ -116,6 +127,125 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     }
     if rebase {
         app.submit_rebase();
+    }
+}
+
+fn tag_confirmation(
+    ctx: &egui::Context,
+    dialog: &Dialog,
+    name: &str,
+    busy: bool,
+    palette: Palette,
+) -> (bool, Option<Mode>) {
+    let target = dialog
+        .snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.tag.as_ref());
+    let enabled = !busy && target.is_some_and(|tag| !tag.already_merged);
+    let fast_forward = enabled && target.is_some_and(|tag| tag.fast_forward);
+    let mut close = false;
+    let mut mode = None;
+    dialog_style::modal(ctx, palette, "merge.tag").show(ctx, |ui| {
+        ui.set_width(575.0);
+        dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        dialog_style::header_with_icon(
+            ui,
+            palette,
+            "Merge Tag",
+            "Choose how to merge the selected tag into the current branch.",
+            Icon::Merge,
+        );
+        dialog_style::section(ui, palette.panel, egui::Margin::symmetric(12, 10), |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            let tag_name = format!("Tag: {name}");
+            dialog_style::text_line(ui, &tag_name, 20.0).help_text(tag_name);
+            let status = match target {
+                Some(_) if busy => "Merging…",
+                Some(tag) if tag.already_merged => "The current branch already contains this tag’s commit.",
+                Some(tag) if tag.fast_forward => "Fast-forward can move the current branch to the tag’s commit.",
+                Some(_) => "Fast-forward is unavailable for this tag.",
+                None if busy => "Checking merge options…",
+                None => "Close and reopen Merge to retry.",
+            };
+            dialog_style::text_line(ui, RichText::new(status).color(palette.muted), 20.0);
+            dialog_style::button_row(ui, |ui| {
+                close = ui.add_enabled(!busy, dialog_style::button("Cancel")).dialog_cancel();
+                if ui.add_enabled(enabled, dialog_style::button("Merge to Working Tree"))
+                    .help_text("Start the merge and leave it open for review and conflict resolution.")
+                    .clicked() {
+                    mode = Some(Mode::WorkingTree);
+                }
+                if ui.add_enabled(enabled, dialog_style::button("Create Merge-Commit"))
+                    .help_text("Create a merge commit even when fast-forward is possible.")
+                    .clicked() {
+                    mode = Some(Mode::Commit);
+                }
+                if ui.add_enabled(fast_forward, dialog_style::primary("Fast-Forward", palette))
+                    .help_text("Move the current branch to the selected commit without creating a merge commit.")
+                    .clicked() {
+                    mode = Some(Mode::FastForward);
+                }
+            });
+        });
+    });
+    (close, mode)
+}
+
+#[cfg(test)]
+#[test]
+fn tag_confirmation_keeps_its_size_as_merge_options_load() {
+    for theme in [
+        crate::theme::ThemeChoice::Light,
+        crate::theme::ThemeChoice::Dark,
+    ] {
+        for size in [egui::vec2(1100.0, 700.0), egui::vec2(1400.0, 900.0)] {
+            let ctx = egui::Context::default();
+            crate::theme::install_fonts(&ctx);
+            theme.apply(&ctx);
+            let mut dialog = crate::mock_data::merge_dialog();
+            let mut snapshot = dialog.snapshot.take().unwrap();
+            snapshot.tag = Some(crate::app::merge::TagTarget {
+                commit: dialog.selected.take().unwrap(),
+                fast_forward: true,
+                already_merged: false,
+            });
+            let mut snapshot = Some(snapshot);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let mut previous = None;
+            for stage in 0..3 {
+                for _ in 0..3 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            let (close, mode) = tag_confirmation(
+                                ui.ctx(),
+                                &dialog,
+                                "v1.0",
+                                stage != 1,
+                                theme.palette(),
+                            );
+                            assert!(!close && mode.is_none());
+                        },
+                    );
+                    output.textures_delta.clear();
+                }
+                let rect = ctx
+                    .memory(|memory| memory.area_rect(egui::Id::unique("merge.tag")))
+                    .unwrap();
+                assert!(screen.contains_rect(rect));
+                if let Some(previous) = previous {
+                    assert_eq!(rect, previous);
+                }
+                previous = Some(rect);
+                if stage == 0 {
+                    dialog.snapshot = snapshot.take();
+                }
+            }
+        }
     }
 }
 

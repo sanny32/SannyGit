@@ -238,7 +238,7 @@ mod tests {
                             assert!((after[1].height() - before[1].height() - growth).abs() < 1.0);
                             assert!((after[3].height() - before[3].height() + growth).abs() < 1.0);
                         }
-                        app.history_loading = true;
+                        app.history.history_loading = true;
                         app.refs_loading = true;
                         for _ in 0..5 {
                             assert_eq!(render(&mut app, vec![]), after);
