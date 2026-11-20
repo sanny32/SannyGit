@@ -280,7 +280,7 @@ pub struct SannyGitApp {
     last_reset_strategy: crate::branches::ResetStrategy,
     pub remote_checkout: Option<RemoteCheckoutDialog>,
     pub network_dialog: Option<remotes::RemoteDialog>,
-    pub pull_in_progress: bool,
+    pub background_progress_only: bool,
     pub stash_dialog: Option<stash::Dialog>,
     pub discard_dialog: Option<discard::Dialog>,
     pub ref_dialog: Option<ref_management::Dialog>,
@@ -536,7 +536,7 @@ impl SannyGitApp {
             last_reset_strategy: Default::default(),
             remote_checkout: None,
             network_dialog: None,
-            pull_in_progress: false,
+            background_progress_only: false,
             stash_dialog: None,
             discard_dialog: None,
             ref_dialog: None,
@@ -1400,6 +1400,7 @@ impl SannyGitApp {
             snapshot: git::load(&root),
         }) {
             self.tag_dialog_open = false;
+            self.background_progress_only = true;
         } else if push {
             self.manager.cancel = None;
         }
@@ -1918,7 +1919,7 @@ impl SannyGitApp {
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.worker = None;
-                self.pull_in_progress = false;
+                self.background_progress_only = false;
                 self.generating_commit_message = false;
                 self.generation_cancel = None;
                 self.manager.cancel = None;
@@ -1956,7 +1957,7 @@ impl SannyGitApp {
             }
         };
         self.worker = None;
-        self.pull_in_progress = false;
+        self.background_progress_only = false;
         self.apply_worker_result(result);
     }
 

@@ -119,6 +119,10 @@ or mix Git logic with panel rendering.
   progress, errors, and action button clicks must not resize dialogs; reserve
   compact, stable space and keep overflowing text accessible (for example, in
   a tooltip). Do not stabilize dialog sizes by adding large empty areas.
+- After **Add Tag** or **Add Tag & Push** starts, close the tag form immediately
+  and run the operation in the background. Use the status bar for progress and
+  success. Never open a progress window, a second confirmation, or a success
+  dialog for either action.
 - Display all user-facing error messages in modal dialogs, including errors from
   background tasks, settings, previews, and repository operations. Do not show
   error details inline in panels, status bars, tooltips, or operation dialogs.

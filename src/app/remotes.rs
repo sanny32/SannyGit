@@ -249,7 +249,7 @@ impl SannyGitApp {
                 self.finish_hidden_remote();
             }
         } else if operation == Operation::Pull {
-            self.pull_in_progress = true;
+            self.background_progress_only = true;
             self.network_dialog = None;
         }
     }

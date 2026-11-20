@@ -1591,7 +1591,69 @@ fn pull_shows_progress_in_the_status_bar_without_a_progress_window() {
         std::thread::sleep(std::time::Duration::from_millis(5));
         app.poll_worker();
     }
-    assert!(!app.pull_in_progress);
+    assert!(!app.background_progress_only);
+}
+
+#[test]
+fn adding_tags_closes_the_form_and_shows_progress_in_the_status_bar() {
+    let repo = crate::test_support::TempRepo::new();
+    let remote = crate::test_support::TempRepo::new();
+    repo.git(&["commit", "--allow-empty", "-m", "Initial commit"]);
+    repo.git(&["remote", "add", "origin", remote.0.to_str().unwrap()]);
+
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
+            for push in [false, true] {
+                let mut app = SannyGitApp::with_theme(theme);
+                app.apply_snapshot(git::load(&repo.0).unwrap());
+                app.refs_current = true;
+                app.branch_head_exists = true;
+                app.tag_dialog_open = true;
+                let name = format!("release-{theme:?}-{}-{push}", size.x);
+                app.new_tag_name = name.clone();
+
+                app.create_tag(push);
+                assert!(app.busy());
+                assert!(!app.modal_dialog_open());
+                assert_eq!(app.manager.cancel.is_some(), push);
+                let progress = if push {
+                    "Creating and pushing tag…"
+                } else {
+                    "Creating tag…"
+                };
+
+                let ctx = egui::Context::default();
+                theme.apply(&ctx);
+                for frame in 0..4 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                            ..Default::default()
+                        },
+                        |ui| ui::show(ui, &mut app),
+                    );
+                    output.textures_delta.clear();
+                    if frame == 3 {
+                        assert!(!visible_text(&output.shapes, "Repository operation"));
+                        assert!(!visible_text(&output.shapes, "Cancel operation"));
+                        assert_eq!(visible_text_count(&output.shapes, progress), 1);
+                    }
+                }
+
+                let result = app
+                    .worker
+                    .as_ref()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .unwrap();
+                deliver(&mut app, result);
+                assert!(!app.background_progress_only);
+                assert!(!app.modal_dialog_open());
+                assert_eq!(repo.git(&["tag", "--list", &name]).trim(), name);
+                assert_eq!(!remote.git(&["tag", "--list", &name]).is_empty(), push);
+            }
+        }
+    }
 }
 
 #[test]
