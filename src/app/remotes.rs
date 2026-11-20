@@ -79,7 +79,8 @@ impl SannyGitApp {
             set_upstream: false,
             dont_show_again: false,
             pull: PullDialog {
-                update_tags: defaults.is_some_and(|defaults| defaults.update_tags),
+                update_tags: operation == Operation::Pull
+                    && defaults.is_none_or(|defaults| defaults.update_tags),
                 remember: defaults.is_some(),
                 ..Default::default()
             },
@@ -261,6 +262,51 @@ mod tests {
     use crate::theme::ThemeChoice;
 
     #[test]
+    fn pull_fetches_tags_and_refreshes_the_list_without_a_branch_update() {
+        let source = crate::test_support::TempRepo::new();
+        source.git(&["commit", "--allow-empty", "-m", "Initial commit"]);
+        let repo = crate::test_support::TempRepo::new();
+        repo.git(&["remote", "add", "origin", source.0.to_str().unwrap()]);
+        repo.git(&["pull", "--ff-only", "origin", "main"]);
+        source.git(&["tag", "release"]);
+
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories.push(crate::models::Repository {
+            name: "Test".into(),
+            path: repo.0.to_string_lossy().into_owned(),
+        });
+        app.apply_snapshot(crate::git::load(&repo.0).unwrap());
+        app.open_remote(Operation::Pull);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while app.busy() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            app.poll_worker();
+        }
+        assert!(app.network_dialog.as_ref().unwrap().pull.update_tags);
+        app.run_remote();
+        while app.busy() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            app.poll_worker();
+        }
+        assert_eq!(app.status, "Pull complete");
+        assert!(app.refs_pending);
+        app.load_history();
+        app.load_refs();
+        while app.refs_loading {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            app.poll_refs();
+        }
+        assert!(app.refs_current);
+        assert!(app
+            .refs
+            .iter()
+            .any(|tag| tag.full_name == "refs/tags/release"));
+    }
+
+    #[test]
     fn pull_defaults_survive_restart_and_restore_the_remote_without_starting_an_operation() {
         let repo = crate::test_support::TempRepo::new();
         repo.git(&["remote", "add", "origin", "https://example.test/repo"]);
@@ -277,13 +323,13 @@ mod tests {
             path.clone(),
             crate::repository::PullDefaults {
                 remote: "team".into(),
-                update_tags: true,
+                update_tags: false,
             },
         );
         let saved = serde_json::to_string(&app.manager.preferences).unwrap();
         app.manager.preferences = serde_json::from_str(&saved).unwrap();
         app.open_remote(Operation::Pull);
-        assert!(app.network_dialog.as_ref().unwrap().pull.update_tags);
+        assert!(!app.network_dialog.as_ref().unwrap().pull.update_tags);
         assert!(app.network_dialog.as_ref().unwrap().pull.remember);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while app.busy() {
