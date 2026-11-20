@@ -459,6 +459,43 @@ pub enum ResetMode {
     Discard,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ResetStrategy {
+    #[default]
+    Mixed,
+    Soft,
+    Hard,
+    Keep,
+    Merge,
+}
+
+impl ResetStrategy {
+    fn flag(self) -> &'static str {
+        match self {
+            Self::Mixed => "--mixed",
+            Self::Soft => "--soft",
+            Self::Hard => "--hard",
+            Self::Keep => "--keep",
+            Self::Merge => "--merge",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct AdvancedReset {
+    pub strategy: ResetStrategy,
+    pub fix_line_endings: bool,
+}
+
+fn reset_head(root: &Path) -> Result<(String, String), String> {
+    let head = git::text(git::run(root, &["rev-parse", "--verify", "HEAD^{commit}"])?)?;
+    let reference = git::text(git::run(
+        root,
+        &["rev-parse", "--symbolic-full-name", "HEAD"],
+    )?)?;
+    Ok((head.trim().to_owned(), reference.trim().to_owned()))
+}
+
 pub fn preview_reset(root: &Path, tag: &str) -> Result<ResetPreview, String> {
     git::require_no_operation(root)?;
     let refs = load(root)?;
@@ -480,9 +517,9 @@ pub fn preview_reset(root: &Path, tag: &str) -> Result<ResetPreview, String> {
             )
         })?,
     )?;
-    let head = git::text(git::run(root, &["rev-parse", "--verify", "HEAD^{commit}"])?)?;
-    let (head, target) = (head.trim(), target.trim());
-    if [head, target].iter().any(|oid| {
+    let (head, branch) = reset_head(root)?;
+    let target = target.trim();
+    if [head.as_str(), target].iter().any(|oid| {
         !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit())
     }) {
         return Err("Git returned an invalid commit object ID.".into());
@@ -492,12 +529,9 @@ pub fn preview_reset(root: &Path, tag: &str) -> Result<ResetPreview, String> {
         tag: tag.to_owned(),
         target: target.to_owned(),
         tag_oid: source.hash.clone(),
-        branch: snapshot.branch,
-        head: head.to_owned(),
-        has_tracked_changes: snapshot
-            .changes
-            .iter()
-            .any(|change| change.kind != crate::models::ChangeKind::Untracked),
+        branch,
+        head,
+        has_tracked_changes: reset_has_tracked_changes(&snapshot),
     })
 }
 
@@ -516,15 +550,30 @@ fn check_reset(root: &Path, expected: &ResetPreview) -> Result<ResetPreview, Str
     Ok(current)
 }
 
-pub fn reset_tag(root: &Path, expected: &ResetPreview, mode: ResetMode) -> Result<(), String> {
+fn reset_has_tracked_changes(snapshot: &git::Snapshot) -> bool {
+    snapshot
+        .changes
+        .iter()
+        .any(|change| change.kind != crate::models::ChangeKind::Untracked)
+}
+
+pub fn reset_tag(
+    root: &Path,
+    expected: &ResetPreview,
+    mode: ResetMode,
+    advanced: Option<AdvancedReset>,
+) -> Result<(), String> {
     let current = check_reset(root, expected)?;
-    if mode == ResetMode::Clean && current.has_tracked_changes {
+    let strategy = advanced.map_or(ResetStrategy::Hard, |options| options.strategy);
+    if strategy == ResetStrategy::Hard && mode == ResetMode::Clean && current.has_tracked_changes {
         return Err(
             "Tracked changes appeared before Reset. Reload details to review how to handle them."
                 .into(),
         );
     }
-    let stash_saved = mode == ResetMode::SaveStash && current.has_tracked_changes;
+    let stash_saved = strategy == ResetStrategy::Hard
+        && mode == ResetMode::SaveStash
+        && current.has_tracked_changes;
     if stash_saved {
         let prepared = crate::stash::preview_save(root, false)?;
         check_reset(root, expected)?;
@@ -537,23 +586,54 @@ pub fn reset_tag(root: &Path, expected: &ResetPreview, mode: ResetMode) -> Resul
                     .into(),
             );
         }
+        if matches!(strategy, ResetStrategy::Keep | ResetStrategy::Merge) {
+            // Refresh stat information for clean entries before Git checks for overwritten edits.
+            git::run(root, &["update-index", "-q", "--refresh"])?;
+        }
         git::run(
             root,
             &[
                 "reset",
-                "--hard",
+                strategy.flag(),
                 "--no-recurse-submodules",
                 &expected.target,
                 "--",
             ],
         )
         .map(|_| ())
+        .map_err(|error| match strategy {
+            ResetStrategy::Keep => format!(
+                "Keep reset did not complete. Git refuses to overwrite local changes in files it needs to update.\n{error}"
+            ),
+            ResetStrategy::Merge => format!(
+                "Merge reset did not complete. Git refuses to overwrite unstaged changes in files it needs to update.\n{error}"
+            ),
+            _ => error,
+        })
     })();
     if stash_saved {
         result.map_err(|error| format!("The stash was saved, but Reset did not complete.\n{error}"))
     } else {
         result
+    }?;
+    if strategy == ResetStrategy::Hard && advanced.is_some_and(|options| options.fix_line_endings) {
+        refresh_reset_line_endings(root, expected).map_err(|error| {
+            format!("Reset completed, but line endings could not be refreshed.\n{error}")
+        })?;
     }
+    Ok(())
+}
+
+fn refresh_reset_line_endings(root: &Path, expected: &ResetPreview) -> Result<(), String> {
+    git::require_no_operation(root)?;
+    let (head, branch) = reset_head(root)?;
+    if head != expected.target
+        || branch != expected.branch
+        || reset_has_tracked_changes(&git::load(root)?)
+    {
+        return Err("HEAD, the current branch or tracked files changed after Reset.".into());
+    }
+    git::refresh_checkout_line_endings(root, &expected.target)
 }
 
 #[cfg(test)]

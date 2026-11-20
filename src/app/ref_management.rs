@@ -57,6 +57,7 @@ pub enum Kind {
         source: String,
         prepared: Option<branches::ResetPreview>,
         choose_changes: bool,
+        advanced: Option<branches::AdvancedReset>,
     },
     Remotes(RemoteEditor),
 }
@@ -291,6 +292,20 @@ impl SannyGitApp {
     }
 
     pub fn open_tag_reset(&mut self, source: String) {
+        self.open_tag_reset_dialog(source, None);
+    }
+
+    pub fn open_advanced_tag_reset(&mut self, source: String) {
+        self.open_tag_reset_dialog(
+            source,
+            Some(branches::AdvancedReset {
+                strategy: self.last_reset_strategy,
+                fix_line_endings: false,
+            }),
+        );
+    }
+
+    fn open_tag_reset_dialog(&mut self, source: String, advanced: Option<branches::AdvancedReset>) {
         if !self.tag_reset_allowed()
             || !self
                 .refs
@@ -303,6 +318,7 @@ impl SannyGitApp {
             source,
             prepared: None,
             choose_changes: false,
+            advanced,
         });
     }
 
@@ -473,6 +489,7 @@ impl SannyGitApp {
         let Kind::Reset {
             prepared: Some(prepared),
             choose_changes,
+            advanced,
             ..
         } = &mut dialog.kind
         else {
@@ -483,12 +500,17 @@ impl SannyGitApp {
         {
             return;
         }
-        if mode == branches::ResetMode::Clean && prepared.has_tracked_changes {
+        if let Some(options) = advanced {
+            self.last_reset_strategy = options.strategy;
+        }
+        let hard = advanced.is_none_or(|options| options.strategy == branches::ResetStrategy::Hard);
+        if hard && mode == branches::ResetMode::Clean && prepared.has_tracked_changes {
             *choose_changes = true;
             return;
         }
         let root = PathBuf::from(&dialog.root);
         let prepared = prepared.clone();
+        let advanced = *advanced;
         dialog.running = true;
         dialog.error = None;
         self.state_current = false;
@@ -497,7 +519,7 @@ impl SannyGitApp {
         if !self.start_worker(move || WorkerResult::Operation {
             committed: false,
             success: "Reset complete",
-            outcome: branches::reset_tag(&root, &prepared, mode),
+            outcome: branches::reset_tag(&root, &prepared, mode, advanced),
             snapshot: git::load(&root),
         }) {
             self.state_current = true;
@@ -727,6 +749,42 @@ mod tests {
         app.refs_current = true;
         app.commit_message = "Keep commit draft".into();
         (repo, app)
+    }
+
+    #[test]
+    fn advanced_tag_reset_remembers_the_confirmed_strategy() {
+        let (repo, mut app) = opened();
+        repo.git(&["commit", "--allow-empty", "-m", "before reset"]);
+        repo.write("file", "dirty\n");
+        app.open_advanced_tag_reset("refs/tags/chosen".into());
+        wait(&mut app);
+        let Kind::Reset {
+            advanced: Some(options),
+            ..
+        } = &mut app.ref_dialog.as_mut().unwrap().kind
+        else {
+            panic!("Expected Reset Advanced");
+        };
+        assert_eq!(options.strategy, branches::ResetStrategy::Mixed);
+        options.strategy = branches::ResetStrategy::Soft;
+        app.confirm_tag_reset(branches::ResetMode::Clean);
+        assert!(app.busy());
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(app.ref_dialog.is_none());
+        assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"dirty\n");
+
+        app.refs_current = true;
+        app.open_advanced_tag_reset("refs/tags/chosen".into());
+        wait(&mut app);
+        let Kind::Reset {
+            advanced: Some(options),
+            ..
+        } = &app.ref_dialog.as_ref().unwrap().kind
+        else {
+            panic!("Expected Reset Advanced");
+        };
+        assert_eq!(options.strategy, branches::ResetStrategy::Soft);
     }
 
     #[test]

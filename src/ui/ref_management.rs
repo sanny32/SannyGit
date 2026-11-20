@@ -5,7 +5,7 @@ use crate::{
         ref_management::{Dialog, Kind, RemoteEditor},
         SannyGitApp,
     },
-    branches::ResetMode,
+    branches::{ResetMode, ResetStrategy},
     remote_config,
 };
 use eframe::egui::{self, Button, ComboBox, RichText};
@@ -21,6 +21,10 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         Kind::Delete { .. } => ("ref.delete", "Delete Local Branch", "Delete a local branch only after it is fully merged into the current HEAD. No force deletion; current and worktree branches are protected.", Icon::Branch, 580.0),
         Kind::Tag { .. } => ("ref.tag.push", "Push Selected Tag", "Push exactly one tag object to one reviewed push address. Other branches and tags are not sent. Existing remote tags are not replaced.", Icon::Tag, 580.0),
         Kind::AddTagRemote => ("ref.tag.add_remote", "Add a Remote?", "Configure a remote for this repository, then run Push again to send the tag.", Icon::Tag, 440.0),
+        Kind::Reset { advanced: Some(_), choose_changes: false, .. } => {
+            show_advanced_reset(ctx, app, dialog);
+            return;
+        }
         Kind::Reset { .. } => {
             show_tag_reset(ctx, app, dialog);
             return;
@@ -248,6 +252,7 @@ fn show_tag_reset(ctx: &egui::Context, app: &mut SannyGitApp, dialog: Dialog) {
         source,
         prepared,
         choose_changes,
+        ..
     } = &dialog.kind
     else {
         return;
@@ -297,7 +302,7 @@ fn show_tag_reset(ctx: &egui::Context, app: &mut SannyGitApp, dialog: Dialog) {
         });
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             dialog_style::button_row(ui, |ui| {
-                let step = ui.make_persistent_id("reset.choose_changes");
+                let step = egui::Id::unique("ref.tag.reset.choose_changes");
                 let entering_choices = ui.data_mut(|data| {
                     let was_choosing = data.get_temp::<bool>(step).unwrap_or_default();
                     data.insert_temp(step, *choose_changes);
@@ -349,6 +354,146 @@ fn show_tag_reset(ctx: &egui::Context, app: &mut SannyGitApp, dialog: Dialog) {
     }
     if let Some(mode) = mode {
         app.confirm_tag_reset(mode);
+    }
+}
+
+fn show_advanced_reset(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Dialog) {
+    let Kind::Reset {
+        source,
+        prepared,
+        advanced: Some(options),
+        ..
+    } = &mut dialog.kind
+    else {
+        return;
+    };
+    ctx.data_mut(|data| {
+        data.remove::<bool>(egui::Id::unique("ref.tag.reset.choose_changes"));
+    });
+    let palette = app.palette();
+    let busy = app.busy();
+    let enabled = !busy && app.state_current && prepared.is_some();
+    let name = source.strip_prefix("refs/tags/").unwrap_or(source);
+    let target = prepared.as_ref().map_or_else(
+        || name.to_owned(),
+        |preview| {
+            format!(
+                "{name} · {}",
+                preview.target.get(..8).unwrap_or(&preview.target)
+            )
+        },
+    );
+    let mut close = false;
+    let mut reload = false;
+    let mut submit = false;
+    dialog_style::modal(ctx, palette, "ref.tag.reset.advanced").show(ctx, |ui| {
+        ui.set_width(560.0);
+        dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        dialog_style::header_with_icon(
+            ui,
+            palette,
+            "Reset Advanced",
+            "Move HEAD to the tag’s commit. Choose what to update in the index and working tree.",
+            Icon::Warning,
+        );
+        dialog_style::section(ui, palette.panel, egui::Margin::symmetric(18, 8), |ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.spacing_mut().interact_size.y = 18.0;
+            ui.spacing_mut().button_padding.y = 1.0;
+            let target = format!("Target: {target}");
+            dialog_style::text_line(ui, RichText::new(&target).color(palette.text), 20.0)
+                .help_text(target);
+            ui.add_space(3.0);
+            ui.add_enabled_ui(!busy, |ui| {
+                for (strategy, label, description) in [
+                    (
+                        ResetStrategy::Mixed,
+                        "Mixed · Reset the index",
+                        "Keep working files. Replace staged changes with the target commit.",
+                    ),
+                    (
+                        ResetStrategy::Soft,
+                        "Soft · Keep the index and working tree",
+                        "Staged changes are shown relative to the new HEAD.",
+                    ),
+                    (
+                        ResetStrategy::Hard,
+                        "Hard · Reset the index and working tree",
+                        "Save tracked changes to a stash or discard them before resetting.",
+                    ),
+                    (
+                        ResetStrategy::Keep,
+                        "Keep · Preserve local changes",
+                        "Abort if updating a file would overwrite local changes.",
+                    ),
+                    (
+                        ResetStrategy::Merge,
+                        "Merge · Preserve unstaged changes",
+                        "Abort if a file that needs updating has conflicting unstaged changes.",
+                    ),
+                ] {
+                    ui.radio_value(&mut options.strategy, strategy, label);
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        dialog_style::text_line(
+                            ui,
+                            RichText::new(description).color(palette.muted),
+                            17.0,
+                        )
+                        .help_text(description);
+                    });
+                    if strategy == ResetStrategy::Hard {
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            let hard = options.strategy == ResetStrategy::Hard;
+                            ui.add_enabled(
+                                hard,
+                                egui::Checkbox::new(
+                                    &mut options.fix_line_endings,
+                                    "Refresh line endings using .gitattributes",
+                                ),
+                            );
+                        });
+                    }
+                    ui.add_space(5.0);
+                }
+            });
+            let notice = if dialog.running {
+                "Resetting HEAD…"
+            } else if prepared.is_none() && busy {
+                "Checking the tag and working tree…"
+            } else if options.strategy == ResetStrategy::Hard {
+                "Untracked or ignored files in the way may be overwritten or removed."
+            } else {
+                ""
+            };
+            dialog_style::text_line(ui, RichText::new(notice).color(palette.muted), 18.0)
+                .help_text(notice);
+        });
+        dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
+            dialog_style::button_row(ui, |ui| {
+                close = ui
+                    .add_enabled(!busy, dialog_style::button("Cancel"))
+                    .dialog_cancel();
+                if !busy && prepared.is_none() && dialog.error.is_some() {
+                    reload = ui.add(dialog_style::button("Reload Details")).clicked();
+                } else {
+                    submit = ui
+                        .add_enabled(enabled, dialog_style::primary("Reset", palette))
+                        .dialog_accept();
+                }
+            });
+        });
+    });
+    if !close {
+        app.ref_dialog = Some(dialog);
+    }
+    if reload {
+        app.reload_ref_dialog();
+    }
+    if submit {
+        app.confirm_tag_reset(ResetMode::Clean);
     }
 }
 
@@ -507,6 +652,64 @@ mod tests {
         mock_data::{self, RefDialogFixture},
         theme::{install_fonts, InterfaceStyle, ThemeChoice},
     };
+
+    #[test]
+    fn advanced_reset_stays_compact_when_switching_modes() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                let ctx = egui::Context::default();
+                install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                let mut previous = None;
+                for strategy in [ResetStrategy::Mixed, ResetStrategy::Hard] {
+                    app.ref_dialog = Some(Dialog {
+                        root: "Fixture".into(),
+                        kind: Kind::Reset {
+                            source: "refs/tags/release".into(),
+                            prepared: None,
+                            choose_changes: false,
+                            advanced: Some(crate::branches::AdvancedReset {
+                                strategy,
+                                fix_line_endings: false,
+                            }),
+                        },
+                        confirmed: false,
+                        running: false,
+                        reload_pending: false,
+                        error: None,
+                        status: String::new(),
+                    });
+                    for _ in 0..3 {
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(screen),
+                                ..Default::default()
+                            },
+                            |ui| show(ui.ctx(), &mut app),
+                        );
+                        output.textures_delta.clear();
+                    }
+                    let rect = ctx
+                        .memory(|memory| {
+                            memory.area_rect(egui::Id::unique("ref.tag.reset.advanced"))
+                        })
+                        .unwrap();
+                    assert!(screen.contains_rect(rect));
+                    assert!(
+                        rect.height() < 470.0,
+                        "Reset Advanced is too tall: {rect:?}"
+                    );
+                    if let Some(previous) = previous {
+                        assert_eq!(previous, rect);
+                    }
+                    previous = Some(rect);
+                }
+            }
+        }
+    }
 
     #[test]
     fn ref_dialogs_keep_geometry_across_states_and_never_render_credentials() {

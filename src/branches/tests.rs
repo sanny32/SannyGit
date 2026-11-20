@@ -10,6 +10,115 @@ fn committed_repo() -> TempRepo {
 }
 
 #[test]
+fn advanced_soft_and_mixed_keep_working_files_and_handle_the_index_differently() {
+    for (strategy, expected_index) in [
+        (ResetStrategy::Soft, "staged"),
+        (ResetStrategy::Mixed, "base"),
+    ] {
+        let repo = committed_repo();
+        repo.git(&["tag", "v1"]);
+        repo.write("file", "new commit\n");
+        repo.git(&["add", "file"]);
+        repo.git(&["commit", "-m", "before reset"]);
+        repo.write("file", "staged\n");
+        repo.git(&["add", "file"]);
+        repo.write("file", "unstaged\n");
+        let preview = preview_reset(&repo.0, "refs/tags/v1").unwrap();
+        assert!(preview.has_tracked_changes);
+
+        reset_tag(
+            &repo.0,
+            &preview,
+            ResetMode::Clean,
+            Some(AdvancedReset {
+                strategy,
+                fix_line_endings: false,
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), preview.target);
+        assert_eq!(repo.git(&["show", ":file"]).trim(), expected_index);
+        assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"unstaged\n");
+        assert!(repo.git(&["stash", "list"]).is_empty());
+    }
+}
+
+#[test]
+fn advanced_keep_and_merge_refuse_conflicting_files_and_preserve_unrelated_edits() {
+    for strategy in [ResetStrategy::Keep, ResetStrategy::Merge] {
+        let repo = committed_repo();
+        repo.write("keep", "base\n");
+        repo.git(&["add", "keep"]);
+        repo.git(&["commit", "-m", "add unrelated file"]);
+        repo.git(&["tag", "v1"]);
+        repo.write("file", "new commit\n");
+        repo.git(&["add", "file"]);
+        repo.git(&["commit", "-m", "before reset"]);
+        let before = repo.git(&["rev-parse", "HEAD"]);
+        repo.write("file", "conflict\n");
+        let preview = preview_reset(&repo.0, "refs/tags/v1").unwrap();
+        let options = Some(AdvancedReset {
+            strategy,
+            fix_line_endings: false,
+        });
+
+        assert!(reset_tag(&repo.0, &preview, ResetMode::Clean, options).is_err());
+        assert_eq!(repo.git(&["rev-parse", "HEAD"]), before);
+        assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"conflict\n");
+
+        repo.write("file", "new commit\n");
+        repo.write("keep", "unrelated edit\n");
+        reset_tag(&repo.0, &preview, ResetMode::Clean, options).unwrap();
+        assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), preview.target);
+        assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"base\n");
+        assert_eq!(
+            std::fs::read(repo.0.join("keep")).unwrap(),
+            b"unrelated edit\n"
+        );
+        assert!(repo.git(&["stash", "list"]).is_empty());
+    }
+}
+
+#[test]
+fn advanced_hard_refreshes_line_endings_even_for_an_unchanged_file() {
+    let repo = committed_repo();
+    repo.write(".gitattributes", "eol.txt text eol=crlf\n");
+    repo.write("eol.txt", "first\nsecond\n");
+    repo.git(&["add", ".gitattributes", "eol.txt"]);
+    repo.git(&["commit", "-m", "line ending rules"]);
+    repo.git(&["tag", "v1"]);
+    repo.git(&["commit", "--allow-empty", "-m", "same tree"]);
+    repo.git(&["switch", "--detach"]);
+    repo.write("eol.txt", "first\nsecond\n");
+    repo.git(&["update-index", "-q", "--refresh"]);
+    repo.write("untracked", "keep\n");
+    let preview = preview_reset(&repo.0, "refs/tags/v1").unwrap();
+    assert!(!preview.has_tracked_changes);
+    reset_tag(
+        &repo.0,
+        &preview,
+        ResetMode::Clean,
+        Some(AdvancedReset {
+            strategy: ResetStrategy::Hard,
+            fix_line_endings: true,
+        }),
+    )
+    .unwrap();
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), preview.target);
+    assert_eq!(
+        repo.git(&["rev-parse", "--symbolic-full-name", "HEAD"])
+            .trim(),
+        "HEAD"
+    );
+    assert_eq!(
+        std::fs::read(repo.0.join("eol.txt")).unwrap(),
+        b"first\r\nsecond\r\n"
+    );
+    assert_eq!(std::fs::read(repo.0.join("untracked")).unwrap(), b"keep\n");
+}
+
+#[test]
 fn reset_handles_tracked_changes_and_preserves_unrelated_untracked_files() {
     for mode in [ResetMode::SaveStash, ResetMode::Discard] {
         let repo = committed_repo();
@@ -32,7 +141,7 @@ fn reset_handles_tracked_changes_and_preserves_unrelated_untracked_files() {
         assert!(preview.has_tracked_changes);
         assert_eq!(preview.target, tagged.trim());
         assert_eq!(repo.git(&["rev-parse", "HEAD"]), before);
-        reset_tag(&repo.0, &preview, mode).unwrap();
+        reset_tag(&repo.0, &preview, mode, None).unwrap();
 
         assert_eq!(repo.git(&["rev-parse", "HEAD"]), tagged);
         assert_eq!(
@@ -69,25 +178,25 @@ fn reset_rejects_stale_tag_branch_and_new_changes_before_moving_head() {
     let preview = preview_reset(&repo.0, "refs/tags/v1").unwrap();
     assert!(!preview.has_tracked_changes);
     repo.git(&["switch", "-c", "other"]);
-    assert!(reset_tag(&repo.0, &preview, ResetMode::Clean)
+    assert!(reset_tag(&repo.0, &preview, ResetMode::Clean, None)
         .unwrap_err()
         .contains("changed"));
     assert_eq!(repo.git(&["rev-parse", "HEAD"]), before);
     repo.git(&["switch", "main"]);
     repo.git(&["tag", "-f", "v1"]);
-    assert!(reset_tag(&repo.0, &preview, ResetMode::Clean)
+    assert!(reset_tag(&repo.0, &preview, ResetMode::Clean, None)
         .unwrap_err()
         .contains("changed"));
     repo.git(&["tag", "-f", "v1", "HEAD~"]);
 
     repo.write("file", "new work\n");
-    assert!(reset_tag(&repo.0, &preview, ResetMode::Clean)
+    assert!(reset_tag(&repo.0, &preview, ResetMode::Clean, None)
         .unwrap_err()
         .contains("Tracked changes appeared"));
     assert_eq!(repo.git(&["rev-parse", "HEAD"]), before);
     assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"new work\n");
     repo.write("file", "base\n");
-    reset_tag(&repo.0, &preview, ResetMode::Clean).unwrap();
+    reset_tag(&repo.0, &preview, ResetMode::Clean, None).unwrap();
     assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), preview.target);
 }
 

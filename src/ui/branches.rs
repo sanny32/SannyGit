@@ -19,6 +19,7 @@ enum BranchRequest {
     MergeTag(String),
     LogTag(String),
     ResetTag(String),
+    ResetTagAdvanced(String),
     CopyTagName(String),
     Unavailable,
 }
@@ -144,6 +145,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             BranchRequest::ResetTag(target) => {
                 app.selected_branch = target.clone();
                 app.open_tag_reset(target);
+            }
+            BranchRequest::ResetTagAdvanced(target) => {
+                app.selected_branch = target.clone();
+                app.open_advanced_tag_reset(target);
             }
             BranchRequest::Rename(target) => {
                 app.selected_branch = target;
@@ -376,7 +381,14 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
         .help(
             "Reset requires an existing HEAD, fresh repository data and no operation in progress",
         ),
-        unavailable("Reset Advanced…"),
+        E::item(
+            "Reset Advanced…",
+            requested.tag_reset_allowed,
+            BranchRequest::ResetTagAdvanced(tag.full_name.clone()),
+        )
+        .help(
+            "Reset requires an existing HEAD, fresh repository data and no operation in progress",
+        ),
         unavailable("Delete…"),
         E::Separator,
         E::item("Copy", true, BranchRequest::CopyTagName(tag.name.clone())),

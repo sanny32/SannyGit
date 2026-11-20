@@ -170,6 +170,72 @@ pub(crate) fn run_with_input(
         .map_err(|error| error.to_string())
 }
 
+pub(crate) fn refresh_checkout_line_endings(root: &Path, target: &str) -> Result<(), String> {
+    let tracked = run(root, &["ls-files", "--stage", "-t", "-z"])?;
+    let mut paths = Vec::new();
+    for entry in tracked
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+    {
+        let tab = entry
+            .iter()
+            .position(|byte| *byte == b'\t')
+            .ok_or("Invalid tracked file metadata while refreshing line endings.")?;
+        let (metadata, path) = entry.split_at(tab);
+        // H marks ordinary cached entries. Sparse entries, symlinks and submodules
+        // do not need line-ending conversion in this worktree.
+        if (metadata.starts_with(b"H 100644 ") || metadata.starts_with(b"H 100755 "))
+            && metadata.ends_with(b" 0")
+        {
+            paths.extend_from_slice(&path[1..]);
+            paths.push(0);
+        }
+    }
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("Cannot create a temporary checkout index: {error}"))?
+        .as_nanos();
+    let directory =
+        std::env::temp_dir().join(format!("sannygit-reset-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&directory)
+        .map_err(|error| format!("Cannot create a temporary checkout index: {error}"))?;
+    let index = directory.join("index");
+    let result = (|| {
+        // A fresh index has no cached file stat information for checkout-index to trust.
+        execute(
+            root,
+            &[
+                "-c",
+                "core.splitIndex=false",
+                "read-tree",
+                "--reset",
+                "-i",
+                target,
+            ],
+            None,
+            TIMEOUT,
+            None,
+            CommandMode::AlternateIndex(&index),
+        )?;
+        execute(
+            root,
+            &["checkout-index", "--force", "--stdin", "-z"],
+            Some(&paths),
+            TIMEOUT,
+            None,
+            CommandMode::AlternateIndex(&index),
+        )?;
+        Ok::<(), CommandError>(())
+    })();
+    let _ = std::fs::remove_file(&index);
+    let _ = std::fs::remove_file(directory.join("index.lock"));
+    let _ = std::fs::remove_dir(&directory);
+    result.map_err(|error| error.to_string())
+}
+
 /// Read-only commands with bounded stdin and the same cancellation/timeout handling.
 pub(crate) fn run_with_input_controlled(
     path: &Path,
@@ -206,11 +272,12 @@ pub(crate) fn run_stash(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         .map_err(|error| error.to_string())
 }
 
-enum CommandMode {
+enum CommandMode<'a> {
     Normal,
     Diagnostic,
     SyncPush,
     Stash,
+    AlternateIndex(&'a Path),
 }
 
 fn execute(
@@ -219,7 +286,7 @@ fn execute(
     input: Option<&[u8]>,
     timeout: Duration,
     cancel: Option<&AtomicBool>,
-    mode: CommandMode,
+    mode: CommandMode<'_>,
 ) -> Result<CommandOutput, CommandError> {
     let operation = if matches!(mode, CommandMode::Stash) {
         "stash"
@@ -254,7 +321,7 @@ fn execute_command(
     input: Option<&[u8]>,
     timeout: Duration,
     cancel: Option<&AtomicBool>,
-    mode: CommandMode,
+    mode: CommandMode<'_>,
     operation: &'static str,
 ) -> Result<CommandOutput, CommandError> {
     let fail = |kind, message: String| CommandError::new(operation, kind, message);
@@ -286,6 +353,9 @@ fn execute_command(
     if matches!(mode, CommandMode::SyncPush) {
         // Porcelain rejection summaries must be stable across Git locales.
         command.env("LC_ALL", "C");
+    }
+    if let CommandMode::AlternateIndex(index) = mode {
+        command.env("GIT_INDEX_FILE", index);
     }
     #[cfg(unix)]
     {

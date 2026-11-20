@@ -277,6 +277,7 @@ pub struct SannyGitApp {
     pub branch_dialog_open: bool,
     pub rename_branch_dialog: Option<RenameBranchDialog>,
     pub tag_dialog_open: bool,
+    last_reset_strategy: crate::branches::ResetStrategy,
     pub remote_checkout: Option<RemoteCheckoutDialog>,
     pub network_dialog: Option<remotes::RemoteDialog>,
     pub pull_in_progress: bool,
@@ -372,6 +373,10 @@ impl SannyGitApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.skip_push_confirmation"))
             .unwrap_or(false);
+        app.last_reset_strategy = creation_context
+            .storage
+            .and_then(|storage| eframe::get_value(storage, "sannygit.reset_strategy"))
+            .unwrap_or_default();
         app.tracking.auto_fetch = creation_context
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.auto_fetch"))
@@ -528,6 +533,7 @@ impl SannyGitApp {
             branch_dialog_open: false,
             rename_branch_dialog: None,
             tag_dialog_open: false,
+            last_reset_strategy: Default::default(),
             remote_checkout: None,
             network_dialog: None,
             pull_in_progress: false,
@@ -2530,6 +2536,11 @@ impl eframe::App for SannyGitApp {
             &self.skip_push_confirmation,
         );
         eframe::set_value(storage, "sannygit.auto_fetch", &self.tracking.auto_fetch);
+        eframe::set_value(
+            storage,
+            "sannygit.reset_strategy",
+            &self.last_reset_strategy,
+        );
         eframe::set_value(storage, "sannygit.llm", &self.llm_config);
         eframe::set_value(
             storage,
