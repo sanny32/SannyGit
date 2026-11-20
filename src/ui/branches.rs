@@ -30,8 +30,7 @@ struct BranchRequests {
     action: Option<BranchRequest>,
     rename_allowed: bool,
     tag_add_allowed: bool,
-    tag_push_allowed: bool,
-    tag_checkout_allowed: bool,
+    tag_actions_allowed: bool,
     tag_merge_allowed: bool,
     tag_log_allowed: bool,
     tag_reset_allowed: bool,
@@ -79,12 +78,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         palette,
     );
     let refs_current = !app.busy() && app.state_current && app.refs_current;
-    let tag_push_allowed = refs_current && app.repositories.get(app.selected_repository).is_some();
+    let tag_actions_allowed =
+        refs_current && app.repositories.get(app.selected_repository).is_some();
     let mut requested = BranchRequests {
         rename_allowed: refs_current,
         tag_add_allowed: !app.busy(),
-        tag_push_allowed,
-        tag_checkout_allowed: tag_push_allowed && app.changes.is_empty(),
+        tag_actions_allowed,
         tag_merge_allowed: app.merge_allowed(),
         tag_log_allowed: !app.busy() && app.repositories.get(app.selected_repository).is_some(),
         tag_reset_allowed: app.tag_reset_allowed(),
@@ -344,10 +343,10 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
     vec![
         E::item(
             "Check Out…",
-            requested.tag_checkout_allowed,
+            requested.tag_actions_allowed,
             BranchRequest::Switch(tag.full_name.clone()),
         )
-        .help("Refresh the repository and ensure the working tree is clean"),
+        .help("Refresh the repository and tags before continuing"),
         E::Separator,
         E::item(
             "Merge…",
@@ -360,13 +359,13 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
         E::Separator,
         E::item(
             "Push",
-            requested.tag_push_allowed,
+            requested.tag_actions_allowed,
             BranchRequest::PushTag(tag.full_name.clone()),
         )
         .help("Refresh the repository and wait for the current operation"),
         E::item(
             "Push To…",
-            requested.tag_push_allowed,
+            requested.tag_actions_allowed,
             BranchRequest::PushTagTo(tag.full_name.clone()),
         )
         .help("Refresh the repository and wait for the current operation"),
@@ -396,7 +395,7 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
         ),
         E::item(
             "Delete…",
-            requested.tag_push_allowed,
+            requested.tag_actions_allowed,
             BranchRequest::DeleteTag(tag.full_name.clone()),
         )
         .help("Refresh the repository and wait for the current operation"),

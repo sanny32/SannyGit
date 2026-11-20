@@ -110,14 +110,6 @@ pub fn name_hint(name: &str) -> Option<&'static str> {
     }
 }
 
-fn require_clean(root: &Path) -> Result<(), String> {
-    git::require_no_operation(root)?;
-    if !git::load(root)?.changes.is_empty() {
-        return Err("Commit or move aside staged, unstaged and untracked changes before switching branches.".into());
-    }
-    Ok(())
-}
-
 pub fn tag_hint(name: &str, message: &str) -> Option<&'static str> {
     if name.is_empty() {
         Some("Enter a tag name")
@@ -201,7 +193,7 @@ pub fn switch(root: &Path, full_name: &str) -> Result<(), String> {
             return Err(reason.into());
         }
     }
-    require_clean(root)?;
+    git::require_no_operation(root)?;
     if target.kind != RefKind::Local {
         // Resolve the exact ref to a commit, including annotated tags. Never guess
         // a local branch or create tracking branches as a side effect.
@@ -293,7 +285,7 @@ pub fn checkout_remote(root: &Path, remote: &str, choice: &RemoteChoice) -> Resu
             {
                 return Err("A local branch with this name already exists.".into());
             }
-            require_clean(root)?;
+            git::require_no_operation(root)?;
             git::run(
                 root,
                 &[
@@ -336,7 +328,7 @@ pub fn create(root: &Path, name: &str, switch_to: bool) -> Result<(), String> {
         return Err("A local branch with this name already exists.".into());
     }
     if switch_to {
-        require_clean(root)?;
+        git::require_no_operation(root)?;
         git::run(
             root,
             &[

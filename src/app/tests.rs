@@ -1058,7 +1058,7 @@ fn tag_creation_requires_fresh_state_and_keeps_draft_on_failure() {
 }
 
 #[test]
-fn branch_actions_require_fresh_refs_and_clean_switches() {
+fn branch_actions_require_fresh_refs_and_allow_local_changes() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
@@ -1072,13 +1072,9 @@ fn branch_actions_require_fresh_refs_and_clean_switches() {
     assert!(app.switch_branch_blocker().is_none());
     assert!(app.create_branch_blocker().is_none());
     app.changes = crate::mock_data::changes();
-    assert!(app.switch_branch_blocker().is_some());
-    assert!(app.create_branch_blocker().is_some());
-    app.switch_branch();
-    app.create_branch();
-    assert!(!app.busy());
-    app.switch_to_new_branch = false;
+    assert!(app.switch_branch_blocker().is_none());
     assert!(app.create_branch_blocker().is_none());
+    assert!(app.switch_to_new_branch);
     app.branch_head_exists = false;
     assert!(app
         .create_branch_blocker()

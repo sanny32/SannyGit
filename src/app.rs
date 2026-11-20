@@ -1279,9 +1279,6 @@ impl SannyGitApp {
                 return Some(reason);
             }
         }
-        if !self.changes.is_empty() {
-            return Some("Commit or move aside local changes before switching branches");
-        }
         None
     }
 
@@ -1423,9 +1420,6 @@ impl SannyGitApp {
         {
             return Some("A local branch with this name already exists");
         }
-        if self.switch_to_new_branch && !self.changes.is_empty() {
-            return Some("Commit or move aside changes, or disable switching to the new branch");
-        }
         None
     }
 
@@ -1489,10 +1483,6 @@ impl SannyGitApp {
     ) -> bool {
         if let Some(reason) = self.branch_base_blocker() {
             self.error = Some(reason.into());
-            return false;
-        }
-        if !self.changes.is_empty() {
-            self.error = Some("Commit or move aside local changes before checking out.".into());
             return false;
         }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);

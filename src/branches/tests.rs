@@ -509,37 +509,54 @@ fn creates_branches_with_and_without_switching_and_handles_detached_head() {
 }
 
 #[test]
-fn refuses_dirty_switches_and_preserves_index_and_worktree() {
+fn carries_staged_unstaged_and_untracked_changes_across_branch_switches() {
     let repo = committed_repo();
-    create(&repo.0, "other", false).unwrap();
-    for staged in [false, true] {
-        repo.write("file", "unsaved\n");
-        if staged {
-            repo.git(&["add", "file"]);
-        }
-        let index = std::fs::read(repo.0.join(".git/index")).unwrap();
-        assert!(switch(&repo.0, "refs/heads/other").is_err());
-        assert_eq!(git::load(&repo.0).unwrap().branch, "main");
-        assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
-        assert_eq!(
-            std::fs::read_to_string(repo.0.join("file")).unwrap(),
-            "unsaved\n"
-        );
-        repo.git(&["restore", "--staged", "--worktree", "--", "file"]);
-    }
+    create(&repo.0, "other", true).unwrap();
+    repo.write("target-only", "from other\n");
+    repo.git(&["add", "target-only"]);
+    repo.git(&["commit", "-m", "Add target file"]);
+    switch(&repo.0, "refs/heads/main").unwrap();
+
+    repo.write("file", "staged\n");
+    repo.git(&["add", "file"]);
+    repo.write("file", "unstaged\n");
     repo.write("untracked", "keep\n");
+    let status = repo.git(&["status", "--porcelain"]);
+    let staged = repo.git(&["show", ":file"]);
+
+    switch(&repo.0, "refs/heads/other").unwrap();
+    assert_eq!(git::load(&repo.0).unwrap().branch, "other");
+    assert_eq!(
+        std::fs::read_to_string(repo.0.join("target-only")).unwrap(),
+        "from other\n"
+    );
+    create(&repo.0, "new", true).unwrap();
+    assert_eq!(git::load(&repo.0).unwrap().branch, "new");
+    assert_eq!(repo.git(&["status", "--porcelain"]), status);
+    assert_eq!(repo.git(&["show", ":file"]), staged);
+    for (path, contents) in [("file", "unstaged\n"), ("untracked", "keep\n")] {
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join(path)).unwrap(),
+            contents
+        );
+    }
+}
+
+#[test]
+fn refuses_switch_that_would_overwrite_untracked_file() {
+    let repo = committed_repo();
+    create(&repo.0, "other", true).unwrap();
+    repo.write("collision", "tracked\n");
+    repo.git(&["add", "collision"]);
+    repo.git(&["commit", "-m", "Track collision"]);
+    switch(&repo.0, "refs/heads/main").unwrap();
+
+    repo.write("collision", "untracked\n");
     assert!(switch(&repo.0, "refs/heads/other").is_err());
-    assert!(create(&repo.0, "must-not-exist", true).is_err());
-    assert!(!load(&repo.0)
-        .unwrap()
-        .refs
-        .iter()
-        .any(|r| r.name == "must-not-exist"));
-    create(&repo.0, "without-switch", false).unwrap();
     assert_eq!(git::load(&repo.0).unwrap().branch, "main");
     assert_eq!(
-        std::fs::read_to_string(repo.0.join("untracked")).unwrap(),
-        "keep\n"
+        std::fs::read_to_string(repo.0.join("collision")).unwrap(),
+        "untracked\n"
     );
 }
 
@@ -615,12 +632,15 @@ fn switches_tags_and_remote_refs_to_detached_commits_without_creating_branches()
             .count(),
         1
     );
+    repo.write("file", "staged edits\n");
+    repo.git(&["add", "file"]);
     repo.write("file", "local edits\n");
     assert!(switch(&repo.0, "refs/tags/release").is_err());
     assert_eq!(
         std::fs::read_to_string(repo.0.join("file")).unwrap(),
         "local edits\n"
     );
+    assert_eq!(repo.git(&["show", ":file"]), "staged edits\n");
     assert_eq!(git::load(&repo.0).unwrap().branch, "main");
 }
 
@@ -660,8 +680,8 @@ fn remote_checkout_creates_tracking_branch_at_remote_commit_and_preserves_existi
     checkout_remote(&repo.0, remote, &RemoteChoice::Detached).unwrap();
     assert!(git::run(&repo.0, &["symbolic-ref", "-q", "HEAD"]).is_err());
     repo.write("file", "local\n");
-    assert!(checkout_remote(&repo.0, remote, &RemoteChoice::Create("safe".into())).is_err());
-    assert!(!load(&repo.0).unwrap().refs.iter().any(|r| r.name == "safe"));
+    checkout_remote(&repo.0, remote, &RemoteChoice::Create("safe".into())).unwrap();
+    assert_eq!(git::load(&repo.0).unwrap().branch, "safe");
     assert_eq!(
         std::fs::read_to_string(repo.0.join("file")).unwrap(),
         "local\n"
