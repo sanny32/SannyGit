@@ -15,12 +15,16 @@ enum BranchRequest {
     Rename(String),
     Delete(String),
     PushTag(String),
+    CopyTagName(String),
+    Unavailable,
 }
 
 #[derive(Default)]
 struct BranchRequests {
     action: Option<BranchRequest>,
     rename_allowed: bool,
+    tag_push_allowed: bool,
+    tag_checkout_allowed: bool,
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -64,8 +68,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         header.response.rect.expand2(Vec2::new(8.0, 0.0)),
         palette,
     );
+    let refs_current = !app.busy() && app.state_current && app.refs_current;
+    let tag_push_allowed = refs_current && app.repositories.get(app.selected_repository).is_some();
     let mut requested = BranchRequests {
-        rename_allowed: !app.busy() && app.state_current && app.refs_current,
+        rename_allowed: refs_current,
+        tag_push_allowed,
+        tag_checkout_allowed: tag_push_allowed && app.changes.is_empty(),
         ..Default::default()
     };
     let mut add_tag_requested = false;
@@ -112,6 +120,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 app.selected_branch = target;
                 app.open_rename_branch();
             }
+            BranchRequest::CopyTagName(name) => ui.ctx().copy_text(name),
+            BranchRequest::Unavailable => {}
         }
     }
     if add_tag_requested {
@@ -226,6 +236,10 @@ fn branch_group(
                         RefKind::Tag => "\nDouble-click to check out a detached HEAD",
                     }
                 ));
+                if response.clicked() || response.secondary_clicked() {
+                    *selected_group = None;
+                    *selected = branch.full_name.clone();
+                }
                 response.widget_info(|| {
                     eframe::egui::WidgetInfo::selected(
                         eframe::egui::Role::Button,
@@ -234,6 +248,12 @@ fn branch_group(
                         &branch.name,
                     )
                 });
+                if response.double_clicked() {
+                    requested.action = Some(BranchRequest::Switch(branch.full_name.clone()));
+                }
+                if kind == RefKind::Remote {
+                    return;
+                }
                 if let Some(action) = popup_menu::context(&response, palette, || {
                     use popup_menu::Entry as E;
                     match kind {
@@ -249,22 +269,11 @@ fn branch_group(
                                 BranchRequest::Delete(branch.full_name.clone()),
                             ).help("Select a non-current local branch after refreshing; worktree and merge safety are checked before deletion"),
                         ],
-                        RefKind::Tag => vec![E::item(
-                            "Push Tag…",
-                            requested.rename_allowed,
-                            BranchRequest::PushTag(branch.full_name.clone()),
-                        ).help("Refresh branches and wait for the current operation")],
+                        RefKind::Tag => tag_menu(branch, requested),
                         RefKind::Remote => Vec::new(),
                     }
                 }) {
                     requested.action = Some(action);
-                }
-                if response.clicked() {
-                    *selected_group = None;
-                    *selected = branch.full_name.clone();
-                }
-                if response.double_clicked() {
-                    requested.action = Some(BranchRequest::Switch(branch.full_name.clone()));
                 }
             });
         }
@@ -281,6 +290,45 @@ fn branch_group(
         .is_some();
     }
     add_tag_requested
+}
+
+fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entry<BranchRequest>> {
+    use popup_menu::Entry as E;
+
+    let unavailable = |label| {
+        E::item(label, false, BranchRequest::Unavailable)
+            .help("This tag action is not available yet")
+    };
+    vec![
+        E::item(
+            "Check Out…",
+            requested.tag_checkout_allowed,
+            BranchRequest::Switch(tag.full_name.clone()),
+        )
+        .help("Refresh the repository and ensure the working tree is clean"),
+        E::Separator,
+        unavailable("Merge…"),
+        E::Separator,
+        unavailable("Push"),
+        E::item(
+            "Push To…",
+            requested.tag_push_allowed,
+            BranchRequest::PushTag(tag.full_name.clone()),
+        )
+        .help("Refresh the repository and wait for the current operation"),
+        E::Separator,
+        unavailable("Log"),
+        E::Separator,
+        unavailable("Reset…"),
+        unavailable("Reset Advanced…"),
+        unavailable("Delete…"),
+        E::Separator,
+        E::item("Copy", true, BranchRequest::CopyTagName(tag.name.clone())),
+        unavailable("Copy Message"),
+        E::Separator,
+        unavailable("Format Patch"),
+        unavailable("Fast-Forward Merge"),
+    ]
 }
 
 fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -330,7 +378,8 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.label("Annotated Tag Message:");
                 let message = ui.add_sized(
                     [ui.available_width(), 120.0],
-                    TextEdit::multiline(&mut app.new_tag_message),
+                    TextEdit::multiline(&mut app.new_tag_message)
+                        .margin(eframe::egui::Margin::symmetric(6, 4)),
                 );
                 super::controls::dialog_style::preserve_multiline_enter(&message);
                 });
@@ -954,6 +1003,94 @@ mod tests {
                 requested.action,
                 Some(BranchRequest::Switch("refs/heads/feature".into()))
             );
+        }
+    }
+
+    #[test]
+    fn secondary_click_selects_ref_before_dispatching_a_menu_action() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            for kind in [RefKind::Local, RefKind::Remote, RefKind::Tag] {
+                let ctx = Context::default();
+                theme.apply(&ctx);
+                let prefix = match kind {
+                    RefKind::Local => "refs/heads",
+                    RefKind::Remote => "refs/remotes/origin",
+                    RefKind::Tag => "refs/tags",
+                };
+                let reference = BranchRef {
+                    name: "target".into(),
+                    full_name: format!("{prefix}/target"),
+                    hash: "a".repeat(40),
+                    upstream: None,
+                    current: false,
+                    kind,
+                };
+                let refs = [reference];
+                let mut selected = String::new();
+                let mut selected_group = Some(RefKind::Local);
+                let mut requested = BranchRequests::default();
+                let mut header = Pos2::ZERO;
+                let mut row = Pos2::ZERO;
+                for frame in 0..7 {
+                    let pointer = if frame < 4 { header } else { row };
+                    let mut events = vec![Event::PointerMoved(pointer)];
+                    let button = match frame {
+                        1 | 2 if kind != RefKind::Local => Some(PointerButton::Primary),
+                        4 | 5 => Some(PointerButton::Secondary),
+                        _ => None,
+                    };
+                    if let Some(button) = button {
+                        events.push(Event::PointerButton {
+                            pos: pointer,
+                            button,
+                            pressed: frame == 1 || frame == 4,
+                            modifiers: Modifiers::NONE,
+                        });
+                    }
+                    let mut output = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(
+                                Pos2::ZERO,
+                                Vec2::new(1100.0, 700.0),
+                            )),
+                            time: Some(frame as f64 * 0.25),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            header = ui.next_widget_position() + Vec2::new(70.0, 11.0);
+                            row = header + Vec2::new(0.0, 23.0);
+                            branch_group(
+                                ui,
+                                &refs,
+                                &mut selected,
+                                &mut selected_group,
+                                kind,
+                                theme.palette(),
+                                &mut requested,
+                            );
+                        },
+                    );
+                    output.textures_delta.clear();
+                    if frame == 6 && kind == RefKind::Tag {
+                        for item in ["Check Out…", "Push To…", "Copy", "Fast-Forward Merge"] {
+                            assert!(
+                                output.shapes.iter().any(|shape| matches!(
+                                    &shape.shape,
+                                    eframe::egui::Shape::Text(text) if text.galley.text() == item
+                                )),
+                                "Missing tag menu item {item}"
+                            );
+                        }
+                    }
+                }
+                assert_eq!(selected, refs[0].full_name);
+                assert_eq!(selected_group, None);
+                assert!(requested.action.is_none());
+            }
         }
     }
 

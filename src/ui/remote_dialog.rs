@@ -287,6 +287,8 @@ fn branch_confirmation(
                                     egui::Label::new("Remote:")
                                         .wrap_mode(egui::TextWrapMode::Extend),
                                 );
+                                ui.scope(|ui| {
+                                ui.spacing_mut().button_padding.x = 5.0;
                                 ComboBox::from_id_salt("push.remote")
                                     .width(220.0)
                                     .selected_text(&dialog.remote)
@@ -299,6 +301,7 @@ fn branch_confirmation(
                                             );
                                         }
                                     });
+                                });
                                 ui.end_row();
                                 ui.add(
                                     egui::Label::new("Remote branch:")

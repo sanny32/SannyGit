@@ -53,6 +53,8 @@ pub struct Review {
     pub text: Option<String>,
     pub versions: [Option<String>; 3],
     pub conflicts: Vec<Conflict>,
+    merge_snapshot: Option<String>,
+    recovered_conflicts: Vec<Conflict>,
 }
 
 fn stages(index: &[u8], path: &str) -> Result<[bool; 4], String> {
@@ -117,6 +119,8 @@ pub fn prepare(root: &Path, path: &str, action: Action) -> Result<Review, String
         text: None,
         versions: Default::default(),
         conflicts: Vec::new(),
+        merge_snapshot: None,
+        recovered_conflicts: Vec::new(),
     };
     if action == Action::Edit {
         let attr = git::run(
@@ -144,16 +148,40 @@ pub fn prepare(root: &Path, path: &str, action: Action) -> Result<Review, String
                     continue;
                 }
                 let object = format!(":{stage}:{path}");
-                let size = git::text(git::run(root, &["cat-file", "-s", &object])?)?;
-                if size.trim().parse::<usize>().is_ok_and(|size| size <= LIMIT) {
-                    *version = String::from_utf8(git::run(root, &["cat-file", "blob", &object])?)
-                        .ok()
-                        .filter(|text| !text.contains('\0'));
+                *version = read_text_blob(root, &object)?;
+            }
+            if let Some(text) = review
+                .text
+                .as_deref()
+                .filter(|_| review.conflicts.is_empty())
+            {
+                // The ort merge strategy saves the initial working tree, including
+                // conflict markers, while the index still contains unmerged entries.
+                let object = format!("AUTO_MERGE:{path}");
+                if let Some(snapshot) = read_text_blob(root, &object).ok().flatten() {
+                    if let Ok(conflicts) = parse(&snapshot, review.marker_size) {
+                        review.recovered_conflicts = project_conflicts(&snapshot, &conflicts, text);
+                        if !review.recovered_conflicts.is_empty() {
+                            review.merge_snapshot = Some(snapshot);
+                        }
+                    }
                 }
             }
         }
     }
     Ok(review)
+}
+
+fn read_text_blob(root: &Path, object: &str) -> Result<Option<String>, String> {
+    let size = git::text(git::run(root, &["cat-file", "-s", object])?)?;
+    if size.trim().parse::<usize>().is_ok_and(|size| size <= LIMIT) {
+        return Ok(
+            String::from_utf8(git::run(root, &["cat-file", "blob", object])?)
+                .ok()
+                .filter(|text| !text.contains('\0')),
+        );
+    }
+    Ok(None)
 }
 
 fn marker(line: &str, size: usize) -> Option<u8> {
@@ -221,17 +249,120 @@ fn combine(text: &str, conflicts: &[Conflict], edits: &[Option<String>]) -> Opti
 }
 
 impl Review {
+    pub fn blocks(&self) -> &[Conflict] {
+        if self.merge_snapshot.is_some() {
+            &self.recovered_conflicts
+        } else {
+            &self.conflicts
+        }
+    }
+
+    pub fn has_recovered_conflicts(&self) -> bool {
+        self.merge_snapshot.is_some()
+    }
+
+    pub fn conflict_sides(&self, index: usize) -> Option<[&str; 2]> {
+        let source = self.merge_snapshot.as_deref().or(self.text.as_deref())?;
+        let block = self.blocks().get(index)?;
+        Some([&source[block.ours.clone()], &source[block.theirs.clone()]])
+    }
+
     pub fn can_stage(&self, text: &str) -> bool {
         text.len() <= LIMIT
             && !text.contains('\0')
             && parse(text, self.marker_size).is_ok_and(|conflicts| conflicts.is_empty())
     }
+
+    pub fn compare_draft(&self, text: &str, sources: [&str; 2]) -> Comparison {
+        let conflicts = parse(text, self.marker_size).unwrap_or_default();
+        Comparison::new(
+            text,
+            &conflicts,
+            &vec![None; conflicts.len()],
+            sources.map(Some),
+            &[],
+        )
+    }
+
+    pub fn draft_conflict_edit(
+        &self,
+        text: &str,
+        index: usize,
+        side: usize,
+        both: bool,
+    ) -> Option<BlockEdit> {
+        let conflicts = parse(text, self.marker_size).ok()?;
+        let block = conflicts.get(index)?;
+        let sides = [&text[block.ours.clone()], &text[block.theirs.clone()]];
+        Some(BlockEdit {
+            original: block.span.clone(),
+            replacement: take_sides(sides, side, both),
+            side,
+        })
+    }
+}
+
+pub fn take_sides(sides: [&str; 2], side: usize, both: bool) -> String {
+    if both {
+        [sides[side], sides[1 - side]].concat()
+    } else {
+        sides[side].to_owned()
+    }
+}
+
+fn project_conflicts(snapshot: &str, conflicts: &[Conflict], text: &str) -> Vec<Conflict> {
+    if conflicts.is_empty() {
+        return Vec::new();
+    }
+    let source_lines = numbered_lines(snapshot);
+    let result_lines = numbered_lines(text);
+    let source: Vec<_> = source_lines
+        .iter()
+        .map(|line| &snapshot[line.span.clone()])
+        .collect();
+    let result: Vec<_> = result_lines
+        .iter()
+        .map(|line| &text[line.span.clone()])
+        .collect();
+    let matches = matching_lines(&source, &result);
+    let mut projected: Vec<Conflict> = Vec::new();
+    for conflict in conflicts {
+        let start = source_lines.partition_point(|line| line.span.start < conflict.span.start);
+        let end = source_lines.partition_point(|line| line.span.start < conflict.span.end);
+        let before = matches.partition_point(|&(source, _)| source < start);
+        let after = matches.partition_point(|&(source, _)| source < end);
+        let first = before
+            .checked_sub(1)
+            .map_or(0, |index| matches[index].1 + 1);
+        let last = matches
+            .get(after)
+            .map_or(result_lines.len(), |&(_, index)| index);
+        let offset = |line: usize| {
+            result_lines
+                .get(line)
+                .map_or(text.len(), |line| line.span.start)
+        };
+        let span = offset(first)..offset(last);
+        if projected
+            .last()
+            .is_none_or(|previous| previous.span.end <= span.start && previous.span != span)
+        {
+            projected.push(Conflict {
+                span,
+                ours: conflict.ours.clone(),
+                theirs: conflict.theirs.clone(),
+            });
+        }
+    }
+    projected
 }
 
 pub struct Comparison {
     pub rows: Vec<CompareRow>,
+    pub result_row_boundaries: Vec<usize>,
     pub conflict_rows: Vec<Range<usize>>,
-    pub change_rows: [Vec<usize>; 3],
+    pub conflict_spans: Vec<Range<usize>>,
+    pub change_ranges: [Vec<Range<usize>>; 3],
     pub sources: [String; 2],
     pub result: String,
     pub connectors: [Vec<Connector>; 3],
@@ -274,6 +405,17 @@ pub struct CompareLine {
 }
 
 impl Comparison {
+    pub fn result_offset_at(&self, row: usize) -> usize {
+        self.rows
+            .get(row)
+            .map_or(self.result.len(), |row| row.result_offset)
+    }
+
+    pub fn rows_for_result_span(&self, span: &Range<usize>) -> Range<usize> {
+        let boundary = |offset| self.rows.partition_point(|row| row.result_offset < offset);
+        boundary(span.start)..boundary(span.end)
+    }
+
     pub fn new(
         text: &str,
         conflicts: &[Conflict],
@@ -456,23 +598,29 @@ impl Comparison {
                 conflict_rows[id].end = rows.len();
             }
         }
-        let change_rows = std::array::from_fn(|view| {
+        let change_ranges = std::array::from_fn(|view| {
+            let mut ranges: Vec<Range<usize>> = Vec::new();
             let mut previous = None;
-            rows.iter()
-                .enumerate()
-                .filter_map(|(index, row)| {
-                    let changed = row.marker
-                        || match view {
-                            0 | 1 => row.changes[view].is_some(),
-                            _ => row.changes.iter().any(Option::is_some),
-                        };
-                    // Do not split a conflict at an unchanged row between its marker lines.
-                    let group = row.conflict.map(Some).or_else(|| changed.then_some(None));
-                    let start = group.is_some() && group != previous;
-                    previous = group;
-                    start.then_some(index)
-                })
-                .collect()
+            for (index, row) in rows.iter().enumerate() {
+                let changed = row.marker
+                    || match view {
+                        0 | 1 => row.changes[view].is_some(),
+                        _ => row.changes.iter().any(Option::is_some),
+                    };
+                // Do not split a conflict at an unchanged row between its marker lines.
+                let group = row.conflict.map(Some).or_else(|| changed.then_some(None));
+                if group.is_some() {
+                    if group == previous {
+                        if let Some(range) = ranges.last_mut() {
+                            range.end = index + 1;
+                        }
+                    } else {
+                        ranges.push(index..index + 1);
+                    }
+                }
+                previous = group;
+            }
+            ranges
         });
         let applied_rows = applied
             .into_iter()
@@ -482,10 +630,19 @@ impl Comparison {
                 start..end
             })
             .collect();
+        let mut result_row_boundaries = Vec::with_capacity(rows.len() + 1);
+        result_row_boundaries.push(0);
+        for row in &rows {
+            let next = result_row_boundaries.last().copied().unwrap_or_default()
+                + usize::from(row.lines[2].is_some());
+            result_row_boundaries.push(next);
+        }
         let mut comparison = Self {
             rows,
+            result_row_boundaries,
             conflict_rows,
-            change_rows,
+            conflict_spans: blocks.into_iter().map(|(span, _)| span).collect(),
+            change_ranges,
             sources,
             result,
             connectors: Default::default(),
@@ -881,6 +1038,125 @@ mod tests {
     }
 
     #[test]
+    fn recovers_conflict_location_when_working_copy_markers_were_removed() {
+        use crate::app::conflict::Dialog;
+        use eframe::egui::{
+            Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape, Vec2,
+        };
+        use std::sync::Arc;
+
+        let repo = fixture(Some("start\ntheirs\nend\n"));
+        let resolved = "unrelated insertion\nstart\nmanual resolution\nend\n";
+        repo.write("file", resolved);
+        let review = prepare(&repo.0, "file", Action::Edit).unwrap();
+        assert!(review.conflicts.is_empty());
+        let mut dialog = Dialog::new(repo.0.clone(), "file".into(), Action::Edit);
+        dialog.set_review(Arc::new(review));
+        assert!(dialog.ready());
+        assert!(!dialog.dirty());
+        let comparison = dialog.comparison.as_ref().unwrap();
+        assert_eq!(comparison.result, resolved);
+        assert_eq!(comparison.conflict_rows.len(), 1);
+        let rows = comparison.conflict_rows[0].clone();
+        let line = comparison.rows[rows.start].lines[2].as_ref().unwrap();
+        assert_eq!(&comparison.result[line.span.clone()], "manual resolution");
+        assert_eq!(rows.len(), 1);
+        dialog.go_to_conflict(0);
+        assert_eq!(dialog.jump_to_row, Some(rows.start));
+
+        let theme = crate::theme::ThemeChoice::Light;
+        let ctx = Context::default();
+        crate::theme::install_fonts(&ctx);
+        egui_extras::install_image_loaders(&ctx);
+        theme.apply(&ctx);
+        let mut app = crate::app::SannyGitApp::with_theme(theme);
+        app.conflict_dialog = Some(dialog);
+        let frame = |app: &mut crate::app::SannyGitApp, events| {
+            let mut output = ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1320.0, 850.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| crate::ui::show(ui, app),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        frame(&mut app, Vec::new());
+        let click_take = |app: &mut crate::app::SannyGitApp, caption| {
+            let output = frame(app, Vec::new());
+            let pos = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    Shape::Text(text) if text.galley.job.text == caption => {
+                        Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            frame(app, vec![Event::PointerMoved(pos)]);
+            for pressed in [true, false] {
+                frame(
+                    app,
+                    vec![Event::PointerButton {
+                        pos,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    }],
+                );
+            }
+        };
+        let choices = [
+            ("Take Left", "ours\n"),
+            ("Take Right", "theirs\n"),
+            ("Take Left, Right", "ours\ntheirs\n"),
+            ("Take Right, Left", "theirs\nours\n"),
+        ];
+        for (caption, replacement) in choices {
+            click_take(&mut app, caption);
+            let dialog = app.conflict_dialog.as_mut().unwrap();
+            assert_eq!(
+                dialog.comparison.as_ref().unwrap().result,
+                resolved.replace("manual resolution\n", replacement),
+                "{caption}"
+            );
+            assert!(dialog.dirty() && dialog.ready());
+            dialog.undo_conflict(0);
+            assert!(!dialog.dirty());
+        }
+        let dialog = app.conflict_dialog.as_mut().unwrap();
+        let offset = resolved.find("manual resolution").unwrap();
+        dialog.begin_draft(offset);
+        dialog
+            .draft
+            .as_mut()
+            .unwrap()
+            .insert_str(offset, "ручная правка\n");
+        dialog.draft_text_changed();
+        let edited = dialog.draft.clone().unwrap();
+        let caret = edited[..edited.find("manual resolution").unwrap()]
+            .chars()
+            .count()
+            + 1;
+        dialog.manual_edit_start = Some(caret);
+        for (caption, replacement) in choices {
+            click_take(&mut app, caption);
+            let dialog = app.conflict_dialog.as_mut().unwrap();
+            assert_eq!(
+                dialog.draft.as_deref(),
+                Some(edited.replace("manual resolution\n", replacement).as_str()),
+                "{caption} in Working Tree"
+            );
+            dialog.undo_draft_block(0);
+            assert_eq!(dialog.draft.as_deref(), Some(edited.as_str()));
+        }
+        assert_eq!(fs::read_to_string(repo.0.join("file")).unwrap(), resolved);
+    }
+
+    #[test]
     fn combines_multiple_blocks_without_changing_surrounding_bytes() {
         let text = "start\r\n<<<< ours\r\na\r\n|||| base\r\nb\r\n====\r\nc\r\n>>>> theirs\r\nkeep\n<<<< ours\n====\nd\n>>>> theirs";
         let blocks = parse(text, 4).unwrap();
@@ -1074,7 +1350,10 @@ mod tests {
 
         let repo = fixture(Some("start\ntheirs\nend\n"));
         let working = fs::read_to_string(repo.0.join("file")).unwrap();
-        repo.write("file", &format!("inserted header\n{working}"));
+        repo.write(
+            "file",
+            &format!("inserted header\nsecond header\n{working}"),
+        );
         let review = Arc::new(prepare(&repo.0, "file", Action::Edit).unwrap());
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
             for size in [
@@ -1252,8 +1531,18 @@ mod tests {
                     }
                 };
                 click(&mut app, position("inserted header", None, false));
-                let clicked = app.conflict_dialog.as_ref().unwrap().cursor_position;
+                let dialog = app.conflict_dialog.as_ref().unwrap();
+                let clicked = dialog.cursor_position;
                 assert!(matches!(clicked, Some((1, 7..=10))), "got {clicked:?}");
+                assert_eq!(dialog.pane_caret.unwrap().column, 2);
+                let line_position = position("inserted header", None, false);
+                let output_with_caret = render(&mut app, Vec::new());
+                assert!(output_with_caret.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, Shape::Rect(rect)
+                        if rect.rect.width() == 1.5
+                            && rect.rect.height() > 8.0
+                            && rect.rect.expand(8.0).contains(line_position))
+                }));
                 for (caption, layout) in [
                     ("All", Layout::ThreeWay),
                     (merge_right, Layout::ResultTheirs),
@@ -1273,7 +1562,34 @@ mod tests {
                     Some(dialog.comparison.as_ref().unwrap().conflict_rows[0].start)
                 );
                 click(&mut app, position(change_prev, Some(save.y), false));
-                assert_eq!(app.conflict_dialog.as_ref().unwrap().change_row, Some(0));
+                let dialog = app.conflict_dialog.as_ref().unwrap();
+                assert_eq!(dialog.change_row, Some(0));
+                assert_eq!(
+                    dialog.comparison.as_ref().unwrap().change_ranges[0][0],
+                    0..2
+                );
+                let accent = app.palette().accent;
+                let selected = render(&mut app, Vec::new());
+                assert_eq!(
+                    selected
+                        .shapes
+                        .iter()
+                        .filter(|shape| {
+                            matches!(&shape.shape, Shape::Rect(rect)
+                            if rect.fill == accent && rect.rect.width() == 3.0)
+                        })
+                        .count(),
+                    4,
+                    "both changed rows should be highlighted in each of the two visible panes"
+                );
+                click(&mut app, position("start", None, false));
+                click(&mut app, position(take_left, Some(save.y), false));
+                assert!(app.conflict_dialog.as_ref().unwrap().block_edits.is_empty());
+
+                click(&mut app, position("second header", None, false));
+                assert_eq!(app.conflict_dialog.as_ref().unwrap().change_row, Some(1));
+                click(&mut app, position(take_right, Some(save.y), false));
+                assert!(app.conflict_dialog.as_ref().unwrap().block_edits.is_empty());
                 click(&mut app, position(take_left, Some(save.y), false));
                 let dialog = app.conflict_dialog.as_ref().unwrap();
                 let merge_text = dialog.comparison.as_ref().unwrap().result.clone();
@@ -1292,6 +1608,67 @@ mod tests {
                 let dialog = app.conflict_dialog.as_ref().unwrap();
                 assert!(!dialog.show_base);
                 assert_eq!(dialog.comparison.as_ref().unwrap().result, merge_text);
+
+                let output = render(&mut app, Vec::new());
+                let edit_position = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        Shape::Text(text) if text.galley.job.text == "start" => {
+                            Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                        }
+                        _ => None,
+                    })
+                    .max_by(|a, b| a.x.total_cmp(&b.x))
+                    .unwrap();
+                click(&mut app, edit_position);
+                let dialog = app.conflict_dialog.as_ref().unwrap();
+                assert!(dialog.draft.is_none());
+                let index = dialog.pane_caret.unwrap().character;
+                assert!((1..5).contains(&index), "editor caret at {index}");
+                render(&mut app, vec![Event::Text("!".into())]);
+                let dialog = app.conflict_dialog.as_ref().unwrap();
+                let mut expected = merge_text.clone();
+                expected.insert(index, '!');
+                assert_eq!(dialog.draft.as_deref(), Some(expected.as_str()));
+                let palette = app.palette();
+                let edited = render(&mut app, Vec::new());
+                assert!(
+                    edited.shapes.iter().any(|shape| {
+                        matches!(&shape.shape, Shape::Text(text)
+                        if text.galley.job.text == "1" && text.pos.x > size.x / 2.0)
+                    }),
+                    "missing Working Tree line number at {size:?}"
+                );
+                assert!(
+                    edited
+                        .shapes
+                        .iter()
+                        .any(|shape| { matches!(shape.shape, Shape::Band(_)) }),
+                    "missing connection to the editable Working Tree at {size:?}"
+                );
+                for fill in [palette.modified_background, palette.hunk_background] {
+                    assert!(edited.shapes.iter().any(|shape| {
+                        matches!(&shape.shape, Shape::Vec(bands)
+                            if bands.iter().any(|band| matches!(band, Shape::Rect(rect) if rect.fill == fill)))
+                    }), "missing edited row or conflict marker highlight at {size:?}");
+                }
+                click(&mut app, next_conflict);
+                let dialog = app.conflict_dialog.as_ref().unwrap();
+                assert_eq!(
+                    dialog.draft_selection.as_ref(),
+                    dialog
+                        .draft_comparison
+                        .as_ref()
+                        .unwrap()
+                        .conflict_rows
+                        .first()
+                );
+                assert!(dialog.draft_selection.is_some());
+                click(&mut app, position(change_prev, Some(save.y), false));
+                let dialog = app.conflict_dialog.as_ref().unwrap();
+                assert_eq!(dialog.draft_selection, Some(0..1));
+                assert_eq!(dialog.draft.as_deref(), Some(expected.as_str()));
             }
         }
     }

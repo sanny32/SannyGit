@@ -1251,6 +1251,7 @@ mod tests {
                             path: format!("{i}-{path}"),
                             original_path: None,
                             kind: ChangeKind::Modified,
+                            conflict_status: None,
                             staged: false,
                             unstaged: true,
                             diff: String::new(),

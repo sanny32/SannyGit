@@ -1,5 +1,5 @@
 //! Explicit merge operations; the dialog pins the target commit and current HEAD.
-use crate::git;
+use crate::{branches, git, models::RefKind};
 use std::path::Path;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -25,6 +25,7 @@ pub fn execute(
     expected_head: &str,
     expected_branch: &str,
     target: &str,
+    preferred_ref: &str,
     mode: Mode,
 ) -> Result<bool, String> {
     if !matches!(target.len(), 40 | 64) || !target.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -51,14 +52,13 @@ pub fn execute(
     }
     // --no-overwrite-ignore alone does not protect every merge strategy.
     git::require_no_ignored_collisions(root, target)?;
-    let args = match mode {
+    let mut args = match mode {
         Mode::Commit => vec![
             "merge",
             "--no-ff",
             "--no-edit",
             "--no-autostash",
             "--no-overwrite-ignore",
-            target,
         ],
         Mode::WorkingTree => vec![
             "merge",
@@ -66,9 +66,30 @@ pub fn execute(
             "--no-commit",
             "--no-autostash",
             "--no-overwrite-ignore",
-            target,
         ],
     };
+    // Use the branch name for the message while merging the reviewed object ID.
+    let refs = branches::load(root)?;
+    let mut matching = refs
+        .refs
+        .iter()
+        .filter(|entry| entry.hash == target && entry.kind != RefKind::Tag);
+    let selected = matching
+        .clone()
+        .find(|entry| entry.full_name == preferred_ref)
+        .or_else(|| match (matching.next(), matching.next()) {
+            (Some(entry), None) => Some(entry),
+            _ => None,
+        });
+    let message = selected.and_then(|entry| match entry.kind {
+        RefKind::Local => Some(format!("Merge branch '{}'", entry.name)),
+        RefKind::Remote => Some(format!("Merge remote-tracking branch '{}'", entry.name)),
+        RefKind::Tag => None,
+    });
+    if let Some(message) = &message {
+        args.extend(["-m", message]);
+    }
+    args.push(target);
     match git::run(root, &args) {
         Ok(_) => Ok(false),
         Err(error) => {
@@ -116,7 +137,7 @@ mod tests {
             let index = std::fs::read(repo.0.join(".git/index")).unwrap();
             assert!(git::load(&repo.0).unwrap().changes.is_empty());
 
-            let error = execute(&repo.0, &before, "main", &target, mode).unwrap_err();
+            let error = execute(&repo.0, &before, "main", &target, "", mode).unwrap_err();
             assert!(error.contains("\"feature\""), "{error}");
 
             assert_eq!(
@@ -134,7 +155,7 @@ mod tests {
         let (repo, before, target) = fixture();
         repo.write("feature", "local contents\n");
         repo.write("unrelated", "keep\n");
-        let error = execute(&repo.0, &before, "main", &target, Mode::WorkingTree).unwrap_err();
+        let error = execute(&repo.0, &before, "main", &target, "", Mode::WorkingTree).unwrap_err();
         assert!(error.starts_with("Untracked files overlap"));
         assert_eq!(
             error.split_once("\n\nGit diagnostic:\n").unwrap().1.trim(),
@@ -150,7 +171,7 @@ mod tests {
     #[test]
     fn commit_creates_two_parents_even_for_fast_forward() {
         let (repo, before, target) = fixture();
-        execute(&repo.0, &before, "main", &target, Mode::Commit).unwrap();
+        execute(&repo.0, &before, "main", &target, "", Mode::Commit).unwrap();
         assert_eq!(
             repo.git(&["show", "-s", "--format=%P", "HEAD"]).trim(),
             format!("{before} {target}")
@@ -161,7 +182,7 @@ mod tests {
     #[test]
     fn working_tree_leaves_a_merge_to_commit_without_moving_head() {
         let (repo, before, target) = fixture();
-        execute(&repo.0, &before, "main", &target, Mode::WorkingTree).unwrap();
+        execute(&repo.0, &before, "main", &target, "", Mode::WorkingTree).unwrap();
         assert_eq!(head(&repo.0).unwrap(), before);
         assert!(git::load(&repo.0).unwrap().merging);
         assert!(git::load(&repo.0)
@@ -179,10 +200,10 @@ mod tests {
     #[test]
     fn rejects_stale_head_dirty_tree_invalid_target_and_unfinished_merge() {
         let (repo, before, target) = fixture();
-        assert!(execute(&repo.0, &target, "main", &target, Mode::Commit).is_err());
-        assert!(execute(&repo.0, &before, "main", "--all", Mode::Commit).is_err());
+        assert!(execute(&repo.0, &target, "main", &target, "", Mode::Commit).is_err());
+        assert!(execute(&repo.0, &before, "main", "--all", "", Mode::Commit).is_err());
         repo.write("local", "keep");
-        assert!(execute(&repo.0, &before, "main", &target, Mode::WorkingTree).is_err());
+        assert!(execute(&repo.0, &before, "main", &target, "", Mode::WorkingTree).is_err());
         assert_eq!(
             std::fs::read_to_string(repo.0.join("local")).unwrap(),
             "keep"
@@ -191,7 +212,7 @@ mod tests {
         assert!(repo.git(&["diff", "--cached"]).is_empty());
         let (repo, before, target) = fixture();
         std::fs::write(repo.0.join(".git/MERGE_HEAD"), format!("{target}\n")).unwrap();
-        assert!(execute(&repo.0, &before, "main", &target, Mode::Commit).is_err());
+        assert!(execute(&repo.0, &before, "main", &target, "", Mode::Commit).is_err());
         assert_eq!(head(&repo.0).unwrap(), before);
     }
 
@@ -199,7 +220,7 @@ mod tests {
     fn rejects_branch_switch_even_when_commit_is_unchanged() {
         let (repo, before, target) = fixture();
         repo.git(&["checkout", "-b", "other"]);
-        assert!(execute(&repo.0, &before, "main", &target, Mode::Commit).is_err());
+        assert!(execute(&repo.0, &before, "main", &target, "", Mode::Commit).is_err());
         assert_eq!(head(&repo.0).unwrap(), before);
         assert!(git::load(&repo.0).unwrap().changes.is_empty());
     }
@@ -211,7 +232,7 @@ mod tests {
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "diverge"]);
         let before = head(&repo.0).unwrap();
-        assert!(execute(&repo.0, &before, "main", &target, Mode::Commit).unwrap());
+        assert!(execute(&repo.0, &before, "main", &target, "", Mode::Commit).unwrap());
         assert_eq!(head(&repo.0).unwrap(), before);
         assert!(git::load(&repo.0)
             .unwrap()

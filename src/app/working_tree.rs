@@ -283,7 +283,7 @@ impl SannyGitApp {
         let index = selected
             .as_ref()
             .and_then(|path| snapshot.changes.iter().position(|c| &c.path == path));
-        self.merging = snapshot.merging;
+        self.update_merge_message(snapshot.merging, snapshot.merge_message, true);
         self.changes = snapshot.changes;
         self.update_commit_contents_after_refresh(false);
         // Row indices and file contents may have changed during the read.

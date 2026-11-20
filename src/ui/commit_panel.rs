@@ -5,8 +5,8 @@ use crate::{
     theme::{semibold_family, Palette},
 };
 use eframe::egui::{
-    Align, Align2, Button, FontId, Frame, Layout, Margin, Rect, RichText, Sense, Shape, Stroke,
-    TextEdit, Ui, Vec2,
+    Align, Align2, Button, FontId, Frame, Layout, Margin, Rect, RichText, ScrollArea, Sense, Shape,
+    Stroke, StrokeKind, TextEdit, Ui, Vec2,
 };
 
 #[derive(Clone, Copy)]
@@ -126,21 +126,45 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             bottom: 16,
         })
         .show(ui, |ui| {
-            let width = ui.available_width();
             let editor_height = (ui.available_height() - 38.0).max(32.0);
             let busy = app.busy();
             ui.add_enabled_ui(!busy, |ui| {
-                let editor = ui.add_sized(
-                    [width, editor_height],
-                    TextEdit::multiline(&mut app.commit_message)
-                        .id(eframe::egui::Id::unique("commit.message"))
-                        .desired_rows(1)
-                        .desired_width(f32::INFINITY)
-                        .margin(Vec2::new(6.0, 4.0)),
+                let corner_radius = ui.visuals().widgets.inactive.corner_radius;
+                let editor = Frame::new()
+                    .fill(ui.visuals().text_edit_bg_color())
+                    .corner_radius(corner_radius)
+                    .show(ui, |ui| {
+                        ScrollArea::vertical()
+                            .id_salt("commit.message.scroll")
+                            .min_scrolled_height(editor_height)
+                            .max_height(editor_height)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.add(
+                                    TextEdit::multiline(&mut app.commit_message)
+                                        .id(eframe::egui::Id::unique("commit.message"))
+                                        .frame(Frame::NONE.inner_margin(Margin::symmetric(6, 4)))
+                                        .desired_rows(1)
+                                        .desired_width(f32::INFINITY)
+                                        .min_size(Vec2::new(0.0, editor_height)),
+                                )
+                            })
+                            .inner
+                    });
+                let border = if editor.inner.has_focus() {
+                    ui.visuals().selection.stroke
+                } else {
+                    ui.style().interact(&editor.inner).bg_stroke
+                };
+                ui.painter().rect_stroke(
+                    editor.response.rect,
+                    corner_radius,
+                    border,
+                    StrokeKind::Inside,
                 );
                 if app.generating_commit_message {
                     let time = ui.input(|input| input.time);
-                    draw_generation_animation(ui, editor.rect, time, palette);
+                    draw_generation_animation(ui, editor.response.rect, time, palette);
                 }
             });
             ui.add_space(10.0);
@@ -294,12 +318,26 @@ mod tests {
                     theme.apply_style(&context, style);
                     let mut app = SannyGitApp::with_theme(theme);
                     app.interface_style = style;
-                    app.commit_message = "Existing draft\n\nKeep this text readable.".into();
+                    let short_draft = "Existing draft\n\nKeep this text readable.";
+                    let merge_draft = format!(
+                        "Merge branch 'feature'\n\n# Conflicts:\n{}",
+                        (0..50)
+                            .map(|i| format!("#\tfile-{i}\n"))
+                            .collect::<String>()
+                    );
                     let mut idle_layout = None;
                     for (frame, generating) in [false, true, true, false, false, false]
                         .into_iter()
                         .enumerate()
                     {
+                        let draft = if frame < 4 { short_draft } else { &merge_draft };
+                        app.commit_message = draft.into();
+                        let typed = frame == 3;
+                        if typed {
+                            context.memory_mut(|memory| {
+                                memory.request_focus(egui::Id::unique("commit.message"));
+                            });
+                        }
                         app.commit_contents = if frame % 2 == 0 {
                             crate::git::CommitContents::All
                         } else {
@@ -310,6 +348,10 @@ mod tests {
                         let input = egui::RawInput {
                             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
                             time: Some(frame as f64 * 0.75),
+                            events: typed
+                                .then(|| egui::Event::Text(" More text.".into()))
+                                .into_iter()
+                                .collect(),
                             ..Default::default()
                         };
                         let mut output = context.run_ui(input, |ui| {
@@ -318,16 +360,41 @@ mod tests {
                             show(ui, &mut app);
                             let layout = ui.min_rect();
                             if let Some(idle) = idle_layout {
-                                assert_eq!(layout, idle, "Generation changed layout in {theme:?}");
+                                assert_eq!(
+                                    layout, idle,
+                                    "Commit panel changed layout in {theme:?}"
+                                );
                             } else {
                                 idle_layout = Some(layout);
                             }
                         });
                         output.textures_delta.clear();
-                        assert_eq!(
-                            app.commit_message,
-                            "Existing draft\n\nKeep this text readable."
-                        );
+                        if typed {
+                            assert_eq!(app.commit_message, format!("{draft} More text."));
+                            let text_pos = output
+                                .shapes
+                                .iter()
+                                .find_map(|shape| match &shape.shape {
+                                    Shape::Text(text)
+                                        if text.galley.job.text == app.commit_message =>
+                                    {
+                                        Some(text.pos)
+                                    }
+                                    _ => None,
+                                })
+                                .expect("Commit message text missing");
+                            assert!(output.shapes.iter().any(|shape| {
+                                matches!(&shape.shape, Shape::Rect(rect)
+                                            if rect.stroke.width > 0.0
+                                        && rect.rect.contains(text_pos)
+                                        && (text_pos - rect.rect.min - Vec2::new(6.0, 4.0)).length() < 1.0)
+                            }), "Commit message padding changed while typing in {theme:?}");
+                            context.memory_mut(|memory| {
+                                memory.surrender_focus(egui::Id::unique("commit.message"));
+                            });
+                        } else {
+                            assert_eq!(app.commit_message, draft);
+                        }
                     }
                 }
             }

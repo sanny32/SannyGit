@@ -313,6 +313,7 @@ fn repository_error_retains_view_and_refresh_preserves_selection() {
         branch: "real-branch".into(),
         changes,
         merging: false,
+        merge_message: None,
     };
     deliver(&mut app, WorkerResult::Repository(Ok(snapshot)));
     assert_eq!(app.changes[app.selected_change].path, selected);
@@ -603,6 +604,7 @@ fn skipped_push_and_sync_preserve_errors_for_modal_reporting() {
                                     branch: "main".into(),
                                     changes: vec![],
                                     merging: false,
+                                    merge_message: None,
                                 })
                             },
                         },
@@ -813,6 +815,7 @@ fn operation_outcomes_remain_distinct_from_refresh_and_cancellation() {
                             branch: "main".into(),
                             changes: crate::mock_data::changes(),
                             merging: false,
+                            merge_message: None,
                         })
                     };
                     deliver(

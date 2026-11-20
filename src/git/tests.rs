@@ -548,6 +548,27 @@ fn parses_nul_paths_renames_mixed_and_conflicted_status() {
 }
 
 #[test]
+fn labels_each_unmerged_status() {
+    let files = parse_status(b"DD a\0AU b\0UD c\0UA d\0DU e\0AA f\0UU g\0 M h\0").unwrap();
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| file.conflict_status)
+            .collect::<Vec<_>>(),
+        [
+            Some("Both deleted"),
+            Some("Added by us"),
+            Some("Deleted by them"),
+            Some("Added by them"),
+            Some("Deleted by us"),
+            Some("Both added"),
+            Some("Both modified"),
+            None,
+        ],
+    );
+}
+
+#[test]
 fn rejects_malformed_oversized_and_non_utf8_status() {
     for input in [
         b"M\0".as_slice(),

@@ -4,7 +4,7 @@ use super::controls::{
 };
 use crate::{
     app::{
-        conflict::{Dialog, Layout, WindowGeometry},
+        conflict::{Dialog, Layout, PaneCaret, WindowGeometry},
         SannyGitApp,
     },
     conflict::{Action, BlockEdit, CompareRow, Comparison, LineChange},
@@ -603,18 +603,68 @@ fn working_tree_menu(ui: &Ui, dialog: &mut Dialog, header: egui::Rect) {
                 .clicked()
             {
                 dialog.draft = None;
+                dialog.draft_comparison = None;
+                dialog.draft_undo.clear();
                 ui.close();
             }
         } else if ui.button("Edit Working Tree").clicked() {
-            if let (Some(review), Some(comparison)) = (&dialog.review, &dialog.comparison) {
-                dialog.draft_ready = review.can_stage(&comparison.result);
-                dialog.draft = Some(comparison.result.clone());
-                dialog.manual_cursor_index = None;
-            }
+            dialog.begin_draft(0);
             ui.close();
         }
     });
 }
+fn working_tree_caret_id() -> Id {
+    Id::unique("conflict.working_tree.caret")
+}
+
+fn start_editing_on_input(ui: &Ui, dialog: &mut Dialog) {
+    let id = working_tree_caret_id();
+    if !ui.is_enabled()
+        || dialog.show_base
+        || dialog.draft.is_some()
+        || egui::Popup::is_any_open(ui.ctx())
+        || !ui.memory(|memory| memory.has_focus(id))
+    {
+        return;
+    }
+    ui.memory_mut(|memory| memory.interested_in_focus(id, ui.layer_id()));
+    if !ui.input(|input| {
+        input.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Text(_)
+                    | egui::Event::Paste(_)
+                    | egui::Event::Ime(_)
+                    | egui::Event::Key {
+                        key: Key::Backspace | Key::Delete | Key::Enter,
+                        pressed: true,
+                        ..
+                    }
+            )
+        })
+    }) {
+        return;
+    }
+    let Some(caret) = dialog.pane_caret.filter(|caret| caret.column == 2) else {
+        return;
+    };
+    let Some(comparison) = dialog
+        .draft_comparison
+        .as_ref()
+        .or(dialog.comparison.as_ref())
+    else {
+        return;
+    };
+    if let Some(line) = comparison
+        .rows
+        .get(caret.row)
+        .and_then(|row| row.lines[2].as_ref())
+    {
+        let character = comparison.result[..line.span.start].chars().count() + caret.character;
+        dialog.begin_draft(character);
+    }
+}
+
 fn layout_controls(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, busy: bool) {
     let enabled = !busy
         && dialog.comparison.is_some()
@@ -688,28 +738,36 @@ fn layout_controls(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, busy: 
     }
 }
 
-fn change_navigation(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, busy: bool) {
-    let view = match dialog.layout {
+fn change_view(layout: Layout) -> usize {
+    match layout {
         Layout::OursResult => 0,
         Layout::ResultTheirs => 1,
         Layout::ThreeWay | Layout::ResultBelow => 2,
-    };
+    }
+}
+
+fn change_navigation(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, busy: bool) {
+    if let Some(comparison) = &dialog.draft_comparison {
+        let ranges = comparison.change_ranges[change_view(dialog.layout)].clone();
+        draft_navigation(ui, dialog, style, busy, &ranges, false);
+        return;
+    }
     let (previous, next) = if let Some(comparison) = &dialog.comparison {
-        let anchor = dialog.change_row.or_else(|| {
-            comparison
-                .conflict_rows
-                .get(dialog.selected)
-                .map(|rows| rows.start)
-        });
-        let rows = &comparison.change_rows[view];
+        let anchor = selected_range(dialog, comparison)
+            .map(|range| range.start)
+            .or(dialog.change_row);
+        let ranges = &comparison.change_ranges[change_view(dialog.layout)];
         let previous = anchor.and_then(|anchor| {
-            rows.partition_point(|&row| row < anchor)
+            ranges
+                .partition_point(|range| range.start < anchor)
                 .checked_sub(1)
-                .map(|index| rows[index])
+                .map(|index| ranges[index].start)
         });
-        let next = rows
-            .get(anchor.map_or(0, |anchor| rows.partition_point(|&row| row <= anchor)))
-            .copied();
+        let next = ranges
+            .get(anchor.map_or(0, |anchor| {
+                ranges.partition_point(|range| range.start <= anchor)
+            }))
+            .map(|range| range.start);
         (previous, next)
     } else {
         (None, None)
@@ -736,30 +794,54 @@ fn change_navigation(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, busy
             .as_ref()
             .and_then(|comparison| comparison.rows[row].conflict)
         {
-            dialog.selected = conflict;
+            dialog.selected = Some(conflict);
         }
     }
 }
 
 fn conflict_navigation(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, busy: bool) {
+    if let Some(comparison) = &dialog.draft_comparison {
+        let mut ranges = comparison.conflict_rows.clone();
+        if ranges.is_empty() {
+            ranges.extend(dialog.draft_recovered_spans.iter().flatten().map(|span| {
+                let mut rows = comparison.rows_for_result_span(span);
+                if rows.is_empty() && !comparison.rows.is_empty() {
+                    rows.start = rows.start.min(comparison.rows.len() - 1);
+                    rows.end = rows.start + 1;
+                }
+                rows
+            }));
+        }
+        draft_navigation(ui, dialog, style, busy, &ranges, true);
+        return;
+    }
     let enabled = !busy && dialog.draft.is_none() && !dialog.show_base;
     let row_height = ui.text_style_height(&egui::TextStyle::Monospace) + 4.0;
     let viewport_row = (dialog.scroll_y[0] / row_height) as usize;
     let targets = dialog.comparison.as_ref().map_or([None; 2], |comparison| {
         let row = dialog.conflict_navigation_row.unwrap_or(viewport_row);
-        let unresolved = comparison.conflict_rows.iter().zip(&dialog.edits);
+        let has_unresolved = dialog.edits.iter().any(Option::is_none);
+        let eligible =
+            |index| !has_unresolved || dialog.edits.get(index).is_some_and(Option::is_none);
         [
-            unresolved
-                .clone()
-                .rposition(|(range, edit)| range.end <= row && edit.is_none()),
-            unresolved.enumerate().find_map(|(index, (range, edit))| {
-                let after = if dialog.conflict_navigation_row.is_some() {
-                    range.start > row
-                } else {
-                    range.end > row
-                };
-                (after && edit.is_none()).then_some(index)
-            }),
+            comparison
+                .conflict_rows
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(index, range)| (range.end <= row && eligible(index)).then_some(index)),
+            comparison
+                .conflict_rows
+                .iter()
+                .enumerate()
+                .find_map(|(index, range)| {
+                    let after = if dialog.conflict_navigation_row.is_some() {
+                        range.start > row
+                    } else {
+                        range.end > row
+                    };
+                    (after && eligible(index)).then_some(index)
+                }),
         ]
     });
     let labels = if style.compact {
@@ -777,6 +859,63 @@ fn conflict_navigation(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, bu
         true,
     ) {
         dialog.go_to_conflict(index);
+    }
+}
+
+fn draft_caret_row(dialog: &Dialog, comparison: &Comparison) -> Option<usize> {
+    let (_, line) = dialog.manual_cursor?;
+    Some(
+        comparison
+            .result_row_boundaries
+            .partition_point(|&boundary| boundary < line)
+            .saturating_sub(1),
+    )
+}
+
+fn draft_navigation(
+    ui: &mut Ui,
+    dialog: &mut Dialog,
+    style: ToolbarStyle,
+    busy: bool,
+    ranges: &[std::ops::Range<usize>],
+    conflict: bool,
+) {
+    let Some(comparison) = &dialog.draft_comparison else {
+        return;
+    };
+    let anchor = dialog
+        .draft_selection
+        .as_ref()
+        .map(|range| range.start)
+        .or_else(|| draft_caret_row(dialog, comparison));
+    let targets = [
+        anchor.and_then(|row| {
+            ranges
+                .iter()
+                .rposition(|range| !range.is_empty() && range.end <= row)
+        }),
+        ranges
+            .iter()
+            .position(|range| !range.is_empty() && anchor.is_none_or(|row| range.start > row)),
+    ];
+    let labels = if style.compact {
+        ["Prev.", "Next"]
+    } else if conflict {
+        ["Prev. Conflict", "Next Conflict"]
+    } else {
+        ["Prev. Change", "Next Change"]
+    };
+    let tips = if conflict {
+        ["Previous conflict block", "Next conflict block"]
+    } else {
+        ["Previous change", "Next change"]
+    };
+    if let Some(index) = navigation_buttons(ui, style, targets, labels, tips, !busy, conflict) {
+        let range = ranges[index].clone();
+        let offset = comparison.result_offset_at(range.start);
+        dialog.manual_edit_start = Some(comparison.result[..offset].chars().count());
+        dialog.jump_to_row = Some(range.start);
+        dialog.draft_selection = Some(range);
     }
 }
 
@@ -818,21 +957,65 @@ fn navigation_buttons(
 }
 
 fn resolution_controls(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, busy: bool) {
-    let enabled = !busy && !dialog.show_base && dialog.draft.is_none();
-    let conflict = dialog.change_row.map_or_else(
-        || (dialog.selected < dialog.edits.len()).then_some(dialog.selected),
-        |row| dialog.comparison.as_ref()?.rows.get(row)?.conflict,
-    );
+    let enabled = !busy && !dialog.show_base;
+    let draft = dialog.draft.as_deref();
+    let comparison = dialog
+        .draft_comparison
+        .as_ref()
+        .or(dialog.comparison.as_ref());
+    let draft_row = draft.and_then(|_| {
+        dialog
+            .draft_selection
+            .as_ref()
+            .map(|range| range.start)
+            .or_else(|| draft_caret_row(dialog, comparison?))
+    });
+    let row = if draft.is_some() {
+        draft_row
+    } else {
+        dialog.change_row
+    };
+    let conflict = if draft.is_none() && row.is_none() {
+        dialog.selected.filter(|&index| index < dialog.edits.len())
+    } else {
+        row.and_then(|row| comparison?.rows.get(row)?.conflict)
+    };
+    let recovered = draft_row.and_then(|row| {
+        let offset = comparison?.result_offset_at(row);
+        dialog
+            .draft_recovered_spans
+            .iter()
+            .enumerate()
+            .find_map(|(index, span)| {
+                let span = span.as_ref()?;
+                (span.contains(&offset) || (span.is_empty() && span.start == offset))
+                    .then_some((index, span))
+            })
+    });
     let selected_block = |side: usize| {
-        let row = dialog.change_row?;
-        let comparison = dialog.comparison.as_ref()?;
-        let connectors = &comparison.connectors[side];
-        let run = connectors.get(connectors.partition_point(|run| run.rows.end <= row))?;
-        if !run.rows.contains(&row) {
+        if matches!(
+            (dialog.layout, side),
+            (Layout::OursResult, 1) | (Layout::ResultTheirs, 0)
+        ) {
             return None;
         }
+        let row = row?;
+        let comparison = comparison?;
+        let connectors = &comparison.connectors[side];
+        let index = connectors.partition_point(|run| run.rows.end <= row);
+        let run = connectors
+            .get(index)
+            .filter(|run| run.rows.contains(&row))
+            .or_else(|| {
+                let previous = connectors.get(index.checked_sub(1)?)?;
+                let boundaries = &comparison.result_row_boundaries;
+                (draft.is_some()
+                    && previous.change == LineChange::Removed
+                    && boundaries[previous.rows.start] == boundaries[row])
+                    .then_some(previous)
+            })?;
         let target = comparison.block_target(run)?;
-        dialog.can_edit_block(&target).then_some((run, target))
+        (draft.is_some() || dialog.can_edit_block(&target)).then_some((run, target))
     };
     let available = [selected_block(0).is_some(), selected_block(1).is_some()];
     let mut choice = None;
@@ -882,7 +1065,7 @@ fn resolution_controls(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, bu
             "Take both sides for this conflict, Right first.",
         ),
     ] {
-        let can_take = conflict.is_some() || (!both && available[side]);
+        let can_take = conflict.is_some() || recovered.is_some() || (!both && available[side]);
         if tool(
             ui,
             style,
@@ -898,7 +1081,30 @@ fn resolution_controls(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, bu
         }
     }
     if let Some((side, both)) = choice {
-        if let Some(index) = conflict {
+        if let Some(draft) = draft {
+            let edit = if let Some(index) = conflict {
+                dialog
+                    .review
+                    .as_ref()
+                    .and_then(|review| review.draft_conflict_edit(draft, index, side, both))
+            } else if let Some((index, span)) = recovered {
+                dialog
+                    .review
+                    .as_ref()
+                    .and_then(|review| review.conflict_sides(index))
+                    .map(|sides| BlockEdit {
+                        original: span.clone(),
+                        replacement: crate::conflict::take_sides(sides, side, both),
+                        side,
+                    })
+            } else {
+                selected_block(side)
+                    .and_then(|(run, target)| comparison?.block_edit(run, side, draft, target))
+            };
+            if let Some(edit) = edit {
+                dialog.apply_draft_block(edit);
+            }
+        } else if let Some(index) = conflict {
             dialog.take_conflict_sides(index, side, both);
         } else if let Some((run, target)) = selected_block(side) {
             if let (Some(comparison), Some(original)) = (
@@ -916,10 +1122,15 @@ fn resolution_controls(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, bu
     }
 }
 fn documents(ui: &mut Ui, dialog: &mut Dialog, palette: Palette) {
+    start_editing_on_input(ui, dialog);
     let Some(review) = &dialog.review else {
         return;
     };
-    let Some(comparison) = &dialog.comparison else {
+    let Some(comparison) = dialog
+        .draft_comparison
+        .as_ref()
+        .or(dialog.comparison.as_ref())
+    else {
         ui.label(
             "This file has no editable text. Use Take Ours or Take Theirs from the file menu.",
         );
@@ -927,9 +1138,9 @@ fn documents(ui: &mut Ui, dialog: &mut Dialog, palette: Palette) {
     };
     let row_height = ui.text_style_height(&egui::TextStyle::Monospace) + 4.0;
     let jump = dialog.jump_to_row.take();
-    if let Some(row) = jump {
-        dialog.scroll_y = [row.saturating_sub(2) as f32 * row_height; 2];
-    }
+    let jump_range = jump
+        .and_then(|_| selected_range(dialog, comparison))
+        .cloned();
 
     let height = ui.available_height();
     let columns = match (
@@ -942,17 +1153,56 @@ fn documents(ui: &mut Ui, dialog: &mut Dialog, palette: Palette) {
         (_, Layout::ResultTheirs) => &[2, 1][..],
         (_, Layout::ResultBelow) => &[0, 1][..],
     };
-    let navigated_position = jump
-        .and_then(|row| comparison.rows.get(row))
-        .and_then(|row| {
-            [2, 0, 1]
-                .into_iter()
-                .filter(|column| *column == 2 || columns.contains(column))
-                .find_map(|column| row.lines[column].as_ref())
-        })
-        .map(|line| (line.number, 1));
+    let navigated_position = jump.and_then(|index| {
+        let row = comparison.rows.get(index)?;
+        [2, 0, 1]
+            .into_iter()
+            .filter(|column| *column == 2 || columns.contains(column))
+            .find_map(|column| {
+                let line = row.lines[column].as_ref()?;
+                Some((
+                    PaneCaret {
+                        column,
+                        row: index,
+                        character: 0,
+                    },
+                    (line.number, 1),
+                ))
+            })
+    });
+    if jump.is_some() {
+        dialog.pane_caret = navigated_position.map(|(caret, _)| caret);
+    }
     let below = columns == [0, 1];
     let top_height = if below { (height - 8.0) / 2.0 } else { height };
+    let row_count = comparison.rows.len();
+    let draft_jump_offset = |height, range: &std::ops::Range<usize>| {
+        let boundaries = &comparison.result_row_boundaries;
+        let position = centered_conflict_offset(
+            boundaries[range.start]..boundaries[range.end],
+            boundaries[row_count] + 1,
+            row_height,
+            height,
+        ) / row_height;
+        let aligned = boundaries
+            .partition_point(|&value| value <= position as usize)
+            .saturating_sub(1);
+        (aligned as f32 + position.fract()) * row_height
+    };
+    let jump_offset = |height| {
+        jump.map(|row| {
+            jump_range.as_ref().map_or_else(
+                || row.saturating_sub(2) as f32 * row_height,
+                |range| centered_conflict_offset(range.clone(), row_count, row_height, height),
+            )
+        })
+    };
+    if let Some(offset) = jump_offset(top_height) {
+        dialog.scroll_y = [offset; 2];
+    }
+    if let Some(range) = jump.and(dialog.draft_selection.as_ref()) {
+        dialog.draft_navigation_offset = Some(draft_jump_offset(top_height, range));
+    }
     let mut event = PaneEvent::default();
     let mut viewports = [None; 3];
     let spacing = ui.spacing().item_spacing.x;
@@ -974,7 +1224,11 @@ fn documents(ui: &mut Ui, dialog: &mut Dialog, palette: Palette) {
     });
     ui.spacing_mut().item_spacing.x = spacing;
     let mut ribbon_action = None;
-    if let Some(comparison) = &dialog.comparison {
+    if let Some(comparison) = dialog
+        .draft_comparison
+        .as_ref()
+        .or(dialog.comparison.as_ref())
+    {
         for pair in columns.windows(2) {
             if let (Some(left), Some(right)) = (viewports[pair[0]], viewports[pair[1]]) {
                 let (a, b) = (pair[0], pair[1]);
@@ -985,13 +1239,16 @@ fn documents(ui: &mut Ui, dialog: &mut Dialog, palette: Palette) {
                     (a, b),
                     [left, right],
                     row_height,
-                    Some(dialog),
+                    (!event.draft_changed).then_some(&*dialog),
                 );
                 ribbon_action = action.or(ribbon_action);
             }
         }
     }
     if let Some(offset) = event.scroll {
+        if jump.is_none() {
+            dialog.draft_navigation_offset = None;
+        }
         dialog.scroll_y[0] = offset;
         if jump.is_none() {
             dialog.conflict_navigation_row = None;
@@ -1000,16 +1257,23 @@ fn documents(ui: &mut Ui, dialog: &mut Dialog, palette: Palette) {
     }
     if below {
         ui.add_space(8.0);
+        let result_height = ui.available_height();
+        if let Some(offset) = jump_offset(result_height) {
+            dialog.scroll_y[1] = offset;
+        }
         let result = pane(
             ui,
             dialog,
             palette,
             2,
-            ui.available_height(),
+            result_height,
             dialog.scroll_y[1],
             row_height,
         );
         if let Some(offset) = result.scroll {
+            if jump.is_none() {
+                dialog.draft_navigation_offset = None;
+            }
             dialog.scroll_y[1] = offset;
             if jump.is_none() {
                 dialog.conflict_navigation_row = None;
@@ -1018,42 +1282,127 @@ fn documents(ui: &mut Ui, dialog: &mut Dialog, palette: Palette) {
         }
         event.merge(result);
     }
-    if let Some(index) = event.selected {
-        dialog.selected = index;
-        dialog.change_row = None;
-        dialog.conflict_navigation_row = dialog
+    if let Some(row) = event.activated_row.filter(|_| dialog.draft.is_none()) {
+        dialog.selected = dialog
             .comparison
             .as_ref()
-            .and_then(|comparison| comparison.conflict_rows.get(index))
-            .map(|range| range.start);
+            .and_then(|comparison| comparison.rows[row].conflict);
+        dialog.change_row = Some(row);
+        dialog.conflict_navigation_row = Some(row);
+        dialog.pane_caret = event.caret;
+        let id = working_tree_caret_id();
+        ui.memory_mut(|memory| {
+            if event.caret.is_some_and(|caret| caret.column == 2) && !dialog.show_base {
+                memory.interested_in_focus(id, ui.layer_id());
+                memory.request_focus(id);
+            } else {
+                memory.surrender_focus(id);
+            }
+        });
+        ui.ctx().request_repaint();
     }
-    if let Some(position) = event.cursor_position.or(navigated_position) {
+    if let Some(position) = event
+        .cursor_position
+        .or(navigated_position.map(|(_, position)| position))
+    {
         if dialog.cursor_position != Some(position) {
             dialog.cursor_position = Some(position);
             ui.ctx().request_repaint();
         }
     }
+    if event.draft_changed {
+        dialog.draft_text_changed();
+        ui.ctx().request_repaint();
+    }
     match ribbon_action {
         Some(RibbonAction::TakeConflict(index, side)) => dialog.take_conflict(index, side),
         Some(RibbonAction::UndoConflict(index)) => dialog.undo_conflict(index),
-        Some(RibbonAction::EditBlock(edit)) => dialog.apply_block(edit),
-        Some(RibbonAction::UndoBlock(index)) => dialog.undo_block(index),
+        Some(RibbonAction::EditBlock(edit)) => {
+            if dialog.draft.is_some() {
+                dialog.apply_draft_block(edit);
+            } else {
+                dialog.apply_block(edit);
+            }
+        }
+        Some(RibbonAction::UndoBlock(index)) => {
+            if dialog.draft.is_some() {
+                dialog.undo_draft_block(index);
+            } else {
+                dialog.undo_block(index);
+            }
+        }
         None => {}
     }
+}
+
+fn selected_range<'a>(
+    dialog: &'a Dialog,
+    comparison: &'a Comparison,
+) -> Option<&'a std::ops::Range<usize>> {
+    if dialog.draft.is_some() {
+        dialog.draft_selection.as_ref()
+    } else if let Some(row) = dialog.change_row {
+        let ranges = &comparison.change_ranges[change_view(dialog.layout)];
+        let index = ranges.partition_point(|range| range.end <= row);
+        ranges.get(index).filter(|range| range.contains(&row))
+    } else {
+        dialog
+            .selected
+            .and_then(|index| comparison.conflict_rows.get(index))
+    }
+}
+
+fn pane_scroll_height(height: f32) -> f32 {
+    (height - 30.0).max(30.0)
+}
+
+fn centered_conflict_offset(
+    range: std::ops::Range<usize>,
+    row_count: usize,
+    row_height: f32,
+    pane_height: f32,
+) -> f32 {
+    let viewport_height = pane_scroll_height(pane_height);
+    let block_center = (range.start as f32 + range.len() as f32 / 2.0) * row_height;
+    let max_offset = (row_count as f32 * row_height - viewport_height).max(0.0);
+    (block_center - viewport_height / 2.0).clamp(0.0, max_offset)
 }
 
 #[derive(Default)]
 struct PaneEvent {
     scroll: Option<f32>,
-    selected: Option<usize>,
+    activated_row: Option<usize>,
+    caret: Option<PaneCaret>,
     cursor_position: Option<(usize, usize)>,
     viewport: Option<PaneViewport>,
+    draft_changed: bool,
 }
 
 #[derive(Clone, Copy)]
 struct PaneViewport {
     rect: egui::Rect,
     offset: f32,
+    draft: bool,
+}
+
+impl PaneViewport {
+    fn row_y(self, row: usize, comparison: &Comparison, row_height: f32) -> f32 {
+        let row = if self.draft {
+            comparison.result_row_boundaries[row]
+        } else {
+            row
+        };
+        self.rect.top() - self.offset + row as f32 * row_height
+    }
+}
+
+fn draft_scroll_offset(comparison: &Comparison, offset: f32, row_height: f32) -> f32 {
+    let row = offset / row_height;
+    let index = (row as usize).min(comparison.rows.len());
+    let boundaries = &comparison.result_row_boundaries;
+    let start = boundaries[index];
+    let end = boundaries.get(index + 1).copied().unwrap_or(start);
+    (start as f32 + row.fract() * (end - start) as f32) * row_height
 }
 
 fn pane_change(
@@ -1114,19 +1463,37 @@ fn draw_connectors(
     let painter = ui.painter().with_clip_rect(clip);
     let first = panes
         .iter()
-        .map(|pane| (pane.offset / row_height).floor() as usize)
+        .map(|pane| {
+            let row = (pane.offset / row_height).floor() as usize;
+            if pane.draft {
+                comparison
+                    .result_row_boundaries
+                    .partition_point(|&boundary| boundary < row)
+            } else {
+                row
+            }
+        })
         .min()
         .unwrap_or(0);
     let last = panes
         .iter()
-        .map(|pane| ((pane.offset + pane.rect.height()) / row_height).ceil() as usize)
+        .map(|pane| {
+            let row = ((pane.offset + pane.rect.height()) / row_height).ceil() as usize;
+            if pane.draft {
+                comparison
+                    .result_row_boundaries
+                    .partition_point(|&boundary| boundary <= row)
+            } else {
+                row
+            }
+        })
         .max()
         .unwrap_or(0)
         .saturating_add(1)
         .min(comparison.rows.len());
     let side = if a == 2 || b == 2 { a.min(b) } else { 2 };
     let runs = &comparison.connectors[side];
-    let controls = dialog.filter(|dialog| side < 2 && dialog.draft.is_none() && !dialog.show_base);
+    let controls = dialog.filter(|dialog| side < 2 && !dialog.show_base);
     let mut action = None;
     let mut shown_conflict = None;
     for run in runs
@@ -1156,10 +1523,14 @@ fn draw_connectors(
             start..if present { end } else { start }
         });
         let bands: [[f32; 2]; 2] = std::array::from_fn(|side| {
-            let origin = panes[side].rect.top() - panes[side].offset;
             let range = &occupied[side];
-            let top = origin + range.start as f32 * row_height;
-            [top, (origin + range.end as f32 * row_height).max(top + 1.0)]
+            let top = panes[side].row_y(range.start, comparison, row_height);
+            [
+                top,
+                panes[side]
+                    .row_y(range.end, comparison, row_height)
+                    .max(top + 1.0),
+            ]
         });
         let fill = change_style(palette, change).0;
         let points = (0..=12)
@@ -1178,9 +1549,10 @@ fn draw_connectors(
         };
         if let Some(index) = run.conflict {
             if shown_conflict == Some(index)
-                || dialog.conflict_undo[index]
-                    .as_ref()
-                    .is_some_and(|undo| undo.side == side || dialog.layout != Layout::ThreeWay)
+                || (dialog.draft.is_none()
+                    && dialog.conflict_undo[index]
+                        .as_ref()
+                        .is_some_and(|undo| undo.side == side || dialog.layout != Layout::ThreeWay))
             {
                 continue;
             }
@@ -1198,11 +1570,19 @@ fn draw_connectors(
                 },
                 Some(a != 2),
             ) {
-                action = Some(RibbonAction::TakeConflict(index, side));
+                action = if let Some(draft) = &dialog.draft {
+                    dialog
+                        .review
+                        .as_ref()
+                        .and_then(|review| review.draft_conflict_edit(draft, index, side, false))
+                        .map(RibbonAction::EditBlock)
+                } else {
+                    Some(RibbonAction::TakeConflict(index, side))
+                };
             }
         } else if let Some(target) = comparison
             .block_target(run)
-            .filter(|target| dialog.can_edit_block(target))
+            .filter(|target| dialog.draft.is_some() || dialog.can_edit_block(target))
         {
             if ribbon_button(
                 ui,
@@ -1218,9 +1598,14 @@ fn draw_connectors(
                 Some(a != 2),
             ) {
                 if let Some(edit) = dialog
-                    .review
-                    .as_ref()
-                    .and_then(|review| review.text.as_deref())
+                    .draft
+                    .as_deref()
+                    .or_else(|| {
+                        dialog
+                            .review
+                            .as_ref()
+                            .and_then(|review| review.text.as_deref())
+                    })
                     .and_then(|text| comparison.block_edit(run, side, text, target))
                 {
                     action = Some(RibbonAction::EditBlock(edit));
@@ -1232,15 +1617,33 @@ fn draw_connectors(
     if let Some(dialog) = controls {
         let undo_bands = |rows: &std::ops::Range<usize>| {
             panes.map(|pane| {
-                let origin = pane.rect.top() - pane.offset;
                 let first = rows.start.min(comparison.rows.len().saturating_sub(1));
-                let top = origin + first as f32 * row_height;
+                let top = pane.row_y(first, comparison, row_height);
                 [
                     top,
-                    (origin + rows.end as f32 * row_height).max(top + row_height),
+                    pane.row_y(rows.end, comparison, row_height)
+                        .max(top + row_height),
                 ]
             })
         };
+        if dialog.draft.is_some() {
+            for (index, undo) in dialog.draft_undo.iter().enumerate() {
+                if (undo.side == side || dialog.layout != Layout::ThreeWay)
+                    && ribbon_button(
+                        ui,
+                        palette,
+                        clip,
+                        undo_bands(&comparison.rows_for_result_span(&undo.span)),
+                        ("undo_draft_block", side, index),
+                        "Undo the edit to this block",
+                        None,
+                    )
+                {
+                    action = Some(RibbonAction::UndoBlock(index));
+                }
+            }
+            return action;
+        }
         for (index, undo) in dialog.conflict_undo.iter().enumerate() {
             if undo
                 .as_ref()
@@ -1339,8 +1742,10 @@ fn ribbon_button(
 impl PaneEvent {
     fn merge(&mut self, other: Self) {
         self.scroll = other.scroll.or(self.scroll);
-        self.selected = other.selected.or(self.selected);
+        self.activated_row = other.activated_row.or(self.activated_row);
+        self.caret = other.caret.or(self.caret);
         self.cursor_position = other.cursor_position.or(self.cursor_position);
+        self.draft_changed |= other.draft_changed;
     }
 }
 
@@ -1372,47 +1777,133 @@ fn pane(
     if column == 2 && !dialog.show_base {
         working_tree_menu(ui, dialog, header);
     }
-    let (Some(review), Some(comparison)) = (&dialog.review, &dialog.comparison) else {
+    let Some(original) = &dialog.comparison else {
         return event;
     };
+    let area_height = pane_scroll_height(height);
+    if column == 2 {
+        if let (Some(draft), Some(comparison)) = (&mut dialog.draft, &dialog.draft_comparison) {
+            let start = dialog.manual_edit_start.take();
+            let draft_offset = draft_scroll_offset(
+                comparison,
+                dialog.draft_navigation_offset.unwrap_or(offset),
+                row_height,
+            );
+            let scrolled = ScrollArea::both()
+                .id_salt("conflict.manual")
+                .auto_shrink([false; 2])
+                .max_height(area_height)
+                .vertical_scroll_offset(draft_offset)
+                .show(ui, |ui| {
+                    let background = ui.painter().add(egui::Shape::Noop);
+                    let editor_id = ui.make_persistent_id("conflict.manual.editor");
+                    if let Some(character) = start {
+                        let mut state = if dialog.manual_cursor.is_some() {
+                            egui::text_edit::TextEditState::load(ui.ctx(), editor_id)
+                                .unwrap_or_default()
+                        } else {
+                            egui::text_edit::TextEditState::default()
+                        };
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::one(
+                                egui::text::CCursor::new(character),
+                            )));
+                        state.store(ui.ctx(), editor_id);
+                        ui.memory_mut(|memory| memory.request_focus(editor_id));
+                    }
+                    let mut layout_text = |ui: &Ui, text: &dyn egui::TextBuffer, _width| {
+                        let mut job = egui::text::LayoutJob::simple(
+                            text.as_str().to_owned(),
+                            egui::TextStyle::Monospace.resolve(ui.style()),
+                            palette.text,
+                            f32::INFINITY,
+                        );
+                        job.keep_trailing_whitespace = true;
+                        for section in &mut job.sections {
+                            section.format.line_height = Some(row_height);
+                        }
+                        ui.fonts_mut(|fonts| fonts.layout_job(job))
+                    };
+                    let output = TextEdit::multiline(draft)
+                        .id(editor_id)
+                        .background_color(egui::Color32::TRANSPARENT)
+                        .margin(Margin {
+                            left: 54,
+                            right: 4,
+                            top: 0,
+                            bottom: 0,
+                        })
+                        .min_size(egui::vec2(width, area_height))
+                        .desired_width(f32::INFINITY)
+                        .code_editor()
+                        .font(egui::TextStyle::Monospace)
+                        .layouter(&mut layout_text)
+                        .show(ui);
+                    if let Some(character) = start.filter(|_| dialog.draft_selection.is_none()) {
+                        let rect = output
+                            .galley
+                            .pos_from_cursor(egui::text::CCursor::new(character))
+                            .translate(output.galley_pos.to_vec2());
+                        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                    }
+                    let changed = output.response.changed();
+                    if changed {
+                        event.draft_changed = true;
+                    }
+                    paint_draft_changes(
+                        ui,
+                        palette,
+                        dialog.layout,
+                        comparison,
+                        &output,
+                        background,
+                        dialog.draft_selection.as_ref(),
+                    );
+                    if let Some(caret) = output.cursor_range.filter(|_| output.response.has_focus())
+                    {
+                        let index = usize::from(caret.primary.index);
+                        if changed
+                            || start.is_some()
+                            || dialog.manual_cursor.map(|(cursor, _)| cursor) != Some(index)
+                        {
+                            if start.is_none() {
+                                dialog.draft_selection = None;
+                            }
+                            let position = text_position(draft, index);
+                            dialog.manual_cursor = Some((index, position.0));
+                            event.cursor_position = Some(position);
+                        }
+                    }
+                    output.galley_pos.y
+                });
+            event.viewport = Some(PaneViewport {
+                rect: scrolled.inner_rect,
+                offset: scrolled.inner_rect.top() - scrolled.inner,
+                draft: true,
+            });
+            let actual = scrolled.state.clamped_offset().y;
+            if (actual - draft_offset).abs() > 0.5
+                && (start.is_some()
+                    || event.cursor_position.is_some()
+                    || ui.rect_contains_pointer(scrolled.inner_rect))
+            {
+                let row = actual / row_height;
+                let aligned = comparison
+                    .result_row_boundaries
+                    .partition_point(|&boundary| boundary <= row as usize)
+                    .saturating_sub(1);
+                event.scroll = Some((aligned as f32 + row.fract()) * row_height);
+            }
+            return event;
+        }
+    }
+    let comparison = dialog.draft_comparison.as_ref().unwrap_or(original);
     let source = if column == 2 {
         &comparison.result
     } else {
         &comparison.sources[column]
     };
-    let area_height = (height - 30.0).max(30.0);
-    if column == 2 {
-        if let Some(draft) = &mut dialog.draft {
-            ScrollArea::both()
-                .id_salt("conflict.manual")
-                .auto_shrink([false; 2])
-                .max_height(area_height)
-                .show(ui, |ui| {
-                    let output = TextEdit::multiline(draft)
-                        .id_salt("conflict.manual.editor")
-                        .min_size(egui::vec2(width, area_height))
-                        .desired_width(width)
-                        .code_editor()
-                        .font(egui::TextStyle::Monospace)
-                        .show(ui);
-                    let changed = output.response.changed();
-                    if changed {
-                        dialog.draft_ready = review.can_stage(draft);
-                    }
-                    if let Some(caret) = output.cursor_range.filter(|_| output.response.has_focus())
-                    {
-                        let index = usize::from(caret.primary.index);
-                        if changed || dialog.manual_cursor_index != Some(index) {
-                            dialog.manual_cursor_index = Some(index);
-                            event.cursor_position = Some(text_position(draft, index));
-                        }
-                    } else {
-                        dialog.manual_cursor_index = None;
-                    }
-                });
-            return event;
-        }
-    }
     let mut row_origin = None;
     let scrolled = Frame::new()
         .fill(palette.editor)
@@ -1424,6 +1915,7 @@ fn pane(
                 .max_height(area_height)
                 .vertical_scroll_offset(offset)
                 .show_rows(ui, row_height, comparison.rows.len(), |ui, rows| {
+                    let selected_range = selected_range(dialog, comparison);
                     let click = ui.input(|input| {
                         input
                             .pointer
@@ -1441,9 +1933,41 @@ fn pane(
                         let change = row.lines[column]
                             .as_ref()
                             .and_then(|_| pane_change(comparison, row, dialog.layout, column));
-                        if let Some(change) = change {
-                            let (fill, mark, symbol) = change_style(palette, change);
+                        let change_style = change.map(|change| change_style(palette, change));
+                        let fill = if let Some((fill, _, _)) = change_style {
+                            fill
+                        } else if row.marker && column == 2 {
+                            palette.hunk_background
+                        } else {
+                            palette.editor
+                        };
+                        if let Some(range) = selected_range.filter(|range| range.contains(&index)) {
+                            let painter = ui.painter();
+                            painter.rect_filled(
+                                background,
+                                0.0,
+                                fill.lerp_to_gamma(palette.selection, 0.55),
+                            );
+                            painter.rect_filled(
+                                egui::Rect::from_min_size(
+                                    egui::pos2(ui.clip_rect().left(), position.y),
+                                    egui::vec2(3.0, row_height),
+                                ),
+                                0.0,
+                                palette.accent,
+                            );
+                            for (edge, y) in [
+                                (range.start, background.top() + 0.5),
+                                (range.end - 1, background.bottom() - 0.5),
+                            ] {
+                                if index == edge {
+                                    painter.hline(background.x_range(), y, (1.0, palette.accent));
+                                }
+                            }
+                        } else if change_style.is_some() || (row.marker && column == 2) {
                             ui.painter().rect_filled(background, 0.0, fill);
+                        }
+                        if let Some((_, mark, symbol)) = change_style {
                             ui.painter().text(
                                 position + egui::vec2(7.0, row_height / 2.0),
                                 egui::Align2::CENTER_CENTER,
@@ -1451,19 +1975,11 @@ fn pane(
                                 egui::TextStyle::Monospace.resolve(ui.style()),
                                 mark,
                             );
-                        } else if row.marker && column == 2 {
-                            ui.painter()
-                                .rect_filled(background, 0.0, palette.hunk_background);
                         }
-                        if row.conflict == Some(dialog.selected) {
-                            ui.painter().rect_filled(
-                                egui::Rect::from_min_size(
-                                    egui::pos2(ui.clip_rect().left(), position.y),
-                                    egui::vec2(2.0, row_height),
-                                ),
-                                0.0,
-                                palette.accent,
-                            );
+                        let row_click = click
+                            .filter(|_| ui.is_enabled() && ui.rect_contains_pointer(background));
+                        if row_click.is_some() {
+                            event.activated_row = Some(index);
                         }
                         ui.allocate_ui_with_layout(
                             egui::vec2(width, row_height),
@@ -1491,23 +2007,43 @@ fn pane(
                                                 egui::Sense::hover()
                                             }),
                                     );
-                                    if response.clicked() && row.conflict.is_some() {
-                                        event.selected = row.conflict;
-                                    }
-                                    if let Some(pointer) = click.filter(|_| {
-                                        ui.is_enabled() && ui.rect_contains_pointer(background)
-                                    }) {
+                                    let active_caret = dialog.pane_caret.filter(|caret| {
+                                        caret.column == column && caret.row == index
+                                    });
+                                    if row_click.is_some() || active_caret.is_some() {
                                         let galley = ui.painter().layout_no_wrap(
                                             text.to_owned(),
                                             egui::TextStyle::Monospace.resolve(ui.style()),
                                             palette.text,
                                         );
-                                        let cursor = galley.cursor_from_pos(egui::vec2(
-                                            pointer.x - response.rect.left(),
-                                            galley.size().y / 2.0,
-                                        ));
-                                        event.cursor_position =
-                                            Some((line.number, usize::from(cursor.index) + 1));
+                                        let character = if let Some(pointer) = row_click {
+                                            let cursor = galley.cursor_from_pos(egui::vec2(
+                                                pointer.x - response.rect.left(),
+                                                galley.size().y / 2.0,
+                                            ));
+                                            let character = usize::from(cursor.index);
+                                            event.caret = Some(PaneCaret {
+                                                column,
+                                                row: index,
+                                                character,
+                                            });
+                                            event.cursor_position =
+                                                Some((line.number, character + 1));
+                                            character
+                                        } else {
+                                            active_caret.map_or(0, |caret| caret.character)
+                                        };
+                                        let caret = galley
+                                            .pos_from_cursor(egui::text::CCursor::new(character))
+                                            .translate(response.rect.min.to_vec2());
+                                        ui.painter().rect_filled(
+                                            egui::Rect::from_min_size(
+                                                egui::pos2(caret.left(), position.y + 2.0),
+                                                egui::vec2(1.5, row_height - 4.0),
+                                            ),
+                                            0.0,
+                                            palette.text,
+                                        );
                                     }
                                 }
                             },
@@ -1520,11 +2056,96 @@ fn pane(
     event.viewport = Some(PaneViewport {
         rect: scrolled.inner_rect,
         offset: row_origin.map_or(0.0, |origin| scrolled.inner_rect.top() - origin),
+        draft: false,
     });
     if changed && ui.rect_contains_pointer(scrolled.inner_rect.expand(14.0)) {
         event.scroll = Some(scrolled.state.clamped_offset().y);
     }
     event
+}
+
+fn paint_draft_changes(
+    ui: &Ui,
+    palette: Palette,
+    layout: Layout,
+    comparison: &Comparison,
+    editor: &egui::text_edit::TextEditOutput,
+    background: egui::layers::ShapeIdx,
+    selection: Option<&std::ops::Range<usize>>,
+) {
+    let bounds = editor.response.rect.intersect(ui.clip_rect());
+    let mut shapes = vec![egui::Shape::rect_filled(bounds, 0.0, palette.editor)];
+    let rows = &editor.galley.rows;
+    let y = editor.galley_pos.y;
+    let first = rows.partition_point(|row| y + row.rect().bottom() <= bounds.top());
+    let gutter = egui::Rect::from_min_max(
+        bounds.min,
+        egui::pos2(bounds.left() + 48.0, bounds.bottom()),
+    )
+    .intersect(bounds);
+    let gutter_painter = ui.painter().with_clip_rect(gutter);
+    gutter_painter.rect_filled(gutter, 0.0, palette.panel_alt);
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let first_aligned = comparison
+        .result_row_boundaries
+        .partition_point(|&number| number < first);
+    let mut lines = comparison.rows[first_aligned.min(comparison.rows.len())..]
+        .iter()
+        .filter(|row| row.lines[2].is_some());
+    let selected_lines = selection.map(|range| {
+        let boundaries = &comparison.result_row_boundaries;
+        boundaries[range.start]..boundaries[range.end]
+    });
+    for (index, row) in rows.iter().enumerate().skip(first) {
+        let rect = row.rect().translate(editor.galley_pos.to_vec2());
+        if rect.top() >= bounds.bottom() {
+            break;
+        }
+        gutter_painter.text(
+            egui::pos2(gutter.right() - 7.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            (index + 1).to_string(),
+            font.clone(),
+            palette.muted,
+        );
+        let Some(line) = lines.next() else { continue };
+        let change = pane_change(comparison, line, layout, 2);
+        let fill = change
+            .map(|change| change_style(palette, change).0)
+            .or_else(|| line.marker.then_some(palette.hunk_background));
+        let selected = selected_lines
+            .as_ref()
+            .is_some_and(|range| range.contains(&index));
+        if selected || fill.is_some() {
+            let fill = if selected {
+                fill.unwrap_or(palette.editor)
+                    .lerp_to_gamma(palette.selection, 0.55)
+            } else {
+                fill.unwrap_or(palette.editor)
+            };
+            let band = egui::Rect::from_x_y_ranges(bounds.x_range(), rect.y_range());
+            shapes.push(egui::Shape::rect_filled(band.intersect(bounds), 0.0, fill));
+        }
+    }
+    if let Some(range) = selected_lines {
+        let boundary_y = |index: usize| {
+            rows.get(index).map_or_else(
+                || rows.last().map_or(0.0, |row| row.rect().bottom()),
+                |row| row.rect().top(),
+            ) + y
+        };
+        for edge in [range.start, range.end] {
+            let edge_y = boundary_y(edge);
+            if bounds.y_range().contains(edge_y) {
+                shapes.push(egui::Shape::hline(
+                    bounds.x_range(),
+                    edge_y,
+                    (1.0, palette.accent),
+                ));
+            }
+        }
+    }
+    ui.painter().set(background, egui::Shape::Vec(shapes));
 }
 
 fn text_position(text: &str, index: usize) -> (usize, usize) {
@@ -1600,6 +2221,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn conflict_scroll_centers_the_block_and_clamps_to_document_bounds() {
+        assert_eq!(centered_conflict_offset(40..50, 100, 20.0, 430.0), 700.0);
+        assert_eq!(centered_conflict_offset(40..50, 100, 20.0, 230.0), 800.0);
+        assert_eq!(centered_conflict_offset(0..4, 100, 20.0, 430.0), 0.0);
+        assert_eq!(centered_conflict_offset(96..100, 100, 20.0, 430.0), 1600.0);
+        assert_eq!(centered_conflict_offset(3..7, 10, 20.0, 430.0), 0.0);
+    }
+
+    #[test]
     fn cursor_position_counts_characters_and_handles_crlf() {
         let text = "é🦀\r\nβ";
         assert_eq!(text_position(text, 0), (1, 1));
@@ -1633,6 +2263,7 @@ mod tests {
         let viewport = |x| PaneViewport {
             rect: egui::Rect::from_min_size(egui::pos2(x, 30.0), egui::vec2(100.0, 180.0)),
             offset: 0.0,
+            draft: false,
         };
         let render = |dialog: &Dialog, events| {
             let mut action = None;
@@ -1645,9 +2276,19 @@ mod tests {
                     action = draw_connectors(
                         ui,
                         palette,
-                        dialog.comparison.as_ref().unwrap(),
+                        dialog
+                            .draft_comparison
+                            .as_ref()
+                            .or(dialog.comparison.as_ref())
+                            .unwrap(),
                         (0, 2),
-                        [viewport(10.0), viewport(140.0)],
+                        [
+                            viewport(10.0),
+                            PaneViewport {
+                                draft: dialog.draft.is_some(),
+                                ..viewport(140.0)
+                            },
+                        ],
                         18.0,
                         Some(dialog),
                     );
@@ -1684,6 +2325,39 @@ mod tests {
             dialog.comparison.as_ref().unwrap().result,
             "start\nlocal change\nend\n"
         );
+
+        dialog.begin_draft(0);
+        dialog
+            .draft
+            .as_mut()
+            .unwrap()
+            .insert_str(0, "ручная правка\n");
+        dialog.draft_text_changed();
+        render(&dialog, vec![]);
+        let Some(RibbonAction::EditBlock(edit)) = click(&dialog, 71.0) else {
+            panic!("the insertion ribbon did not apply its edit in the draft");
+        };
+        dialog.apply_draft_block(edit);
+        assert_eq!(dialog.draft.as_deref(), Some("ручная правка\nstart\nend\n"));
+        dialog
+            .draft
+            .as_mut()
+            .unwrap()
+            .insert_str(0, "second edit\n");
+        dialog.draft_text_changed();
+        render(&dialog, vec![]);
+        let Some(RibbonAction::UndoBlock(index)) = click(&dialog, 93.0) else {
+            panic!("the undo button did not follow the edited block in the draft");
+        };
+        dialog.undo_draft_block(index);
+        assert_eq!(
+            dialog.draft.as_deref(),
+            Some("second edit\nручная правка\nstart\nlocal change\nend\n")
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file")).unwrap(),
+            "start\nlocal change\nend\n"
+        );
     }
 
     #[test]
@@ -1696,6 +2370,7 @@ mod tests {
         let viewport = |x| PaneViewport {
             rect: egui::Rect::from_min_size(egui::pos2(x, 30.0), egui::vec2(100.0, 180.0)),
             offset: 0.0,
+            draft: false,
         };
         let context = egui::Context::default();
         let mut output = context.run_ui(egui::RawInput::default(), |ui| {

@@ -934,7 +934,9 @@ fn instructions_editor(ui: &mut Ui, instructions: &mut String) {
     let editor_height = (ui.available_height() - ui.spacing().item_spacing.y).max(24.0);
     let instructions = ui.add_sized(
         [ui.available_width(), editor_height],
-        egui::TextEdit::multiline(instructions).desired_rows(1),
+        egui::TextEdit::multiline(instructions)
+            .desired_rows(1)
+            .margin(egui::Margin::symmetric(6, 4)),
     );
     super::controls::dialog_style::preserve_multiline_enter(&instructions);
 }

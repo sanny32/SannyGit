@@ -320,6 +320,7 @@ pub struct SannyGitApp {
     pub diff_preview: Option<crate::models::DiffPreview>,
     pub state_current: bool,
     pub merging: bool,
+    merge_default_message: Option<String>,
     pub history_all_branches: bool,
     pub history_edges: Vec<crate::models::HistoryEdge>,
     pub history_max_lane: usize,
@@ -455,7 +456,11 @@ impl SannyGitApp {
             return;
         };
         let draft = CommitDraft {
-            message: self.commit_message.clone(),
+            message: if self.merge_default_message.as_ref() == Some(&self.commit_message) {
+                String::new()
+            } else {
+                self.commit_message.clone()
+            },
             amend_head: self.amend_head.clone().filter(|_| self.amend),
             normal_message: self.amend_draft.clone().filter(|_| self.amend),
         };
@@ -585,6 +590,7 @@ impl SannyGitApp {
             diff_preview: None,
             state_current: false,
             merging: false,
+            merge_default_message: None,
             history_all_branches: false,
             history_edges: Vec::new(),
             history_max_lane: 0,
@@ -1092,7 +1098,6 @@ impl SannyGitApp {
             self.assign_group(&path, self.manager.preferences.selected_group.clone());
         }
         self.current_branch = snapshot.branch;
-        self.merging = snapshot.merging;
         let retained_diff = if same_repository && same_branch && self.selected_diff().is_some() {
             self.changes
                 .get_mut(self.selected_change)
@@ -1166,12 +1171,36 @@ impl SannyGitApp {
             self.load_commit_draft();
             self.journal_filter.clear();
         }
+        self.update_merge_message(snapshot.merging, snapshot.merge_message, same_repository);
         self.status = if self.changes.is_empty() {
             "Working tree clean"
         } else {
             "Ready"
         }
         .into();
+    }
+
+    fn update_merge_message(
+        &mut self,
+        merging: bool,
+        message: Option<String>,
+        same_repository: bool,
+    ) {
+        if !same_repository {
+            self.merge_default_message = None;
+        } else if self.merging
+            && !merging
+            && self.merge_default_message.take().as_ref() == Some(&self.commit_message)
+        {
+            self.commit_message.clear();
+        }
+        if merging && (!self.merging || !same_repository) && self.commit_message.is_empty() {
+            if let Some(message) = message {
+                self.commit_message.clone_from(&message);
+                self.merge_default_message = Some(message);
+            }
+        }
+        self.merging = merging;
     }
 
     fn update_commit_contents_after_refresh(&mut self, opening_repository: bool) {

@@ -1,13 +1,14 @@
 use super::controls::tooltips::TooltipResponse;
 use eframe::egui::{
-    epaint::text::ByteRangeExt, Align, Frame, Label, Layout, Margin, RichText, ScrollArea,
+    epaint::text::ByteRangeExt, Align, Button, Frame, Label, Layout, Margin, RichText, ScrollArea,
     TextWrapMode, Ui, Vec2,
 };
 use egui_extras::syntax_highlighting::{self, CodeTheme};
 
 use crate::{
     app::SannyGitApp,
-    models::{DiffLine, DiffLineKind},
+    conflict::Action,
+    models::{ChangeKind, DiffLine, DiffLineKind},
 };
 
 use super::controls::icons::{self, Icon};
@@ -15,7 +16,8 @@ use super::controls::icons::{self, Icon};
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
-    let Some(change) = app.changes.get(app.selected_change) else {
+    let index = app.selected_change;
+    let Some(change) = app.changes.get(index) else {
         super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
             ui.label("Changes");
         });
@@ -25,6 +27,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         app.selected_change = usize::MAX;
         return;
     };
+    if change.kind == ChangeKind::Conflicted {
+        conflict_bar(ui, app, index);
+    }
+    let change = &app.changes[index];
     let Some(preview) = app.selected_diff() else {
         if app.busy() {
             ui.centered_and_justified(|ui| {
@@ -74,6 +80,80 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         });
     });
     render_preview(ui, preview, palette, &change.path);
+}
+
+fn conflict_bar(ui: &mut Ui, app: &mut SannyGitApp, index: usize) {
+    let palette = app.palette();
+    let state = app.changes[index].conflict_status.map_or_else(
+        || "Conflicted".to_owned(),
+        |status| format!("Conflicted ({status})"),
+    );
+    let compact = ui.available_width() < 570.0;
+    let secondary = [Action::Ours, Action::Theirs, Action::Recreate];
+    let mut requested = None;
+    let mut stage = false;
+    let stage_enabled = app.staging_allowed(index, true);
+    let conflict_button = |ui: &mut Ui, action: Action| {
+        ui.add_enabled(
+            app.can_open_conflict(index, action),
+            Button::new(action.label()),
+        )
+        .help_text(action.description())
+        .disabled_help_text("Select a single file and wait for the working tree to be current")
+        .clicked()
+    };
+    super::header(
+        ui,
+        30.0,
+        crate::theme::Palette {
+            header: palette.warning_background,
+            panel_radius: 0,
+            ..palette
+        },
+        |ui| {
+            ui.spacing_mut().interact_size.y = 22.0;
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                stage = ui
+                    .add_enabled(stage_enabled, Button::new("Stage"))
+                    .help_text("Stage the working copy after resolving the conflict")
+                    .disabled_help_text(if app.merging {
+                        "Wait for the current operation or refresh the working tree"
+                    } else {
+                        "Direct staging of conflicts is available during a merge. Use Conflict Solver to stage a resolution."
+                    })
+                    .clicked();
+                if compact {
+                    ui.menu_button("Resolve", |ui| {
+                        for action in secondary {
+                            if conflict_button(ui, action) {
+                                requested = Some(action);
+                                ui.close();
+                            }
+                        }
+                    });
+                } else {
+                    for action in secondary.into_iter().rev() {
+                        if conflict_button(ui, action) {
+                            requested = Some(action);
+                        }
+                    }
+                }
+                if conflict_button(ui, Action::Edit) {
+                    requested = Some(Action::Edit);
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    icons::paint(ui, Icon::Warning, palette.warning, 16.0);
+                    ui.add(Label::new(&state).truncate().show_tooltip_when_elided(false))
+                        .help_text(&state);
+                });
+            });
+        },
+    );
+    if let Some(action) = requested {
+        app.open_conflict(index, action);
+    } else if stage {
+        app.set_staged(index, true);
+    }
 }
 
 fn file_header(ui: &mut Ui, path: &str, palette: crate::theme::Palette) -> bool {
@@ -391,6 +471,68 @@ fn file_name(path: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn conflict_actions_fit_in_wide_and_narrow_diff_panes() {
+        use super::*;
+        use crate::theme::{install_fonts, ThemeChoice};
+        use eframe::egui::{Context, Pos2, RawInput, Rect, Shape};
+
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for (width, actions) in [
+                (320.0, &["Conflict Solver", "Resolve", "Stage"][..]),
+                (
+                    620.0,
+                    &[
+                        "Conflict Solver",
+                        "Take Ours",
+                        "Take Theirs",
+                        "Recreate Conflict",
+                        "Stage",
+                    ][..],
+                ),
+            ] {
+                let ctx = Context::default();
+                install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.changes = crate::git::parse_status(b"UU README.md\0").unwrap();
+                app.selected_change = 0;
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 180.0))),
+                        ..Default::default()
+                    },
+                    |ui| show(ui, &mut app),
+                );
+                output.textures_delta.clear();
+                let mut end = 0.0;
+                for action in actions {
+                    let (rect, clip) = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            Shape::Text(text) if text.galley.job.text == *action => Some((
+                                Rect::from_min_size(text.pos, text.galley.size()),
+                                shape.clip_rect,
+                            )),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| panic!("Missing action {action} at width {width}"));
+                    assert!(
+                        clip.contains_rect(rect),
+                        "Clipped action {action} at width {width}"
+                    );
+                    assert!(
+                        rect.left() >= end,
+                        "Overlapping action {action} at width {width}"
+                    );
+                    end = rect.right();
+                }
+            }
+        }
+    }
+
     #[test]
     fn dragging_diff_divider_resizes_both_sides_and_keeps_the_split_for_other_files() {
         use super::*;

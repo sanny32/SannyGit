@@ -88,6 +88,7 @@ pub struct Snapshot {
     pub branch: String,
     pub changes: Vec<ChangeFile>,
     pub merging: bool,
+    pub merge_message: Option<String>,
 }
 
 pub(crate) fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -763,6 +764,18 @@ fn commit_with_mode(
     {
         return Err("There are no staged changes to commit.".into());
     }
+    let cleaned;
+    let message = if merging {
+        cleaned = text(run_with_input(
+            root,
+            &["stripspace", "--strip-comments"],
+            Some(message.as_bytes()),
+        )?)?;
+        validate_message(&cleaned)?;
+        &cleaned
+    } else {
+        message
+    };
     if contents == CommitContents::All {
         run(root, &["add", "--all"])?;
     }
@@ -806,10 +819,16 @@ pub fn load(path: &Path) -> Result<Snapshot, String> {
         Err(error) => return Err(error.to_string()),
     };
     let changes = load_changes(&path)?;
-    let merging = operation_directory(&path)?
+    let directory = operation_directory(&path)?;
+    let merging = directory
         .join("MERGE_HEAD")
         .try_exists()
         .map_err(|error| format!("Could not check merge state: {error}"))?;
+    let merge_message = if merging {
+        read_merge_message(&directory)?
+    } else {
+        None
+    };
     Ok(Snapshot {
         repository: Repository {
             name: path
@@ -821,7 +840,28 @@ pub fn load(path: &Path) -> Result<Snapshot, String> {
         branch,
         changes,
         merging,
+        merge_message,
     })
+}
+
+fn read_merge_message(directory: &Path) -> Result<Option<String>, String> {
+    let file = match std::fs::File::open(directory.join("MERGE_MSG")) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Could not open the merge message: {error}")),
+    };
+    let mut raw = Vec::new();
+    file.take(OUTPUT_LIMIT as u64 + 1)
+        .read_to_end(&mut raw)
+        .map_err(|error| format!("Could not read the merge message: {error}"))?;
+    if raw.len() > OUTPUT_LIMIT {
+        return Ok(None);
+    }
+    let Ok(message) = String::from_utf8(raw) else {
+        return Ok(None);
+    };
+    let message = message.trim_end_matches(['\r', '\n']).replace("\r\n", "\n");
+    Ok(validate_message(&message).is_ok().then_some(message))
 }
 
 fn load_changes(path: &Path) -> Result<Vec<ChangeFile>, String> {
@@ -892,6 +932,16 @@ pub fn parse_status(bytes: &[u8]) -> Result<Vec<ChangeFile>, String> {
             path,
             original_path,
             kind,
+            conflict_status: match [x, y] {
+                [b'D', b'D'] => Some("Both deleted"),
+                [b'A', b'U'] => Some("Added by us"),
+                [b'U', b'D'] => Some("Deleted by them"),
+                [b'U', b'A'] => Some("Added by them"),
+                [b'D', b'U'] => Some("Deleted by us"),
+                [b'A', b'A'] => Some("Both added"),
+                [b'U', b'U'] => Some("Both modified"),
+                _ => None,
+            },
             staged: kind != ChangeKind::Conflicted && x != b' ' && x != b'?',
             unstaged: y != b' ',
             diff: String::new(),

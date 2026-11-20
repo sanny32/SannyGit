@@ -644,7 +644,8 @@ impl SannyGitApp {
             return;
         }
         if !discard_draft
-            && (!self.commit_message.is_empty()
+            && ((!self.commit_message.is_empty()
+                && self.merge_default_message.as_ref() != Some(&self.commit_message))
                 || self
                     .amend_draft
                     .as_ref()
@@ -702,6 +703,8 @@ impl SannyGitApp {
         self.clear_commit_preview();
         self.state_current = false;
         self.commit_message.clear();
+        self.merge_default_message = None;
+        self.merging = false;
         self.journal_filter.clear();
         self.manager.dialog = None;
         self.manager.worktrees.clear();
