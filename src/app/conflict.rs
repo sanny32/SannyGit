@@ -497,9 +497,9 @@ impl SannyGitApp {
         let path = self.changes[index].path.clone();
         let reviewed_path = path.clone();
         let reviewed_root = root.clone();
-        if self.start_worker(move || {
+        if self.start_worker(move |git| {
             WorkerResult::ConflictReview(
-                conflict::prepare(&reviewed_root, &reviewed_path, action).map(Box::new),
+                conflict::prepare(git, &reviewed_root, &reviewed_path, action).map(Box::new),
             )
         }) {
             self.conflict_dialog = Some(Dialog::new(root, path, action));
@@ -550,8 +550,8 @@ impl SannyGitApp {
         };
         let root = PathBuf::from(&repository.path);
         let path = dialog.path.clone();
-        self.start_worker(move || {
-            let outcome = conflict::apply(&root, &path, action, &review, draft);
+        self.start_worker(move |git| {
+            let outcome = conflict::apply(git, &root, &path, action, &review, draft);
             WorkerResult::Operation {
                 committed: false,
                 success: if action == Action::Recreate {
@@ -560,7 +560,7 @@ impl SannyGitApp {
                     "Conflict resolved"
                 },
                 outcome,
-                snapshot: git::load(&root),
+                snapshot: git::load(git, &root),
             }
         });
     }

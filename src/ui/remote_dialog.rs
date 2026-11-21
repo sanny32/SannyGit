@@ -222,8 +222,8 @@ fn branch_confirmation(
                 ui.set_width(464.0);
                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
                 let branch = state.branch.as_deref().unwrap_or_else(|| {
-                    if !loaded && !app.current_branch.is_empty() {
-                        &app.current_branch
+                    if !loaded && !app.branches.current_branch.is_empty() {
+                        &app.branches.current_branch
                     } else {
                         "—"
                     }
@@ -544,7 +544,7 @@ mod tests {
                     egui_extras::install_image_loaders(&ctx);
                     theme.apply(&ctx);
                     let mut app = SannyGitApp::with_theme(theme);
-                    app.current_branch = "main".into();
+                    app.branches.current_branch = "main".into();
                     let mut dialog = RemoteDialog {
                         operation,
                         state: None,
@@ -634,7 +634,7 @@ mod tests {
             egui_extras::install_image_loaders(&ctx);
             theme.apply(&ctx);
             let mut app = SannyGitApp::with_theme(theme);
-            app.current_branch = "main".into();
+            app.branches.current_branch = "main".into();
             app.network_dialog = Some(RemoteDialog {
                 operation: Operation::Push,
                 state: None,

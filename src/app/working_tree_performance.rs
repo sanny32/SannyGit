@@ -1,5 +1,6 @@
 //! Opt-in C3 measurements through the real backend and polling coordinators.
 use super::*;
+use crate::test_support::SYSTEM_GIT;
 use crate::{
     history,
     models::{ChangeKind, DiffPreview},
@@ -32,7 +33,13 @@ fn fixture(files: usize, commits: usize) -> TempRepo {
         }
         input.push('\n');
     }
-    git::run_with_input(&repo.0, &["fast-import", "--quiet"], Some(input.as_bytes())).unwrap();
+    git::run_with_input(
+        &SYSTEM_GIT,
+        &repo.0,
+        &["fast-import", "--quiet"],
+        Some(input.as_bytes()),
+    )
+    .unwrap();
     // All writes are confined to this disposable repository.
     repo.git(&["restore", "--source=HEAD", "--staged", "--worktree", "."]);
     repo.git(&["branch", "baseline", "HEAD~1"]);
@@ -71,7 +78,7 @@ fn measure<T>(repo: &TempRepo, name: &str, mut operation: impl FnMut() -> T) {
 fn polling(repo: &TempRepo, dirty: bool) {
     let context = eframe::egui::Context::default();
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-    app.apply_snapshot(git::load(&repo.0).unwrap());
+    app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
     // Exercise the real monitors without auto-fetch or interactive history work.
     // The local upstream is one commit behind and needs an outgoing-file read.
     app.tracking.set_auto_fetch(false);
@@ -126,26 +133,54 @@ fn backend_measurements() {
             serde_json::json!({"files": files, "commits": commits})
         );
         let cancel = AtomicBool::new(false);
-        measure(&repo, "status_clean", || git::load(&repo.0).unwrap());
-        measure(&repo, "tracking", || tracking::read(&repo.0).unwrap());
-        measure(&repo, "history_first", || {
-            history::reload(&repo.0, false, history::PAGE_SIZE, &[], &cancel).unwrap()
+        measure(&repo, "status_clean", || {
+            git::load(&SYSTEM_GIT, &repo.0).unwrap()
         });
-        let page = history::reload(&repo.0, false, history::PAGE_SIZE, &[], &cancel).unwrap();
+        measure(&repo, "tracking", || {
+            tracking::read(&SYSTEM_GIT, &repo.0).unwrap()
+        });
+        measure(&repo, "history_first", || {
+            history::reload(
+                &SYSTEM_GIT,
+                &repo.0,
+                false,
+                history::PAGE_SIZE,
+                &[],
+                &cancel,
+            )
+            .unwrap()
+        });
+        let page = history::reload(
+            &SYSTEM_GIT,
+            &repo.0,
+            false,
+            history::PAGE_SIZE,
+            &[],
+            &cancel,
+        )
+        .unwrap();
         if page.cursor.has_more() {
             measure(&repo, "history_more", || {
-                history::more(&repo.0, &page.cursor, page.history.commits.clone(), &cancel).unwrap()
+                history::more(
+                    &SYSTEM_GIT,
+                    &repo.0,
+                    &page.cursor,
+                    page.history.commits.clone(),
+                    &cancel,
+                )
+                .unwrap()
             });
         }
         let root = repo.git(&["rev-list", "--max-parents=0", "HEAD"]);
         measure(&repo, "commit_files_root", || {
-            history::files(&repo.0, root.trim(), None).unwrap()
+            history::files(&SYSTEM_GIT, &repo.0, root.trim(), None).unwrap()
         });
-        let selected = history::files(&repo.0, root.trim(), None)
+        let selected = history::files(&SYSTEM_GIT, &repo.0, root.trim(), None)
             .unwrap()
             .remove(0);
         measure(&repo, "commit_file_diff", || {
-            let patch = history::file_patch(&repo.0, root.trim(), None, &selected).unwrap();
+            let patch =
+                history::file_patch(&SYSTEM_GIT, &repo.0, root.trim(), None, &selected).unwrap();
             DiffPreview::new(&patch)
         });
         polling(&repo, false);
@@ -155,9 +190,18 @@ fn backend_measurements() {
         }
         repo.git(&["add", "file-00000"]);
         repo.write("file-00000", &"worktree\n".repeat(1_000));
-        measure(&repo, "status_dirty", || git::load(&repo.0).unwrap());
+        measure(&repo, "status_dirty", || {
+            git::load(&SYSTEM_GIT, &repo.0).unwrap()
+        });
         measure(&repo, "working_file_diff", || {
-            let patch = git::diff(&repo.0, "file-00000", ChangeKind::Modified, None).unwrap();
+            let patch = git::diff(
+                &SYSTEM_GIT,
+                &repo.0,
+                "file-00000",
+                ChangeKind::Modified,
+                None,
+            )
+            .unwrap();
             DiffPreview::new(&patch)
         });
         polling(&repo, true);

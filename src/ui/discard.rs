@@ -91,6 +91,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SYSTEM_GIT;
     use crate::{
         discard::Action,
         theme::{install_fonts, InterfaceStyle, ThemeChoice},
@@ -104,7 +105,8 @@ mod tests {
                 install_fonts(&ctx);
                 egui_extras::install_image_loaders(&ctx);
                 theme.apply(&ctx);
-                let (_repo, mut dialog) = crate::mock_data::discard_dialog(Action::Restore);
+                let (_repo, mut dialog) =
+                    crate::mock_data::discard_dialog(&SYSTEM_GIT, Action::Restore);
                 dialog.paths.push("another/selected/path".into());
                 let prepared = dialog.prepared.take();
                 let mut app = SannyGitApp::with_theme(theme);
@@ -152,7 +154,7 @@ mod tests {
                         install_fonts(&ctx);
                         egui_extras::install_image_loaders(&ctx);
                         theme.apply(&ctx);
-                        let (_repo, dialog) = crate::mock_data::discard_dialog(action);
+                        let (_repo, dialog) = crate::mock_data::discard_dialog(&SYSTEM_GIT, action);
                         let prepared = dialog.prepared.clone();
                         let mut app = SannyGitApp::with_theme(theme);
                         app.interface_style = style;
@@ -250,17 +252,17 @@ mod tests {
             let ctx = egui::Context::default();
             install_fonts(&ctx);
             egui_extras::install_image_loaders(&ctx);
-            let (repo, mut dialog) = crate::mock_data::discard_dialog(action);
+            let (repo, mut dialog) = crate::mock_data::discard_dialog(&SYSTEM_GIT, action);
             dialog.confirmed = true;
             let path = repo.0.join(&dialog.path);
             let bytes = std::fs::read(&path).unwrap();
             let index = repo.git(&["ls-files", "--stage"]);
             let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-            let snapshot = crate::git::load(&repo.0).unwrap();
+            let snapshot = crate::git::load(&SYSTEM_GIT, &repo.0).unwrap();
             app.repositories.push(snapshot.repository);
             app.changes = snapshot.changes;
             app.selected_repository = 0;
-            app.selected_change = 0;
+            app.selection.active = 0;
             app.state_current = true;
             app.discard_dialog = Some(dialog);
             let render = |app: &mut SannyGitApp, events| {

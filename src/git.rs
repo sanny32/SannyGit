@@ -4,7 +4,6 @@ use crate::{
     models::{ChangeFile, ChangeKind, Repository},
 };
 use std::{
-    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
     io::Read,
@@ -39,13 +38,21 @@ impl std::fmt::Debug for CommandOutput {
     }
 }
 
-thread_local! {
-    static EXECUTABLE: RefCell<String> = const { RefCell::new(String::new()) };
+#[derive(Clone, Debug)]
+pub(crate) struct GitContext {
+    executable: String,
 }
 
-/// Set once at worker startup so every command in an operation uses the same Git.
-pub(crate) fn set_executable(executable: String) {
-    EXECUTABLE.with(|value| *value.borrow_mut() = executable);
+impl GitContext {
+    pub(crate) fn new(executable: String) -> Self {
+        Self {
+            executable: if executable.is_empty() {
+                "git".into()
+            } else {
+                executable
+            },
+        }
+    }
 }
 
 /// Find the first executable Git in PATH without launching a process.
@@ -72,17 +79,6 @@ fn find_executable_in(search_path: &std::ffi::OsStr, current_dir: &Path) -> Opti
     })
 }
 
-fn executable() -> String {
-    EXECUTABLE.with(|value| {
-        let value = value.borrow();
-        if value.is_empty() {
-            "git".into()
-        } else {
-            value.clone()
-        }
-    })
-}
-
 pub struct Snapshot {
     pub repository: Repository,
     pub branch: String,
@@ -91,12 +87,18 @@ pub struct Snapshot {
     pub merge_message: Option<String>,
 }
 
-pub(crate) fn run(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    run_controlled(path, args, TIMEOUT, None)
+pub(crate) fn run(git: &GitContext, path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    run_controlled(git, path, args, TIMEOUT, None)
 }
 
-pub(crate) fn is_ancestor(path: &Path, ancestor: &str, descendant: &str) -> Result<bool, String> {
+pub(crate) fn is_ancestor(
+    git: &GitContext,
+    path: &Path,
+    ancestor: &str,
+    descendant: &str,
+) -> Result<bool, String> {
     match execute(
+        git,
         path,
         &["merge-base", "--is-ancestor", ancestor, descendant],
         None,
@@ -111,12 +113,13 @@ pub(crate) fn is_ancestor(path: &Path, ancestor: &str, descendant: &str) -> Resu
 }
 
 pub(crate) fn run_controlled(
+    git: &GitContext,
     path: &Path,
     args: &[&str],
     timeout: Duration,
     cancel: Option<&AtomicBool>,
 ) -> Result<Vec<u8>, String> {
-    execute(path, args, None, timeout, cancel, CommandMode::Normal)
+    execute(git, path, args, None, timeout, cancel, CommandMode::Normal)
         .map(|output| output.stdout)
         .map_err(|error| error.to_string())
 }
@@ -124,11 +127,13 @@ pub(crate) fn run_controlled(
 /// Return whether Sync needs to pull after a non-fast-forward push rejection.
 /// Other failures retain the normal sanitized errors.
 pub(crate) fn run_sync_push(
+    git: &GitContext,
     path: &Path,
     args: &[&str],
     cancel: &AtomicBool,
 ) -> Result<bool, String> {
     execute(
+        git,
         path,
         args,
         None,
@@ -161,17 +166,22 @@ fn push_needs_pull(output: &[u8]) -> bool {
 }
 
 pub(crate) fn run_with_input(
+    git: &GitContext,
     path: &Path,
     args: &[&str],
     input: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
-    execute(path, args, input, TIMEOUT, None, CommandMode::Normal)
+    execute(git, path, args, input, TIMEOUT, None, CommandMode::Normal)
         .map(|output| output.stdout)
         .map_err(|error| error.to_string())
 }
 
-pub(crate) fn refresh_checkout_line_endings(root: &Path, target: &str) -> Result<(), String> {
-    let tracked = run(root, &["ls-files", "--stage", "-t", "-z"])?;
+pub(crate) fn refresh_checkout_line_endings(
+    git: &GitContext,
+    root: &Path,
+    target: &str,
+) -> Result<(), String> {
+    let tracked = run(git, root, &["ls-files", "--stage", "-t", "-z"])?;
     let mut paths = Vec::new();
     for entry in tracked
         .split(|byte| *byte == 0)
@@ -206,6 +216,7 @@ pub(crate) fn refresh_checkout_line_endings(root: &Path, target: &str) -> Result
     let result = (|| {
         // A fresh index has no cached file stat information for checkout-index to trust.
         execute(
+            git,
             root,
             &[
                 "-c",
@@ -221,6 +232,7 @@ pub(crate) fn refresh_checkout_line_endings(root: &Path, target: &str) -> Result
             CommandMode::AlternateIndex(&index),
         )?;
         execute(
+            git,
             root,
             &["checkout-index", "--force", "--stdin", "-z"],
             Some(&paths),
@@ -238,12 +250,14 @@ pub(crate) fn refresh_checkout_line_endings(root: &Path, target: &str) -> Result
 
 /// Read-only commands with bounded stdin and the same cancellation/timeout handling.
 pub(crate) fn run_with_input_controlled(
+    git: &GitContext,
     path: &Path,
     args: &[&str],
     input: &[u8],
     cancel: &AtomicBool,
 ) -> Result<Vec<u8>, String> {
     execute(
+        git,
         path,
         args,
         Some(input),
@@ -256,18 +270,30 @@ pub(crate) fn run_with_input_controlled(
 }
 
 /// Successful diagnostic output for an explicit preview (never error logging).
-pub(crate) fn run_diagnostic(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    execute(path, args, None, TIMEOUT, None, CommandMode::Diagnostic)
-        .map(|output| output.stdout)
-        .map_err(|error| error.to_string())
+pub(crate) fn run_diagnostic(
+    git: &GitContext,
+    path: &Path,
+    args: &[&str],
+) -> Result<Vec<u8>, String> {
+    execute(
+        git,
+        path,
+        args,
+        None,
+        TIMEOUT,
+        None,
+        CommandMode::Diagnostic,
+    )
+    .map(|output| output.stdout)
+    .map_err(|error| error.to_string())
 }
 
 /// Whole-repository stash operations have no user pathspecs. Git's stash cleanup
 /// internally uses :/; inheriting literal pathspecs leaves untracked files behind.
-pub(crate) fn run_stash(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+pub(crate) fn run_stash(git: &GitContext, path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let mut command = vec!["-c", "submodule.recurse=false", "stash"];
     command.extend_from_slice(args);
-    execute(path, &command, None, TIMEOUT, None, CommandMode::Stash)
+    execute(git, path, &command, None, TIMEOUT, None, CommandMode::Stash)
         .map(|output| output.stdout)
         .map_err(|error| error.to_string())
 }
@@ -281,6 +307,7 @@ enum CommandMode<'a> {
 }
 
 fn execute(
+    git: &GitContext,
     path: &Path,
     args: &[&str],
     input: Option<&[u8]>,
@@ -294,7 +321,7 @@ fn execute(
         diagnostics::operation(args)
     };
     let started = Instant::now();
-    let result = execute_command(path, args, input, timeout, cancel, mode, operation);
+    let result = execute_command(git, path, args, input, timeout, cancel, mode, operation);
     let milliseconds = started.elapsed().as_millis();
     match &result {
         Ok(output) => logging::record(
@@ -315,7 +342,12 @@ fn execute(
     result
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "pass the worker Git context explicitly"
+)]
 fn execute_command(
+    git: &GitContext,
     path: &Path,
     args: &[&str],
     input: Option<&[u8]>,
@@ -328,8 +360,8 @@ fn execute_command(
     if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
         return Err(fail(FailureKind::Cancelled, "Operation cancelled".into()));
     }
-    let executable = executable();
-    let mut command = Command::new(&executable);
+    let executable = &git.executable;
+    let mut command = Command::new(executable);
     command
         .current_dir(path)
         .args(["--no-pager", "--no-optional-locks", "-c", "color.ui=false"])
@@ -528,17 +560,22 @@ fn command_error(operation: &str) -> String {
 }
 
 /// Stages or unstages the complete selected file; never changes working-tree bytes.
-pub fn set_staged(root: &Path, path: &str, staged: bool) -> Result<(), String> {
-    set_staged_paths(root, &[path.to_owned()], staged)
+pub fn set_staged(git: &GitContext, root: &Path, path: &str, staged: bool) -> Result<(), String> {
+    set_staged_paths(git, root, &[path.to_owned()], staged)
 }
 
-pub fn set_staged_paths(root: &Path, paths: &[String], staged: bool) -> Result<(), String> {
+pub fn set_staged_paths(
+    git: &GitContext,
+    root: &Path,
+    paths: &[String],
+    staged: bool,
+) -> Result<(), String> {
     if paths.is_empty() {
         return Err("Select files first.".into());
     }
-    let merging = check_operation(root, staged)?;
+    let merging = check_operation(git, root, staged)?;
     // Staging needs fresh file states, not repository/branch discovery.
-    let status = load_changes(root)?;
+    let status = load_changes(git, root)?;
     let by_path: BTreeMap<_, _> = status.iter().map(|c| (c.path.as_str(), c)).collect();
     let changes = paths
         .iter()
@@ -562,7 +599,7 @@ pub fn set_staged_paths(root: &Path, paths: &[String], staged: bool) -> Result<(
     }
     // --revs-only succeeds with empty output for an unborn HEAD; other command
     // failures must propagate rather than being mistaken for a new repository.
-    let has_head = !staged && !run(root, &["rev-parse", "--revs-only", "HEAD"])?.is_empty();
+    let has_head = !staged && !run(git, root, &["rev-parse", "--revs-only", "HEAD"])?.is_empty();
     let mut args = if staged {
         vec!["add", "--all", "--"]
     } else if has_head {
@@ -581,7 +618,7 @@ pub fn set_staged_paths(root: &Path, paths: &[String], staged: bool) -> Result<(
             }
         }
     }
-    run(root, &args).map(|_| ())
+    run(git, root, &args).map(|_| ())
 }
 
 pub fn validate_message(message: &str) -> Result<(), String> {
@@ -617,14 +654,19 @@ impl CommitContents {
 /// Read-only preview of the resulting commit relative to its first parent.
 /// For amend this includes the existing commit as well as the selected changes.
 pub fn commit_patch(
+    git: &GitContext,
     root: &Path,
     contents: CommitContents,
     amend_head: Option<&str>,
 ) -> Result<String, String> {
-    let head = text(run(root, &["rev-parse", "--revs-only", "HEAD"])?)?;
+    let head = text(run(git, root, &["rev-parse", "--revs-only", "HEAD"])?)?;
     let base = if let Some(expected) = amend_head {
-        check_amend_head(root, expected)?;
-        let parents = text(run(root, &["rev-list", "--parents", "-n", "1", expected])?)?;
+        check_amend_head(git, root, expected)?;
+        let parents = text(run(
+            git,
+            root,
+            &["rev-list", "--parents", "-n", "1", expected],
+        )?)?;
         parents.split_whitespace().nth(1).map(str::to_owned)
     } else {
         let head = head.trim();
@@ -633,6 +675,7 @@ pub fn commit_patch(
     let base = match base {
         Some(base) => base,
         None => text(run_with_input(
+            git,
             root,
             &["hash-object", "-t", "tree", "--stdin"],
             Some(b""),
@@ -646,13 +689,13 @@ pub fn commit_patch(
     }
     args.push(&base);
     args.push("--");
-    let mut patch = text(run(root, &args)?)?;
+    let mut patch = text(run(git, root, &args)?)?;
     if contents == CommitContents::All {
         // Preview new files without staging them or modifying the real index.
-        for change in load(root)?.changes {
+        for change in load(git, root)?.changes {
             if change.kind == ChangeKind::Untracked {
                 writeln!(patch, "\nNew file: {}", change.path).map_err(|e| e.to_string())?;
-                patch.push_str(&diff(root, &change.path, change.kind, None)?);
+                patch.push_str(&diff(git, root, &change.path, change.kind, None)?);
                 if patch.len() > OUTPUT_LIMIT {
                     return Err("Commit diff exceeds the 2 MiB limit".into());
                 }
@@ -663,19 +706,25 @@ pub fn commit_patch(
 }
 
 /// Commits explicitly selected contents after a UI action.
-pub fn commit(root: &Path, message: &str, contents: CommitContents) -> Result<(), String> {
-    commit_with_mode(root, message, false, contents)
+pub fn commit(
+    git: &GitContext,
+    root: &Path,
+    message: &str,
+    contents: CommitContents,
+) -> Result<(), String> {
+    commit_with_mode(git, root, message, false, contents)
 }
 
 /// Loads HEAD explicitly rather than relying on the filtered journal selection.
-pub fn amend_message(root: &Path) -> Result<(String, String), String> {
-    require_no_operation(root)?;
-    let head = text(run(root, &["rev-parse", "--revs-only", "HEAD"])?)?;
+pub fn amend_message(git: &GitContext, root: &Path) -> Result<(String, String), String> {
+    require_no_operation(git, root)?;
+    let head = text(run(git, root, &["rev-parse", "--revs-only", "HEAD"])?)?;
     let head = head.trim();
     if head.is_empty() {
         return Err("There is no commit to amend.".into());
     }
     let message = text(run(
+        git,
         root,
         &[
             "show",
@@ -693,39 +742,44 @@ pub fn amend_message(root: &Path) -> Result<(String, String), String> {
 }
 
 pub fn amend_commit(
+    git: &GitContext,
     root: &Path,
     message: &str,
     expected_head: &str,
     contents: CommitContents,
 ) -> Result<(), String> {
-    check_amend_head(root, expected_head)?;
-    commit_with_mode(root, message, true, contents)
+    check_amend_head(git, root, expected_head)?;
+    commit_with_mode(git, root, message, true, contents)
 }
 
-fn check_amend_head(root: &Path, expected_head: &str) -> Result<(), String> {
-    let head = text(run(root, &["rev-parse", "--verify", "HEAD"])?)?;
+fn check_amend_head(git: &GitContext, root: &Path, expected_head: &str) -> Result<(), String> {
+    let head = text(run(git, root, &["rev-parse", "--verify", "HEAD"])?)?;
     if head.trim() != expected_head {
         return Err("HEAD has changed. Turn off Amend last commit and enable it again.".into());
     }
-    require_no_operation(root)
+    require_no_operation(git, root)
 }
 
 /// Resolve markers through Git so linked worktrees use their own operation state.
-pub(crate) fn require_no_operation(root: &Path) -> Result<(), String> {
-    check_operation(root, false).map(|_| ())
+pub(crate) fn require_no_operation(git: &GitContext, root: &Path) -> Result<(), String> {
+    check_operation(git, root, false).map(|_| ())
 }
 
-fn operation_directory(root: &Path) -> Result<PathBuf, String> {
-    let directory = text(run(root, &["rev-parse", "--absolute-git-dir"])?)?;
+fn operation_directory(git: &GitContext, root: &Path) -> Result<PathBuf, String> {
+    let directory = text(run(git, root, &["rev-parse", "--absolute-git-dir"])?)?;
     Ok(PathBuf::from(
         directory.strip_suffix('\n').unwrap_or(&directory),
     ))
 }
 
-pub(crate) fn check_operation(root: &Path, allow_merge: bool) -> Result<bool, String> {
+pub(crate) fn check_operation(
+    git: &GitContext,
+    root: &Path,
+    allow_merge: bool,
+) -> Result<bool, String> {
     // These operation markers belong to the per-worktree Git directory, not
     // the shared common directory. Resolve it once, including for linked trees.
-    let directory = operation_directory(root)?;
+    let directory = operation_directory(git, root)?;
     let mut merging = false;
     for marker in [
         "MERGE_HEAD",
@@ -747,8 +801,13 @@ pub(crate) fn check_operation(root: &Path, allow_merge: bool) -> Result<bool, St
 
 /// Porcelain status omits ignored files; reject collisions before Git can
 /// replace them during a merge or a rebase's internal reset.
-pub(crate) fn require_no_ignored_collisions(root: &Path, target: &str) -> Result<(), String> {
+pub(crate) fn require_no_ignored_collisions(
+    git: &GitContext,
+    root: &Path,
+    target: &str,
+) -> Result<(), String> {
     let ignored = text(run(
+        git,
         root,
         &[
             "ls-files",
@@ -758,17 +817,22 @@ pub(crate) fn require_no_ignored_collisions(root: &Path, target: &str) -> Result
             "-z",
         ],
     )?)?;
-    require_no_path_collisions(root, target, &ignored, "Ignored local files")
+    require_no_path_collisions(git, root, target, &ignored, "Ignored local files")
 }
 
 pub(crate) fn require_no_path_collisions(
+    git: &GitContext,
     root: &Path,
     target: &str,
     local_paths: &str,
     file_kind: &str,
 ) -> Result<(), String> {
     if !local_paths.is_empty() {
-        let paths = text(run(root, &["ls-tree", "-r", "--name-only", "-z", target])?)?;
+        let paths = text(run(
+            git,
+            root,
+            &["ls-tree", "-r", "--name-only", "-z", target],
+        )?)?;
         let collisions = path_collisions(local_paths, &paths);
         if !collisions.is_empty() {
             const DISPLAY_LIMIT: usize = 20;
@@ -824,14 +888,15 @@ fn path_collisions<'a>(local_paths: &'a str, target_paths: &str) -> Vec<&'a str>
 }
 
 fn commit_with_mode(
+    git: &GitContext,
     root: &Path,
     message: &str,
     amend: bool,
     contents: CommitContents,
 ) -> Result<(), String> {
     validate_message(message)?;
-    let merging = check_operation(root, !amend)?;
-    let snapshot = load(root)?;
+    let merging = check_operation(git, root, !amend)?;
+    let snapshot = load(git, root)?;
     if snapshot
         .changes
         .iter()
@@ -852,6 +917,7 @@ fn commit_with_mode(
     let cleaned;
     let message = if merging {
         cleaned = text(run_with_input(
+            git,
             root,
             &["stripspace", "--strip-comments"],
             Some(message.as_bytes()),
@@ -862,7 +928,7 @@ fn commit_with_mode(
         message
     };
     if contents == CommitContents::All {
-        run(root, &["add", "--all"])?;
+        run(git, root, &["add", "--all"])?;
     }
     // stdin preserves multiline messages without a shell or a message file.
     // Git's configured identity, hooks and signing remain in effect.
@@ -870,19 +936,20 @@ fn commit_with_mode(
     if amend {
         args.push("--amend");
     }
-    run_with_input(root, &args, Some(message.as_bytes())).map(|_| ())
+    run_with_input(git, root, &args, Some(message.as_bytes())).map(|_| ())
 }
 
 pub(crate) fn text(bytes: Vec<u8>) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "Non-UTF-8 Git output is not supported yet".into())
 }
 
-pub fn load(path: &Path) -> Result<Snapshot, String> {
-    let root = text(run(path, &["rev-parse", "--show-toplevel"])?)?;
+pub fn load(git: &GitContext, path: &Path) -> Result<Snapshot, String> {
+    let root = text(run(git, path, &["rev-parse", "--show-toplevel"])?)?;
     // Git appends exactly one line ending; preserve whitespace in directory names.
     let root = root.strip_suffix('\n').unwrap_or(&root);
     let path = PathBuf::from(root);
     let branch = match execute(
+        git,
         &path,
         &["symbolic-ref", "--quiet", "HEAD"],
         None,
@@ -899,12 +966,12 @@ pub fn load(path: &Path) -> Result<Snapshot, String> {
         }
         Err(error) if error.kind == FailureKind::Exit && error.exit_code == Some(1) => format!(
             "Detached at {}",
-            text(run(&path, &["rev-parse", "--short", "HEAD"])?)?.trim()
+            text(run(git, &path, &["rev-parse", "--short", "HEAD"])?)?.trim()
         ),
         Err(error) => return Err(error.to_string()),
     };
-    let changes = load_changes(&path)?;
-    let directory = operation_directory(&path)?;
+    let changes = load_changes(git, &path)?;
+    let directory = operation_directory(git, &path)?;
     let merging = directory
         .join("MERGE_HEAD")
         .try_exists()
@@ -949,8 +1016,9 @@ fn read_merge_message(directory: &Path) -> Result<Option<String>, String> {
     Ok(validate_message(&message).is_ok().then_some(message))
 }
 
-fn load_changes(path: &Path) -> Result<Vec<ChangeFile>, String> {
+fn load_changes(git: &GitContext, path: &Path) -> Result<Vec<ChangeFile>, String> {
     parse_status(&run(
+        git,
         path,
         &[
             "status",
@@ -1039,6 +1107,7 @@ pub fn parse_status(bytes: &[u8]) -> Result<Vec<ChangeFile>, String> {
 }
 
 pub fn diff(
+    git: &GitContext,
     root: &Path,
     path: &str,
     kind: ChangeKind,
@@ -1086,7 +1155,7 @@ pub fn diff(
     if let Some(source) = original_path {
         index_args.push(source);
     }
-    let index = text(run(root, &index_args)?)?;
+    let index = text(run(git, root, &index_args)?)?;
     let mut worktree_args = if kind == ChangeKind::Conflicted {
         vec![
             "diff",
@@ -1102,7 +1171,7 @@ pub fn diff(
     if let Some(source) = original_path {
         worktree_args.push(source);
     }
-    let worktree = text(run(root, &worktree_args)?)?;
+    let worktree = text(run(git, root, &worktree_args)?)?;
     let mut result = String::new();
     if !index.is_empty() {
         result.push_str("Staged changes (HEAD → index)\n");

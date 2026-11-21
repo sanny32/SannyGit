@@ -8,6 +8,23 @@ pub struct ErrorDialogs {
     observed: BTreeMap<String, String>,
 }
 
+impl ErrorDialogs {
+    fn observe(&mut self, current: BTreeMap<String, String>) {
+        for (source, error) in &current {
+            if self.observed.get(source) != Some(error) && !self.pending.contains(error) {
+                let source = if source.starts_with("settings:") {
+                    "repository settings"
+                } else {
+                    source
+                };
+                logging::record(Level::Error, format_args!("Error reported in {source}"));
+                self.pending.push_back(error.clone());
+            }
+        }
+        self.observed = current;
+    }
+}
+
 impl SannyGitApp {
     /// Retain diagnostics used for retry state, but present each new error once.
     pub fn collect_errors(&mut self) {
@@ -19,7 +36,7 @@ impl SannyGitApp {
         let mut current = BTreeMap::new();
         for (source, error) in [
             ("application", self.error.as_deref()),
-            ("branches", self.refs_error.as_deref()),
+            ("branches", self.branches.error.as_deref()),
             ("history", self.history.history_error.as_deref()),
             ("commit diff", self.history.commit_preview_error.as_deref()),
             (
@@ -49,7 +66,10 @@ impl SannyGitApp {
             ),
             (
                 "refs",
-                self.ref_dialog.as_ref().and_then(|d| d.error.as_deref()),
+                self.branches
+                    .ref_dialog
+                    .as_ref()
+                    .and_then(|d| d.error.as_deref()),
             ),
             ("settings", self.settings_window.llm.secret_error.as_deref()),
         ] {
@@ -62,20 +82,7 @@ impl SannyGitApp {
                 current.insert(format!("settings:{path}"), error.clone());
             }
         }
-        for (source, error) in &current {
-            if self.error_dialogs.observed.get(source) != Some(error)
-                && !self.error_dialogs.pending.contains(error)
-            {
-                let source = if source.starts_with("settings:") {
-                    "repository settings"
-                } else {
-                    source
-                };
-                logging::record(Level::Error, format_args!("Error reported in {source}"));
-                self.error_dialogs.pending.push_back(error.clone());
-            }
-        }
-        self.error_dialogs.observed = current;
+        self.error_dialogs.observe(current);
     }
 
     pub fn dismiss_error(&mut self) {
@@ -111,11 +118,11 @@ mod tests {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.error = Some("Operation failed".into());
         app.history.history_error = app.error.clone();
-        app.refs_error = Some("Cannot load branches".into());
+        app.branches.error = Some("Cannot load branches".into());
         app.collect_errors();
         assert_eq!(app.error_dialogs.pending.len(), 2);
         app.error = None;
-        app.refs_error = None;
+        app.branches.error = None;
         app.collect_errors();
         assert_eq!(app.error_dialogs.pending.len(), 2);
         app.dismiss_error();

@@ -1,8 +1,10 @@
 use super::*;
+use crate::test_support::SYSTEM_GIT;
 use crate::test_support::{linear_repo, TempRepo};
 
 fn first(root: &Path, all: bool, limit: usize) -> Page {
     first_with_limits(
+        &SYSTEM_GIT,
         root,
         Scope::Branches(all),
         2,
@@ -21,19 +23,43 @@ fn tag_history_pages_keep_the_target_and_reject_a_moved_tag() {
     repo.git(&["tag", "old", oldest.trim()]);
     let cancel = AtomicBool::new(false);
     let tag = "refs/tags/old";
-    let limited = first_with_limits(&repo.0, Scope::Tag(tag), 2, &[], 2, 3, &cancel).unwrap();
+    let limited =
+        first_with_limits(&SYSTEM_GIT, &repo.0, Scope::Tag(tag), 2, &[], 2, 3, &cancel).unwrap();
     assert!(limited.cursor.at_limit());
     assert_eq!(limited.history.commits.last().unwrap().hash, oldest.trim());
 
     repo.git(&["tag", "-f", "old", "HEAD"]);
-    let page = first_with_limits(&repo.0, Scope::Tag(tag), 2, &[], 2, 10, &cancel).unwrap();
+    let page = first_with_limits(
+        &SYSTEM_GIT,
+        &repo.0,
+        Scope::Tag(tag),
+        2,
+        &[],
+        2,
+        10,
+        &cancel,
+    )
+    .unwrap();
     assert!(page.cursor.has_more());
     repo.git(&["tag", "unrelated-metadata", "HEAD~"]);
-    assert!(more(&repo.0, &page.cursor, page.history.commits.clone(), &cancel).is_ok());
+    assert!(more(
+        &SYSTEM_GIT,
+        &repo.0,
+        &page.cursor,
+        page.history.commits.clone(),
+        &cancel
+    )
+    .is_ok());
     repo.git(&["tag", "-f", "old", "HEAD~"]);
-    let error = more(&repo.0, &page.cursor, page.history.commits, &cancel)
-        .err()
-        .unwrap();
+    let error = more(
+        &SYSTEM_GIT,
+        &repo.0,
+        &page.cursor,
+        page.history.commits,
+        &cancel,
+    )
+    .err()
+    .unwrap();
     assert!(error.contains("History changed"));
 }
 
@@ -43,7 +69,7 @@ fn real_pages_cross_the_old_limit_without_duplicate_commits_or_index_writes() {
     let head = repo.git(&["rev-parse", "HEAD"]);
     let index = std::fs::read(repo.0.join(".git/index")).ok();
     let cancel = AtomicBool::new(false);
-    let first = reload(&repo.0, false, PAGE_SIZE, &[], &cancel).unwrap();
+    let first = reload(&SYSTEM_GIT, &repo.0, false, PAGE_SIZE, &[], &cancel).unwrap();
     assert_eq!(first.history.commits.len(), PAGE_SIZE);
     assert!(first.cursor.has_more());
     let prefix = first
@@ -53,13 +79,21 @@ fn real_pages_cross_the_old_limit_without_duplicate_commits_or_index_writes() {
         .map(|commit| (commit.hash.clone(), commit.lane))
         .collect::<Vec<_>>();
     assert!(more(
+        &SYSTEM_GIT,
         &repo.0,
         &first.cursor,
         first.history.commits.clone(),
         &AtomicBool::new(true)
     )
     .is_err());
-    let complete = more(&repo.0, &first.cursor, first.history.commits, &cancel).unwrap();
+    let complete = more(
+        &SYSTEM_GIT,
+        &repo.0,
+        &first.cursor,
+        first.history.commits,
+        &cancel,
+    )
+    .unwrap();
     assert_eq!(complete.history.commits.len(), 620);
     assert!(!complete.cursor.has_more());
     assert!(!complete.history.truncated);
@@ -103,6 +137,7 @@ fn changed_head_requires_reload_and_reload_keeps_requested_old_commit() {
     let selected = page.history.commits[1].hash.clone();
     repo.git(&["commit", "--allow-empty", "-m", "New HEAD"]);
     assert!(more(
+        &SYSTEM_GIT,
         &repo.0,
         &page.cursor,
         page.history.commits.clone(),
@@ -112,6 +147,7 @@ fn changed_head_requires_reload_and_reload_keeps_requested_old_commit() {
     .unwrap()
     .contains("History changed"));
     let refreshed = first_with_limits(
+        &SYSTEM_GIT,
         &repo.0,
         Scope::Branches(false),
         2,
@@ -133,6 +169,7 @@ fn all_refs_changes_and_shallow_boundaries_cannot_mix_history_pages() {
     let current = first(&repo.0, false, HISTORY_LIMIT);
     repo.git(&["tag", "new-ref"]);
     assert!(more(
+        &SYSTEM_GIT,
         &repo.0,
         &all.cursor,
         all.history.commits,
@@ -140,6 +177,7 @@ fn all_refs_changes_and_shallow_boundaries_cannot_mix_history_pages() {
     )
     .is_err());
     assert!(more(
+        &SYSTEM_GIT,
         &repo.0,
         &current.cursor,
         current.history.commits.clone(),
@@ -149,6 +187,7 @@ fn all_refs_changes_and_shallow_boundaries_cannot_mix_history_pages() {
     let cutoff = repo.git(&["rev-parse", "HEAD~2"]);
     std::fs::write(repo.0.join(".git/shallow"), &cutoff).unwrap();
     assert!(more(
+        &SYSTEM_GIT,
         &repo.0,
         &current.cursor,
         current.history.commits,
@@ -157,6 +196,7 @@ fn all_refs_changes_and_shallow_boundaries_cannot_mix_history_pages() {
     .is_err());
     let shallow = first(&repo.0, false, HISTORY_LIMIT);
     let complete = more(
+        &SYSTEM_GIT,
         &repo.0,
         &shallow.cursor,
         shallow.history.commits,
@@ -170,16 +210,29 @@ fn all_refs_changes_and_shallow_boundaries_cannot_mix_history_pages() {
 #[test]
 fn snapshot_limits_empty_repositories_and_mismatched_prefixes_are_explicit() {
     let empty = TempRepo::new();
-    assert!(
-        !reload(&empty.0, true, PAGE_SIZE, &[], &AtomicBool::new(false))
-            .unwrap()
-            .cursor
-            .has_more()
-    );
+    assert!(!reload(
+        &SYSTEM_GIT,
+        &empty.0,
+        true,
+        PAGE_SIZE,
+        &[],
+        &AtomicBool::new(false)
+    )
+    .unwrap()
+    .cursor
+    .has_more());
     let repo = linear_repo(6);
     let capped = first(&repo.0, false, 3);
-    assert!(more(&repo.0, &capped.cursor, Vec::new(), &AtomicBool::new(false)).is_err());
+    assert!(more(
+        &SYSTEM_GIT,
+        &repo.0,
+        &capped.cursor,
+        Vec::new(),
+        &AtomicBool::new(false)
+    )
+    .is_err());
     let last = more(
+        &SYSTEM_GIT,
         &repo.0,
         &capped.cursor,
         capped.history.commits,
@@ -190,6 +243,7 @@ fn snapshot_limits_empty_repositories_and_mismatched_prefixes_are_explicit() {
     assert!(last.cursor.at_limit() && last.history.truncated);
     assert!(!last.cursor.has_more());
     assert!(more(
+        &SYSTEM_GIT,
         &repo.0,
         &last.cursor,
         last.history.commits,
@@ -197,6 +251,7 @@ fn snapshot_limits_empty_repositories_and_mismatched_prefixes_are_explicit() {
     )
     .is_err());
     assert!(first_with_limits(
+        &SYSTEM_GIT,
         &repo.0,
         Scope::Branches(false),
         1,
@@ -226,6 +281,7 @@ fn paged_merge_graph_preserves_lanes_and_links_parents_across_batches() {
         .collect::<Vec<_>>();
     while page.cursor.has_more() {
         page = more(
+            &SYSTEM_GIT,
             &repo.0,
             &page.cursor,
             page.history.commits,
@@ -261,10 +317,13 @@ fn paged_merge_graph_preserves_lanes_and_links_parents_across_batches() {
 #[test]
 fn oversized_later_page_fails_without_changing_the_previous_page_or_cursor() {
     let repo = TempRepo::new();
-    let tree = git::text(git::run_with_input(&repo.0, &["mktree"], Some(b"")).unwrap()).unwrap();
+    let tree =
+        git::text(git::run_with_input(&SYSTEM_GIT, &repo.0, &["mktree"], Some(b"")).unwrap())
+            .unwrap();
     let huge = "Huge message ".repeat(200_000);
     let root = git::text(
         git::run_with_input(
+            &SYSTEM_GIT,
             &repo.0,
             &["commit-tree", tree.trim()],
             Some(huge.as_bytes()),
@@ -276,6 +335,7 @@ fn oversized_later_page_fails_without_changing_the_previous_page_or_cursor() {
     for message in ["Second", "Third"] {
         parent = git::text(
             git::run_with_input(
+                &SYSTEM_GIT,
                 &repo.0,
                 &["commit-tree", tree.trim(), "-p", &parent],
                 Some(message.as_bytes()),
@@ -295,6 +355,7 @@ fn oversized_later_page_fails_without_changing_the_previous_page_or_cursor() {
         .map(|commit| commit.hash.clone())
         .collect::<Vec<_>>();
     let error = more(
+        &SYSTEM_GIT,
         &repo.0,
         &page.cursor,
         page.history.commits.clone(),
@@ -321,12 +382,12 @@ fn head_change_during_message_read_is_detected_before_the_page_is_published() {
         use std::os::unix::fs::PermissionsExt;
         let repo = linear_repo(6);
         let tree = repo.git(&["rev-parse", "HEAD^{tree}"]);
-        let next = git::text(git::run_with_input(&repo.0, &["commit-tree", tree.trim(), "-p", "HEAD"], Some(b"New head")).unwrap()).unwrap();
+        let next = git::text(git::run_with_input(&SYSTEM_GIT, &repo.0, &["commit-tree", tree.trim(), "-p", "HEAD"], Some(b"New head")).unwrap()).unwrap();
         let wrapper = repo.0.join(".git/changing-history-git");
         let script = format!("#!/bin/sh\nchange=0\nfor arg in \"$@\"; do if [ \"$arg\" = log ]; then change=1; fi; done\ngit \"$@\"\nresult=$?\nif [ \"$change\" = 1 ]; then git update-ref HEAD {}; fi\nexit \"$result\"\n", next.trim());
         std::fs::write(&wrapper, script).unwrap(); std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
-        git::set_executable(wrapper.to_string_lossy().into_owned());
-        let error = first_with_limits(&repo.0, Scope::Branches(false), 2, &[], 2, HISTORY_LIMIT, &AtomicBool::new(false)).err().unwrap();
+        let git = &crate::git::GitContext::new(wrapper.to_string_lossy().into_owned());
+        let error = first_with_limits(git, &repo.0, Scope::Branches(false), 2, &[], 2, HISTORY_LIMIT, &AtomicBool::new(false)).err().unwrap();
         assert!(error.contains("History changed"));
     }).join().unwrap();
 }
@@ -363,8 +424,11 @@ fn rejects_truncated_malformed_non_utf8_and_duplicate_records() {
 #[test]
 fn loads_real_scopes_graph_messages_and_first_parent_patches_without_writes() {
     let repo = TempRepo::new();
-    assert!(load(&repo.0, false).unwrap().commits.is_empty());
-    assert!(load(&repo.0, true).unwrap().commits.is_empty());
+    assert!(load(&SYSTEM_GIT, &repo.0, false)
+        .unwrap()
+        .commits
+        .is_empty());
+    assert!(load(&SYSTEM_GIT, &repo.0, true).unwrap().commits.is_empty());
     repo.write("root", "root\n");
     repo.git(&["add", "."]);
     repo.git(&["commit", "-m", "Root"]);
@@ -384,14 +448,14 @@ fn loads_real_scopes_graph_messages_and_first_parent_patches_without_writes() {
     repo.write("main", "main\n");
     repo.git(&["add", "."]);
     repo.git(&["commit", "-m", "Main"]);
-    assert_eq!(load(&repo.0, false).unwrap().commits.len(), 2);
-    let all = load(&repo.0, true).unwrap();
+    assert_eq!(load(&SYSTEM_GIT, &repo.0, false).unwrap().commits.len(), 2);
+    let all = load(&SYSTEM_GIT, &repo.0, true).unwrap();
     assert_eq!(all.commits.len(), 3);
     assert!(all.commits.iter().any(|c| c.message.contains("Full body")));
     repo.git(&["merge", "--no-ff", "topic", "-m", "Merge topic"]);
     repo.write("root", "unsaved worktree change\n");
     let index = std::fs::read(repo.0.join(".git/index")).unwrap();
-    let history = load(&repo.0, false).unwrap();
+    let history = load(&SYSTEM_GIT, &repo.0, false).unwrap();
     assert_eq!(history.commits.len(), 4);
     let merge = &history.commits[0];
     assert_eq!(merge.parents.len(), 2);
@@ -407,6 +471,7 @@ fn loads_real_scopes_graph_messages_and_first_parent_patches_without_writes() {
             .contains(&history.commits[edge.parent].hash));
     }
     let patch = patch(
+        &SYSTEM_GIT,
         &repo.0,
         &merge.hash,
         merge.parents.first().map(String::as_str),
@@ -414,7 +479,7 @@ fn loads_real_scopes_graph_messages_and_first_parent_patches_without_writes() {
     .unwrap();
     assert!(patch.contains("+topic"));
     assert!(!patch.contains("+main"));
-    assert!(super::patch(&repo.0, &root, None)
+    assert!(super::patch(&SYSTEM_GIT, &repo.0, &root, None)
         .unwrap()
         .contains("+root"));
     assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
@@ -422,28 +487,31 @@ fn loads_real_scopes_graph_messages_and_first_parent_patches_without_writes() {
         std::fs::read_to_string(repo.0.join("root")).unwrap(),
         "unsaved worktree change\n"
     );
-    let limited = load_limited(&repo.0, false, 2).unwrap();
+    let limited = load_limited(&SYSTEM_GIT, &repo.0, false, 2).unwrap();
     assert!(limited.truncated);
     assert_eq!(limited.commits.len(), 2);
     assert!(limited.edges.iter().all(|e| e.parent < 2));
     repo.git(&["checkout", "--detach", &topic]);
-    assert_eq!(load(&repo.0, false).unwrap().commits.len(), 2);
-    assert_eq!(load(&repo.0, true).unwrap().commits.len(), 4);
+    assert_eq!(load(&SYSTEM_GIT, &repo.0, false).unwrap().commits.len(), 2);
+    assert_eq!(load(&SYSTEM_GIT, &repo.0, true).unwrap().commits.len(), 4);
 }
 
 #[test]
 fn handles_empty_patch_unborn_head_with_other_refs_and_invalid_objects() {
     let repo = TempRepo::new();
     repo.git(&["commit", "--allow-empty", "-m", "Empty"]);
-    let history = load(&repo.0, false).unwrap();
-    assert!(patch(&repo.0, &history.commits[0].hash, None)
+    let history = load(&SYSTEM_GIT, &repo.0, false).unwrap();
+    assert!(patch(&SYSTEM_GIT, &repo.0, &history.commits[0].hash, None)
         .unwrap()
         .contains("no text changes"));
-    assert!(patch(&repo.0, "--help", None).is_err());
-    assert!(patch(&repo.0, &"f".repeat(40), None).is_err());
+    assert!(patch(&SYSTEM_GIT, &repo.0, "--help", None).is_err());
+    assert!(patch(&SYSTEM_GIT, &repo.0, &"f".repeat(40), None).is_err());
     repo.git(&["checkout", "--orphan", "new-branch"]);
-    assert!(load(&repo.0, false).unwrap().commits.is_empty());
-    assert_eq!(load(&repo.0, true).unwrap().commits.len(), 1);
+    assert!(load(&SYSTEM_GIT, &repo.0, false)
+        .unwrap()
+        .commits
+        .is_empty());
+    assert_eq!(load(&SYSTEM_GIT, &repo.0, true).unwrap().commits.len(), 1);
 }
 
 #[test]
@@ -459,11 +527,11 @@ fn commit_file_list_survives_large_patches_and_limits_each_file_independently() 
     repo.git(&["commit", "-m", "Large root"]);
     let hash = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
     let index = std::fs::read(repo.0.join(".git/index")).unwrap();
-    assert!(patch(&repo.0, &hash, None).is_err());
-    let list = files(&repo.0, &hash, None).unwrap();
+    assert!(patch(&SYSTEM_GIT, &repo.0, &hash, None).is_err());
+    let list = files(&SYSTEM_GIT, &repo.0, &hash, None).unwrap();
     assert_eq!(list.len(), 5);
     for file in &list {
-        let result = file_patch(&repo.0, &hash, None, file);
+        let result = file_patch(&SYSTEM_GIT, &repo.0, &hash, None, file);
         if file.path == "oversized" {
             assert!(result.is_err());
         } else {
@@ -477,7 +545,7 @@ fn commit_file_list_survives_large_patches_and_limits_each_file_independently() 
             }
         }
     }
-    assert_eq!(files(&repo.0, &hash, None).unwrap(), list);
+    assert_eq!(files(&SYSTEM_GIT, &repo.0, &hash, None).unwrap(), list);
     assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
     assert_eq!(
         std::fs::read_to_string(repo.0.join("small")).unwrap(),
@@ -501,19 +569,23 @@ fn commit_files_handle_renames_deletions_literal_paths_and_first_parent_merges()
     repo.git(&["add", "."]);
     repo.git(&["commit", "-m", "Files"]);
     let hash = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
-    let list = files(&repo.0, &hash, Some(&root)).unwrap();
+    let list = files(&SYSTEM_GIT, &repo.0, &hash, Some(&root)).unwrap();
     let renamed = list.iter().find(|f| f.path == "new name").unwrap();
     assert_eq!(renamed.original_path.as_deref(), Some("old name"));
-    assert!(file_patch(&repo.0, &hash, Some(&root), renamed)
-        .unwrap()
-        .contains("rename from old name"));
+    assert!(
+        file_patch(&SYSTEM_GIT, &repo.0, &hash, Some(&root), renamed)
+            .unwrap()
+            .contains("rename from old name")
+    );
     let deleted = list.iter().find(|f| f.path == "delete").unwrap();
     assert_eq!(deleted.status, "D");
-    assert!(file_patch(&repo.0, &hash, Some(&root), deleted)
-        .unwrap()
-        .contains("-deleted contents"));
+    assert!(
+        file_patch(&SYSTEM_GIT, &repo.0, &hash, Some(&root), deleted)
+            .unwrap()
+            .contains("-deleted contents")
+    );
     let literal = list.iter().find(|f| f.path == "[literal] ü.txt").unwrap();
-    let diff = file_patch(&repo.0, &hash, Some(&root), literal).unwrap();
+    let diff = file_patch(&SYSTEM_GIT, &repo.0, &hash, Some(&root), literal).unwrap();
     assert!(diff.contains("+literal patch"));
     assert!(!diff.contains("unrelated patch"));
     repo.git(&["checkout", "-b", "topic", &root]);
@@ -523,17 +595,21 @@ fn commit_files_handle_renames_deletions_literal_paths_and_first_parent_merges()
     repo.git(&["checkout", "main"]);
     repo.git(&["merge", "--no-ff", "topic", "-m", "Merge"]);
     let merge = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
-    let list = files(&repo.0, &merge, Some(&hash)).unwrap();
+    let list = files(&SYSTEM_GIT, &repo.0, &merge, Some(&hash)).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].path, "topic");
-    assert!(file_patch(&repo.0, &merge, Some(&hash), &list[0])
-        .unwrap()
-        .contains("+topic contents"));
+    assert!(
+        file_patch(&SYSTEM_GIT, &repo.0, &merge, Some(&hash), &list[0])
+            .unwrap()
+            .contains("+topic contents")
+    );
     repo.git(&["commit", "--allow-empty", "-m", "Empty"]);
     let empty = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
-    assert!(files(&repo.0, &empty, Some(&merge)).unwrap().is_empty());
-    assert!(files(&repo.0, "--help", None).is_err());
-    assert!(files(&repo.0, &"f".repeat(40), None).is_err());
+    assert!(files(&SYSTEM_GIT, &repo.0, &empty, Some(&merge))
+        .unwrap()
+        .is_empty());
+    assert!(files(&SYSTEM_GIT, &repo.0, "--help", None).is_err());
+    assert!(files(&SYSTEM_GIT, &repo.0, &"f".repeat(40), None).is_err());
 }
 
 #[test]

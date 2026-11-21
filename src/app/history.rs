@@ -98,11 +98,60 @@ impl Session {
 }
 
 impl SannyGitApp {
+    fn commit_preview_matches(&self, path: &str, hash: &str, generation: u64) -> bool {
+        self.repositories
+            .get(self.selected_repository)
+            .is_some_and(|repo| repo.path == path)
+            && self.history.selected_commit.as_deref() == Some(hash)
+            && self.history.commit_preview_generation == generation
+    }
+
+    pub(super) fn apply_commit_patch(
+        &mut self,
+        path: String,
+        file: String,
+        hash: String,
+        generation: u64,
+        result: Result<DiffPreview, String>,
+    ) {
+        if self.commit_preview_matches(&path, &hash, generation)
+            && self.history.selected_commit_file.as_ref() == Some(&file)
+        {
+            match result {
+                Ok(preview) => {
+                    self.history.commit_preview = Some(preview);
+                    self.history.commit_preview_error = None;
+                }
+                Err(error) => self.history.commit_preview_error = Some(error),
+            }
+        }
+    }
+
+    pub(super) fn apply_commit_files(
+        &mut self,
+        path: String,
+        hash: String,
+        generation: u64,
+        result: Result<Vec<backend::CommitFile>, String>,
+    ) {
+        if self.commit_preview_matches(&path, &hash, generation) {
+            match result {
+                Ok(files) => {
+                    self.history.selected_commit_file = files.first().map(|file| file.path.clone());
+                    self.history.commit_files = Some(files);
+                    self.history.commit_preview_error = None;
+                }
+                Err(error) => self.history.commit_preview_error = Some(error),
+            }
+        }
+    }
+
     pub fn open_tag_log(&mut self, tag: String) {
         if self.busy()
             || self.repositories.get(self.selected_repository).is_none()
             || !self
-                .refs
+                .branches
+                .entries
                 .iter()
                 .any(|entry| entry.kind == RefKind::Tag && entry.full_name == tag)
         {
@@ -279,17 +328,17 @@ impl SannyGitApp {
         let cancel = Arc::new(AtomicBool::new(false));
         self.history.history_session.cancel = Some(cancel.clone());
         self.history.history_pending = false;
-        match self.spawn_reader(None, move || {
+        match self.spawn_reader(None, move |git| {
             let root = PathBuf::from(&path);
             let result = if append {
                 cursor
                     .as_ref()
                     .ok_or_else(|| "Reload history before loading more.".to_owned())
-                    .and_then(|cursor| backend::more(&root, cursor, previous, &cancel))
+                    .and_then(|cursor| backend::more(git, &root, cursor, previous, &cancel))
             } else if let Some(tag) = tag.as_deref() {
-                backend::reload_tag(&root, tag, requested, &keep, &cancel)
+                backend::reload_tag(git, &root, tag, requested, &keep, &cancel)
             } else {
-                backend::reload(&root, all, requested, &keep, &cancel)
+                backend::reload(git, &root, all, requested, &keep, &cancel)
             };
             WorkerResult::History {
                 path,
@@ -378,6 +427,7 @@ impl SannyGitApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SYSTEM_GIT;
     use crate::{models::DiffPreview, test_support::linear_repo, theme::ThemeChoice};
     use std::time::{Duration, Instant};
 
@@ -412,8 +462,8 @@ mod tests {
         repo.git(&["switch", "main"]);
 
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-        app.apply_snapshot(crate::git::load(&repo.0).unwrap());
-        app.refs = crate::branches::load(&repo.0).unwrap().refs;
+        app.apply_snapshot(crate::git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        app.branches.entries = crate::branches::load(&SYSTEM_GIT, &repo.0).unwrap().refs;
         wait(&mut app);
         app.history.selected_commit = Some(head.clone());
         app.history.journal_filter = "Main only".into();
@@ -462,7 +512,7 @@ mod tests {
     fn opened() -> (crate::test_support::TempRepo, SannyGitApp) {
         let repo = linear_repo(620);
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-        app.apply_snapshot(crate::git::load(&repo.0).unwrap());
+        app.apply_snapshot(crate::git::load(&SYSTEM_GIT, &repo.0).unwrap());
         wait(&mut app);
         assert_eq!(app.history.commits.len(), backend::PAGE_SIZE);
         assert!(app.history_can_load_more());
@@ -479,7 +529,7 @@ mod tests {
             .map(|commit| commit.hash.clone())
             .collect::<Vec<_>>();
         app.select_commit(hashes[450].clone());
-        app.commit_message = "Keep draft".into();
+        app.commit.message = "Keep draft".into();
         app.history.commit_preview = Some(DiffPreview::new("+selected commit diff\n"));
         let preview = app.history.commit_preview.as_ref().unwrap().lines.as_ptr();
         app.remember_history_scroll(hashes[400].clone(), 7.0);
@@ -504,7 +554,7 @@ mod tests {
             app.history.commit_preview.as_ref().unwrap().lines.as_ptr(),
             preview
         );
-        assert_eq!(app.commit_message, "Keep draft");
+        assert_eq!(app.commit.message, "Keep draft");
         assert!(app.take_history_scroll().is_none());
         assert!(app
             .history
@@ -529,6 +579,7 @@ mod tests {
         assert_eq!(app.history.selected_commit, selected);
         assert!(app.history_notice().is_some());
         let page = backend::more(
+            &SYSTEM_GIT,
             &repo.0,
             app.history.history_session.cursor.as_ref().unwrap(),
             app.history.commits.clone(),
@@ -598,14 +649,30 @@ mod tests {
         let (repo, mut app) = opened();
         let path = app.repositories[0].path.clone();
         let generation = app.history.history_session.generation;
-        let page = backend::reload(&repo.0, false, 500, &[], &AtomicBool::new(false)).unwrap();
+        let page = backend::reload(
+            &SYSTEM_GIT,
+            &repo.0,
+            false,
+            500,
+            &[],
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         app.history.history_all_branches = true;
         app.queue_history_reload();
         app.apply_history(path.clone(), false, generation, false, Ok(page));
         assert!(app.history.history_pending);
         app.close_repository(true);
         assert!(app.history.commits.is_empty());
-        let page = backend::reload(&repo.0, true, 500, &[], &AtomicBool::new(false)).unwrap();
+        let page = backend::reload(
+            &SYSTEM_GIT,
+            &repo.0,
+            true,
+            500,
+            &[],
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         app.apply_history(
             path,
             true,

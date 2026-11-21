@@ -1,4 +1,5 @@
 //! Repository lifecycle, discovery, worktrees and configuration. No UI rendering.
+use crate::git::GitContext;
 use crate::{git, models::Repository};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -68,8 +69,11 @@ fn windows_path(path: &str) -> String {
 }
 
 /// Reads local Git configuration only; never connects to the hosting service.
-pub fn hosting_provider(root: &Path) -> Result<Option<crate::clone_source::Provider>, String> {
-    let names = git::text(git::run(root, &["remote"])?)?;
+pub fn hosting_provider(
+    git: &GitContext,
+    root: &Path,
+) -> Result<Option<crate::clone_source::Provider>, String> {
+    let names = git::text(git::run(git, root, &["remote"])?)?;
     let mut names: Vec<_> = names.lines().collect();
     names.sort_unstable();
     if names.contains(&"origin") {
@@ -80,7 +84,7 @@ pub fn hosting_provider(root: &Path) -> Result<Option<crate::clone_source::Provi
             return Err("Unsupported remote name".into());
         }
         // get-url also applies Git's insteadOf aliases without exposing URLs to the UI.
-        let url = git::text(git::run(root, &["remote", "get-url", "--", name])?)?;
+        let url = git::text(git::run(git, root, &["remote", "get-url", "--", name])?)?;
         if let Some(provider) = crate::clone_source::Provider::from_remote_url(url.trim()) {
             return Ok(Some(provider));
         }
@@ -108,12 +112,12 @@ fn new_destination(path: &Path) -> Result<PathBuf, String> {
     Ok(absolute)
 }
 
-pub fn init(path: &Path) -> Result<git::Snapshot, String> {
+pub fn init(git: &GitContext, path: &Path) -> Result<git::Snapshot, String> {
     let path = if path.exists() {
         let path = path.canonicalize().map_err(|e| e.to_string())?;
         if !path.is_dir()
             || fs::symlink_metadata(path.join(".git")).is_ok()
-            || git::run(&path, &["rev-parse", "--show-toplevel"]).is_ok()
+            || git::run(git, &path, &["rev-parse", "--show-toplevel"]).is_ok()
         {
             return Err("Choose a directory outside existing Git working trees.".into());
         }
@@ -122,6 +126,7 @@ pub fn init(path: &Path) -> Result<git::Snapshot, String> {
         new_destination(path)?
     };
     git::run(
+        git,
         path.parent().ok_or("Missing parent")?,
         &[
             "init",
@@ -130,7 +135,7 @@ pub fn init(path: &Path) -> Result<git::Snapshot, String> {
             path.to_str().ok_or("Non-UTF-8 destination")?,
         ],
     )?;
-    git::load(&path)
+    git::load(git, &path)
 }
 
 pub fn expand_path(value: &str) -> PathBuf {
@@ -142,13 +147,13 @@ pub fn expand_path(value: &str) -> PathBuf {
     PathBuf::from(value)
 }
 
-pub fn add_or_create(value: &str) -> Result<git::Snapshot, String> {
+pub fn add_or_create(git: &GitContext, value: &str) -> Result<git::Snapshot, String> {
     if value.trim().is_empty() {
         return Err("Choose a repository directory.".into());
     }
     let path = expand_path(value);
     if path.exists() {
-        let loaded = git::load(&path);
+        let loaded = git::load(git, &path);
         if loaded.is_ok() {
             return loaded;
         }
@@ -163,7 +168,7 @@ pub fn add_or_create(value: &str) -> Result<git::Snapshot, String> {
             return Err("To create a repository, choose an empty directory.".into());
         }
     }
-    init(&path)
+    init(git, &path)
 }
 
 #[derive(Clone, Debug)]
@@ -182,10 +187,15 @@ impl Default for CloneOptions {
     }
 }
 
-pub fn clone_branches(source: &str, cancel: &AtomicBool) -> Result<Vec<String>, String> {
+pub fn clone_branches(
+    git: &GitContext,
+    source: &str,
+    cancel: &AtomicBool,
+) -> Result<Vec<String>, String> {
     let source = clone_source(source)?;
     let root = std::env::current_dir().map_err(|e| e.to_string())?;
     let output = git::run_controlled(
+        git,
         &root,
         &[
             "ls-remote",
@@ -274,14 +284,16 @@ fn clone_source(source: &str) -> Result<String, String> {
 
 #[cfg(test)]
 pub fn clone_repository(
+    git: &GitContext,
     source: &str,
     path: &Path,
     cancel: &AtomicBool,
 ) -> Result<git::Snapshot, String> {
-    clone_with_options(source, path, &CloneOptions::default(), cancel)
+    clone_with_options(git, source, path, &CloneOptions::default(), cancel)
 }
 
 pub fn clone_with_options(
+    git: &GitContext,
     source: &str,
     path: &Path,
     options: &CloneOptions,
@@ -305,15 +317,21 @@ pub fn clone_with_options(
     }
     args.extend(["--", &source, path.to_str().ok_or("Non-UTF-8 destination")?]);
     git::run_controlled(
+        git,
         path.parent().ok_or("Missing parent")?,
         &args,
         Duration::from_secs(600),
         Some(cancel),
     )?;
-    git::load(&path)
+    git::load(git, &path)
 }
 
-pub fn search(root: &Path, depth: usize, cancel: &AtomicBool) -> Result<SearchResult, String> {
+pub fn search(
+    git: &GitContext,
+    root: &Path,
+    depth: usize,
+    cancel: &AtomicBool,
+) -> Result<SearchResult, String> {
     let root = root
         .canonicalize()
         .map_err(|e| format!("Cannot search directory: {e}"))?;
@@ -344,7 +362,7 @@ pub fn search(root: &Path, depth: usize, cancel: &AtomicBool) -> Result<SearchRe
         }
         visited += 1;
         if path.join(".git").exists() {
-            match git::run(&path, &["rev-parse", "--show-toplevel"]).and_then(git::text) {
+            match git::run(git, &path, &["rev-parse", "--show-toplevel"]).and_then(git::text) {
                 Ok(root) => {
                     let root = root.trim_end_matches('\n').to_owned();
                     if seen.insert(root.clone()) {
@@ -400,14 +418,18 @@ fn skip_dir(name: &str) -> bool {
     matches!(name, ".git" | "target" | "node_modules")
 }
 
-pub fn worktrees(root: &Path) -> Result<Vec<Worktree>, String> {
+pub fn worktrees(git: &GitContext, root: &Path) -> Result<Vec<Worktree>, String> {
     // -z is available since Git 2.36; paths can contain newlines.
-    parse_worktrees(&git::run(root, &["worktree", "list", "--porcelain", "-z"])?)
+    parse_worktrees(&git::run(
+        git,
+        root,
+        &["worktree", "list", "--porcelain", "-z"],
+    )?)
 }
 
-pub fn available_worktree_branches(root: &Path) -> Result<Vec<String>, String> {
-    let trees = worktrees(root)?;
-    Ok(crate::branches::load(root)?
+pub fn available_worktree_branches(git: &GitContext, root: &Path) -> Result<Vec<String>, String> {
+    let trees = worktrees(git, root)?;
+    Ok(crate::branches::load(git, root)?
         .refs
         .into_iter()
         .filter(|branch| {
@@ -420,11 +442,11 @@ pub fn available_worktree_branches(root: &Path) -> Result<Vec<String>, String> {
         .collect())
 }
 
-pub fn worktree_availability(root: &Path) -> Result<(bool, bool), String> {
+pub fn worktree_availability(git: &GitContext, root: &Path) -> Result<(bool, bool), String> {
     let active = root
         .canonicalize()
         .map_err(|error| format!("Cannot resolve active worktree: {error}"))?;
-    let removable = worktrees(root)?.iter().any(|tree| {
+    let removable = worktrees(git, root)?.iter().any(|tree| {
         !tree.main
             && !tree.bare
             && !tree.locked
@@ -432,7 +454,7 @@ pub fn worktree_availability(root: &Path) -> Result<(bool, bool), String> {
             && !same_path(&tree.path, &root.to_string_lossy())
             && Path::new(&tree.path).canonicalize().ok().as_ref() != Some(&active)
     });
-    Ok((removable, !prune_preview(root)?.trim().is_empty()))
+    Ok((removable, !prune_preview(git, root)?.trim().is_empty()))
 }
 
 fn parse_worktrees(bytes: &[u8]) -> Result<Vec<Worktree>, String> {
@@ -487,6 +509,7 @@ fn parse_worktrees(bytes: &[u8]) -> Result<Vec<Worktree>, String> {
 }
 
 pub fn add_worktree(
+    git: &GitContext,
     root: &Path,
     destination: &Path,
     branch: &str,
@@ -497,8 +520,8 @@ pub fn add_worktree(
     if let Some(reason) = crate::branches::name_hint(branch) {
         return Err(reason.into());
     }
-    git::run(root, &["check-ref-format", "--branch", branch])?;
-    let refs = crate::branches::load(root)?;
+    git::run(git, root, &["check-ref-format", "--branch", branch])?;
+    let refs = crate::branches::load(git, root)?;
     let existing = refs
         .refs
         .iter()
@@ -517,12 +540,16 @@ pub fn add_worktree(
     } else {
         vec!["worktree", "add", "--", path, branch]
     };
-    git::run_controlled(root, &args, Duration::from_secs(120), Some(cancel))?;
-    worktrees(root)
+    git::run_controlled(git, root, &args, Duration::from_secs(120), Some(cancel))?;
+    worktrees(git, root)
 }
 
-pub fn remove_worktree(root: &Path, path: &Path) -> Result<Vec<Worktree>, String> {
-    let trees = worktrees(root)?;
+pub fn remove_worktree(
+    git: &GitContext,
+    root: &Path,
+    path: &Path,
+) -> Result<Vec<Worktree>, String> {
+    let trees = worktrees(git, root)?;
     let target = trees
         .iter()
         .find(|t| {
@@ -540,16 +567,17 @@ pub fn remove_worktree(root: &Path, path: &Path) -> Result<Vec<Worktree>, String
     {
         return Err("The main, active or locked worktree cannot be removed.".into());
     }
-    if !git::load(path)?.changes.is_empty() {
+    if !git::load(git, path)?.changes.is_empty() {
         return Err("The worktree contains local changes; removal was refused.".into());
     }
     // Include ignored files: Git's normal remove would allow losing those.
-    if !git::run(path, &["ls-files", "--others", "-z"])?.is_empty() {
+    if !git::run(git, path, &["ls-files", "--others", "-z"])?.is_empty() {
         return Err(
             "The worktree contains untracked or ignored files; removal was refused.".into(),
         );
     }
     git::run(
+        git,
         root,
         &[
             "worktree",
@@ -558,11 +586,12 @@ pub fn remove_worktree(root: &Path, path: &Path) -> Result<Vec<Worktree>, String
             path.to_str().ok_or("Non-UTF-8 worktree path")?,
         ],
     )?;
-    worktrees(root)
+    worktrees(git, root)
 }
 
-pub fn prune_preview(root: &Path) -> Result<String, String> {
+pub fn prune_preview(git: &GitContext, root: &Path) -> Result<String, String> {
     git::text(git::run_diagnostic(
+        git,
         root,
         &[
             "worktree",
@@ -573,13 +602,17 @@ pub fn prune_preview(root: &Path) -> Result<String, String> {
         ],
     )?)
 }
-pub fn prune(root: &Path) -> Result<Vec<Worktree>, String> {
-    git::run(root, &["worktree", "prune", "--expire=now"])?;
-    worktrees(root)
+pub fn prune(git: &GitContext, root: &Path) -> Result<Vec<Worktree>, String> {
+    git::run(git, root, &["worktree", "prune", "--expire=now"])?;
+    worktrees(git, root)
 }
 
-pub fn settings(root: &Path) -> Result<Settings, String> {
-    let output = git::text(git::run(root, &["config", "--local", "--null", "--list"])?)?;
+pub fn settings(git: &GitContext, root: &Path) -> Result<Settings, String> {
+    let output = git::text(git::run(
+        git,
+        root,
+        &["config", "--local", "--null", "--list"],
+    )?)?;
     let mut settings = Settings::default();
     for item in output.split('\0') {
         if let Some((key, value)) = item.split_once('\n') {
@@ -592,31 +625,39 @@ pub fn settings(root: &Path) -> Result<Settings, String> {
     }
     Ok(settings)
 }
-pub fn save_settings(root: &Path, values: &Settings) -> Result<Settings, String> {
+pub fn save_settings(git: &GitContext, root: &Path, values: &Settings) -> Result<Settings, String> {
     if [&values.name, &values.email]
         .iter()
         .any(|v| v.len() > 4096 || v.chars().any(char::is_control))
     {
         return Err("Identity values must be single lines up to 4 KiB.".into());
     }
-    let existing = git::text(git::run(root, &["config", "--local", "--null", "--list"])?)?;
+    let existing = git::text(git::run(
+        git,
+        root,
+        &["config", "--local", "--null", "--list"],
+    )?)?;
     for (key, value) in [("user.name", &values.name), ("user.email", &values.email)] {
         if value.is_empty() {
             if existing
                 .split('\0')
                 .any(|item| item.split_once('\n').is_some_and(|(name, _)| name == key))
             {
-                git::run(root, &["config", "--local", "--unset-all", key])?;
+                git::run(git, root, &["config", "--local", "--unset-all", key])?;
             }
         } else {
-            git::run(root, &["config", "--local", "--replace-all", key, value])?;
+            git::run(
+                git,
+                root,
+                &["config", "--local", "--replace-all", key, value],
+            )?;
         }
     }
-    settings(root)
+    settings(git, root)
 }
 
-pub fn config_path(root: &Path) -> Result<PathBuf, String> {
-    let common = git::text(git::run(root, &["rev-parse", "--git-common-dir"])?)?;
+pub fn config_path(git: &GitContext, root: &Path) -> Result<PathBuf, String> {
+    let common = git::text(git::run(git, root, &["rev-parse", "--git-common-dir"])?)?;
     let common = PathBuf::from(common.trim_end_matches('\n'));
     Ok(if common.is_absolute() {
         common
@@ -761,14 +802,15 @@ fn spawn_window(path: Option<&Path>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::SYSTEM_GIT;
     #[test]
     fn hosting_uses_origin_resolves_aliases_and_handles_removed_remotes() {
         use crate::{clone_source::Provider, test_support::TempRepo};
         let repo = TempRepo::new();
-        assert_eq!(super::hosting_provider(&repo.0).unwrap(), None);
+        assert_eq!(super::hosting_provider(&SYSTEM_GIT, &repo.0).unwrap(), None);
         repo.git(&["remote", "add", "upstream", "git@gitlab.com:group/repo.git"]);
         assert_eq!(
-            super::hosting_provider(&repo.0).unwrap(),
+            super::hosting_provider(&SYSTEM_GIT, &repo.0).unwrap(),
             Some(Provider::GitLab)
         );
         repo.git(&[
@@ -778,21 +820,21 @@ mod tests {
             "https://github.com/owner/repo.git",
         ]);
         assert_eq!(
-            super::hosting_provider(&repo.0).unwrap(),
+            super::hosting_provider(&SYSTEM_GIT, &repo.0).unwrap(),
             Some(Provider::GitHub)
         );
         repo.git(&["config", "url.https://bitbucket.org/.insteadOf", "work:"]);
         repo.git(&["remote", "set-url", "origin", "work:team/repo.git"]);
         assert_eq!(
-            super::hosting_provider(&repo.0).unwrap(),
+            super::hosting_provider(&SYSTEM_GIT, &repo.0).unwrap(),
             Some(Provider::Bitbucket)
         );
         repo.git(&["remote", "set-url", "origin", "/local/repository"]);
-        assert_eq!(super::hosting_provider(&repo.0).unwrap(), None);
+        assert_eq!(super::hosting_provider(&SYSTEM_GIT, &repo.0).unwrap(), None);
         repo.git(&["remote", "remove", "origin"]);
         repo.git(&["remote", "remove", "upstream"]);
-        assert_eq!(super::hosting_provider(&repo.0).unwrap(), None);
-        assert!(super::hosting_provider(&repo.0.join("missing")).is_err());
+        assert_eq!(super::hosting_provider(&SYSTEM_GIT, &repo.0).unwrap(), None);
+        assert!(super::hosting_provider(&SYSTEM_GIT, &repo.0.join("missing")).is_err());
     }
 
     use super::*;
@@ -856,19 +898,19 @@ mod tests {
             container.0.file_name().unwrap().to_string_lossy()
         ));
         fs::create_dir(&outside).unwrap();
-        let snapshot = init(&outside.join("new é")).unwrap();
+        let snapshot = init(&SYSTEM_GIT, &outside.join("new é")).unwrap();
         assert_eq!(snapshot.branch, "main");
         assert!(snapshot.changes.is_empty());
-        assert!(init(Path::new(&snapshot.repository.path)).is_err());
+        assert!(init(&SYSTEM_GIT, Path::new(&snapshot.repository.path)).is_err());
         let existing = outside.join("existing");
         fs::create_dir(&existing).unwrap();
         fs::write(existing.join("keep"), "user bytes").unwrap();
-        assert_eq!(init(&existing).unwrap().changes.len(), 1);
+        assert_eq!(init(&SYSTEM_GIT, &existing).unwrap().changes.len(), 1);
         assert_eq!(
             fs::read_to_string(existing.join("keep")).unwrap(),
             "user bytes"
         );
-        assert!(init(&base).is_err());
+        assert!(init(&SYSTEM_GIT, &base).is_err());
         fs::remove_dir_all(outside).unwrap();
     }
 
@@ -883,7 +925,8 @@ mod tests {
         // Fixture writes still disable hooks through command-scoped settings.
         repo.git(&["config", "--local", "--unset", "core.hooksPath"]);
         let cancel = AtomicBool::new(false);
-        let snapshot = clone_repository(repo.0.to_str().unwrap(), &destination, &cancel).unwrap();
+        let snapshot =
+            clone_repository(&SYSTEM_GIT, repo.0.to_str().unwrap(), &destination, &cancel).unwrap();
         assert!(snapshot.changes.is_empty());
         assert_eq!(
             fs::read_to_string(destination.join("file"))
@@ -891,11 +934,17 @@ mod tests {
                 .replace("\r\n", "\n"),
             "fixture\n"
         );
-        assert!(clone_repository(repo.0.to_str().unwrap(), &destination, &cancel).is_err());
-        cancel.store(true, Ordering::Relaxed);
         assert!(
-            clone_repository(repo.0.to_str().unwrap(), &repo.0.join("cancelled"), &cancel).is_err()
+            clone_repository(&SYSTEM_GIT, repo.0.to_str().unwrap(), &destination, &cancel).is_err()
         );
+        cancel.store(true, Ordering::Relaxed);
+        assert!(clone_repository(
+            &SYSTEM_GIT,
+            repo.0.to_str().unwrap(),
+            &repo.0.join("cancelled"),
+            &cancel
+        )
+        .is_err());
         assert!(!repo.0.join("cancelled").exists());
         for source in [
             "--help",
@@ -903,9 +952,13 @@ mod tests {
             "ssh://git:password@example.invalid/repo",
             "ext::not-supported",
         ] {
-            assert!(
-                clone_repository(source, &repo.0.join("invalid"), &AtomicBool::new(false)).is_err()
-            );
+            assert!(clone_repository(
+                &SYSTEM_GIT,
+                source,
+                &repo.0.join("invalid"),
+                &AtomicBool::new(false)
+            )
+            .is_err());
             assert!(!repo.0.join("invalid").exists());
         }
     }
@@ -916,18 +969,18 @@ mod tests {
         let empty = repo.0.join("empty");
         fs::create_dir(&empty).unwrap();
         // An empty child of an existing repository opens that repository.
-        assert!(add_or_create(empty.to_str().unwrap()).is_ok());
+        assert!(add_or_create(&SYSTEM_GIT, empty.to_str().unwrap()).is_ok());
         let outside = std::env::temp_dir().join(format!("sannygit-empty-{}", std::process::id()));
         fs::create_dir(&outside).unwrap();
         fs::write(outside.join("keep"), "contents").unwrap();
-        assert!(add_or_create(outside.to_str().unwrap()).is_err());
+        assert!(add_or_create(&SYSTEM_GIT, outside.to_str().unwrap()).is_err());
         assert!(!outside.join(".git").exists());
         assert_eq!(
             fs::read_to_string(outside.join("keep")).unwrap(),
             "contents"
         );
         fs::remove_file(outside.join("keep")).unwrap();
-        assert!(add_or_create(outside.to_str().unwrap()).is_ok());
+        assert!(add_or_create(&SYSTEM_GIT, outside.to_str().unwrap()).is_ok());
         fs::remove_dir_all(outside).unwrap();
     }
 
@@ -942,11 +995,12 @@ mod tests {
         // Keep the source compatible with Git for Windows clone protection.
         repo.git(&["config", "--local", "--unset", "core.hooksPath"]);
         let cancel = AtomicBool::new(false);
-        let branches = clone_branches(repo.0.to_str().unwrap(), &cancel).unwrap();
+        let branches = clone_branches(&SYSTEM_GIT, repo.0.to_str().unwrap(), &cancel).unwrap();
         assert_eq!(branches.first().map(String::as_str), Some("main"));
         assert!(branches.contains(&"feature".into()));
         let destination = repo.0.join("limited");
         clone_with_options(
+            &SYSTEM_GIT,
             repo.0.to_str().unwrap(),
             &destination,
             &CloneOptions {
@@ -958,13 +1012,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            git::run(&destination, &["branch", "--show-current"]).unwrap(),
+            git::run(&SYSTEM_GIT, &destination, &["branch", "--show-current"]).unwrap(),
             b"feature\n"
         );
-        assert!(git::run(&destination, &["tag", "--list"])
+        assert!(git::run(&SYSTEM_GIT, &destination, &["tag", "--list"])
             .unwrap()
             .is_empty());
         let refs = git::run(
+            &SYSTEM_GIT,
             &destination,
             &["for-each-ref", "--format=%(refname)", "refs/remotes/origin"],
         )
@@ -980,81 +1035,123 @@ mod tests {
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "fixture"]);
         let linked = repo.0.join("nested");
-        add_worktree(&repo.0, &linked, "linked", true, &AtomicBool::new(false)).unwrap();
-        let shallow = search(&repo.0, 0, &AtomicBool::new(false)).unwrap();
+        add_worktree(
+            &SYSTEM_GIT,
+            &repo.0,
+            &linked,
+            "linked",
+            true,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let shallow = search(&SYSTEM_GIT, &repo.0, 0, &AtomicBool::new(false)).unwrap();
         assert_eq!(shallow.repositories.len(), 1);
         assert!(shallow.limited);
-        let deep = search(&repo.0, 4, &AtomicBool::new(false)).unwrap();
+        let deep = search(&SYSTEM_GIT, &repo.0, 4, &AtomicBool::new(false)).unwrap();
         assert_eq!(deep.repositories.len(), 2);
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(&repo.0, repo.0.join("loop")).unwrap();
             assert_eq!(
-                search(&repo.0, 4, &AtomicBool::new(false))
+                search(&SYSTEM_GIT, &repo.0, 4, &AtomicBool::new(false))
                     .unwrap()
                     .repositories
                     .len(),
                 2
             );
         }
-        assert!(search(&repo.0, 4, &AtomicBool::new(true)).is_err());
+        assert!(search(&SYSTEM_GIT, &repo.0, 4, &AtomicBool::new(true)).is_err());
     }
 
     #[test]
     fn worktree_lifecycle_preserves_ignored_dirty_active_and_locked_directories() {
         let repo = TempRepo::new();
-        assert_eq!(worktree_availability(&repo.0).unwrap(), (false, false));
-        assert!(available_worktree_branches(&repo.0).unwrap().is_empty());
+        assert_eq!(
+            worktree_availability(&SYSTEM_GIT, &repo.0).unwrap(),
+            (false, false)
+        );
+        assert!(available_worktree_branches(&SYSTEM_GIT, &repo.0)
+            .unwrap()
+            .is_empty());
         repo.write("file", "fixture\n");
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "fixture"]);
         let linked = repo.0.join("linked");
-        let trees =
-            add_worktree(&repo.0, &linked, "feature", true, &AtomicBool::new(false)).unwrap();
+        let trees = add_worktree(
+            &SYSTEM_GIT,
+            &repo.0,
+            &linked,
+            "feature",
+            true,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert_eq!(trees.len(), 2);
-        assert!(available_worktree_branches(&repo.0).unwrap().is_empty());
+        assert!(available_worktree_branches(&SYSTEM_GIT, &repo.0)
+            .unwrap()
+            .is_empty());
         repo.git(&["branch", "available"]);
         repo.git(&["tag", "not-a-branch"]);
         assert_eq!(
-            available_worktree_branches(&linked).unwrap(),
+            available_worktree_branches(&SYSTEM_GIT, &linked).unwrap(),
             vec!["available"]
         );
         assert!(trees[0].main);
-        assert_eq!(worktree_availability(&repo.0).unwrap(), (true, false));
-        assert_eq!(worktree_availability(&linked).unwrap(), (false, false));
+        assert_eq!(
+            worktree_availability(&SYSTEM_GIT, &repo.0).unwrap(),
+            (true, false)
+        );
+        assert_eq!(
+            worktree_availability(&SYSTEM_GIT, &linked).unwrap(),
+            (false, false)
+        );
         // Git resolves aliases such as macOS /var -> /private/var and Windows
         // path casing. Availability must still exclude the active worktree.
         let alias = linked.join("..").join("linked");
-        assert_eq!(worktree_availability(&alias).unwrap(), (false, false));
         assert_eq!(
-            worktree_availability(&linked.canonicalize().unwrap()).unwrap(),
+            worktree_availability(&SYSTEM_GIT, &alias).unwrap(),
             (false, false)
         );
-        assert!(remove_worktree(&repo.0, &repo.0).is_err());
-        assert!(remove_worktree(&linked, &linked).is_err());
+        assert_eq!(
+            worktree_availability(&SYSTEM_GIT, &linked.canonicalize().unwrap()).unwrap(),
+            (false, false)
+        );
+        assert!(remove_worktree(&SYSTEM_GIT, &repo.0, &repo.0).is_err());
+        assert!(remove_worktree(&SYSTEM_GIT, &linked, &linked).is_err());
         repo.git(&["worktree", "lock", linked.to_str().unwrap()]);
-        assert_eq!(worktree_availability(&repo.0).unwrap(), (false, false));
-        assert!(remove_worktree(&repo.0, &linked).is_err());
+        assert_eq!(
+            worktree_availability(&SYSTEM_GIT, &repo.0).unwrap(),
+            (false, false)
+        );
+        assert!(remove_worktree(&SYSTEM_GIT, &repo.0, &linked).is_err());
         repo.git(&["worktree", "unlock", linked.to_str().unwrap()]);
         fs::write(linked.join("file"), "dirty").unwrap();
-        assert!(remove_worktree(&repo.0, &linked).is_err());
+        assert!(remove_worktree(&SYSTEM_GIT, &repo.0, &linked).is_err());
         repo.git(&["-C", linked.to_str().unwrap(), "restore", "file"]);
         fs::write(repo.0.join(".git/info/exclude"), "ignored\nlinked/\n").unwrap();
         fs::write(linked.join("ignored"), "valuable bytes").unwrap();
-        assert!(remove_worktree(&repo.0, &linked).is_err());
+        assert!(remove_worktree(&SYSTEM_GIT, &repo.0, &linked).is_err());
         assert_eq!(
             fs::read_to_string(linked.join("ignored")).unwrap(),
             "valuable bytes"
         );
         fs::remove_file(linked.join("ignored")).unwrap();
-        assert_eq!(remove_worktree(&repo.0, &linked).unwrap().len(), 1);
-        assert!(!linked.exists());
-        assert_eq!(worktree_availability(&repo.0).unwrap(), (false, false));
         assert_eq!(
-            available_worktree_branches(&repo.0).unwrap(),
+            remove_worktree(&SYSTEM_GIT, &repo.0, &linked)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(!linked.exists());
+        assert_eq!(
+            worktree_availability(&SYSTEM_GIT, &repo.0).unwrap(),
+            (false, false)
+        );
+        assert_eq!(
+            available_worktree_branches(&SYSTEM_GIT, &repo.0).unwrap(),
             vec!["available", "feature"]
         );
-        assert!(crate::branches::load(&repo.0)
+        assert!(crate::branches::load(&SYSTEM_GIT, &repo.0)
             .unwrap()
             .refs
             .iter()
@@ -1068,12 +1165,23 @@ mod tests {
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "fixture"]);
         let linked = repo.0.join("gone");
-        add_worktree(&repo.0, &linked, "gone", true, &AtomicBool::new(false)).unwrap();
+        add_worktree(
+            &SYSTEM_GIT,
+            &repo.0,
+            &linked,
+            "gone",
+            true,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         repo.git(&["worktree", "lock", linked.to_str().unwrap()]);
         fs::remove_dir_all(&linked).unwrap();
-        assert!(prune_preview(&repo.0).unwrap().is_empty());
-        assert_eq!(worktree_availability(&repo.0).unwrap(), (false, false));
-        assert_eq!(prune(&repo.0).unwrap().len(), 2);
+        assert!(prune_preview(&SYSTEM_GIT, &repo.0).unwrap().is_empty());
+        assert_eq!(
+            worktree_availability(&SYSTEM_GIT, &repo.0).unwrap(),
+            (false, false)
+        );
+        assert_eq!(prune(&SYSTEM_GIT, &repo.0).unwrap().len(), 2);
         repo.git(&["worktree", "unlock", linked.to_str().unwrap()]);
         fs::File::options()
             .write(true)
@@ -1081,11 +1189,17 @@ mod tests {
             .unwrap()
             .set_modified(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000))
             .unwrap();
-        assert!(!prune_preview(&repo.0).unwrap().is_empty());
-        assert_eq!(worktree_availability(&repo.0).unwrap(), (false, true));
-        assert_eq!(worktrees(&repo.0).unwrap().len(), 2);
-        assert_eq!(prune(&repo.0).unwrap().len(), 1);
-        assert_eq!(worktree_availability(&repo.0).unwrap(), (false, false));
+        assert!(!prune_preview(&SYSTEM_GIT, &repo.0).unwrap().is_empty());
+        assert_eq!(
+            worktree_availability(&SYSTEM_GIT, &repo.0).unwrap(),
+            (false, true)
+        );
+        assert_eq!(worktrees(&SYSTEM_GIT, &repo.0).unwrap().len(), 2);
+        assert_eq!(prune(&SYSTEM_GIT, &repo.0).unwrap().len(), 1);
+        assert_eq!(
+            worktree_availability(&SYSTEM_GIT, &repo.0).unwrap(),
+            (false, false)
+        );
         assert!(repo.0.join("file").exists());
     }
 
@@ -1096,9 +1210,13 @@ mod tests {
             name: "Name é".into(),
             email: "person@example.invalid".into(),
         };
-        assert_eq!(save_settings(&repo.0, &values).unwrap(), values);
-        assert_eq!(settings(&repo.0).unwrap(), values);
+        assert_eq!(
+            save_settings(&SYSTEM_GIT, &repo.0, &values).unwrap(),
+            values
+        );
+        assert_eq!(settings(&SYSTEM_GIT, &repo.0).unwrap(), values);
         assert!(save_settings(
+            &SYSTEM_GIT,
             &repo.0,
             &Settings {
                 name: "bad\nname".into(),
@@ -1107,26 +1225,40 @@ mod tests {
         )
         .is_err());
         assert_eq!(
-            save_settings(&repo.0, &Settings::default()).unwrap(),
+            save_settings(&SYSTEM_GIT, &repo.0, &Settings::default()).unwrap(),
             Settings::default()
         );
         repo.git(&["config", "--local", "user.name", ""]);
-        save_settings(&repo.0, &Settings::default()).unwrap();
+        save_settings(&SYSTEM_GIT, &repo.0, &Settings::default()).unwrap();
         assert!(!repo
             .git(&["config", "--local", "--name-only", "--list"])
             .lines()
             .any(|key| key == "user.name"));
         assert_eq!(
-            config_path(&repo.0).unwrap().canonicalize().unwrap(),
+            config_path(&SYSTEM_GIT, &repo.0)
+                .unwrap()
+                .canonicalize()
+                .unwrap(),
             repo.0.join(".git/config").canonicalize().unwrap()
         );
         repo.write("file", "fixture");
         repo.git(&["add", "."]);
         repo.git(&["commit", "-m", "fixture"]);
         let linked = repo.0.join("linked");
-        add_worktree(&repo.0, &linked, "linked", true, &AtomicBool::new(false)).unwrap();
+        add_worktree(
+            &SYSTEM_GIT,
+            &repo.0,
+            &linked,
+            "linked",
+            true,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert_eq!(
-            config_path(&linked).unwrap().canonicalize().unwrap(),
+            config_path(&SYSTEM_GIT, &linked)
+                .unwrap()
+                .canonicalize()
+                .unwrap(),
             repo.0.join(".git/config").canonicalize().unwrap()
         );
     }
@@ -1147,6 +1279,7 @@ mod tests {
         let repo = TempRepo::new();
         let start = Instant::now();
         assert!(git::run_controlled(
+            &SYSTEM_GIT,
             &repo.0,
             &["-c", "alias.wait=!sleep 30", "wait"],
             Duration::from_millis(100),

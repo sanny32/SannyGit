@@ -122,8 +122,11 @@ impl SannyGitApp {
         }
         dialog.reload_pending = false;
         let path = dialog.path.clone();
-        if !self.start_worker(move || WorkerResult::Stash {
-            result: Box::new(ResultMessage::List(backend::list(&PathBuf::from(&path)))),
+        if !self.start_worker(move |git| WorkerResult::Stash {
+            result: Box::new(ResultMessage::List(backend::list(
+                git,
+                &PathBuf::from(&path),
+            ))),
             path,
         }) {
             if let Some(dialog) = &mut self.stash_dialog {
@@ -148,16 +151,18 @@ impl SannyGitApp {
         dialog.invalidate_preview();
         dialog.error = None;
         dialog.status = "Loading contents preview…".into();
-        self.start_worker(move || {
+        self.start_worker(move |git| {
             let root = PathBuf::from(&path);
             let result = if saving {
-                ResultMessage::SavePreview(backend::preview_save(&root, include).map(|prepared| {
-                    let diff = DiffPreview::new(&prepared.patch);
-                    (prepared, diff)
-                }))
+                ResultMessage::SavePreview(backend::preview_save(git, &root, include).map(
+                    |prepared| {
+                        let diff = DiffPreview::new(&prepared.patch);
+                        (prepared, diff)
+                    },
+                ))
             } else if let Some(entry) = entry {
-                let result =
-                    backend::preview_entry(&root, &entry).map(|patch| DiffPreview::new(&patch));
+                let result = backend::preview_entry(git, &root, &entry)
+                    .map(|patch| DiffPreview::new(&patch));
                 ResultMessage::EntryPreview { entry, result }
             } else {
                 ResultMessage::List(Err("Select a stash entry first.".into()))
@@ -198,25 +203,25 @@ impl SannyGitApp {
         self.error = None;
         self.state_current = false;
         self.status = "Stash operation in progress…".into();
-        self.start_worker(move || {
+        self.start_worker(move |git| {
             let (outcome, success) = match action {
                 Action::Save => (
                     prepared
                         .as_ref()
                         .ok_or_else(|| "Preview changes before saving.".to_owned())
-                        .and_then(|preview| backend::save(&root, &message, preview)),
+                        .and_then(|preview| backend::save(git, &root, &message, preview)),
                     "Stash saved",
                 ),
                 Action::Apply => (
-                    backend::apply(&root, &entries, selected, restore_index, false),
+                    backend::apply(git, &root, &entries, selected, restore_index, false),
                     "Stash applied; entry retained",
                 ),
                 Action::Pop => (
-                    backend::apply(&root, &entries, selected, restore_index, true),
+                    backend::apply(git, &root, &entries, selected, restore_index, true),
                     "Stash applied and removed",
                 ),
                 Action::Drop => (
-                    backend::drop_entry(&root, &entries, selected),
+                    backend::drop_entry(git, &root, &entries, selected),
                     "Stash dropped",
                 ),
             };
@@ -224,7 +229,7 @@ impl SannyGitApp {
                 committed: false,
                 success,
                 outcome,
-                snapshot: git::load(&root),
+                snapshot: git::load(git, &root),
             }
         });
     }
@@ -283,6 +288,7 @@ impl SannyGitApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SYSTEM_GIT;
     use crate::{test_support::TempRepo, theme::ThemeChoice};
     use std::time::{Duration, Instant};
 
@@ -303,19 +309,19 @@ mod tests {
     fn stash_workflow_preserves_commit_draft_requires_preview_and_confirms_drop() {
         let repo = TempRepo::new();
         repo.write("file", "base\n");
-        git::commit(&repo.0, "Base", git::CommitContents::All).unwrap();
+        git::commit(&SYSTEM_GIT, &repo.0, "Base", git::CommitContents::All).unwrap();
         repo.write("file", "staged\n");
         repo.git(&["add", "file"]);
         repo.write("file", "unstaged\n");
         repo.write("new", "new\n");
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-        app.apply_snapshot(git::load(&repo.0).unwrap());
-        app.commit_message = "Commit draft remains".into();
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        app.commit.message = "Commit draft remains".into();
         app.open_stashes();
         wait(&mut app);
         app.run_stash(Action::Save);
         assert!(!app.busy());
-        assert!(backend::list(&repo.0).unwrap().is_empty());
+        assert!(backend::list(&SYSTEM_GIT, &repo.0).unwrap().is_empty());
         app.stash_dialog.as_mut().unwrap().include_untracked = true;
         app.preview_stash(true);
         wait(&mut app);
@@ -325,7 +331,7 @@ mod tests {
         assert!(app.error.is_none());
         assert_eq!(app.status, "Stash saved");
         assert!(app.changes.is_empty());
-        assert_eq!(app.commit_message, "Commit draft remains");
+        assert_eq!(app.commit.message, "Commit draft remains");
         assert_eq!(app.stash_dialog.as_ref().unwrap().entries.len(), 1);
         app.stash_dialog.as_mut().unwrap().selected = Some(0);
         app.run_stash(Action::Apply);
@@ -353,39 +359,40 @@ mod tests {
         wait(&mut app);
         assert!(app.error.is_none());
         assert_eq!(app.status, "Stash applied; entry retained");
-        assert_eq!(app.commit_message, "Commit draft remains");
+        assert_eq!(app.commit.message, "Commit draft remains");
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"unstaged\n");
         assert_eq!(repo.git(&["show", ":file"]), "staged\n");
         app.preview_stash(false);
         wait(&mut app);
         app.run_stash(Action::Drop);
         assert!(!app.busy());
-        assert_eq!(backend::list(&repo.0).unwrap().len(), 1);
+        assert_eq!(backend::list(&SYSTEM_GIT, &repo.0).unwrap().len(), 1);
         app.stash_dialog.as_mut().unwrap().confirm_drop = true;
         app.run_stash(Action::Drop);
         wait(&mut app);
-        assert!(backend::list(&repo.0).unwrap().is_empty());
+        assert!(backend::list(&SYSTEM_GIT, &repo.0).unwrap().is_empty());
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"unstaged\n");
-        assert_eq!(app.commit_message, "Commit draft remains");
+        assert_eq!(app.commit.message, "Commit draft remains");
     }
 
     #[test]
     fn conflict_results_keep_entry_and_actual_conflicts_and_require_a_new_preview() {
         let repo = TempRepo::new();
         repo.write("file", "base\n");
-        git::commit(&repo.0, "Base", git::CommitContents::All).unwrap();
+        git::commit(&SYSTEM_GIT, &repo.0, "Base", git::CommitContents::All).unwrap();
         repo.write("file", "stashed\n");
         backend::save(
+            &SYSTEM_GIT,
             &repo.0,
             "Conflict",
-            &backend::preview_save(&repo.0, false).unwrap(),
+            &backend::preview_save(&SYSTEM_GIT, &repo.0, false).unwrap(),
         )
         .unwrap();
         repo.write("file", "diverged\n");
-        git::commit(&repo.0, "Diverged", git::CommitContents::All).unwrap();
+        git::commit(&SYSTEM_GIT, &repo.0, "Diverged", git::CommitContents::All).unwrap();
         let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
-        app.apply_snapshot(git::load(&repo.0).unwrap());
-        app.commit_message = "Keep draft".into();
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        app.commit.message = "Keep draft".into();
         app.open_stashes();
         wait(&mut app);
         let dialog = app.stash_dialog.as_mut().unwrap();
@@ -403,14 +410,14 @@ mod tests {
             .changes
             .iter()
             .any(|change| change.kind == crate::models::ChangeKind::Conflicted));
-        assert_eq!(app.commit_message, "Keep draft");
+        assert_eq!(app.commit.message, "Keep draft");
     }
 
     #[test]
     fn late_stash_previews_cannot_replace_another_selection_or_repository() {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         let repo = TempRepo::new();
-        app.apply_snapshot(git::load(&repo.0).unwrap());
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
         app.open_stashes();
         wait(&mut app);
         let path = app.stash_dialog.as_ref().unwrap().path.clone();

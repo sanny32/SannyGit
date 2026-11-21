@@ -58,7 +58,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SannyGitApp) -> [Rect; 4] {
                     .map_or("Working Tree", |repository| repository.name.as_str());
                 ui.heading(name);
                 ui.label("›");
-                ui.label(&app.current_branch);
+                ui.label(&app.branches.current_branch);
             });
             super::changes::show(ui, app);
         })
@@ -239,7 +239,7 @@ mod tests {
                             assert!((after[3].height() - before[3].height() + growth).abs() < 1.0);
                         }
                         app.history.history_loading = true;
-                        app.refs_loading = true;
+                        app.branches.loading = true;
                         for _ in 0..5 {
                             assert_eq!(render(&mut app, vec![]), after);
                         }

@@ -1,4 +1,5 @@
 //! Ref listing and explicit branch/tag operations, called on background workers.
+use crate::git::GitContext;
 use crate::{
     git,
     models::{BranchRef, RefKind, RefSnapshot},
@@ -7,8 +8,8 @@ use std::{collections::HashSet, path::Path};
 
 const REF_LIMIT: usize = 5_000;
 
-pub fn load(root: &Path) -> Result<RefSnapshot, String> {
-    let output = git::run(
+pub fn load(git: &GitContext, root: &Path) -> Result<RefSnapshot, String> {
+    let output = git::run(git,
         root,
         &[
             "for-each-ref",
@@ -21,7 +22,7 @@ pub fn load(root: &Path) -> Result<RefSnapshot, String> {
         ],
     )?;
     let refs = parse(&output)?;
-    let has_head = !git::run(root, &["rev-parse", "--revs-only", "HEAD"])?.is_empty();
+    let has_head = !git::run(git, root, &["rev-parse", "--revs-only", "HEAD"])?.is_empty();
     Ok(RefSnapshot { refs, has_head })
 }
 
@@ -147,12 +148,16 @@ pub fn tag_hint(name: &str, message: &str) -> Option<&'static str> {
 }
 
 /// Creates a tag at the current commit, never replacing an existing tag.
-pub fn create_tag(root: &Path, name: &str, message: &str) -> Result<(), String> {
+pub fn create_tag(git: &GitContext, root: &Path, name: &str, message: &str) -> Result<(), String> {
     if let Some(reason) = tag_hint(name, message) {
         return Err(reason.into());
     }
-    git::run(root, &["check-ref-format", &format!("refs/tags/{name}")])?;
-    let refs = load(root)?;
+    git::run(
+        git,
+        root,
+        &["check-ref-format", &format!("refs/tags/{name}")],
+    )?;
+    let refs = load(git, root)?;
     if !refs.has_head {
         return Err("Create the first commit before creating a tag.".into());
     }
@@ -164,15 +169,21 @@ pub fn create_tag(root: &Path, name: &str, message: &str) -> Result<(), String> 
         return Err("A tag with this name already exists.".into());
     }
     // Resolve HEAD once so both forms refer to the same exact commit.
-    let commit = git::text(git::run(root, &["rev-parse", "--verify", "HEAD^{commit}"])?)?;
+    let commit = git::text(git::run(
+        git,
+        root,
+        &["rev-parse", "--verify", "HEAD^{commit}"],
+    )?)?;
     if message.trim().is_empty() {
         // Override tag.gpgSign so an empty message always creates a lightweight tag.
         git::run(
+            git,
             root,
             &["-c", "tag.gpgSign=false", "tag", "--", name, commit.trim()],
         )
     } else {
         git::run_with_input(
+            git,
             root,
             &[
                 "tag",
@@ -189,8 +200,8 @@ pub fn create_tag(root: &Path, name: &str, message: &str) -> Result<(), String> 
     .map(|_| ())
 }
 
-pub fn switch(root: &Path, full_name: &str) -> Result<(), String> {
-    let refs = load(root)?;
+pub fn switch(git: &GitContext, root: &Path, full_name: &str) -> Result<(), String> {
+    let refs = load(git, root)?;
     let target = refs
         .refs
         .iter()
@@ -204,11 +215,12 @@ pub fn switch(root: &Path, full_name: &str) -> Result<(), String> {
             return Err(reason.into());
         }
     }
-    git::require_no_operation(root)?;
+    git::require_no_operation(git, root)?;
     if target.kind != RefKind::Local {
         // Resolve the exact ref to a commit, including annotated tags. Never guess
         // a local branch or create tracking branches as a side effect.
         let commit = git::text(git::run(
+            git,
             root,
             &[
                 "rev-parse",
@@ -218,6 +230,7 @@ pub fn switch(root: &Path, full_name: &str) -> Result<(), String> {
             ],
         )?)?;
         return git::run(
+            git,
             root,
             &[
                 "switch",
@@ -232,6 +245,7 @@ pub fn switch(root: &Path, full_name: &str) -> Result<(), String> {
     }
     // No force, auto-stash, remote guessing, submodule recursion or overwriting ignored files.
     git::run(
+        git,
         root,
         &[
             "switch",
@@ -265,8 +279,13 @@ pub fn local_for_remote<'a>(refs: &'a [BranchRef], remote: &BranchRef) -> Option
         .find(|r| r.kind == RefKind::Local && r.name == name && r.upstream.is_none())
 }
 
-pub fn checkout_remote(root: &Path, remote: &str, choice: &RemoteChoice) -> Result<(), String> {
-    let refs = load(root)?;
+pub fn checkout_remote(
+    git: &GitContext,
+    root: &Path,
+    remote: &str,
+    choice: &RemoteChoice,
+) -> Result<(), String> {
+    let refs = load(git, root)?;
     let target = refs
         .refs
         .iter()
@@ -281,14 +300,14 @@ pub fn checkout_remote(root: &Path, remote: &str, choice: &RemoteChoice) -> Resu
             {
                 return Err("Select an existing local branch.".into());
             }
-            switch(root, local)
+            switch(git, root, local)
         }
-        RemoteChoice::Detached => switch(root, remote),
+        RemoteChoice::Detached => switch(git, root, remote),
         RemoteChoice::Create(name) => {
             if let Some(reason) = name_hint(name) {
                 return Err(reason.into());
             }
-            git::run(root, &["check-ref-format", "--branch", name])?;
+            git::run(git, root, &["check-ref-format", "--branch", name])?;
             if refs
                 .refs
                 .iter()
@@ -296,8 +315,9 @@ pub fn checkout_remote(root: &Path, remote: &str, choice: &RemoteChoice) -> Resu
             {
                 return Err("A local branch with this name already exists.".into());
             }
-            git::require_no_operation(root)?;
+            git::require_no_operation(git, root)?;
             git::run(
+                git,
                 root,
                 &[
                     "switch",
@@ -316,18 +336,18 @@ pub fn checkout_remote(root: &Path, remote: &str, choice: &RemoteChoice) -> Resu
     }
 }
 
-pub fn create(root: &Path, name: &str, switch_to: bool) -> Result<(), String> {
+pub fn create(git: &GitContext, root: &Path, name: &str, switch_to: bool) -> Result<(), String> {
     if let Some(reason) = name_hint(name) {
         return Err(reason.into());
     }
     let checked = git::text(
-        git::run(root, &["check-ref-format", "--branch", name])
+        git::run(git, root, &["check-ref-format", "--branch", name])
             .map_err(|_| "Invalid branch name. Check Git branch naming rules.")?,
     )?;
     if checked.strip_suffix('\n').unwrap_or(&checked) != name {
         return Err("Branch name must be literal, not a revision expression.".into());
     }
-    let refs = load(root)?;
+    let refs = load(git, root)?;
     if !refs.has_head {
         return Err("Create the first commit before creating another branch.".into());
     }
@@ -339,8 +359,9 @@ pub fn create(root: &Path, name: &str, switch_to: bool) -> Result<(), String> {
         return Err("A local branch with this name already exists.".into());
     }
     if switch_to {
-        git::require_no_operation(root)?;
+        git::require_no_operation(git, root)?;
         git::run(
+            git,
             root,
             &[
                 "switch",
@@ -356,23 +377,23 @@ pub fn create(root: &Path, name: &str, switch_to: bool) -> Result<(), String> {
         )
         .map(|_| ())
     } else {
-        git::run(root, &["branch", "--no-track", "--", name, "HEAD"]).map(|_| ())
+        git::run(git, root, &["branch", "--no-track", "--", name, "HEAD"]).map(|_| ())
     }
 }
 
 /// Renames one exact local ref without overwriting another branch or touching files.
-pub fn rename(root: &Path, full_name: &str, name: &str) -> Result<(), String> {
+pub fn rename(git: &GitContext, root: &Path, full_name: &str, name: &str) -> Result<(), String> {
     if let Some(reason) = name_hint(name) {
         return Err(reason.into());
     }
     let checked = git::text(
-        git::run(root, &["check-ref-format", "--branch", name])
+        git::run(git, root, &["check-ref-format", "--branch", name])
             .map_err(|_| "Invalid branch name. Check Git branch naming rules.")?,
     )?;
     if checked.strip_suffix('\n').unwrap_or(&checked) != name {
         return Err("Branch name must be literal, not a revision expression.".into());
     }
-    let refs = load(root)?;
+    let refs = load(git, root)?;
     let target = refs
         .refs
         .iter()
@@ -390,7 +411,7 @@ pub fn rename(root: &Path, full_name: &str, name: &str) -> Result<(), String> {
     }
     // Lowercase -m refuses an existing destination; Git retains upstream config
     // and reflogs, and updates HEAD if the renamed branch is checked out.
-    git::run(root, &["branch", "-m", "--", &target.name, name]).map(|_| ())
+    git::run(git, root, &["branch", "-m", "--", &target.name, name]).map(|_| ())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -401,9 +422,13 @@ pub struct DeletePreview {
     pub head: String,
 }
 
-pub fn preview_delete(root: &Path, full_name: &str) -> Result<DeletePreview, String> {
-    git::require_no_operation(root)?;
-    let refs = load(root)?;
+pub fn preview_delete(
+    git: &GitContext,
+    root: &Path,
+    full_name: &str,
+) -> Result<DeletePreview, String> {
+    git::require_no_operation(git, root)?;
+    let refs = load(git, root)?;
     let target = refs
         .refs
         .iter()
@@ -415,16 +440,20 @@ pub fn preview_delete(root: &Path, full_name: &str) -> Result<DeletePreview, Str
     if let Some(reason) = name_hint(&target.name) {
         return Err(reason.into());
     }
-    if crate::repository::worktrees(root)?
+    if crate::repository::worktrees(git, root)?
         .iter()
         .any(|tree| tree.branch.as_deref() == Some(&target.name))
     {
         return Err("This branch is checked out in a worktree and cannot be deleted.".into());
     }
-    let head = git::text(git::run(root, &["rev-parse", "--verify", "HEAD^{commit}"])?)?
-        .trim()
-        .to_owned();
-    git::run(root, &["merge-base", "--is-ancestor", &target.hash, &head])
+    let head = git::text(git::run(
+        git,
+        root,
+        &["rev-parse", "--verify", "HEAD^{commit}"],
+    )?)?
+    .trim()
+    .to_owned();
+    git::run(git, root, &["merge-base", "--is-ancestor", &target.hash, &head])
         .map_err(|_| "The branch is not fully merged into the current HEAD, or its ancestry could not be verified. Force deletion is not available.".to_owned())?;
     Ok(DeletePreview {
         full_name: target.full_name.clone(),
@@ -434,13 +463,13 @@ pub fn preview_delete(root: &Path, full_name: &str) -> Result<DeletePreview, Str
     })
 }
 
-pub fn delete(root: &Path, expected: &DeletePreview) -> Result<(), String> {
-    if preview_delete(root, &expected.full_name)? != *expected {
+pub fn delete(git: &GitContext, root: &Path, expected: &DeletePreview) -> Result<(), String> {
+    if preview_delete(git, root, &expected.full_name)? != *expected {
         return Err(
             "The branch or HEAD changed after review. Reload details and confirm again.".into(),
         );
     }
-    git::run(root, &["branch", "-d", "--", &expected.name])
+    git::run(git, root, &["branch", "-d", "--", &expected.name])
         .map_err(|error| format!("Branch deletion did not complete: {error} Only merged branches can be deleted; no force option is used."))?;
     Ok(())
 }
@@ -490,18 +519,23 @@ pub struct AdvancedReset {
     pub fix_line_endings: bool,
 }
 
-fn reset_head(root: &Path) -> Result<(String, String), String> {
-    let head = git::text(git::run(root, &["rev-parse", "--verify", "HEAD^{commit}"])?)?;
+fn reset_head(git: &GitContext, root: &Path) -> Result<(String, String), String> {
+    let head = git::text(git::run(
+        git,
+        root,
+        &["rev-parse", "--verify", "HEAD^{commit}"],
+    )?)?;
     let reference = git::text(git::run(
+        git,
         root,
         &["rev-parse", "--symbolic-full-name", "HEAD"],
     )?)?;
     Ok((head.trim().to_owned(), reference.trim().to_owned()))
 }
 
-pub fn preview_reset(root: &Path, tag: &str) -> Result<ResetPreview, String> {
-    git::require_no_operation(root)?;
-    let refs = load(root)?;
+pub fn preview_reset(git: &GitContext, root: &Path, tag: &str) -> Result<ResetPreview, String> {
+    git::require_no_operation(git, root)?;
+    let refs = load(git, root)?;
     let source = refs
         .refs
         .iter()
@@ -510,6 +544,7 @@ pub fn preview_reset(root: &Path, tag: &str) -> Result<ResetPreview, String> {
     let revision = format!("{}^{{commit}}", source.hash);
     let target = git::text(
         git::run(
+            git,
             root,
             &["rev-parse", "--verify", "--end-of-options", &revision],
         )
@@ -520,14 +555,14 @@ pub fn preview_reset(root: &Path, tag: &str) -> Result<ResetPreview, String> {
             )
         })?,
     )?;
-    let (head, branch) = reset_head(root)?;
+    let (head, branch) = reset_head(git, root)?;
     let target = target.trim();
     if [head.as_str(), target].iter().any(|oid| {
         !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit())
     }) {
         return Err("Git returned an invalid commit object ID.".into());
     }
-    let snapshot = git::load(root)?;
+    let snapshot = git::load(git, root)?;
     Ok(ResetPreview {
         tag: tag.to_owned(),
         target: target.to_owned(),
@@ -538,8 +573,12 @@ pub fn preview_reset(root: &Path, tag: &str) -> Result<ResetPreview, String> {
     })
 }
 
-fn check_reset(root: &Path, expected: &ResetPreview) -> Result<ResetPreview, String> {
-    let current = preview_reset(root, &expected.tag)?;
+fn check_reset(
+    git: &GitContext,
+    root: &Path,
+    expected: &ResetPreview,
+) -> Result<ResetPreview, String> {
+    let current = preview_reset(git, root, &expected.tag)?;
     if current.tag_oid != expected.tag_oid
         || current.target != expected.target
         || current.branch != expected.branch
@@ -561,12 +600,13 @@ fn reset_has_tracked_changes(snapshot: &git::Snapshot) -> bool {
 }
 
 pub fn reset_tag(
+    git: &GitContext,
     root: &Path,
     expected: &ResetPreview,
     mode: ResetMode,
     advanced: Option<AdvancedReset>,
 ) -> Result<(), String> {
-    let current = check_reset(root, expected)?;
+    let current = check_reset(git, root, expected)?;
     let strategy = advanced.map_or(ResetStrategy::Hard, |options| options.strategy);
     if strategy == ResetStrategy::Hard && mode == ResetMode::Clean && current.has_tracked_changes {
         return Err(
@@ -578,12 +618,12 @@ pub fn reset_tag(
         && mode == ResetMode::SaveStash
         && current.has_tracked_changes;
     if stash_saved {
-        let prepared = crate::stash::preview_save(root, false)?;
-        check_reset(root, expected)?;
-        crate::stash::save(root, "SannyGit: automatic stash on Reset", &prepared)?;
+        let prepared = crate::stash::preview_save(git, root, false)?;
+        check_reset(git, root, expected)?;
+        crate::stash::save(git, root, "SannyGit: automatic stash on Reset", &prepared)?;
     }
     let result = (|| {
-        if stash_saved && check_reset(root, expected)?.has_tracked_changes {
+        if stash_saved && check_reset(git, root, expected)?.has_tracked_changes {
             return Err(
                 "Tracked changes appeared after saving the stash. Reload details before retrying."
                     .into(),
@@ -591,9 +631,9 @@ pub fn reset_tag(
         }
         if matches!(strategy, ResetStrategy::Keep | ResetStrategy::Merge) {
             // Refresh stat information for clean entries before Git checks for overwritten edits.
-            git::run(root, &["update-index", "-q", "--refresh"])?;
+            git::run(git, root, &["update-index", "-q", "--refresh"])?;
         }
-        git::run(
+        git::run(git,
             root,
             &[
                 "reset",
@@ -620,23 +660,27 @@ pub fn reset_tag(
         result
     }?;
     if strategy == ResetStrategy::Hard && advanced.is_some_and(|options| options.fix_line_endings) {
-        refresh_reset_line_endings(root, expected).map_err(|error| {
+        refresh_reset_line_endings(git, root, expected).map_err(|error| {
             format!("Reset completed, but line endings could not be refreshed.\n{error}")
         })?;
     }
     Ok(())
 }
 
-fn refresh_reset_line_endings(root: &Path, expected: &ResetPreview) -> Result<(), String> {
-    git::require_no_operation(root)?;
-    let (head, branch) = reset_head(root)?;
+fn refresh_reset_line_endings(
+    git: &GitContext,
+    root: &Path,
+    expected: &ResetPreview,
+) -> Result<(), String> {
+    git::require_no_operation(git, root)?;
+    let (head, branch) = reset_head(git, root)?;
     if head != expected.target
         || branch != expected.branch
-        || reset_has_tracked_changes(&git::load(root)?)
+        || reset_has_tracked_changes(&git::load(git, root)?)
     {
         return Err("HEAD, the current branch or tracked files changed after Reset.".into());
     }
-    git::refresh_checkout_line_endings(root, &expected.target)
+    git::refresh_checkout_line_endings(git, root, &expected.target)
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 //! Destructive file operations on reviewed working copies and index entries.
+use crate::git::GitContext;
 use crate::{git, models::ChangeKind};
 use std::{
     io::Read,
@@ -163,8 +164,8 @@ pub(crate) fn file_state(path: &Path) -> Result<FileState, String> {
     })
 }
 
-pub(crate) fn index_entry(root: &Path, path: &str) -> Result<Vec<u8>, String> {
-    let entry = git::run(root, &["ls-files", "--stage", "-z", "--", path])?;
+pub(crate) fn index_entry(git: &GitContext, root: &Path, path: &str) -> Result<Vec<u8>, String> {
+    let entry = git::run(git, root, &["ls-files", "--stage", "-z", "--", path])?;
     if entry.is_empty() {
         return Ok(entry);
     }
@@ -192,21 +193,22 @@ pub(crate) fn index_entry(root: &Path, path: &str) -> Result<Vec<u8>, String> {
     Ok(entry)
 }
 
-pub fn prepare(root: &Path, path: &str) -> Result<Prepared, String> {
-    prepare_action(root, path, false, false)
+pub fn prepare(git: &GitContext, root: &Path, path: &str) -> Result<Prepared, String> {
+    prepare_action(git, root, path, false, false)
 }
 
 pub(crate) fn prepare_action(
+    git: &GitContext,
     root: &Path,
     path: &str,
     remove: bool,
     merging: bool,
 ) -> Result<Prepared, String> {
     let target = safe_path(root, path)?;
-    if git::check_operation(root, merging)? != merging {
+    if git::check_operation(git, root, merging)? != merging {
         return Err("The merge state changed. Refresh and review the selected files again.".into());
     }
-    let snapshot = git::load(root)?;
+    let snapshot = git::load(git, root)?;
     let changes: Vec<_> = snapshot
         .changes
         .iter()
@@ -222,7 +224,7 @@ pub(crate) fn prepare_action(
     {
         return Err("Resolve conflicts outside SannyGit before discarding changes.".into());
     }
-    let index = index_entry(root, path)?;
+    let index = index_entry(git, root, path)?;
     let action = if remove {
         if index.is_empty()
             && !changes
@@ -276,8 +278,13 @@ pub(crate) fn prepare_action(
         file,
         merging,
         index,
-        head: git::run(root, &["rev-parse", "--revs-only", "HEAD", "MERGE_HEAD"])?,
+        head: git::run(
+            git,
+            root,
+            &["rev-parse", "--revs-only", "HEAD", "MERGE_HEAD"],
+        )?,
         status: git::run(
+            git,
             root,
             &[
                 "status",
@@ -291,8 +298,9 @@ pub(crate) fn prepare_action(
     })
 }
 
-pub fn execute(root: &Path, expected: &Prepared) -> Result<(), String> {
+pub fn execute(git: &GitContext, root: &Path, expected: &Prepared) -> Result<(), String> {
     if prepare_action(
+        git,
         root,
         &expected.path,
         expected.action == Action::Remove,
@@ -308,6 +316,7 @@ pub fn execute(root: &Path, expected: &Prepared) -> Result<(), String> {
     match expected.action {
         Action::RestoreHead => {
             return git::run(
+                git,
                 root,
                 &[
                     "restore",
@@ -323,13 +332,14 @@ pub fn execute(root: &Path, expected: &Prepared) -> Result<(), String> {
         }
         Action::Remove => {
             return git::run(
+                git,
                 root,
                 &["rm", "-f", "--ignore-unmatch", "--", &expected.path],
             )
             .map(|_| ());
         }
         Action::Restore => {
-            git::run(root, &["restore", "--worktree", "--no-recurse-submodules", "--", &expected.path])
+            git::run(git, root, &["restore", "--worktree", "--no-recurse-submodules", "--", &expected.path])
             .map_err(|error| format!("File restoration did not complete: {error}. Inspect the refreshed file before retrying."))?;
         }
         Action::DeleteUntracked => {
@@ -350,19 +360,20 @@ pub fn execute(root: &Path, expected: &Prepared) -> Result<(), String> {
             result.map_err(|error| format!("Could not delete the selected file: {error}"))?;
         }
     }
-    if index_entry(root, &expected.path)? != expected.index {
+    if index_entry(git, root, &expected.path)? != expected.index {
         return Err("The file operation completed, but its index entry changed externally. Inspect the repository before retrying.".into());
     }
     Ok(())
 }
 
 /// Validate every reviewed path before starting; report partial completion on I/O failure.
-pub fn execute_many(root: &Path, expected: &[Prepared]) -> Result<(), String> {
+pub fn execute_many(git: &GitContext, root: &Path, expected: &[Prepared]) -> Result<(), String> {
     if expected.is_empty() {
         return Err("Select files first.".into());
     }
     for entry in expected {
         if prepare_action(
+            git,
             root,
             &entry.path,
             entry.action == Action::Remove,
@@ -373,7 +384,7 @@ pub fn execute_many(root: &Path, expected: &[Prepared]) -> Result<(), String> {
         }
     }
     for (completed, entry) in expected.iter().enumerate() {
-        execute(root, entry).map_err(|error| {
+        execute(git, root, entry).map_err(|error| {
             format!(
                 "Discard stopped at {} after {completed} of {} files completed. {error}",
                 entry.path,
@@ -387,6 +398,7 @@ pub fn execute_many(root: &Path, expected: &[Prepared]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SYSTEM_GIT;
     use crate::{git::CommitContents, test_support::TempRepo};
 
     #[test]
@@ -399,20 +411,20 @@ mod tests {
         repo.write("other", "keep\n");
         let index = repo.git(&["ls-files", "--stage"]);
         let entries = [
-            prepare(&repo.0, "file").unwrap(),
-            prepare(&repo.0, "new").unwrap(),
+            prepare(&SYSTEM_GIT, &repo.0, "file").unwrap(),
+            prepare(&SYSTEM_GIT, &repo.0, "new").unwrap(),
         ];
         repo.write("new", "changed\n");
-        assert!(execute_many(&repo.0, &entries).is_err());
+        assert!(execute_many(&SYSTEM_GIT, &repo.0, &entries).is_err());
         assert_eq!(
             std::fs::read_to_string(repo.0.join("file")).unwrap(),
             "unstaged\n"
         );
         let entries = [
-            prepare(&repo.0, "file").unwrap(),
-            prepare(&repo.0, "new").unwrap(),
+            prepare(&SYSTEM_GIT, &repo.0, "file").unwrap(),
+            prepare(&SYSTEM_GIT, &repo.0, "new").unwrap(),
         ];
-        execute_many(&repo.0, &entries).unwrap();
+        execute_many(&SYSTEM_GIT, &repo.0, &entries).unwrap();
         assert_eq!(
             std::fs::read_to_string(repo.0.join("file")).unwrap(),
             "staged\n"
@@ -429,7 +441,7 @@ mod tests {
         let repo = TempRepo::new();
         repo.write("file", "base\n");
         repo.write("other", "other base\n");
-        git::commit(&repo.0, "Base", CommitContents::All).unwrap();
+        git::commit(&SYSTEM_GIT, &repo.0, "Base", CommitContents::All).unwrap();
         repo
     }
 
@@ -445,11 +457,11 @@ mod tests {
         repo.write("new", "new contents\n");
         let index = repo.git(&["ls-files", "--stage"]);
         let head = repo.git(&["rev-parse", "HEAD"]);
-        let prepared = prepare(&repo.0, "file").unwrap();
+        let prepared = prepare(&SYSTEM_GIT, &repo.0, "file").unwrap();
         assert_eq!(prepared.action, Action::Restore);
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"unstaged\n");
         assert_eq!(repo.git(&["ls-files", "--stage"]), index);
-        execute(&repo.0, &prepared).unwrap();
+        execute(&SYSTEM_GIT, &repo.0, &prepared).unwrap();
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"staged\n");
         assert_eq!(
             std::fs::read(repo.0.join("other")).unwrap(),
@@ -461,7 +473,9 @@ mod tests {
         );
         assert_eq!(repo.git(&["ls-files", "--stage"]), index);
         assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
-        assert!(prepare(&repo.0, "file").unwrap_err().contains("Unstage"));
+        assert!(prepare(&SYSTEM_GIT, &repo.0, "file")
+            .unwrap_err()
+            .contains("Unstage"));
     }
 
     #[test]
@@ -471,9 +485,9 @@ mod tests {
         repo.write("file", "recreated untracked\n");
         repo.write("new", "keep new\n");
         let index = repo.git(&["ls-files", "--stage"]);
-        let prepared = prepare(&repo.0, "file").unwrap();
+        let prepared = prepare(&SYSTEM_GIT, &repo.0, "file").unwrap();
         assert_eq!(prepared.action, Action::DeleteUntracked);
-        execute(&repo.0, &prepared).unwrap();
+        execute(&SYSTEM_GIT, &repo.0, &prepared).unwrap();
         assert!(!repo.0.join("file").exists());
         assert_eq!(repo.git(&["ls-files", "--stage"]), index);
         assert!(repo
@@ -488,12 +502,22 @@ mod tests {
         repo.git(&["mv", "file", "renamed"]);
         repo.write("renamed", "unstaged rename edit\n");
         let index = repo.git(&["ls-files", "--stage"]);
-        execute(&repo.0, &prepare(&repo.0, "renamed").unwrap()).unwrap();
+        execute(
+            &SYSTEM_GIT,
+            &repo.0,
+            &prepare(&SYSTEM_GIT, &repo.0, "renamed").unwrap(),
+        )
+        .unwrap();
         assert!(!repo.0.join("file").exists());
         assert_eq!(std::fs::read(repo.0.join("renamed")).unwrap(), b"base\n");
         assert_eq!(repo.git(&["ls-files", "--stage"]), index);
         std::fs::remove_file(repo.0.join("other")).unwrap();
-        execute(&repo.0, &prepare(&repo.0, "other").unwrap()).unwrap();
+        execute(
+            &SYSTEM_GIT,
+            &repo.0,
+            &prepare(&SYSTEM_GIT, &repo.0, "other").unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             std::fs::read(repo.0.join("other")).unwrap(),
             b"other base\n"
@@ -502,7 +526,12 @@ mod tests {
         unborn.write("new", "staged\n");
         unborn.git(&["add", "new"]);
         unborn.write("new", "unstaged\n");
-        execute(&unborn.0, &prepare(&unborn.0, "new").unwrap()).unwrap();
+        execute(
+            &SYSTEM_GIT,
+            &unborn.0,
+            &prepare(&SYSTEM_GIT, &unborn.0, "new").unwrap(),
+        )
+        .unwrap();
         assert_eq!(std::fs::read(unborn.0.join("new")).unwrap(), b"staged\n");
     }
 
@@ -510,10 +539,20 @@ mod tests {
     fn unstaged_moves_are_handled_as_two_independent_paths() {
         let repo = base();
         std::fs::rename(repo.0.join("file"), repo.0.join("moved")).unwrap();
-        execute(&repo.0, &prepare(&repo.0, "file").unwrap()).unwrap();
+        execute(
+            &SYSTEM_GIT,
+            &repo.0,
+            &prepare(&SYSTEM_GIT, &repo.0, "file").unwrap(),
+        )
+        .unwrap();
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"base\n");
         assert_eq!(std::fs::read(repo.0.join("moved")).unwrap(), b"base\n");
-        execute(&repo.0, &prepare(&repo.0, "moved").unwrap()).unwrap();
+        execute(
+            &SYSTEM_GIT,
+            &repo.0,
+            &prepare(&SYSTEM_GIT, &repo.0, "moved").unwrap(),
+        )
+        .unwrap();
         assert!(!repo.0.join("moved").exists());
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"base\n");
     }
@@ -531,7 +570,7 @@ mod tests {
             } else {
                 "file"
             };
-            let prepared = prepare(&repo.0, path).unwrap();
+            let prepared = prepare(&SYSTEM_GIT, &repo.0, path).unwrap();
             match change {
                 "contents" => repo.write("file", "new work\n"),
                 "index" => {
@@ -552,7 +591,7 @@ mod tests {
             let index = repo.git(&["ls-files", "--stage"]);
             let status = repo.git(&["status", "--porcelain"]);
             assert!(
-                execute(&repo.0, &prepared).is_err(),
+                execute(&SYSTEM_GIT, &repo.0, &prepared).is_err(),
                 "Failed to reject {change}"
             );
             assert_eq!(repo.git(&["ls-files", "--stage"]), index);
@@ -574,10 +613,15 @@ mod tests {
         let repo = base();
         std::fs::write(repo.0.join("file[ab].bin"), [0, 255, 1]).unwrap();
         repo.write("filea.bin", "base\n");
-        git::commit(&repo.0, "Binary", CommitContents::All).unwrap();
+        git::commit(&SYSTEM_GIT, &repo.0, "Binary", CommitContents::All).unwrap();
         std::fs::write(repo.0.join("file[ab].bin"), [0, 255, 2]).unwrap();
         repo.write("filea.bin", "keep changed\n");
-        execute(&repo.0, &prepare(&repo.0, "file[ab].bin").unwrap()).unwrap();
+        execute(
+            &SYSTEM_GIT,
+            &repo.0,
+            &prepare(&SYSTEM_GIT, &repo.0, "file[ab].bin").unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             std::fs::read(repo.0.join("file[ab].bin")).unwrap(),
             [0, 255, 1]
@@ -593,7 +637,7 @@ mod tests {
         let repo = base();
         repo.write("file", "keep modified\n");
         for path in ["", "../file", ".git/../file", "/file", "file/child"] {
-            assert!(prepare(&repo.0, path).is_err());
+            assert!(prepare(&SYSTEM_GIT, &repo.0, path).is_err());
         }
         for marker in [
             "MERGE_HEAD",
@@ -603,13 +647,17 @@ mod tests {
             "rebase-apply",
             "sequencer",
         ] {
-            let prepared = prepare(&repo.0, "file").unwrap();
+            let prepared = prepare(&SYSTEM_GIT, &repo.0, "file").unwrap();
             repo.write(&format!(".git/{marker}"), "busy");
-            assert!(execute(&repo.0, &prepared).unwrap_err().contains("Finish"));
+            assert!(execute(&SYSTEM_GIT, &repo.0, &prepared)
+                .unwrap_err()
+                .contains("Finish"));
             std::fs::remove_file(repo.0.join(".git").join(marker)).unwrap();
         }
         std::fs::write(repo.0.join("large"), vec![0; SNAPSHOT_LIMIT as usize + 1]).unwrap();
-        assert!(prepare(&repo.0, "large").unwrap_err().contains("2 MiB"));
+        assert!(prepare(&SYSTEM_GIT, &repo.0, "large")
+            .unwrap_err()
+            .contains("2 MiB"));
         assert!(repo.0.join("large").exists());
         assert_eq!(
             std::fs::read(repo.0.join("file")).unwrap(),
@@ -626,17 +674,27 @@ mod tests {
         outside.write("first", "first target\n");
         outside.write("second", "second target\n");
         symlink(outside.0.join("first"), repo.0.join("link")).unwrap();
-        git::commit(&repo.0, "Link", CommitContents::All).unwrap();
+        git::commit(&SYSTEM_GIT, &repo.0, "Link", CommitContents::All).unwrap();
         std::fs::remove_file(repo.0.join("link")).unwrap();
         symlink(outside.0.join("second"), repo.0.join("link")).unwrap();
-        execute(&repo.0, &prepare(&repo.0, "link").unwrap()).unwrap();
+        execute(
+            &SYSTEM_GIT,
+            &repo.0,
+            &prepare(&SYSTEM_GIT, &repo.0, "link").unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             std::fs::read_link(repo.0.join("link")).unwrap(),
             outside.0.join("first")
         );
         std::fs::remove_file(repo.0.join("file")).unwrap();
         symlink(outside.0.join("second"), repo.0.join("file")).unwrap();
-        execute(&repo.0, &prepare(&repo.0, "file").unwrap()).unwrap();
+        execute(
+            &SYSTEM_GIT,
+            &repo.0,
+            &prepare(&SYSTEM_GIT, &repo.0, "file").unwrap(),
+        )
+        .unwrap();
         assert!(!repo
             .0
             .join("file")
@@ -646,7 +704,12 @@ mod tests {
             .is_symlink());
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"base\n");
         symlink(&outside.0, repo.0.join("directory-link")).unwrap();
-        execute(&repo.0, &prepare(&repo.0, "directory-link").unwrap()).unwrap();
+        execute(
+            &SYSTEM_GIT,
+            &repo.0,
+            &prepare(&SYSTEM_GIT, &repo.0, "directory-link").unwrap(),
+        )
+        .unwrap();
         assert!(repo.0.join("directory-link").symlink_metadata().is_err());
         assert_eq!(
             std::fs::read(outside.0.join("first")).unwrap(),
@@ -667,11 +730,11 @@ mod tests {
         outside.write("file", "outside\n");
         std::fs::create_dir(repo.0.join("dir")).unwrap();
         repo.write("dir/file", "reviewed\n");
-        let prepared = prepare(&repo.0, "dir/file").unwrap();
+        let prepared = prepare(&SYSTEM_GIT, &repo.0, "dir/file").unwrap();
         std::fs::remove_file(repo.0.join("dir/file")).unwrap();
         std::fs::remove_dir(repo.0.join("dir")).unwrap();
         symlink(&outside.0, repo.0.join("dir")).unwrap();
-        assert!(execute(&repo.0, &prepared)
+        assert!(execute(&SYSTEM_GIT, &repo.0, &prepared)
             .unwrap_err()
             .contains("parent path"));
         assert_eq!(std::fs::read(outside.0.join("file")).unwrap(), b"outside\n");

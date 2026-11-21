@@ -210,15 +210,15 @@ impl SannyGitApp {
             return;
         };
         let path = repository.path.clone();
-        let git_executable = self.preferences.git_executable.clone();
+        let git_context = crate::git::GitContext::new(self.preferences.git_executable.clone());
         let context = context.clone();
         let (sender, receiver) = mpsc::channel();
         self.manager.availability_checked = Some(Instant::now());
         match std::thread::Builder::new()
             .name("sannygit-worktree-availability".into())
             .spawn(move || {
-                git::set_executable(git_executable);
-                let result = repository::worktree_availability(std::path::Path::new(&path));
+                let git = &git_context;
+                let result = repository::worktree_availability(git, std::path::Path::new(&path));
                 let _ = sender.send(WorktreeAvailability { path, result });
                 context.request_repaint();
             }) {
@@ -274,12 +274,12 @@ impl SannyGitApp {
         self.manager
             .hosting_checked
             .insert(path.clone(), Instant::now());
-        let git_executable = self.preferences.git_executable.clone();
+        let git_context = crate::git::GitContext::new(self.preferences.git_executable.clone());
         if std::thread::Builder::new()
             .name("sannygit-hosting".into())
             .spawn(move || {
-                git::set_executable(git_executable);
-                let provider = repository::hosting_provider(std::path::Path::new(&path));
+                let git = &git_context;
+                let provider = repository::hosting_provider(git, std::path::Path::new(&path));
                 let _ = sender.send(HostingUpdate { path, provider });
                 context.request_repaint();
             })
@@ -336,7 +336,7 @@ impl SannyGitApp {
             Job::InspectClone(_) | Job::Clone { .. } | Job::Search { .. } | Job::AddWorktree { .. }
         )
         .then(|| cancel.clone());
-        if !self.start_worker(move || {
+        if !self.start_worker(move |git| {
             let result = match job {
                 Job::NewWindow => ResultMessage::Window(repository::new_window()),
                 Job::NewRepositoryWindow(path) => {
@@ -345,9 +345,11 @@ impl SannyGitApp {
                 Job::Reveal(path) => {
                     ResultMessage::Editor(repository::reveal(&PathBuf::from(path)))
                 }
-                Job::AddOrCreate(path) => ResultMessage::Open(repository::add_or_create(&path)),
+                Job::AddOrCreate(path) => {
+                    ResultMessage::Open(repository::add_or_create(git, &path))
+                }
                 Job::InspectClone(source) => {
-                    let result = repository::clone_branches(&source, &cancel);
+                    let result = repository::clone_branches(git, &source, &cancel);
                     ResultMessage::CloneBranches { source, result }
                 }
                 Job::Clone {
@@ -355,22 +357,26 @@ impl SannyGitApp {
                     destination,
                     options,
                 } => ResultMessage::Open(repository::clone_with_options(
+                    git,
                     &source,
                     &PathBuf::from(destination),
                     &options,
                     &cancel,
                 )),
-                Job::Search { root, depth } => {
-                    ResultMessage::Search(repository::search(&PathBuf::from(root), depth, &cancel))
-                }
+                Job::Search { root, depth } => ResultMessage::Search(repository::search(
+                    git,
+                    &PathBuf::from(root),
+                    depth,
+                    &cancel,
+                )),
                 other => {
                     let root = root.unwrap_or_default();
                     match other {
                         Job::PrepareAddWorktree => ResultMessage::WorktreeBranches(
-                            repository::available_worktree_branches(&root),
+                            repository::available_worktree_branches(git, &root),
                         ),
                         Job::ListWorktrees => ResultMessage::Worktrees {
-                            result: repository::worktrees(&root),
+                            result: repository::worktrees(git, &root),
                             snapshot: None,
                         },
                         Job::AddWorktree {
@@ -379,6 +385,7 @@ impl SannyGitApp {
                             new_branch,
                         } => {
                             let result = repository::add_worktree(
+                                git,
                                 &root,
                                 &PathBuf::from(destination),
                                 &branch,
@@ -387,34 +394,37 @@ impl SannyGitApp {
                             );
                             ResultMessage::Worktrees {
                                 result,
-                                snapshot: Some(git::load(&root)),
+                                snapshot: Some(git::load(git, &root)),
                             }
                         }
                         Job::RemoveWorktree(path) => {
-                            let result = repository::remove_worktree(&root, &PathBuf::from(path));
+                            let result =
+                                repository::remove_worktree(git, &root, &PathBuf::from(path));
                             ResultMessage::Worktrees {
                                 result,
-                                snapshot: Some(git::load(&root)),
+                                snapshot: Some(git::load(git, &root)),
                             }
                         }
-                        Job::PreviewPrune => ResultMessage::Prune(repository::prune_preview(&root)),
+                        Job::PreviewPrune => {
+                            ResultMessage::Prune(repository::prune_preview(git, &root))
+                        }
                         Job::Prune => ResultMessage::Worktrees {
-                            result: repository::prune(&root),
-                            snapshot: Some(git::load(&root)),
+                            result: repository::prune(git, &root),
+                            snapshot: Some(git::load(git, &root)),
                         },
                         Job::LoadSettings => ResultMessage::Settings {
-                            result: repository::settings(&root),
+                            result: repository::settings(git, &root),
                             saved: false,
                         },
                         Job::SaveSettings(settings) => ResultMessage::Settings {
-                            result: repository::save_settings(&root, &settings),
+                            result: repository::save_settings(git, &root, &settings),
                             saved: true,
                         },
                         Job::EditConfig { global } => ResultMessage::Editor(
                             (if global {
                                 repository::user_config_path()
                             } else {
-                                repository::config_path(&root)
+                                repository::config_path(git, &root)
                             })
                             .and_then(|path| repository::edit_config(&path)),
                         ),
@@ -630,7 +640,7 @@ impl SannyGitApp {
         }
         self.repositories.remove(index);
         self.assign_group(&path, None);
-        self.commit_drafts.remove(&path);
+        self.commit.commit_drafts.remove(&path);
         self.manager.hosting.remove(&path);
         self.manager.hosting_checked.remove(&path);
         if self.manager.highlighted_repository.as_deref() == Some(&path) {
@@ -644,9 +654,10 @@ impl SannyGitApp {
             return;
         }
         if !discard_draft
-            && ((!self.commit_message.is_empty()
-                && self.merge_default_message.as_ref() != Some(&self.commit_message))
+            && ((!self.commit.message.is_empty()
+                && self.commit.merge_default_message.as_ref() != Some(&self.commit.message))
                 || self
+                    .commit
                     .amend_draft
                     .as_ref()
                     .is_some_and(|draft| !draft.is_empty()))
@@ -655,22 +666,22 @@ impl SannyGitApp {
             return;
         }
         if let Some(repository) = self.repositories.get(self.selected_repository) {
-            self.commit_drafts.remove(&repository.path);
+            self.commit.commit_drafts.remove(&repository.path);
         }
-        self.amend = false;
-        self.amend_head = None;
-        self.amend_draft = None;
+        self.commit.amend = false;
+        self.commit.amend_head = None;
+        self.commit.amend_draft = None;
         self.open_dialog = false;
         self.selected_repository = usize::MAX;
         self.close_tag_log();
         self.invalidate_view_reads();
         self.tracking.invalidate();
-        self.selected_change = usize::MAX;
-        self.selected_paths.clear();
-        self.selection_anchor = None;
-        self.current_branch.clear();
+        self.selection.active = usize::MAX;
+        self.selection.paths.clear();
+        self.selection.anchor = None;
+        self.branches.current_branch.clear();
         self.changes.clear();
-        self.refs.clear();
+        self.branches.entries.clear();
         self.history.commits.clear();
         self.history.history_edges.clear();
         self.history.history_max_lane = 0;
@@ -679,32 +690,32 @@ impl SannyGitApp {
         self.history.history_pending = false;
         self.history.history_session.clear_view();
         self.history.history_error = None;
-        self.refs_current = false;
-        self.refs_worker = None;
-        self.refs_loading = false;
-        self.refs_pending = false;
-        self.refs_error = None;
-        self.branch_head_exists = false;
-        self.branch_dialog_open = false;
-        self.rename_branch_dialog = None;
-        self.tag_dialog_open = false;
-        self.new_tag_name.clear();
-        self.new_tag_message.clear();
-        self.remote_checkout = None;
+        self.branches.current = false;
+        self.branches.worker = None;
+        self.branches.loading = false;
+        self.branches.pending = false;
+        self.branches.error = None;
+        self.branches.branch_head_exists = false;
+        self.branches.branch_dialog_open = false;
+        self.branches.rename_branch_dialog = None;
+        self.branches.tag_dialog_open = false;
+        self.branches.new_tag_name.clear();
+        self.branches.new_tag_message.clear();
+        self.branches.remote_checkout = None;
         self.network_dialog = None;
         self.stash_dialog = None;
         self.discard_dialog = None;
-        self.ref_dialog = None;
-        self.selected_branch.clear();
-        self.selected_ref_group = None;
+        self.branches.ref_dialog = None;
+        self.branches.selected_branch.clear();
+        self.branches.selected_ref_group = None;
         self.loaded_diff = None;
         self.diff_preview = None;
         self.history.selected_commit = None;
         self.history.commit_details_open = false;
         self.clear_commit_preview();
         self.state_current = false;
-        self.commit_message.clear();
-        self.merge_default_message = None;
+        self.commit.message.clear();
+        self.commit.merge_default_message = None;
         self.merging = false;
         self.history.journal_filter.clear();
         self.manager.dialog = None;
@@ -718,6 +729,7 @@ impl SannyGitApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SYSTEM_GIT;
     use crate::theme::ThemeChoice;
     use std::{collections::HashMap, path::Path};
 
@@ -987,7 +999,7 @@ mod tests {
                 name: "Saved group".into(),
                 paths: vec![stored_path.clone()],
             });
-        app.apply_snapshot(git::load(&repo.0).unwrap());
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
         assert_eq!(app.repositories.len(), 1);
         assert_eq!(app.selected_repository, 0);
         assert_eq!(app.repositories[0].name, "Saved name");
@@ -1057,27 +1069,33 @@ mod tests {
     fn drafts_survive_repository_switch_restart_amend_and_failed_open() {
         let first = crate::test_support::TempRepo::new();
         first.write("file", "base\n");
-        crate::git::commit(&first.0, "Base", crate::git::CommitContents::All).unwrap();
+        crate::git::commit(
+            &SYSTEM_GIT,
+            &first.0,
+            "Base",
+            crate::git::CommitContents::All,
+        )
+        .unwrap();
         let second = crate::test_support::TempRepo::new();
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-        app.apply_snapshot(crate::git::load(&first.0).unwrap());
-        app.commit_message = "Normal draft\n\nBody".into();
-        app.apply_snapshot(crate::git::load(&second.0).unwrap());
-        assert!(app.commit_message.is_empty());
-        app.commit_message = "Other repository".into();
-        app.apply_snapshot(crate::git::load(&first.0).unwrap());
-        assert_eq!(app.commit_message, "Normal draft\n\nBody");
-        let (head, _) = crate::git::amend_message(&first.0).unwrap();
-        app.amend = true;
-        app.amend_head = Some(head.clone());
-        app.amend_draft = Some(std::mem::replace(
-            &mut app.commit_message,
+        app.apply_snapshot(crate::git::load(&SYSTEM_GIT, &first.0).unwrap());
+        app.commit.message = "Normal draft\n\nBody".into();
+        app.apply_snapshot(crate::git::load(&SYSTEM_GIT, &second.0).unwrap());
+        assert!(app.commit.message.is_empty());
+        app.commit.message = "Other repository".into();
+        app.apply_snapshot(crate::git::load(&SYSTEM_GIT, &first.0).unwrap());
+        assert_eq!(app.commit.message, "Normal draft\n\nBody");
+        let (head, _) = crate::git::amend_message(&SYSTEM_GIT, &first.0).unwrap();
+        app.commit.amend = true;
+        app.commit.amend_head = Some(head.clone());
+        app.commit.amend_draft = Some(std::mem::replace(
+            &mut app.commit.message,
             "Edited amend".into(),
         ));
-        app.apply_snapshot(crate::git::load(&second.0).unwrap());
-        app.apply_snapshot(crate::git::load(&first.0).unwrap());
-        assert!(app.amend);
-        assert_eq!(app.commit_message, "Edited amend");
+        app.apply_snapshot(crate::git::load(&SYSTEM_GIT, &second.0).unwrap());
+        app.apply_snapshot(crate::git::load(&SYSTEM_GIT, &first.0).unwrap());
+        assert!(app.commit.amend);
+        assert_eq!(app.commit.message, "Edited amend");
         let mut storage = Storage::default();
         eframe::App::save(&mut app, &mut storage);
         let mut restored = SannyGitApp::with_theme(ThemeChoice::Dark);
@@ -1085,40 +1103,52 @@ mod tests {
         restored.restore_commit_drafts(&storage);
         restored.restore_active_repository(&storage);
         finish_restore(&mut restored);
-        assert!(restored.amend);
-        assert_eq!(restored.amend_head.as_deref(), Some(head.as_str()));
-        assert_eq!(restored.commit_message, "Edited amend");
+        assert!(restored.commit.amend);
+        assert_eq!(restored.commit.amend_head.as_deref(), Some(head.as_str()));
+        assert_eq!(restored.commit.message, "Edited amend");
         restored.open_repository(first.0.join("missing").to_string_lossy().into_owned());
         finish_restore(&mut restored);
         assert!(restored.error.is_some());
-        assert_eq!(restored.commit_message, "Edited amend");
+        assert_eq!(restored.commit.message, "Edited amend");
         restored.set_amend(false);
-        assert_eq!(restored.commit_message, "Normal draft\n\nBody");
-        restored.apply_snapshot(crate::git::load(&second.0).unwrap());
-        assert_eq!(restored.commit_message, "Other repository");
+        assert_eq!(restored.commit.message, "Normal draft\n\nBody");
+        restored.apply_snapshot(crate::git::load(&SYSTEM_GIT, &second.0).unwrap());
+        assert_eq!(restored.commit.message, "Other repository");
         restored.close_repository(true);
-        restored.apply_snapshot(crate::git::load(&second.0).unwrap());
-        assert!(restored.commit_message.is_empty());
-        assert!(!restored.amend);
-        restored.apply_snapshot(crate::git::load(&first.0).unwrap());
-        assert_eq!(restored.commit_message, "Normal draft\n\nBody");
+        restored.apply_snapshot(crate::git::load(&SYSTEM_GIT, &second.0).unwrap());
+        assert!(restored.commit.message.is_empty());
+        assert!(!restored.commit.amend);
+        restored.apply_snapshot(crate::git::load(&SYSTEM_GIT, &first.0).unwrap());
+        assert_eq!(restored.commit.message, "Normal draft\n\nBody");
     }
 
     #[test]
     fn restored_amend_rejects_changed_head_and_keeps_drafts_until_success() {
         let repo = crate::test_support::TempRepo::new();
         repo.write("file", "base\n");
-        crate::git::commit(&repo.0, "Base", crate::git::CommitContents::All).unwrap();
+        crate::git::commit(
+            &SYSTEM_GIT,
+            &repo.0,
+            "Base",
+            crate::git::CommitContents::All,
+        )
+        .unwrap();
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-        app.apply_snapshot(crate::git::load(&repo.0).unwrap());
-        app.commit_message = "Amend draft".into();
-        app.amend = true;
-        app.amend_head = Some(crate::git::amend_message(&repo.0).unwrap().0);
-        app.amend_draft = Some("Normal draft".into());
+        app.apply_snapshot(crate::git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        app.commit.message = "Amend draft".into();
+        app.commit.amend = true;
+        app.commit.amend_head = Some(crate::git::amend_message(&SYSTEM_GIT, &repo.0).unwrap().0);
+        app.commit.amend_draft = Some("Normal draft".into());
         let mut storage = Storage::default();
         eframe::App::save(&mut app, &mut storage);
         repo.write("file", "external commit\n");
-        crate::git::commit(&repo.0, "External", crate::git::CommitContents::All).unwrap();
+        crate::git::commit(
+            &SYSTEM_GIT,
+            &repo.0,
+            "External",
+            crate::git::CommitContents::All,
+        )
+        .unwrap();
         repo.write("file", "keep unstaged\n");
         let mut restored = SannyGitApp::with_theme(ThemeChoice::Dark);
         restored.repositories = app.repositories;
@@ -1132,21 +1162,21 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("HEAD has changed"));
-        assert_eq!(restored.commit_message, "Amend draft");
-        assert!(restored.amend);
+        assert_eq!(restored.commit.message, "Amend draft");
+        assert!(restored.commit.amend);
         assert!(repo.git(&["diff", "--cached", "--name-only"]).is_empty());
         assert_eq!(repo.git(&["log", "-1", "--format=%s"]).trim(), "External");
         restored.set_amend(false);
-        assert_eq!(restored.commit_message, "Normal draft");
+        assert_eq!(restored.commit.message, "Normal draft");
         restored.create_commit();
         finish_restore(&mut restored);
         assert!(restored.error.is_none());
-        assert!(restored.commit_message.is_empty());
+        assert!(restored.commit.message.is_empty());
         eframe::App::save(&mut restored, &mut storage);
         restored.restore_commit_drafts(&storage);
         restored.load_commit_draft();
-        assert!(restored.commit_message.is_empty());
-        assert!(restored.commit_drafts.is_empty());
+        assert!(restored.commit.message.is_empty());
+        assert!(restored.commit.commit_drafts.is_empty());
         assert_eq!(
             repo.git(&["log", "-1", "--format=%s"]).trim(),
             "Normal draft"
@@ -1166,8 +1196,8 @@ mod tests {
         app.selected_repository = 0;
         app.changes = crate::mock_data::changes();
         app.history.commits = crate::mock_data::commits();
-        app.refs = crate::mock_data::refs();
-        app.commit_message = "Draft".into();
+        app.branches.entries = crate::mock_data::refs();
+        app.commit.message = "Draft".into();
         app.manager.group_name = "Work".into();
         app.add_group();
         app.assign_group(&path, Some("Work".into()));
@@ -1175,12 +1205,16 @@ mod tests {
         app.request_remove_repository(path.clone());
         assert_eq!(app.manager.dialog, Some(Dialog::RemoveRepository));
         assert_eq!(app.repositories.len(), 1);
-        assert_eq!(app.commit_message, "Draft");
+        assert_eq!(app.commit.message, "Draft");
         app.confirm_remove_repository();
         assert!(app.repositories.is_empty());
         assert_eq!(app.selected_repository, usize::MAX);
-        assert!(app.changes.is_empty() && app.history.commits.is_empty() && app.refs.is_empty());
-        assert!(app.commit_message.is_empty());
+        assert!(
+            app.changes.is_empty()
+                && app.history.commits.is_empty()
+                && app.branches.entries.is_empty()
+        );
+        assert!(app.commit.message.is_empty());
         assert!(app.manager.preferences.groups[0].paths.is_empty());
         assert!(app.manager.highlighted_repository.is_none());
         assert!(repo.0.join(".git").is_dir());
@@ -1208,9 +1242,9 @@ mod tests {
             app.repositories = crate::mock_data::repositories();
             app.selected_repository = selected;
             let active_path = app.repositories.get(selected).map(|r| r.path.clone());
-            app.commit_message = "Keep this draft".into();
+            app.commit.message = "Keep this draft".into();
             let path = app.repositories[1].path.clone();
-            app.commit_drafts.insert(
+            app.commit.commit_drafts.insert(
                 path.clone(),
                 super::super::CommitDraft {
                     message: "Inactive draft".into(),
@@ -1225,8 +1259,8 @@ mod tests {
                     .map(|r| r.path.clone()),
                 active_path
             );
-            assert_eq!(app.commit_message, "Keep this draft");
-            assert!(!app.commit_drafts.contains_key(&path));
+            assert_eq!(app.commit.message, "Keep this draft");
+            assert!(!app.commit.commit_drafts.contains_key(&path));
             assert!(!app.repositories.iter().any(|r| r.path == path));
         }
     }
@@ -1255,22 +1289,22 @@ mod tests {
         app.selected_repository = 0;
         app.changes = crate::mock_data::changes();
         app.history.commits = crate::mock_data::commits();
-        app.refs = crate::mock_data::refs();
-        app.current_branch = "main".into();
+        app.branches.entries = crate::mock_data::refs();
+        app.branches.current_branch = "main".into();
         app.manager.group_name = "Work".into();
         app.add_group();
         let path = app.repositories[0].path.clone();
         app.assign_group(&path, Some("Work".into()));
-        app.commit_message = "Unsaved message".into();
+        app.commit.message = "Unsaved message".into();
         let (sender, receiver) = mpsc::channel();
-        app.refs_worker = Some(receiver);
+        app.branches.worker = Some(receiver);
         app.close_repository(false);
         assert_eq!(app.manager.dialog, Some(Dialog::CloseRepository));
         assert_eq!(app.selected_repository, 0);
         assert!(!app.changes.is_empty());
-        assert!(app.refs_worker.is_some());
+        assert!(app.branches.worker.is_some());
         app.close_repository(true);
-        assert!(app.refs_worker.is_none());
+        assert!(app.branches.worker.is_none());
         assert!(sender
             .send(WorkerResult::Refs {
                 path: path.clone(),
@@ -1278,10 +1312,14 @@ mod tests {
             })
             .is_err());
         assert_eq!(app.selected_repository, usize::MAX);
-        assert!(app.changes.is_empty() && app.refs.is_empty() && app.history.commits.is_empty());
-        assert!(!app.history.history_pending && !app.refs_pending);
+        assert!(
+            app.changes.is_empty()
+                && app.branches.entries.is_empty()
+                && app.history.commits.is_empty()
+        );
+        assert!(!app.history.history_pending && !app.branches.pending);
         assert!(!app.state_current);
-        assert!(app.commit_message.is_empty());
+        assert!(app.commit.message.is_empty());
         assert_eq!(app.repositories.len(), 4);
         assert_eq!(app.manager.preferences.groups[0].paths, vec![path]);
     }

@@ -694,7 +694,8 @@ fn metadata(ui: &mut Ui, app: &SannyGitApp) {
                     );
                 }
                 let mut refs = app
-                    .refs
+                    .branches
+                    .entries
                     .iter()
                     .filter(|reference| reference.hash == commit.hash)
                     .map(|reference| reference.name.as_str())

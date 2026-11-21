@@ -786,8 +786,8 @@ mod tests {
                 app.selected_repository = 0;
                 app.changes = crate::mock_data::changes();
                 app.history.commits = crate::mock_data::commits();
-                app.refs = crate::mock_data::refs();
-                app.current_branch = "main".into();
+                app.branches.entries = crate::mock_data::refs();
+                app.branches.current_branch = "main".into();
                 let render = |app: &mut SannyGitApp, events: Vec<Event>| {
                     let mut output = ctx.run_ui(
                         RawInput {
@@ -862,9 +862,9 @@ mod tests {
                 app.selected_repository = 1;
                 app.changes.clear();
                 app.history.commits.clear();
-                app.refs.clear();
-                app.current_branch.clear();
-                app.refs_loading = true;
+                app.branches.entries.clear();
+                app.branches.current_branch.clear();
+                app.branches.loading = true;
                 app.history.history_loading = true;
                 for _ in 0..10 {
                     let after = render(&mut app, vec![]);
@@ -1097,7 +1097,7 @@ mod tests {
                         matches!(&shape.shape, eframe::egui::Shape::Text(text)
                     if text.galley.job.text == "Attention required")
                     }));
-                    app.commit_message = "Keep this draft".into();
+                    app.commit.message = "Keep this draft".into();
                     for diagnostic in [
                     "fatal: unable to access 'https://alice:hunter2@example.invalid/repo?auth=abc123': connection refused".to_owned(),
                     format!("{}\nAPI-Key: unlabelled-value", "ordinary text ".repeat(5_000)),
@@ -1111,7 +1111,7 @@ mod tests {
                     }
                     let (panels, output) = render(&mut app, vec![]);
                     assert_eq!(panels, before);
-                    assert_eq!(app.commit_message, "Keep this draft");
+                    assert_eq!(app.commit.message, "Keep this draft");
                     let shown = output.shapes.iter().filter_map(|shape| match &shape.shape {
                         eframe::egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
                         _ => None,

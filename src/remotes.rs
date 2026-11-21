@@ -1,4 +1,5 @@
 //! Explicit remote operations. Authentication stays with Git; diagnostics omit credentials.
+use crate::git::GitContext;
 use crate::{branches, git, models::RefKind};
 use std::{path::Path, sync::atomic::AtomicBool, time::Duration};
 
@@ -52,9 +53,9 @@ impl State {
     }
 }
 
-pub fn load(root: &Path) -> Result<State, String> {
+pub fn load(git: &GitContext, root: &Path) -> Result<State, String> {
     // `remote` lists only names, never URLs or credentials.
-    let names = git::text(git::run(root, &["remote"])?)?;
+    let names = git::text(git::run(git, root, &["remote"])?)?;
     let remotes = names.lines().map(str::to_owned).collect::<Vec<_>>();
     if remotes
         .iter()
@@ -62,7 +63,7 @@ pub fn load(root: &Path) -> Result<State, String> {
     {
         return Err("Unsupported remote name".into());
     }
-    let refs = branches::load(root)?;
+    let refs = branches::load(git, root)?;
     let branch = refs
         .refs
         .iter()
@@ -70,7 +71,7 @@ pub fn load(root: &Path) -> Result<State, String> {
         .map(|r| r.name.clone());
     let mut state = State {
         remotes,
-        remote_urls: crate::remote_config::load(root)?
+        remote_urls: crate::remote_config::load(git, root)?
             .entries
             .into_iter()
             .map(|entry| (entry.name, entry.fetch_display))
@@ -80,6 +81,7 @@ pub fn load(root: &Path) -> Result<State, String> {
     };
     if let Some(branch) = &state.branch {
         let output = git::text(git::run(
+            git,
             root,
             &[
                 "for-each-ref",
@@ -104,20 +106,25 @@ pub fn load(root: &Path) -> Result<State, String> {
     Ok(state)
 }
 
-fn head(root: &Path) -> Result<String, String> {
-    let oid = git::text(git::run(root, &["rev-parse", "--verify", "HEAD^{commit}"])?)?;
+fn head(git: &GitContext, root: &Path) -> Result<String, String> {
+    let oid = git::text(git::run(
+        git,
+        root,
+        &["rev-parse", "--verify", "HEAD^{commit}"],
+    )?)?;
     Ok(oid.trim().into())
 }
 
-fn require_pull_ready(root: &Path) -> Result<(), String> {
-    if !git::load(root)?.changes.is_empty() {
+fn require_pull_ready(git: &GitContext, root: &Path) -> Result<(), String> {
+    if !git::load(git, root)?.changes.is_empty() {
         return Err("Commit or move aside local changes before pulling.".into());
     }
-    git::require_no_operation(root)
+    git::require_no_operation(git, root)
 }
 
 #[cfg(test)]
 pub fn run(
+    git: &GitContext,
     root: &Path,
     operation: Operation,
     remote: &str,
@@ -126,6 +133,7 @@ pub fn run(
     cancel: &AtomicBool,
 ) -> Result<(), String> {
     run_with_tags(
+        git,
         root,
         operation,
         remote,
@@ -137,7 +145,12 @@ pub fn run(
 }
 
 /// `None` preserves normal Fetch behavior; Pull supplies an explicit tag choice.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "pass the worker Git context explicitly"
+)]
 pub fn run_with_tags(
+    git: &GitContext,
     root: &Path,
     operation: Operation,
     remote: &str,
@@ -146,21 +159,21 @@ pub fn run_with_tags(
     cancel: &AtomicBool,
     update_tags: Option<bool>,
 ) -> Result<(), String> {
-    let state = load(root)?;
+    let state = load(git, root)?;
     if !state.remotes.iter().any(|name| name == remote) {
         return Err("Choose a configured remote, then refresh before retrying.".into());
     }
     let timeout = Duration::from_secs(600);
     if operation == Operation::Fetch {
         if update_tags == Some(true) {
-            fetch_tags(root, remote, cancel)?;
+            fetch_tags(git, root, remote, cancel)?;
         }
         let mut args = vec!["fetch", "--no-recurse-submodules"];
         if update_tags.is_some() {
             args.push("--no-tags");
         }
         args.extend(["--", remote]);
-        git::run_controlled(root, &args, timeout, Some(cancel))?;
+        git::run_controlled(git, root, &args, timeout, Some(cancel))?;
         return Ok(());
     }
     let branch = state
@@ -174,12 +187,13 @@ pub fn run_with_tags(
         return Err(reason.into());
     }
     let destination = format!("refs/heads/{target}");
-    git::run(root, &["check-ref-format", &destination])?;
-    let original = head(root)?;
+    git::run(git, root, &["check-ref-format", &destination])?;
+    let original = head(git, root)?;
     if operation == Operation::Sync {
-        require_pull_ready(root)?;
+        require_pull_ready(git, root)?;
         // Only a non-fast-forward rejection permits continuing after a failed push.
         let rejected = git::run_sync_push(
+            git,
             root,
             &push_arguments(remote, &destination, &original)
                 .iter()
@@ -190,8 +204,8 @@ pub fn run_with_tags(
         if rejected {
             // Pulling from a different endpoint cannot resolve a rejected push.
             // Compare URLs internally; never expose credentials in diagnostics.
-            let fetch_urls = git::run(root, &["remote", "get-url", "--all", remote])?;
-            let push_urls = git::run(root, &["remote", "get-url", "--push", "--all", remote])?;
+            let fetch_urls = git::run(git, root, &["remote", "get-url", "--all", remote])?;
+            let push_urls = git::run(git, root, &["remote", "get-url", "--push", "--all", remote])?;
             if fetch_urls != push_urls {
                 return Err("Sync push was rejected and the fetch and push URLs differ. Pull and push separately.".into());
             }
@@ -200,16 +214,17 @@ pub fn run_with_tags(
     match operation {
         Operation::Fetch => unreachable!(),
         Operation::Push => {
-            push_tip(root, remote, &destination, &original, cancel)?;
+            push_tip(git, root, remote, &destination, &original, cancel)?;
         }
         Operation::Pull | Operation::Sync => {
-            require_pull_ready(root)?;
+            require_pull_ready(git, root)?;
             if update_tags == Some(true) {
                 // Update tag refs separately so FETCH_HEAD still identifies only
                 // the reviewed branch in the following fetch.
-                fetch_tags(root, remote, cancel)?;
+                fetch_tags(git, root, remote, cancel)?;
             }
             git::run_controlled(
+                git,
                 root,
                 &[
                     "fetch",
@@ -223,23 +238,26 @@ pub fn run_with_tags(
                 Some(cancel),
             )?;
             let fetched = git::text(git::run(
+                git,
                 root,
                 &["rev-parse", "--verify", "FETCH_HEAD^{commit}"],
             )?)?;
-            let current = load(root)?;
-            if current.branch.as_deref() != Some(branch) || head(root)? != original {
+            let current = load(git, root)?;
+            if current.branch.as_deref() != Some(branch) || head(git, root)? != original {
                 return Err(
                     "The local branch changed while fetching. Refresh before retrying.".into(),
                 );
             }
-            require_pull_ready(root)?;
+            require_pull_ready(git, root)?;
             let remote_is_ahead = git::run(
+                git,
                 root,
                 &["merge-base", "--is-ancestor", &original, fetched.trim()],
             )
             .is_ok();
             let local_is_ahead = operation == Operation::Sync
                 && git::run(
+                    git,
                     root,
                     &["merge-base", "--is-ancestor", fetched.trim(), &original],
                 )
@@ -248,7 +266,7 @@ pub fn run_with_tags(
                 return Err(format!("{} requires a fast-forward. The branches diverged; merge or rebase them separately.", operation.label()));
             }
             if remote_is_ahead {
-                git::run_controlled(root, &["-c", "submodule.recurse=false", "merge", "--ff-only", "--no-edit", "--no-autostash", "--no-overwrite-ignore", "--", fetched.trim()], timeout, Some(cancel))
+                git::run_controlled(git, root, &["-c", "submodule.recurse=false", "merge", "--ff-only", "--no-edit", "--no-autostash", "--no-overwrite-ignore", "--", fetched.trim()], timeout, Some(cancel))
                     .map_err(|error| format!("Could not fast-forward: {error} Check ignored-file conflicts, Git hooks, repository locks and permissions; refresh before retrying."))?;
             }
         }
@@ -256,8 +274,14 @@ pub fn run_with_tags(
     Ok(())
 }
 
-fn fetch_tags(root: &Path, remote: &str, cancel: &AtomicBool) -> Result<(), String> {
+fn fetch_tags(
+    git: &GitContext,
+    root: &Path,
+    remote: &str,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
     git::run_controlled(
+        git,
         root,
         &[
             "fetch",
@@ -274,6 +298,7 @@ fn fetch_tags(root: &Path, remote: &str, cancel: &AtomicBool) -> Result<(), Stri
 }
 
 fn push_tip(
+    git: &GitContext,
     root: &Path,
     remote: &str,
     destination: &str,
@@ -281,6 +306,7 @@ fn push_tip(
     cancel: &AtomicBool,
 ) -> Result<(), String> {
     git::run_controlled(
+        git,
         root,
         &push_arguments(remote, destination, original)
             .iter()
@@ -310,8 +336,14 @@ fn push_arguments(remote: &str, destination: &str, original: &str) -> Vec<String
     .collect()
 }
 
-pub fn set_upstream(root: &Path, local: &str, remote: &str, target: &str) -> Result<(), String> {
-    let state = load(root)?;
+pub fn set_upstream(
+    git: &GitContext,
+    root: &Path,
+    local: &str,
+    remote: &str,
+    target: &str,
+) -> Result<(), String> {
+    let state = load(git, root)?;
     if state.branch.as_deref() != Some(local) || !state.remotes.iter().any(|r| r == remote) {
         return Err("The branch or remote changed. Refresh before setting upstream.".into());
     }
@@ -319,6 +351,7 @@ pub fn set_upstream(root: &Path, local: &str, remote: &str, target: &str) -> Res
         return Err(reason.into());
     }
     git::run(
+        git,
         root,
         &[
             "branch",
@@ -341,11 +374,12 @@ pub struct TagPushPreview {
 }
 
 pub fn preview_tag_push(
+    git: &GitContext,
     root: &Path,
     full_name: &str,
     remote: &str,
 ) -> Result<TagPushPreview, String> {
-    let refs = branches::load(root)?;
+    let refs = branches::load(git, root)?;
     let tag = refs
         .refs
         .iter()
@@ -354,7 +388,7 @@ pub fn preview_tag_push(
     if let Some(reason) = branches::tag_hint(&tag.name, "") {
         return Err(reason.into());
     }
-    let (endpoint, config) = crate::remote_config::push_endpoint(root, remote)?;
+    let (endpoint, config) = crate::remote_config::push_endpoint(git, root, remote)?;
     Ok(TagPushPreview {
         full_name: tag.full_name.clone(),
         oid: tag.hash.clone(),
@@ -366,35 +400,42 @@ pub fn preview_tag_push(
 }
 
 pub fn create_and_push_tag(
+    git: &GitContext,
     root: &Path,
     name: &str,
     message: &str,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
-    let state = load(root)?;
+    let state = load(git, root)?;
     let remote = state
         .upstream_or_origin()
         .ok_or("Cannot push the tag. Configure an upstream for the current branch or add a remote named origin.")?;
-    let (_, config) = crate::remote_config::push_endpoint(root, remote)?;
-    branches::create_tag(root, name, message)?;
+    let (_, config) = crate::remote_config::push_endpoint(git, root, remote)?;
+    branches::create_tag(git, root, name, message)?;
     (|| {
-        let tag = preview_tag_push(root, &format!("refs/tags/{name}"), remote)?;
+        let tag = preview_tag_push(git, root, &format!("refs/tags/{name}"), remote)?;
         if tag.config != config {
             return Err("Remote configuration changed during tag creation.".into());
         }
-        push_tag(root, &tag, cancel)
+        push_tag(git, root, &tag, cancel)
     })()
     .map_err(|error| format!("Tag {name} was created locally, but push to {remote} failed. To retry, use Push Selected Tag.\n{error}"))
 }
 
-pub fn push_tag(root: &Path, expected: &TagPushPreview, cancel: &AtomicBool) -> Result<(), String> {
-    if preview_tag_push(root, &expected.full_name, &expected.remote)? != *expected {
+pub fn push_tag(
+    git: &GitContext,
+    root: &Path,
+    expected: &TagPushPreview,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    if preview_tag_push(git, root, &expected.full_name, &expected.remote)? != *expected {
         return Err(
             "The tag or remote configuration changed after review. Reload and confirm again."
                 .into(),
         );
     }
     git::run_controlled(
+        git,
         root,
         &[
             "push",
@@ -421,14 +462,18 @@ pub struct TagDeletePreview {
     config: crate::remote_config::Snapshot,
 }
 
-pub fn preview_tag_delete(root: &Path, full_name: &str) -> Result<TagDeletePreview, String> {
-    let refs = branches::load(root)?;
+pub fn preview_tag_delete(
+    git: &GitContext,
+    root: &Path,
+    full_name: &str,
+) -> Result<TagDeletePreview, String> {
+    let refs = branches::load(git, root)?;
     let tag = refs
         .refs
         .iter()
         .find(|entry| entry.kind == RefKind::Tag && entry.full_name == full_name)
         .ok_or("The selected tag no longer exists. Refresh branches and tags.")?;
-    let config = crate::remote_config::load(root)?;
+    let config = crate::remote_config::load(git, root)?;
     Ok(TagDeletePreview {
         full_name: tag.full_name.clone(),
         oid: tag.hash.clone(),
@@ -441,8 +486,12 @@ pub fn preview_tag_delete(root: &Path, full_name: &str) -> Result<TagDeletePrevi
     })
 }
 
-fn check_tag_delete(root: &Path, expected: &TagDeletePreview) -> Result<(), String> {
-    if !branches::load(root)?.refs.iter().any(|tag| {
+fn check_tag_delete(
+    git: &GitContext,
+    root: &Path,
+    expected: &TagDeletePreview,
+) -> Result<(), String> {
+    if !branches::load(git, root)?.refs.iter().any(|tag| {
         tag.kind == RefKind::Tag && tag.full_name == expected.full_name && tag.hash == expected.oid
     }) {
         return Err("The local tag changed after review. Reload details and confirm again.".into());
@@ -451,22 +500,24 @@ fn check_tag_delete(root: &Path, expected: &TagDeletePreview) -> Result<(), Stri
 }
 
 pub fn delete_tag(
+    git: &GitContext,
     root: &Path,
     expected: &TagDeletePreview,
     also_remote: bool,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
-    check_tag_delete(root, expected)?;
+    check_tag_delete(git, root, expected)?;
     let mut removed = 0;
     let result = (|| {
         if also_remote {
             let mut destinations = Vec::new();
             for remote in &expected.remotes {
-                let (endpoint, config) = crate::remote_config::push_endpoint(root, remote)?;
+                let (endpoint, config) = crate::remote_config::push_endpoint(git, root, remote)?;
                 if config != expected.config {
                     return Err("The remote configuration changed after review. Reload details and confirm again.".into());
                 }
                 let listed = git::text(git::run_controlled(
+                    git,
                     root,
                     &["ls-remote", "--refs", "--", &endpoint, &expected.full_name],
                     Duration::from_secs(60),
@@ -492,11 +543,12 @@ pub fn delete_tag(
                 }
             }
             for (remote, endpoint) in destinations {
-                check_tag_delete(root, expected)?;
-                if crate::remote_config::load(root)? != expected.config {
+                check_tag_delete(git, root, expected)?;
+                if crate::remote_config::load(git, root)? != expected.config {
                     return Err("The remote configuration changed after review. Reload details and confirm again.".into());
                 }
                 git::run_controlled(
+                    git,
                     root,
                     &[
                         "push",
@@ -522,6 +574,7 @@ pub fn delete_tag(
             }
         }
         git::run(
+            git,
             root,
             &[
                 "update-ref",

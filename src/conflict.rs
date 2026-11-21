@@ -1,3 +1,4 @@
+use crate::git::GitContext;
 use crate::{discard, git};
 use std::{
     fs,
@@ -87,13 +88,18 @@ fn stages(index: &[u8], path: &str) -> Result<[bool; 4], String> {
     Ok(stages)
 }
 
-pub fn prepare(root: &Path, path: &str, action: Action) -> Result<Review, String> {
+pub fn prepare(
+    git: &GitContext,
+    root: &Path,
+    path: &str,
+    action: Action,
+) -> Result<Review, String> {
     let target = discard::safe_path(root, path)?;
-    let index = discard::index_entry(root, path)?;
+    let index = discard::index_entry(git, root, path)?;
     let current = stages(&index, path)?;
     let unmerged = current[1..].contains(&true);
     let undo = if action == Action::Recreate && !unmerged {
-        git::run(root, &["ls-files", "--resolve-undo", "-z", "--", path])?
+        git::run(git, root, &["ls-files", "--resolve-undo", "-z", "--", path])?
     } else {
         Vec::new()
     };
@@ -124,6 +130,7 @@ pub fn prepare(root: &Path, path: &str, action: Action) -> Result<Review, String
     };
     if action == Action::Edit {
         let attr = git::run(
+            git,
             root,
             &["check-attr", "-z", "conflict-marker-size", "--", path],
         )?;
@@ -148,7 +155,7 @@ pub fn prepare(root: &Path, path: &str, action: Action) -> Result<Review, String
                     continue;
                 }
                 let object = format!(":{stage}:{path}");
-                *version = read_text_blob(root, &object)?;
+                *version = read_text_blob(git, root, &object)?;
             }
             if let Some(text) = review
                 .text
@@ -158,7 +165,7 @@ pub fn prepare(root: &Path, path: &str, action: Action) -> Result<Review, String
                 // The ort merge strategy saves the initial working tree, including
                 // conflict markers, while the index still contains unmerged entries.
                 let object = format!("AUTO_MERGE:{path}");
-                if let Some(snapshot) = read_text_blob(root, &object).ok().flatten() {
+                if let Some(snapshot) = read_text_blob(git, root, &object).ok().flatten() {
                     if let Ok(conflicts) = parse(&snapshot, review.marker_size) {
                         review.recovered_conflicts = project_conflicts(&snapshot, &conflicts, text);
                         if !review.recovered_conflicts.is_empty() {
@@ -172,11 +179,11 @@ pub fn prepare(root: &Path, path: &str, action: Action) -> Result<Review, String
     Ok(review)
 }
 
-fn read_text_blob(root: &Path, object: &str) -> Result<Option<String>, String> {
-    let size = git::text(git::run(root, &["cat-file", "-s", object])?)?;
+fn read_text_blob(git: &GitContext, root: &Path, object: &str) -> Result<Option<String>, String> {
+    let size = git::text(git::run(git, root, &["cat-file", "-s", object])?)?;
     if size.trim().parse::<usize>().is_ok_and(|size| size <= LIMIT) {
         return Ok(
-            String::from_utf8(git::run(root, &["cat-file", "blob", object])?)
+            String::from_utf8(git::run(git, root, &["cat-file", "blob", object])?)
                 .ok()
                 .filter(|text| !text.contains('\0')),
         );
@@ -921,6 +928,7 @@ fn match_gap(
     matched.extend((0..suffix).map(|index| (old.end + index, new.end + index)));
 }
 pub fn apply(
+    git: &GitContext,
     root: &Path,
     path: &str,
     action: Action,
@@ -928,7 +936,7 @@ pub fn apply(
     draft: Option<String>,
 ) -> Result<(), String> {
     let target = discard::safe_path(root, path)?;
-    let index = discard::index_entry(root, path)?;
+    let index = discard::index_entry(git, root, path)?;
     let current = discard::file_state(&target)?;
     let same_draft = matches!((&current.contents, &draft), (discard::Contents::File(bytes), Some(draft)) if bytes == draft.as_bytes());
     if index != review.index || (current != review.file && !(action == Action::Edit && same_draft))
@@ -953,7 +961,7 @@ pub fn apply(
             if !same_draft {
                 replace_file(&target, draft.as_bytes())?;
             }
-            git::run(root, &["add", "--", path])?;
+            git::run(git, root, &["add", "--", path])?;
         }
         Action::Ours | Action::Theirs => {
             let (stage, option) = if action == Action::Ours {
@@ -962,19 +970,20 @@ pub fn apply(
                 (3, "--theirs")
             };
             if review.stages[stage] {
-                git::run(root, &["checkout", option, "--", path])?;
-                git::run(root, &["add", "--", path])?;
+                git::run(git, root, &["checkout", option, "--", path])?;
+                git::run(git, root, &["add", "--", path])?;
             } else {
-                git::run(root, &["rm", "-f", "--", path])?;
+                git::run(git, root, &["rm", "-f", "--", path])?;
             }
         }
         Action::Recreate => {
             if !review.undo.is_empty()
-                && git::run(root, &["ls-files", "--resolve-undo", "-z", "--", path])? != review.undo
+                && git::run(git, root, &["ls-files", "--resolve-undo", "-z", "--", path])?
+                    != review.undo
             {
                 return Err("Git's conflict versions changed. Review this file again.".into());
             }
-            git::run(root, &["checkout", "-m", "--", path])?;
+            git::run(git, root, &["checkout", "-m", "--", path])?;
         }
     }
     Ok(())
@@ -1011,6 +1020,7 @@ fn replace_file(target: &Path, contents: &[u8]) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::test_support::TempRepo;
+    use crate::test_support::SYSTEM_GIT;
 
     fn fixture(theirs: Option<&str>) -> TempRepo {
         let repo = TempRepo::new();
@@ -1030,6 +1040,7 @@ mod tests {
         repo.git(&["add", "file"]);
         repo.git(&["commit", "-m", "ours"]);
         assert!(git::run(
+            &SYSTEM_GIT,
             &repo.0,
             &["-c", "merge.conflictStyle=diff3", "merge", "incoming"]
         )
@@ -1048,7 +1059,7 @@ mod tests {
         let repo = fixture(Some("start\ntheirs\nend\n"));
         let resolved = "unrelated insertion\nstart\nmanual resolution\nend\n";
         repo.write("file", resolved);
-        let review = prepare(&repo.0, "file", Action::Edit).unwrap();
+        let review = prepare(&SYSTEM_GIT, &repo.0, "file", Action::Edit).unwrap();
         assert!(review.conflicts.is_empty());
         let mut dialog = Dialog::new(repo.0.clone(), "file".into(), Action::Edit);
         dialog.set_review(Arc::new(review));
@@ -1267,7 +1278,7 @@ mod tests {
         let repo = fixture(Some("start\ntheirs\nend\n"));
         let mut dialog = Dialog::new(repo.0.clone(), "file".into(), Action::Edit);
         dialog.set_review(std::sync::Arc::new(
-            prepare(&repo.0, "file", Action::Edit).unwrap(),
+            prepare(&SYSTEM_GIT, &repo.0, "file", Action::Edit).unwrap(),
         ));
         dialog.take_conflict(0, 0);
         assert!(dialog.ready());
@@ -1295,19 +1306,27 @@ mod tests {
     fn saves_and_stages_the_reviewed_result_then_recreates_the_conflict() {
         let repo = fixture(Some("start\ntheirs\nend\n"));
         repo.write("unrelated", "keep\n");
-        let review = prepare(&repo.0, "file", Action::Edit).unwrap();
+        let review = prepare(&SYSTEM_GIT, &repo.0, "file", Action::Edit).unwrap();
         assert_eq!(review.conflicts.len(), 1);
         let draft = combine(
             review.text.as_deref().unwrap(),
             &review.conflicts,
             &[Some("combined\n".into())],
         );
-        apply(&repo.0, "file", Action::Edit, &review, draft).unwrap();
+        apply(&SYSTEM_GIT, &repo.0, "file", Action::Edit, &review, draft).unwrap();
         assert_eq!(repo.git(&["show", ":file"]), "start\ncombined\nend\n");
         assert_eq!(fs::read(repo.0.join("unrelated")).unwrap(), b"keep\n");
         assert!(repo.git(&["ls-files", "-u"]).is_empty());
-        let review = prepare(&repo.0, "file", Action::Recreate).unwrap();
-        apply(&repo.0, "file", Action::Recreate, &review, None).unwrap();
+        let review = prepare(&SYSTEM_GIT, &repo.0, "file", Action::Recreate).unwrap();
+        apply(
+            &SYSTEM_GIT,
+            &repo.0,
+            "file",
+            Action::Recreate,
+            &review,
+            None,
+        )
+        .unwrap();
         assert!(!repo.git(&["ls-files", "-u"]).is_empty());
         assert!(fs::read_to_string(repo.0.join("file"))
             .unwrap()
@@ -1317,12 +1336,12 @@ mod tests {
     #[test]
     fn refuses_a_stale_review_and_can_accept_the_deleted_side() {
         let repo = fixture(None);
-        let stale = prepare(&repo.0, "file", Action::Theirs).unwrap();
+        let stale = prepare(&SYSTEM_GIT, &repo.0, "file", Action::Theirs).unwrap();
         repo.write("file", "external edit\n");
-        assert!(apply(&repo.0, "file", Action::Theirs, &stale, None).is_err());
+        assert!(apply(&SYSTEM_GIT, &repo.0, "file", Action::Theirs, &stale, None).is_err());
         assert_eq!(fs::read(repo.0.join("file")).unwrap(), b"external edit\n");
-        let current = prepare(&repo.0, "file", Action::Theirs).unwrap();
-        apply(&repo.0, "file", Action::Theirs, &current, None).unwrap();
+        let current = prepare(&SYSTEM_GIT, &repo.0, "file", Action::Theirs).unwrap();
+        apply(&SYSTEM_GIT, &repo.0, "file", Action::Theirs, &current, None).unwrap();
         assert!(!repo.0.join("file").exists());
         assert!(repo.git(&["ls-files", "--", "file"]).is_empty());
     }
@@ -1331,8 +1350,8 @@ mod tests {
     fn takes_the_incoming_version_and_stages_only_the_selected_file() {
         let repo = fixture(Some("start\ntheirs\nend\n"));
         repo.write("unrelated", "keep\n");
-        let review = prepare(&repo.0, "file", Action::Theirs).unwrap();
-        apply(&repo.0, "file", Action::Theirs, &review, None).unwrap();
+        let review = prepare(&SYSTEM_GIT, &repo.0, "file", Action::Theirs).unwrap();
+        apply(&SYSTEM_GIT, &repo.0, "file", Action::Theirs, &review, None).unwrap();
         assert_eq!(repo.git(&["show", ":file"]), "start\ntheirs\nend\n");
         assert_eq!(repo.git(&["diff", "--cached", "--name-only"]), "file\n");
     }
@@ -1354,7 +1373,7 @@ mod tests {
             "file",
             &format!("inserted header\nsecond header\n{working}"),
         );
-        let review = Arc::new(prepare(&repo.0, "file", Action::Edit).unwrap());
+        let review = Arc::new(prepare(&SYSTEM_GIT, &repo.0, "file", Action::Edit).unwrap());
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
             for size in [
                 Vec2::new(890.0, 560.0),

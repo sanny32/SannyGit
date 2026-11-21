@@ -16,7 +16,7 @@ use super::controls::icons::{self, Icon};
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     ui.spacing_mut().item_spacing.y = 0.0;
-    let index = app.selected_change;
+    let index = app.selection.active;
     let Some(change) = app.changes.get(index) else {
         super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
             ui.label("Changes");
@@ -24,7 +24,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         return;
     };
     if file_header(ui, &change.path, palette) {
-        app.selected_change = usize::MAX;
+        app.selection.active = usize::MAX;
         return;
     };
     if change.kind == ChangeKind::Conflicted {
@@ -497,7 +497,7 @@ mod tests {
                 theme.apply(&ctx);
                 let mut app = SannyGitApp::with_theme(theme);
                 app.changes = crate::git::parse_status(b"UU README.md\0").unwrap();
-                app.selected_change = 0;
+                app.selection.active = 0;
                 let mut output = ctx.run_ui(
                     RawInput {
                         screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 180.0))),

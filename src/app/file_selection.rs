@@ -1,11 +1,111 @@
 use super::{SannyGitApp, WorkerResult};
+use crate::git::GitContext;
 use crate::{git, models::ChangeKind};
 use std::path::PathBuf;
+
+pub struct FileSelection {
+    pub active: usize,
+    pub paths: std::collections::BTreeSet<String>,
+    pub anchor: Option<String>,
+}
+
+impl Default for FileSelection {
+    fn default() -> Self {
+        Self {
+            active: usize::MAX,
+            paths: Default::default(),
+            anchor: None,
+        }
+    }
+}
+
+impl FileSelection {
+    fn select(
+        &mut self,
+        changes: &[crate::models::ChangeFile],
+        index: usize,
+        toggle: bool,
+        extend: bool,
+        visible: &[usize],
+    ) {
+        let Some(change) = changes.get(index) else {
+            return;
+        };
+        let path = change.path.clone();
+        if self.paths.is_empty() {
+            if let Some(active) = changes.get(self.active) {
+                self.paths.insert(active.path.clone());
+            }
+        }
+        if extend {
+            if self
+                .anchor
+                .as_ref()
+                .is_none_or(|path| !visible.iter().any(|&i| changes[i].path == *path))
+            {
+                self.anchor = changes.get(self.active).map(|change| change.path.clone());
+            }
+            let anchor = self
+                .anchor
+                .as_ref()
+                .and_then(|path| visible.iter().position(|&i| changes[i].path == *path))
+                .or_else(|| visible.iter().position(|&i| i == self.active));
+            if !toggle {
+                self.paths.clear();
+            }
+            if let (Some(start), Some(end)) = (anchor, visible.iter().position(|&i| i == index)) {
+                for &i in &visible[start.min(end)..=start.max(end)] {
+                    self.paths.insert(changes[i].path.clone());
+                }
+            } else {
+                self.paths.insert(path.clone());
+            }
+        } else if toggle {
+            if !self.paths.remove(&path) {
+                self.paths.insert(path.clone());
+            }
+            self.anchor = Some(path.clone());
+        } else {
+            self.paths.clear();
+            self.paths.insert(path.clone());
+            self.anchor = Some(path.clone());
+        }
+        self.active = if self.paths.contains(&path) {
+            index
+        } else {
+            changes
+                .iter()
+                .position(|change| self.paths.contains(&change.path))
+                .unwrap_or(usize::MAX)
+        };
+    }
+    fn retain(&mut self, changes: &[crate::models::ChangeFile]) {
+        self.paths
+            .retain(|path| changes.iter().any(|change| &change.path == path));
+        if self
+            .anchor
+            .as_ref()
+            .is_some_and(|path| !changes.iter().any(|change| &change.path == path))
+        {
+            self.anchor = None;
+        }
+        if !self.paths.is_empty()
+            && !changes
+                .get(self.active)
+                .is_some_and(|change| self.paths.contains(&change.path))
+        {
+            self.active = changes
+                .iter()
+                .position(|change| self.paths.contains(&change.path))
+                .unwrap_or(usize::MAX);
+        }
+    }
+}
 
 impl SannyGitApp {
     pub(super) fn start_index_worker(
         &mut self,
-        job: impl FnOnce() -> WorkerResult + Send + 'static,
+        job: impl FnOnce(&GitContext) -> WorkerResult + Send + 'static,
     ) {
         // Index edits supersede working-tree reads but leave immutable commit
         // previews, history and refs (including their in-flight reads) intact.
@@ -22,10 +122,10 @@ impl SannyGitApp {
 
     pub fn change_is_selected(&self, index: usize) -> bool {
         self.changes.get(index).is_some_and(|change| {
-            if self.selected_paths.is_empty() {
-                self.selected_change == index
+            if self.selection.paths.is_empty() {
+                self.selection.active == index
             } else {
-                self.selected_paths.contains(&change.path)
+                self.selection.paths.contains(&change.path)
             }
         })
     }
@@ -37,83 +137,12 @@ impl SannyGitApp {
     }
 
     pub fn select_change(&mut self, index: usize, toggle: bool, extend: bool, visible: &[usize]) {
-        let Some(change) = self.changes.get(index) else {
-            return;
-        };
-        let path = change.path.clone();
-        if self.selected_paths.is_empty() {
-            if let Some(active) = self.changes.get(self.selected_change) {
-                self.selected_paths.insert(active.path.clone());
-            }
-        }
-        if extend {
-            if self
-                .selection_anchor
-                .as_ref()
-                .is_none_or(|path| !visible.iter().any(|&i| self.changes[i].path == *path))
-            {
-                self.selection_anchor = self
-                    .changes
-                    .get(self.selected_change)
-                    .map(|change| change.path.clone());
-            }
-            let anchor = self
-                .selection_anchor
-                .as_ref()
-                .and_then(|path| visible.iter().position(|&i| self.changes[i].path == *path))
-                .or_else(|| visible.iter().position(|&i| i == self.selected_change));
-            if !toggle {
-                self.selected_paths.clear();
-            }
-            if let (Some(start), Some(end)) = (anchor, visible.iter().position(|&i| i == index)) {
-                for &i in &visible[start.min(end)..=start.max(end)] {
-                    self.selected_paths.insert(self.changes[i].path.clone());
-                }
-            } else {
-                self.selected_paths.insert(path.clone());
-            }
-        } else if toggle {
-            if !self.selected_paths.remove(&path) {
-                self.selected_paths.insert(path.clone());
-            }
-            self.selection_anchor = Some(path.clone());
-        } else {
-            self.selected_paths.clear();
-            self.selected_paths.insert(path.clone());
-            self.selection_anchor = Some(path.clone());
-        }
-        self.selected_change = if self.selected_paths.contains(&path) {
-            index
-        } else {
-            self.changes
-                .iter()
-                .position(|change| self.selected_paths.contains(&change.path))
-                .unwrap_or(usize::MAX)
-        };
+        self.selection
+            .select(&self.changes, index, toggle, extend, visible);
     }
 
     pub(super) fn retain_change_selection(&mut self) {
-        self.selected_paths
-            .retain(|path| self.changes.iter().any(|change| &change.path == path));
-        if self
-            .selection_anchor
-            .as_ref()
-            .is_some_and(|path| !self.changes.iter().any(|change| &change.path == path))
-        {
-            self.selection_anchor = None;
-        }
-        if !self.selected_paths.is_empty()
-            && !self
-                .changes
-                .get(self.selected_change)
-                .is_some_and(|change| self.selected_paths.contains(&change.path))
-        {
-            self.selected_change = self
-                .changes
-                .iter()
-                .position(|change| self.selected_paths.contains(&change.path))
-                .unwrap_or(usize::MAX);
-        }
+        self.selection.retain(&self.changes);
     }
 
     pub fn selected_staging_allowed(&self, staged: bool) -> bool {
@@ -149,12 +178,13 @@ impl SannyGitApp {
         .into();
         let selected = self
             .changes
-            .get(self.selected_change)
+            .get(self.selection.active)
             .map(|c| c.path.clone());
-        self.start_index_worker(move || WorkerResult::Index {
+        self.start_index_worker(move |git| WorkerResult::Index {
             staged,
-            outcome: git::set_staged_paths(&root, &paths, staged),
+            outcome: git::set_staged_paths(git, &root, &paths, staged),
             update: super::working_tree::Update::read(
+                git,
                 root.to_string_lossy().into_owned(),
                 selected,
             ),
@@ -165,6 +195,7 @@ impl SannyGitApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SYSTEM_GIT;
     use crate::{test_support::TempRepo, theme::ThemeChoice};
 
     #[test]
@@ -183,11 +214,11 @@ mod tests {
         app.select_change(0, false, false, &visible);
         app.select_change(4, false, true, &visible);
         assert_eq!(app.selected_change_indices(), visible);
-        let paths = app.selected_paths.clone();
+        let paths = app.selection.paths.clone();
         app.changes.reverse();
         app.retain_change_selection();
-        assert_eq!(app.selected_paths, paths);
-        assert!(app.change_is_selected(app.selected_change));
+        assert_eq!(app.selection.paths, paths);
+        assert!(app.change_is_selected(app.selection.active));
         app.changes.clear();
         app.retain_change_selection();
         assert!(app.selected_change_indices().is_empty());
@@ -199,13 +230,13 @@ mod tests {
         for path in ["a", "b", "other"] {
             repo.write(path, "base\n");
         }
-        git::commit(&repo.0, "base", git::CommitContents::All).unwrap();
+        git::commit(&SYSTEM_GIT, &repo.0, "base", git::CommitContents::All).unwrap();
         for path in ["a", "b", "other"] {
             repo.write(path, "edited\n");
         }
-        git::set_staged_paths(&repo.0, &["a".into(), "b".into()], true).unwrap();
+        git::set_staged_paths(&SYSTEM_GIT, &repo.0, &["a".into(), "b".into()], true).unwrap();
         assert_eq!(repo.git(&["diff", "--cached", "--name-only"]), "a\nb\n");
-        git::set_staged_paths(&repo.0, &["a".into(), "b".into()], false).unwrap();
+        git::set_staged_paths(&SYSTEM_GIT, &repo.0, &["a".into(), "b".into()], false).unwrap();
         assert!(repo.git(&["diff", "--cached"]).is_empty());
         for path in ["a", "b", "other"] {
             assert_eq!(
@@ -213,7 +244,10 @@ mod tests {
                 "edited\n"
             );
         }
-        assert!(git::set_staged_paths(&repo.0, &["a".into(), "missing".into()], true).is_err());
+        assert!(
+            git::set_staged_paths(&SYSTEM_GIT, &repo.0, &["a".into(), "missing".into()], true)
+                .is_err()
+        );
         assert!(repo.git(&["diff", "--cached"]).is_empty());
     }
 }

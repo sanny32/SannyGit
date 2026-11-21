@@ -1,5 +1,6 @@
 //! Ahead/behind status against the exact configured upstream.
 use crate::git;
+use crate::git::GitContext;
 use std::{path::Path, sync::atomic::AtomicBool, time::Duration};
 
 #[derive(Clone, Debug, Default)]
@@ -53,11 +54,12 @@ fn counts(output: &str) -> Result<(u64, u64), String> {
     Ok((a, b))
 }
 
-fn files(root: &Path, range: &str, count: u64) -> Option<usize> {
+fn files(git: &GitContext, root: &Path, range: &str, count: u64) -> Option<usize> {
     if count == 0 {
         return Some(0);
     }
     let output = git::run(
+        git,
         root,
         &["diff", "--no-ext-diff", "--name-only", "-z", range, "--"],
     )
@@ -65,8 +67,8 @@ fn files(root: &Path, range: &str, count: u64) -> Option<usize> {
     Some(output.split(|b| *b == 0).filter(|p| !p.is_empty()).count())
 }
 
-pub fn read(root: &Path) -> Result<Status, String> {
-    let output = git::text(git::run(root, &["for-each-ref", "--format=%(HEAD)%00%(refname)%00%(upstream)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)%00", "refs/heads/"])?)?;
+pub fn read(git: &GitContext, root: &Path) -> Result<Status, String> {
+    let output = git::text(git::run(git, root, &["for-each-ref", "--format=%(HEAD)%00%(refname)%00%(upstream)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)%00", "refs/heads/"])?)?;
     let mut status = Status::default();
     for line in output.lines() {
         let fields = line.split('\0').collect::<Vec<_>>();
@@ -88,21 +90,29 @@ pub fn read(root: &Path) -> Result<Status, String> {
         status.remote = (!fields[4].is_empty()).then(|| fields[4].into());
         status.remote_ref = (!fields[5].is_empty()).then(|| fields[5].into());
         let range = format!("HEAD...{}", fields[2]);
-        let Ok(output) = git::run(root, &["rev-list", "--left-right", "--count", &range, "--"])
-        else {
+        let Ok(output) = git::run(
+            git,
+            root,
+            &["rev-list", "--left-right", "--count", &range, "--"],
+        ) else {
             return Ok(status);
         };
         let (ahead, behind) = counts(&git::text(output)?)?;
         status.ahead = Some(ahead);
         status.behind = Some(behind);
-        status.outgoing_files = files(root, &format!("{}...HEAD", fields[2]), ahead);
-        status.incoming_files = files(root, &range, behind);
+        status.outgoing_files = files(git, root, &format!("{}...HEAD", fields[2]), ahead);
+        status.incoming_files = files(git, root, &range, behind);
         return Ok(status);
     }
     Ok(status)
 }
 
-pub fn fetch_upstream(root: &Path, status: &Status, cancel: &AtomicBool) -> Result<bool, String> {
+pub fn fetch_upstream(
+    git: &GitContext,
+    root: &Path,
+    status: &Status,
+    cancel: &AtomicBool,
+) -> Result<bool, String> {
     let (Some(remote), Some(source), Some(destination)) =
         (&status.remote, &status.remote_ref, &status.local_ref)
     else {
@@ -116,6 +126,7 @@ pub fn fetch_upstream(root: &Path, status: &Status, cancel: &AtomicBool) -> Resu
     }
     // Update only this remote-tracking ref, never local branches or FETCH_HEAD.
     git::run_controlled(
+        git,
         root,
         &[
             "fetch",
@@ -137,10 +148,11 @@ pub fn fetch_upstream(root: &Path, status: &Status, cancel: &AtomicBool) -> Resu
 mod tests {
     use super::*;
     use crate::test_support::TempRepo;
+    use crate::test_support::SYSTEM_GIT;
     use std::{fs, path::PathBuf};
 
     fn command(path: &Path, args: &[&str]) -> Vec<u8> {
-        git::run(path, args).unwrap()
+        git::run(&SYSTEM_GIT, path, args).unwrap()
     }
     fn identity(path: &Path) {
         command(path, &["config", "user.name", "Tracking Test"]);
@@ -183,20 +195,20 @@ mod tests {
     #[test]
     fn fetch_reveals_divergence_and_counts_files_without_changing_head_or_fetch_head() {
         let (_temp, source, client) = fixture();
-        let initial = read(&client).unwrap();
+        let initial = read(&SYSTEM_GIT, &client).unwrap();
         assert_eq!(initial.badge(), "✓");
         assert_eq!(initial.upstream.as_deref(), Some("origin/main"));
         commit(&client, "local.txt", "local\n");
         commit(&source, "remote.txt", "remote 1\n");
         commit(&source, "remote.txt", "remote 2\n");
         command(&source, &["push", "origin", "main"]);
-        let cached = read(&client).unwrap();
+        let cached = read(&SYSTEM_GIT, &client).unwrap();
         assert_eq!((cached.ahead, cached.behind), (Some(1), Some(0)));
         let head = command(&client, &["rev-parse", "HEAD"]);
         let index = fs::read(client.join(".git/index")).unwrap();
         fs::write(client.join(".git/FETCH_HEAD"), "keep existing fetch head\n").unwrap();
-        fetch_upstream(&client, &cached, &AtomicBool::new(false)).unwrap();
-        let status = read(&client).unwrap();
+        fetch_upstream(&SYSTEM_GIT, &client, &cached, &AtomicBool::new(false)).unwrap();
+        let status = read(&SYSTEM_GIT, &client).unwrap();
         assert_eq!((status.ahead, status.behind), (Some(1), Some(2)));
         assert_eq!(
             (status.outgoing_files, status.incoming_files),
@@ -210,22 +222,22 @@ mod tests {
             fs::read_to_string(client.join(".git/FETCH_HEAD")).unwrap(),
             "keep existing fetch head\n"
         );
-        assert!(fetch_upstream(&client, &status, &AtomicBool::new(true)).is_err());
+        assert!(fetch_upstream(&SYSTEM_GIT, &client, &status, &AtomicBool::new(true)).is_err());
     }
 
     #[test]
     fn distinguishes_missing_upstream_no_upstream_detached_and_empty_repository() {
         let (temp, _source, client) = fixture();
         command(&client, &["update-ref", "-d", "refs/remotes/origin/main"]);
-        let missing = read(&client).unwrap();
+        let missing = read(&SYSTEM_GIT, &client).unwrap();
         assert!(missing.upstream.is_some());
         assert_eq!(missing.ahead, None);
         assert_eq!(missing.badge(), "?");
         command(&client, &["branch", "--unset-upstream"]);
-        assert!(read(&client).unwrap().upstream.is_none());
+        assert!(read(&SYSTEM_GIT, &client).unwrap().upstream.is_none());
         command(&client, &["switch", "--detach"]);
-        assert!(read(&client).unwrap().branch.is_empty());
-        assert!(read(&temp.0).unwrap().upstream.is_none());
+        assert!(read(&SYSTEM_GIT, &client).unwrap().branch.is_empty());
+        assert!(read(&SYSTEM_GIT, &temp.0).unwrap().upstream.is_none());
         for invalid in ["", "1", "-1 2", "a 0", "1 2 3"] {
             assert!(counts(invalid).is_err());
         }
@@ -235,10 +247,10 @@ mod tests {
     fn explicit_upstream_setup_enables_tracking_after_push() {
         let (_temp, source, _client) = fixture();
         command(&source, &["branch", "--unset-upstream"]);
-        assert!(read(&source).unwrap().upstream.is_none());
-        crate::remotes::set_upstream(&source, "main", "origin", "main").unwrap();
+        assert!(read(&SYSTEM_GIT, &source).unwrap().upstream.is_none());
+        crate::remotes::set_upstream(&SYSTEM_GIT, &source, "main", "origin", "main").unwrap();
         assert_eq!(
-            read(&source).unwrap().upstream.as_deref(),
+            read(&SYSTEM_GIT, &source).unwrap().upstream.as_deref(),
             Some("origin/main")
         );
     }

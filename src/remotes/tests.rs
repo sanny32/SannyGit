@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_support::TempRepo;
+use crate::test_support::SYSTEM_GIT;
 use std::{fs, path::PathBuf};
 
 #[test]
@@ -20,12 +21,12 @@ fn tag_delete_defaults_to_local_and_can_delete_from_all_reviewed_remotes() {
         repo.git(&["push", name, reference, "refs/heads/release"]);
     }
     let cancel = AtomicBool::new(false);
-    let first = preview_tag_delete(&repo.0, reference).unwrap();
-    delete_tag(&repo.0, &first, false, &cancel).unwrap();
+    let first = preview_tag_delete(&SYSTEM_GIT, &repo.0, reference).unwrap();
+    delete_tag(&SYSTEM_GIT, &repo.0, &first, false, &cancel).unwrap();
     assert!(repo.git(&["tag", "--list"]).is_empty());
     for remote in [&origin, &backup] {
         assert_eq!(
-            git::text(git::run(remote, &["rev-parse", reference]).unwrap()).unwrap(),
+            git::text(git::run(&SYSTEM_GIT, remote, &["rev-parse", reference]).unwrap()).unwrap(),
             oid
         );
     }
@@ -35,13 +36,20 @@ fn tag_delete_defaults_to_local_and_can_delete_from_all_reviewed_remotes() {
         "origin",
         "refs/tags/release:refs/tags/release",
     ]);
-    let reviewed = preview_tag_delete(&repo.0, reference).unwrap();
-    delete_tag(&repo.0, &reviewed, true, &cancel).unwrap();
+    let reviewed = preview_tag_delete(&SYSTEM_GIT, &repo.0, reference).unwrap();
+    delete_tag(&SYSTEM_GIT, &repo.0, &reviewed, true, &cancel).unwrap();
     assert!(repo.git(&["tag", "--list"]).is_empty());
     assert_eq!(repo.git(&["branch", "--list", "release"]).trim(), "release");
     for remote in [&origin, &backup] {
-        assert!(git::run(remote, &["tag", "--list"]).unwrap().is_empty());
-        assert!(git::run(remote, &["rev-parse", "--verify", "refs/heads/release"]).is_ok());
+        assert!(git::run(&SYSTEM_GIT, remote, &["tag", "--list"])
+            .unwrap()
+            .is_empty());
+        assert!(git::run(
+            &SYSTEM_GIT,
+            remote,
+            &["rev-parse", "--verify", "refs/heads/release"]
+        )
+        .is_ok());
     }
 }
 
@@ -59,21 +67,21 @@ fn tag_delete_rejects_stale_local_and_remote_objects_before_removing_any_ref() {
         repo.git(&["remote", "add", name, remote.to_str().unwrap()]);
         repo.git(&["push", name, reference]);
     }
-    let reviewed = preview_tag_delete(&repo.0, reference).unwrap();
+    let reviewed = preview_tag_delete(&SYSTEM_GIT, &repo.0, reference).unwrap();
     let cancel = AtomicBool::new(false);
     repo.git(&["commit", "--allow-empty", "-m", "different object"]);
     repo.git(&["tag", "-f", "release"]);
-    assert!(delete_tag(&repo.0, &reviewed, false, &cancel)
+    assert!(delete_tag(&SYSTEM_GIT, &repo.0, &reviewed, false, &cancel)
         .unwrap_err()
         .contains("local tag changed"));
     repo.git(&["push", "--force", "origin", reference]);
     repo.git(&["tag", "-f", "release", original.trim()]);
-    assert!(delete_tag(&repo.0, &reviewed, true, &cancel)
+    assert!(delete_tag(&SYSTEM_GIT, &repo.0, &reviewed, true, &cancel)
         .unwrap_err()
         .contains("different object"));
     assert_eq!(repo.git(&["rev-parse", reference]), original);
     assert_eq!(
-        git::text(git::run(&backup, &["rev-parse", reference]).unwrap()).unwrap(),
+        git::text(git::run(&SYSTEM_GIT, &backup, &["rev-parse", reference]).unwrap()).unwrap(),
         original
     );
 }
@@ -81,7 +89,7 @@ fn tag_delete_rejects_stale_local_and_remote_objects_before_removing_any_ref() {
 fn command(root: &Path, args: &[&str]) -> Vec<u8> {
     let mut configured = vec!["-c", "core.autocrlf=false"];
     configured.extend_from_slice(args);
-    git::run(root, &configured).unwrap()
+    git::run(&SYSTEM_GIT, root, &configured).unwrap()
 }
 fn identity(root: &Path) {
     command(root, &["config", "core.autocrlf", "false"]);
@@ -122,6 +130,7 @@ fn fixture() -> (TempRepo, PathBuf, PathBuf) {
     identity(&source);
     commit(&source, "base\n");
     run(
+        &SYSTEM_GIT,
         &source,
         Operation::Push,
         "origin",
@@ -154,8 +163,8 @@ fn tag_push_targets_one_reviewed_object_and_ignores_unsafe_push_defaults() {
     command(&source, &["config", "push.followTags", "true"]);
     let before = command(&source, &["ls-files", "--stage"]);
     fs::write(source.join("file"), "local edits\n").unwrap();
-    let preview = preview_tag_push(&source, "refs/tags/chosen", "origin").unwrap();
-    push_tag(&source, &preview, &AtomicBool::new(false)).unwrap();
+    let preview = preview_tag_push(&SYSTEM_GIT, &source, "refs/tags/chosen", "origin").unwrap();
+    push_tag(&SYSTEM_GIT, &source, &preview, &AtomicBool::new(false)).unwrap();
     let remote = temp.0.join("remote.git");
     assert_eq!(
         git::text(command(&remote, &["rev-parse", "refs/tags/chosen"]))
@@ -176,8 +185,8 @@ fn tag_push_targets_one_reviewed_object_and_ignores_unsafe_push_defaults() {
     assert_eq!(fs::read(source.join("file")).unwrap(), b"local edits\n");
     // An existing remote tag is never overwritten, even with forced refspec defaults.
     command(&source, &["tag", "-f", "chosen", "HEAD"]);
-    let replacement = preview_tag_push(&source, "refs/tags/chosen", "origin").unwrap();
-    assert!(push_tag(&source, &replacement, &AtomicBool::new(false)).is_err());
+    let replacement = preview_tag_push(&SYSTEM_GIT, &source, "refs/tags/chosen", "origin").unwrap();
+    assert!(push_tag(&SYSTEM_GIT, &source, &replacement, &AtomicBool::new(false)).is_err());
     assert_eq!(
         git::text(command(&remote, &["rev-parse", "refs/tags/chosen"]))
             .unwrap()
@@ -190,8 +199,8 @@ fn tag_push_targets_one_reviewed_object_and_ignores_unsafe_push_defaults() {
 fn tag_push_rejects_stale_refs_endpoints_fanout_and_cancellation() {
     let (temp, source, _) = fixture();
     command(&source, &["tag", "chosen"]);
-    let preview = preview_tag_push(&source, "refs/tags/chosen", "origin").unwrap();
-    assert!(push_tag(&source, &preview, &AtomicBool::new(true)).is_err());
+    let preview = preview_tag_push(&SYSTEM_GIT, &source, "refs/tags/chosen", "origin").unwrap();
+    assert!(push_tag(&SYSTEM_GIT, &source, &preview, &AtomicBool::new(true)).is_err());
     command(
         &source,
         &[
@@ -200,9 +209,11 @@ fn tag_push_rejects_stale_refs_endpoints_fanout_and_cancellation() {
             "https://example.invalid/new.git",
         ],
     );
-    assert!(push_tag(&source, &preview, &AtomicBool::new(false))
-        .unwrap_err()
-        .contains("changed"));
+    assert!(
+        push_tag(&SYSTEM_GIT, &source, &preview, &AtomicBool::new(false))
+            .unwrap_err()
+            .contains("changed")
+    );
     command(
         &source,
         &[
@@ -212,13 +223,15 @@ fn tag_push_rejects_stale_refs_endpoints_fanout_and_cancellation() {
             "https://example.invalid/second.git",
         ],
     );
-    assert!(preview_tag_push(&source, "refs/tags/chosen", "origin")
-        .err()
-        .unwrap()
-        .contains("exactly one"));
+    assert!(
+        preview_tag_push(&SYSTEM_GIT, &source, "refs/tags/chosen", "origin")
+            .err()
+            .unwrap()
+            .contains("exactly one")
+    );
     command(&source, &["config", "--unset-all", "remote.origin.pushurl"]);
     command(&source, &["tag", "-d", "chosen"]);
-    assert!(push_tag(&source, &preview, &AtomicBool::new(false)).is_err());
+    assert!(push_tag(&SYSTEM_GIT, &source, &preview, &AtomicBool::new(false)).is_err());
     assert!(command(&temp.0.join("remote.git"), &["tag", "--list"]).is_empty());
 }
 
@@ -236,9 +249,9 @@ fn tag_push_local_path_cannot_be_reinterpreted_as_another_configured_remote() {
         &["remote", "add", "destination", victim.to_str().unwrap()],
     );
     command(&source, &["tag", "chosen"]);
-    let preview = preview_tag_push(&source, "refs/tags/chosen", "origin").unwrap();
+    let preview = preview_tag_push(&SYSTEM_GIT, &source, "refs/tags/chosen", "origin").unwrap();
     assert!(preview.endpoint_display.starts_with("file:"));
-    push_tag(&source, &preview, &AtomicBool::new(false)).unwrap();
+    push_tag(&SYSTEM_GIT, &source, &preview, &AtomicBool::new(false)).unwrap();
     assert!(git::text(command(&destination, &["tag", "--list"]))
         .unwrap()
         .contains("chosen"));
@@ -248,7 +261,7 @@ fn tag_push_local_path_cannot_be_reinterpreted_as_another_configured_remote() {
 #[test]
 fn explicit_push_and_fetch_preserve_worktree_and_do_not_push_tags_or_other_branches() {
     let (temp, source, other) = fixture();
-    let state = load(&other).unwrap();
+    let state = load(&SYSTEM_GIT, &other).unwrap();
     assert_eq!(state.branch.as_deref(), Some("main"));
     assert_eq!(state.upstream_remote.as_deref(), Some("origin"));
     assert_eq!(state.upstream_ref.as_deref(), Some("main"));
@@ -262,6 +275,7 @@ fn explicit_push_and_fetch_preserve_worktree_and_do_not_push_tags_or_other_branc
     );
     command(&source, &["config", "remote.origin.mirror", "true"]);
     assert!(run(
+        &SYSTEM_GIT,
         &source,
         Operation::Push,
         "origin",
@@ -272,6 +286,7 @@ fn explicit_push_and_fetch_preserve_worktree_and_do_not_push_tags_or_other_branc
     .is_err());
     command(&source, &["config", "--unset", "remote.origin.mirror"]);
     run(
+        &SYSTEM_GIT,
         &source,
         Operation::Push,
         "origin",
@@ -288,9 +303,10 @@ fn explicit_push_and_fetch_preserve_worktree_and_do_not_push_tags_or_other_branc
     ))
     .unwrap()
     .contains("private"));
-    let old = head(&other).unwrap();
+    let old = head(&SYSTEM_GIT, &other).unwrap();
     fs::write(other.join("untracked"), "keep").unwrap();
     run(
+        &SYSTEM_GIT,
         &other,
         Operation::Fetch,
         "origin",
@@ -299,7 +315,7 @@ fn explicit_push_and_fetch_preserve_worktree_and_do_not_push_tags_or_other_branc
         &AtomicBool::new(false),
     )
     .unwrap();
-    assert_eq!(head(&other).unwrap(), old);
+    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), old);
     assert_eq!(fs::read_to_string(other.join("file")).unwrap(), "base\n");
     assert_eq!(fs::read_to_string(other.join("untracked")).unwrap(), "keep");
     assert_eq!(
@@ -307,6 +323,7 @@ fn explicit_push_and_fetch_preserve_worktree_and_do_not_push_tags_or_other_branc
         command(&source, &["rev-parse", "HEAD"])
     );
     assert!(run(
+        &SYSTEM_GIT,
         &other,
         Operation::Fetch,
         "origin",
@@ -323,6 +340,7 @@ fn sync_pushes_then_pulls_only_the_selected_branch_and_is_repeatable() {
     let cancel = AtomicBool::new(false);
     commit(&source, "remote update\n");
     run(
+        &SYSTEM_GIT,
         &source,
         Operation::Push,
         "origin",
@@ -332,6 +350,7 @@ fn sync_pushes_then_pulls_only_the_selected_branch_and_is_repeatable() {
     )
     .unwrap();
     run(
+        &SYSTEM_GIT,
         &other,
         Operation::Sync,
         "origin",
@@ -340,7 +359,10 @@ fn sync_pushes_then_pulls_only_the_selected_branch_and_is_repeatable() {
         &cancel,
     )
     .unwrap();
-    assert_eq!(head(&other).unwrap(), head(&source).unwrap());
+    assert_eq!(
+        head(&SYSTEM_GIT, &other).unwrap(),
+        head(&SYSTEM_GIT, &source).unwrap()
+    );
     assert_eq!(
         fs::read_to_string(other.join("file")).unwrap(),
         "remote update\n"
@@ -355,6 +377,7 @@ fn sync_pushes_then_pulls_only_the_selected_branch_and_is_repeatable() {
     );
     for _ in 0..2 {
         run(
+            &SYSTEM_GIT,
             &other,
             Operation::Sync,
             "origin",
@@ -364,8 +387,8 @@ fn sync_pushes_then_pulls_only_the_selected_branch_and_is_repeatable() {
         )
         .unwrap();
         assert_eq!(
-            head(&temp.0.join("remote.git")).unwrap(),
-            head(&other).unwrap()
+            head(&SYSTEM_GIT, &temp.0.join("remote.git")).unwrap(),
+            head(&SYSTEM_GIT, &other).unwrap()
         );
     }
     assert_eq!(
@@ -389,9 +412,10 @@ fn sync_refuses_dirty_diverged_stale_and_cancelled_operations_without_pushing() 
     let (temp, source, other) = fixture();
     let cancel = AtomicBool::new(false);
     let remote = temp.0.join("remote.git");
-    let base = head(&remote).unwrap();
+    let base = head(&SYSTEM_GIT, &remote).unwrap();
     fs::write(other.join("file"), "keep local edits\n").unwrap();
     assert!(run(
+        &SYSTEM_GIT,
         &other,
         Operation::Sync,
         "origin",
@@ -406,8 +430,9 @@ fn sync_refuses_dirty_diverged_stale_and_cancelled_operations_without_pushing() 
     );
     fs::write(other.join("file"), "base\n").unwrap();
     commit(&other, "local commit\n");
-    let local = head(&other).unwrap();
+    let local = head(&SYSTEM_GIT, &other).unwrap();
     assert!(run(
+        &SYSTEM_GIT,
         &other,
         Operation::Sync,
         "origin",
@@ -417,6 +442,7 @@ fn sync_refuses_dirty_diverged_stale_and_cancelled_operations_without_pushing() 
     )
     .is_err());
     assert!(run(
+        &SYSTEM_GIT,
         &other,
         Operation::Sync,
         "origin",
@@ -425,9 +451,10 @@ fn sync_refuses_dirty_diverged_stale_and_cancelled_operations_without_pushing() 
         &AtomicBool::new(true)
     )
     .is_err());
-    assert_eq!(head(&remote).unwrap(), base);
+    assert_eq!(head(&SYSTEM_GIT, &remote).unwrap(), base);
     commit(&source, "remote commit\n");
     run(
+        &SYSTEM_GIT,
         &source,
         Operation::Push,
         "origin",
@@ -437,6 +464,7 @@ fn sync_refuses_dirty_diverged_stale_and_cancelled_operations_without_pushing() 
     )
     .unwrap();
     let error = run(
+        &SYSTEM_GIT,
         &other,
         Operation::Sync,
         "origin",
@@ -446,8 +474,11 @@ fn sync_refuses_dirty_diverged_stale_and_cancelled_operations_without_pushing() 
     )
     .unwrap_err();
     assert!(error.contains("Sync requires a fast-forward"));
-    assert_eq!(head(&other).unwrap(), local);
-    assert_eq!(head(&remote).unwrap(), head(&source).unwrap());
+    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), local);
+    assert_eq!(
+        head(&SYSTEM_GIT, &remote).unwrap(),
+        head(&SYSTEM_GIT, &source).unwrap()
+    );
 }
 
 #[test]
@@ -456,6 +487,7 @@ fn sync_pushes_before_fetch_and_keeps_published_commits_on_fetch_failure() {
     commit(&other, "local update\n");
     command(&other, &["config", "remote.origin.uploadpack", "false"]);
     assert!(run(
+        &SYSTEM_GIT,
         &other,
         Operation::Sync,
         "origin",
@@ -465,8 +497,8 @@ fn sync_pushes_before_fetch_and_keeps_published_commits_on_fetch_failure() {
     )
     .is_err());
     assert_eq!(
-        head(&temp.0.join("remote.git")).unwrap(),
-        head(&other).unwrap()
+        head(&SYSTEM_GIT, &temp.0.join("remote.git")).unwrap(),
+        head(&SYSTEM_GIT, &other).unwrap()
     );
 }
 
@@ -477,18 +509,20 @@ fn sync_does_not_pull_after_a_hook_rejects_push() {
     let (temp, source, other) = fixture();
     commit(&source, "remote update\n");
     push_tip(
+        &SYSTEM_GIT,
         &source,
         "origin",
         "refs/heads/main",
-        &head(&source).unwrap(),
+        &head(&SYSTEM_GIT, &source).unwrap(),
         &AtomicBool::new(false),
     )
     .unwrap();
-    let original = head(&other).unwrap();
+    let original = head(&SYSTEM_GIT, &other).unwrap();
     let hook = other.join(".git/hooks/pre-push");
     fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
     fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(run(
+        &SYSTEM_GIT,
         &other,
         Operation::Sync,
         "origin",
@@ -497,10 +531,10 @@ fn sync_does_not_pull_after_a_hook_rejects_push() {
         &AtomicBool::new(false)
     )
     .is_err());
-    assert_eq!(head(&other).unwrap(), original);
+    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), original);
     assert_eq!(
-        head(&temp.0.join("remote.git")).unwrap(),
-        head(&source).unwrap()
+        head(&SYSTEM_GIT, &temp.0.join("remote.git")).unwrap(),
+        head(&SYSTEM_GIT, &source).unwrap()
     );
 }
 
@@ -534,8 +568,9 @@ fn sync_does_not_hide_rejection_from_a_different_push_endpoint() {
             destination.to_str().unwrap(),
         ],
     );
-    let original = head(&other).unwrap();
+    let original = head(&SYSTEM_GIT, &other).unwrap();
     let error = run(
+        &SYSTEM_GIT,
         &other,
         Operation::Sync,
         "origin",
@@ -545,7 +580,7 @@ fn sync_does_not_hide_rejection_from_a_different_push_endpoint() {
     )
     .unwrap_err();
     assert!(error.contains("URLs differ"));
-    assert_eq!(head(&other).unwrap(), original);
+    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), original);
 }
 
 #[test]
@@ -554,6 +589,7 @@ fn sync_stops_on_transport_failure_before_pulling() {
     let cancel = AtomicBool::new(false);
     commit(&source, "remote update\n");
     run(
+        &SYSTEM_GIT,
         &source,
         Operation::Push,
         "origin",
@@ -562,7 +598,7 @@ fn sync_stops_on_transport_failure_before_pulling() {
         &cancel,
     )
     .unwrap();
-    let original = head(&other).unwrap();
+    let original = head(&SYSTEM_GIT, &other).unwrap();
     // A broken push endpoint must stop Sync before fetch or local updates.
     command(
         &other,
@@ -573,6 +609,7 @@ fn sync_stops_on_transport_failure_before_pulling() {
         ],
     );
     let error = run(
+        &SYSTEM_GIT,
         &other,
         Operation::Sync,
         "origin",
@@ -582,7 +619,7 @@ fn sync_stops_on_transport_failure_before_pulling() {
     )
     .unwrap_err();
     assert!(error.contains("push failed"));
-    assert_eq!(head(&other).unwrap(), original);
+    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), original);
 }
 
 #[test]
@@ -590,6 +627,7 @@ fn pull_fast_forwards_and_refuses_dirty_or_diverged_worktrees() {
     let (_temp, source, other) = fixture();
     commit(&source, "next\n");
     run(
+        &SYSTEM_GIT,
         &source,
         Operation::Push,
         "origin",
@@ -600,6 +638,7 @@ fn pull_fast_forwards_and_refuses_dirty_or_diverged_worktrees() {
     .unwrap();
     fs::write(other.join("file"), "local edits\n").unwrap();
     assert!(run(
+        &SYSTEM_GIT,
         &other,
         Operation::Pull,
         "origin",
@@ -614,6 +653,7 @@ fn pull_fast_forwards_and_refuses_dirty_or_diverged_worktrees() {
     );
     fs::write(other.join("file"), "base\n").unwrap();
     run(
+        &SYSTEM_GIT,
         &other,
         Operation::Pull,
         "origin",
@@ -622,11 +662,15 @@ fn pull_fast_forwards_and_refuses_dirty_or_diverged_worktrees() {
         &AtomicBool::new(false),
     )
     .unwrap();
-    assert_eq!(head(&other).unwrap(), head(&source).unwrap());
+    assert_eq!(
+        head(&SYSTEM_GIT, &other).unwrap(),
+        head(&SYSTEM_GIT, &source).unwrap()
+    );
     assert_eq!(fs::read_to_string(other.join("file")).unwrap(), "next\n");
     commit(&other, "local commit\n");
     commit(&source, "remote commit\n");
     run(
+        &SYSTEM_GIT,
         &source,
         Operation::Push,
         "origin",
@@ -635,8 +679,9 @@ fn pull_fast_forwards_and_refuses_dirty_or_diverged_worktrees() {
         &AtomicBool::new(false),
     )
     .unwrap();
-    let old = head(&other).unwrap();
+    let old = head(&SYSTEM_GIT, &other).unwrap();
     assert!(run(
+        &SYSTEM_GIT,
         &other,
         Operation::Pull,
         "origin",
@@ -646,7 +691,7 @@ fn pull_fast_forwards_and_refuses_dirty_or_diverged_worktrees() {
     )
     .unwrap_err()
     .contains("fast-forward"));
-    assert_eq!(head(&other).unwrap(), old);
+    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), old);
     assert_eq!(
         fs::read_to_string(other.join("file")).unwrap(),
         "local commit\n"
@@ -656,9 +701,10 @@ fn pull_fast_forwards_and_refuses_dirty_or_diverged_worktrees() {
 #[test]
 fn pull_preserves_ignored_files_and_refuses_in_progress_operations() {
     let (_temp, source, other) = fixture();
-    let original = head(&other).unwrap();
+    let original = head(&SYSTEM_GIT, &other).unwrap();
     fs::write(other.join(".git/MERGE_HEAD"), format!("{original}\n")).unwrap();
     assert!(run(
+        &SYSTEM_GIT,
         &other,
         Operation::Pull,
         "origin",
@@ -675,6 +721,7 @@ fn pull_preserves_ignored_files_and_refuses_in_progress_operations() {
     command(&source, &["add", "secret"]);
     command(&source, &["commit", "-m", "remote file"]);
     run(
+        &SYSTEM_GIT,
         &source,
         Operation::Push,
         "origin",
@@ -684,6 +731,7 @@ fn pull_preserves_ignored_files_and_refuses_in_progress_operations() {
     )
     .unwrap();
     assert!(run(
+        &SYSTEM_GIT,
         &other,
         Operation::Pull,
         "origin",
@@ -692,7 +740,7 @@ fn pull_preserves_ignored_files_and_refuses_in_progress_operations() {
         &AtomicBool::new(false)
     )
     .is_err());
-    assert_eq!(head(&other).unwrap(), original);
+    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), original);
     assert_eq!(
         fs::read_to_string(other.join("secret")).unwrap(),
         "private local contents\n"
@@ -704,6 +752,7 @@ fn push_rejects_non_fast_forward_and_stale_or_invalid_selections() {
     let (temp, source, other) = fixture();
     commit(&other, "remote advance\n");
     run(
+        &SYSTEM_GIT,
         &other,
         Operation::Push,
         "origin",
@@ -715,6 +764,7 @@ fn push_rejects_non_fast_forward_and_stale_or_invalid_selections() {
     commit(&source, "local advance\n");
     let before = command(&temp.0.join("remote.git"), &["rev-parse", "main"]);
     assert!(run(
+        &SYSTEM_GIT,
         &source,
         Operation::Push,
         "origin",
@@ -733,6 +783,7 @@ fn push_rejects_non_fast_forward_and_stale_or_invalid_selections() {
         ("origin", "main", Some("other")),
     ] {
         assert!(run(
+            &SYSTEM_GIT,
             &source,
             Operation::Push,
             remote,
@@ -744,6 +795,7 @@ fn push_rejects_non_fast_forward_and_stale_or_invalid_selections() {
     }
     command(&source, &["switch", "--detach"]);
     assert!(run(
+        &SYSTEM_GIT,
         &source,
         Operation::Push,
         "origin",
@@ -757,7 +809,7 @@ fn push_rejects_non_fast_forward_and_stale_or_invalid_selections() {
 #[test]
 fn pull_tag_option_updates_only_when_requested_and_fetch_only_preserves_work() {
     let (_temp, source, other) = fixture();
-    let old = head(&other).unwrap();
+    let old = head(&SYSTEM_GIT, &other).unwrap();
     command(&other, &["tag", "release"]);
     commit(&source, "next\n");
     command(&source, &["tag", "release"]);
@@ -773,6 +825,7 @@ fn pull_tag_option_updates_only_when_requested_and_fetch_only_preserves_work() {
         ],
     );
     run_with_tags(
+        &SYSTEM_GIT,
         &other,
         Operation::Pull,
         "origin",
@@ -786,12 +839,18 @@ fn pull_tag_option_updates_only_when_requested_and_fetch_only_preserves_work() {
         command(&other, &["rev-parse", "release"]),
         format!("{old}\n").as_bytes()
     );
-    assert!(git::run(&other, &["rev-parse", "--verify", "refs/tags/new-tag"]).is_err());
-    let before = head(&other).unwrap();
+    assert!(git::run(
+        &SYSTEM_GIT,
+        &other,
+        &["rev-parse", "--verify", "refs/tags/new-tag"]
+    )
+    .is_err());
+    let before = head(&SYSTEM_GIT, &other).unwrap();
     fs::write(other.join("file"), "keep local edits\n").unwrap();
     commit(&source, "later\n");
     command(&source, &["push", "origin", "main"]);
     run_with_tags(
+        &SYSTEM_GIT,
         &other,
         Operation::Fetch,
         "origin",
@@ -801,7 +860,7 @@ fn pull_tag_option_updates_only_when_requested_and_fetch_only_preserves_work() {
         Some(true),
     )
     .unwrap();
-    assert_eq!(head(&other).unwrap(), before);
+    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), before);
     assert_eq!(
         fs::read_to_string(other.join("file")).unwrap(),
         "keep local edits\n"
@@ -825,7 +884,7 @@ fn remote_labels_mask_credentials() {
         "origin",
         "https://private-user:private-password@example.test/repo?private-query#private-fragment",
     ]);
-    let state = load(&repo.0).unwrap();
+    let state = load(&SYSTEM_GIT, &repo.0).unwrap();
     let label = &state.remote_urls["origin"];
     for secret in [
         "private-user",

@@ -1,4 +1,5 @@
 //! Bounded history reads and graph preparation, executed by background workers.
+use crate::git::GitContext;
 use crate::{
     git,
     models::{Commit, History, HistoryEdge},
@@ -66,12 +67,22 @@ fn check_cancel(cancel: &AtomicBool) -> Result<(), String> {
     }
 }
 
-fn run(root: &Path, args: &[&str], cancel: &AtomicBool) -> Result<Vec<u8>, String> {
-    git::run_controlled(root, args, Duration::from_secs(15), Some(cancel))
+fn run(
+    git: &GitContext,
+    root: &Path,
+    args: &[&str],
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, String> {
+    git::run_controlled(git, root, args, Duration::from_secs(15), Some(cancel))
 }
 
-fn boundary(root: &Path, name: &str, cancel: &AtomicBool) -> Result<Vec<u8>, String> {
-    let path = git::text(run(root, &["rev-parse", "--git-path", name], cancel)?)?;
+fn boundary(
+    git: &GitContext,
+    root: &Path,
+    name: &str,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, String> {
+    let path = git::text(run(git, root, &["rev-parse", "--git-path", name], cancel)?)?;
     let file = match std::fs::File::open(root.join(path.strip_suffix('\n').unwrap_or(&path))) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -88,10 +99,21 @@ fn boundary(root: &Path, name: &str, cancel: &AtomicBool) -> Result<Vec<u8>, Str
     Ok(bytes)
 }
 
-fn basis(root: &Path, all: bool, tag: Option<&str>, cancel: &AtomicBool) -> Result<Basis, String> {
-    let head = git::text(run(root, &["rev-parse", "--revs-only", "HEAD"], cancel)?)?
-        .trim()
-        .to_owned();
+fn basis(
+    git: &GitContext,
+    root: &Path,
+    all: bool,
+    tag: Option<&str>,
+    cancel: &AtomicBool,
+) -> Result<Basis, String> {
+    let head = git::text(run(
+        git,
+        root,
+        &["rev-parse", "--revs-only", "HEAD"],
+        cancel,
+    )?)?
+    .trim()
+    .to_owned();
     if !head.is_empty() && !valid_hash(&head) {
         return Err("Invalid history HEAD".into());
     }
@@ -105,7 +127,7 @@ fn basis(root: &Path, all: bool, tag: Option<&str>, cancel: &AtomicBool) -> Resu
         args.push("refs/replace/");
         args.extend(tag);
     }
-    let refs = run(root, &args, cancel)?;
+    let refs = run(git, root, &args, cancel)?;
     if refs
         .split(|byte| *byte == b'\n')
         .filter(|row| !row.is_empty())
@@ -117,13 +139,25 @@ fn basis(root: &Path, all: bool, tag: Option<&str>, cancel: &AtomicBool) -> Resu
     Ok(Basis {
         head,
         refs,
-        shallow: boundary(root, "shallow", cancel)?,
-        grafts: boundary(root, "info/grafts", cancel)?,
+        shallow: boundary(git, root, "shallow", cancel)?,
+        grafts: boundary(git, root, "info/grafts", cancel)?,
     })
 }
 
-fn verify(root: &Path, cursor: &Cursor, cancel: &AtomicBool) -> Result<(), String> {
-    if basis(root, cursor.all_branches, cursor.tag.as_deref(), cancel)? != cursor.basis {
+fn verify(
+    git: &GitContext,
+    root: &Path,
+    cursor: &Cursor,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    if basis(
+        git,
+        root,
+        cursor.all_branches,
+        cursor.tag.as_deref(),
+        cancel,
+    )? != cursor.basis
+    {
         return Err("History changed (HEAD, refs or history boundaries). Reload before loading more; existing rows are retained.".into());
     }
     Ok(())
@@ -131,6 +165,7 @@ fn verify(root: &Path, cursor: &Cursor, cancel: &AtomicBool) -> Result<(), Strin
 
 /// Capture a bounded topological ID order, then read commit data in bounded pages.
 pub fn reload(
+    git: &GitContext,
     root: &Path,
     all: bool,
     requested: usize,
@@ -138,6 +173,7 @@ pub fn reload(
     cancel: &AtomicBool,
 ) -> Result<Page, String> {
     first_with_limits(
+        git,
         root,
         Scope::Branches(all),
         requested,
@@ -149,6 +185,7 @@ pub fn reload(
 }
 
 pub fn reload_tag(
+    git: &GitContext,
     root: &Path,
     tag: &str,
     requested: usize,
@@ -156,6 +193,7 @@ pub fn reload_tag(
     cancel: &AtomicBool,
 ) -> Result<Page, String> {
     first_with_limits(
+        git,
         root,
         Scope::Tag(tag),
         requested,
@@ -172,7 +210,12 @@ enum Scope<'a> {
     Tag(&'a str),
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "pass the worker Git context explicitly"
+)]
 fn first_with_limits(
+    git: &GitContext,
     root: &Path,
     scope: Scope<'_>,
     requested: usize,
@@ -188,7 +231,7 @@ fn first_with_limits(
         Scope::Branches(all) => (all, None),
         Scope::Tag(tag) => (false, Some(tag)),
     };
-    let initial = basis(root, all, tag, cancel)?;
+    let initial = basis(git, root, all, tag, cancel)?;
     let tag_commit = tag
         .map(|tag| -> Result<String, String> {
             let revision = tag
@@ -197,6 +240,7 @@ fn first_with_limits(
                 .ok_or("Select a tag to open its history.")?;
             let revision = format!("refs/tags/{revision}^{{commit}}");
             let output = run(
+                git,
                 root,
                 &["rev-parse", "--verify", "--end-of-options", &revision],
                 cancel,
@@ -222,7 +266,7 @@ fn first_with_limits(
     let output = if initial.head.is_empty() && !all && tag_commit.is_none() {
         String::new()
     } else {
-        git::text(run(root, &args, cancel)?)?
+        git::text(run(git, root, &args, cancel)?)?
     };
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
@@ -260,11 +304,12 @@ fn first_with_limits(
         capped,
         page_size,
     };
-    verify(root, &cursor, cancel)?;
-    read_to(root, cursor, Vec::new(), end, cancel)
+    verify(git, root, &cursor, cancel)?;
+    read_to(git, root, cursor, Vec::new(), end, cancel)
 }
 
 pub fn more(
+    git: &GitContext,
     root: &Path,
     cursor: &Cursor,
     previous: Vec<Commit>,
@@ -284,23 +329,25 @@ pub fn more(
         );
     }
     let end = (cursor.next + cursor.page_size).min(cursor.ids.len());
-    read_to(root, cursor.clone(), previous, end, cancel)
+    read_to(git, root, cursor.clone(), previous, end, cancel)
 }
 
 fn read_to(
+    git: &GitContext,
     root: &Path,
     mut cursor: Cursor,
     mut commits: Vec<Commit>,
     end: usize,
     cancel: &AtomicBool,
 ) -> Result<Page, String> {
-    verify(root, &cursor, cancel)?;
+    verify(git, root, &cursor, cancel)?;
     while cursor.next < end {
         check_cancel(cancel)?;
         let next = (cursor.next + cursor.page_size).min(end);
         let ids = &cursor.ids[cursor.next..next];
         let input = format!("{}\n", ids.join("\n"));
         let mut batch = parse(&git::run_with_input_controlled(
+            git,
             root,
             &[
                 "log",
@@ -324,7 +371,7 @@ fn read_to(
         commits.append(&mut batch);
         cursor.next = next;
     }
-    verify(root, &cursor, cancel)?;
+    verify(git, root, &cursor, cancel)?;
     check_cancel(cancel)?;
     let truncated = cursor.has_more() || cursor.capped;
     Ok(Page {
@@ -334,13 +381,14 @@ fn read_to(
 }
 
 #[cfg(test)]
-pub fn load(root: &Path, all: bool) -> Result<History, String> {
-    reload(root, all, PAGE_SIZE, &[], &AtomicBool::new(false)).map(|page| page.history)
+pub fn load(git: &GitContext, root: &Path, all: bool) -> Result<History, String> {
+    reload(git, root, all, PAGE_SIZE, &[], &AtomicBool::new(false)).map(|page| page.history)
 }
 
 #[cfg(test)]
-fn load_limited(root: &Path, all: bool, limit: usize) -> Result<History, String> {
+fn load_limited(git: &GitContext, root: &Path, all: bool, limit: usize) -> Result<History, String> {
     first_with_limits(
+        git,
         root,
         Scope::Branches(all),
         limit,
@@ -463,13 +511,14 @@ pub struct CommitFile {
 }
 
 pub fn files(
+    git: &GitContext,
     root: &Path,
     hash: &str,
     first_parent: Option<&str>,
 ) -> Result<Vec<CommitFile>, String> {
     let mut args = commit_diff_args(hash, first_parent)?;
     args.extend(["--name-status", "-z", "--find-renames", "--"]);
-    parse_files(&git::run(root, &args)?)
+    parse_files(&git::run(git, root, &args)?)
 }
 
 fn parse_files(bytes: &[u8]) -> Result<Vec<CommitFile>, String> {
@@ -541,6 +590,7 @@ fn commit_diff_args<'a>(
 }
 
 pub fn file_patch(
+    git: &GitContext,
     root: &Path,
     hash: &str,
     first_parent: Option<&str>,
@@ -552,7 +602,7 @@ pub fn file_patch(
         args.push(source);
     }
     args.push(&file.path);
-    let output = git::text(git::run(root, &args)?)?;
+    let output = git::text(git::run(git, root, &args)?)?;
     git::limit_diff(if output.is_empty() {
         "This file has no text changes against the first parent.".into()
     } else {
@@ -561,10 +611,15 @@ pub fn file_patch(
 }
 
 #[cfg(test)]
-pub fn patch(root: &Path, hash: &str, first_parent: Option<&str>) -> Result<String, String> {
+pub fn patch(
+    git: &GitContext,
+    root: &Path,
+    hash: &str,
+    first_parent: Option<&str>,
+) -> Result<String, String> {
     let mut args = commit_diff_args(hash, first_parent)?;
     args.extend(["-p", "--find-renames", "--"]);
-    let output = git::text(git::run(root, &args)?)?;
+    let output = git::text(git::run(git, root, &args)?)?;
     git::limit_diff(if output.is_empty() {
         "This commit has no text changes against its first parent.".into()
     } else {

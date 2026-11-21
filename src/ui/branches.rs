@@ -50,13 +50,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         Layout::left_to_right(Align::Center),
         |ui| {
             let heading = ui.heading(RichText::new("Branches").color(
-                if app.refs_error.is_some() {
+                if app.branches.error.is_some() {
                     palette.removed_text
                 } else {
                     palette.text
                 },
             ));
-            if app.refs_error.is_some() {
+            if app.branches.error.is_some() {
                 heading.help_text("Reload branches to retry.");
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -65,7 +65,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     |ui| {
                         if icons::button(ui, Icon::Plus, "Create local branch from HEAD").clicked()
                         {
-                            app.branch_dialog_open = true;
+                            app.branches.branch_dialog_open = true;
                         }
                         if icons::button(ui, Icon::Fetch, "Reload branches and tags").clicked() {
                             app.reload_refs();
@@ -80,7 +80,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         header.response.rect.expand2(Vec2::new(8.0, 0.0)),
         palette,
     );
-    let refs_current = !app.busy() && app.state_current && app.refs_current;
+    let refs_current = !app.busy() && app.state_current && app.branches.current;
     let tag_actions_allowed =
         refs_current && app.repositories.get(app.selected_repository).is_some();
     let mut requested = BranchRequests {
@@ -104,9 +104,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             for kind in [RefKind::Local, RefKind::Remote, RefKind::Tag] {
                 add_tag_requested |= branch_group(
                     ui,
-                    &app.refs,
-                    &mut app.selected_branch,
-                    &mut app.selected_ref_group,
+                    &app.branches.entries,
+                    &mut app.branches.selected_branch,
+                    &mut app.branches.selected_ref_group,
                     kind,
                     palette,
                     &mut requested,
@@ -114,10 +114,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             }
         });
     if let Some(request) = requested.action {
-        app.selected_ref_group = None;
+        app.branches.selected_ref_group = None;
         match request {
             BranchRequest::Switch(target) => {
-                app.selected_branch = target;
+                app.branches.selected_branch = target;
                 if let Some(reason) = app.switch_branch_blocker() {
                     app.error = Some(reason.into());
                 } else {
@@ -125,40 +125,40 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 }
             }
             BranchRequest::Delete(target) => {
-                app.selected_branch = target;
+                app.branches.selected_branch = target;
                 app.open_delete_branch();
             }
             BranchRequest::DeleteTag(target) => {
-                app.selected_branch = target;
+                app.branches.selected_branch = target;
                 app.open_delete_tag();
             }
             BranchRequest::PushTag(target) => {
-                app.selected_branch = target;
+                app.branches.selected_branch = target;
                 app.push_selected_tag();
             }
             BranchRequest::PushTagTo(target) => {
-                app.selected_branch = target;
+                app.branches.selected_branch = target;
                 app.open_push_tag();
             }
             BranchRequest::MergeTag(target) => {
-                app.selected_branch = target.clone();
+                app.branches.selected_branch = target.clone();
                 app.open_merge_tag(target);
             }
             BranchRequest::LogTag(target) => {
-                app.selected_branch = target.clone();
+                app.branches.selected_branch = target.clone();
                 app.open_tag_log(target);
                 super::journal::focus_history(ui.ctx());
             }
             BranchRequest::ResetTag(target) => {
-                app.selected_branch = target.clone();
+                app.branches.selected_branch = target.clone();
                 app.open_tag_reset(target);
             }
             BranchRequest::ResetTagAdvanced(target) => {
-                app.selected_branch = target.clone();
+                app.branches.selected_branch = target.clone();
                 app.open_advanced_tag_reset(target);
             }
             BranchRequest::Rename(target) => {
-                app.selected_branch = target;
+                app.branches.selected_branch = target;
                 app.open_rename_branch();
             }
             BranchRequest::CopyTagName(name) => ui.ctx().copy_text(name),
@@ -166,7 +166,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         }
     }
     if add_tag_requested {
-        app.tag_dialog_open = true;
+        app.branches.tag_dialog_open = true;
         app.error = None;
     }
 }
@@ -426,13 +426,14 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
 }
 
 fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
-    if !app.tag_dialog_open {
+    if !app.branches.tag_dialog_open {
         return;
     }
     let ctx = ui.ctx().clone();
     let palette = app.palette();
     let tag_names: Vec<_> = app
-        .refs
+        .branches
+        .entries
         .iter()
         .filter(|reference| reference.kind == RefKind::Tag)
         .map(|reference| reference.name.clone())
@@ -462,7 +463,7 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                         super::controls::editable_combobox::show(
                             ui,
                             ui.make_persistent_id("tag.name"),
-                            &mut app.new_tag_name,
+                            &mut app.branches.new_tag_name,
                             &tag_names,
                             combo_width,
                             palette,
@@ -472,7 +473,7 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.label("Annotated Tag Message:");
                 let message = ui.add_sized(
                     [ui.available_width(), 120.0],
-                    TextEdit::multiline(&mut app.new_tag_message)
+                    TextEdit::multiline(&mut app.branches.new_tag_message)
                         .margin(eframe::egui::Margin::symmetric(6, 4)),
                 );
                 super::controls::dialog_style::preserve_multiline_enter(&message);
@@ -504,14 +505,14 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
         );
     });
     if !keep {
-        app.tag_dialog_open = false;
-        app.new_tag_name.clear();
-        app.new_tag_message.clear();
+        app.branches.tag_dialog_open = false;
+        app.branches.new_tag_name.clear();
+        app.branches.new_tag_message.clear();
     }
 }
 
 fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
-    let Some(mut dialog) = app.remote_checkout.take() else {
+    let Some(mut dialog) = app.branches.remote_checkout.take() else {
         return;
     };
     let ctx = ui.ctx().clone();
@@ -531,7 +532,7 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                     ui.add_enabled_ui(dialog.mode == 0, |ui| {
                         eframe::egui::ComboBox::from_id_salt("remote.local").width(280.0)
                             .selected_text(dialog.local.strip_prefix("refs/heads/").unwrap_or(&dialog.local))
-                            .show_ui(ui, |ui| { for branch in app.refs.iter().filter(|r| r.kind == RefKind::Local) { ui.selectable_value(&mut dialog.local, branch.full_name.clone(), &branch.name); } });
+                            .show_ui(ui, |ui| { for branch in app.branches.entries.iter().filter(|r| r.kind == RefKind::Local) { ui.selectable_value(&mut dialog.local, branch.full_name.clone(), &branch.name); } });
                     });
                     ui.end_row();
                     ui.radio_value(&mut dialog.mode, 1, "Create local branch:");
@@ -544,8 +545,8 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
         super::controls::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
             super::controls::dialog_style::button_row(ui, |ui| {
                 let valid = match dialog.mode {
-                    0 => app.refs.iter().any(|r| r.kind == RefKind::Local && r.full_name == dialog.local),
-                    1 => crate::branches::name_hint(&dialog.new_name).is_none() && !app.refs.iter().any(|r| r.full_name == format!("refs/heads/{}", dialog.new_name)),
+                    0 => app.branches.entries.iter().any(|r| r.kind == RefKind::Local && r.full_name == dialog.local),
+                    1 => crate::branches::name_hint(&dialog.new_name).is_none() && !app.branches.entries.iter().any(|r| r.full_name == format!("refs/heads/{}", dialog.new_name)),
                     _ => true,
                 };
                 if ui.add_enabled(valid && !app.busy(), super::controls::dialog_style::primary("Checkout", palette)).dialog_accept() {
@@ -557,12 +558,12 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
         });
     });
     if keep {
-        app.remote_checkout = Some(dialog);
+        app.branches.remote_checkout = Some(dialog);
     }
 }
 
 fn rename_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
-    if app.rename_branch_dialog.is_none() {
+    if app.branches.rename_branch_dialog.is_none() {
         return;
     }
     let ctx = ui.ctx().clone();
@@ -586,7 +587,7 @@ fn rename_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             eframe::egui::Margin::same(18),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
-                if let Some(dialog) = &mut app.rename_branch_dialog {
+                if let Some(dialog) = &mut app.branches.rename_branch_dialog {
                     ui.add(
                         eframe::egui::Label::new(
                             dialog
@@ -642,12 +643,12 @@ fn rename_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
         );
     });
     if cancel {
-        app.rename_branch_dialog = None;
+        app.branches.rename_branch_dialog = None;
     }
 }
 
 fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
-    if !app.branch_dialog_open {
+    if !app.branches.branch_dialog_open {
         return;
     }
     let ctx = ui.ctx().clone();
@@ -671,7 +672,7 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             eframe::egui::Margin::same(18),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
-                let source = format!("Create from HEAD ({})", app.current_branch);
+                let source = format!("Create from HEAD ({})", app.branches.current_branch);
                 ui.add(
                     eframe::egui::Label::new(&source)
                         .truncate()
@@ -680,11 +681,14 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                 .help_text(&source);
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.add(
-                        crate::ui::controls::singleline(&mut app.new_branch_name)
+                        crate::ui::controls::singleline(&mut app.branches.new_branch_name)
                             .hint_text("feature/my-change")
                             .desired_width(f32::INFINITY),
                     );
-                    ui.checkbox(&mut app.switch_to_new_branch, "Switch to the new branch");
+                    ui.checkbox(
+                        &mut app.branches.switch_to_new_branch,
+                        "Switch to the new branch",
+                    );
                 });
                 let blocker = app.create_branch_blocker();
                 let status = blocker.unwrap_or("Ready to create");
@@ -724,7 +728,7 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
         );
     });
     if cancel {
-        app.branch_dialog_open = false;
+        app.branches.branch_dialog_open = false;
     }
 }
 
@@ -747,15 +751,15 @@ mod tests {
                 let mut app = SannyGitApp::with_theme(theme);
                 app.repositories = crate::mock_data::repositories();
                 app.selected_repository = 0;
-                app.refs = crate::mock_data::refs();
+                app.branches.entries = crate::mock_data::refs();
                 app.state_current = true;
-                app.refs_current = true;
-                app.branch_head_exists = true;
-                app.tag_dialog_open = true;
+                app.branches.current = true;
+                app.branches.branch_head_exists = true;
+                app.branches.tag_dialog_open = true;
                 let mut geometry = Vec::new();
                 for stage in 0..4 {
-                    app.new_tag_name = if stage == 0 { "" } else { "feature/new" }.into();
-                    app.refs_current = stage != 2;
+                    app.branches.new_tag_name = if stage == 0 { "" } else { "feature/new" }.into();
+                    app.branches.current = stage != 2;
                     app.error = (stage == 3).then(|| "Long error message. ".repeat(100));
                     for frame in 0..3 {
                         let mut output = ctx.run_ui(
@@ -803,15 +807,16 @@ mod tests {
                 let mut app = SannyGitApp::with_theme(theme);
                 app.repositories = crate::mock_data::repositories();
                 app.selected_repository = 0;
-                app.refs = crate::mock_data::refs();
+                app.branches.entries = crate::mock_data::refs();
                 app.state_current = true;
-                app.refs_current = true;
-                app.branch_head_exists = true;
-                app.branch_dialog_open = true;
+                app.branches.current = true;
+                app.branches.branch_head_exists = true;
+                app.branches.branch_dialog_open = true;
                 let mut geometry = Vec::new();
                 for stage in 0..4 {
-                    app.new_branch_name = if stage == 0 { "" } else { "feature/new" }.into();
-                    app.refs_current = stage != 2;
+                    app.branches.new_branch_name =
+                        if stage == 0 { "" } else { "feature/new" }.into();
+                    app.branches.current = stage != 2;
                     app.error = (stage == 3).then(|| "Long error message. ".repeat(100));
                     for frame in 0..3 {
                         let mut output = ctx.run_ui(
@@ -859,15 +864,15 @@ mod tests {
                 app.repositories = crate::mock_data::repositories();
                 app.selected_repository = 0;
                 app.state_current = true;
-                app.refs_current = true;
-                app.refs = crate::mock_data::refs();
-                app.selected_branch = "refs/heads/develop".into();
+                app.branches.current = true;
+                app.branches.entries = crate::mock_data::refs();
+                app.branches.selected_branch = "refs/heads/develop".into();
                 app.open_rename_branch();
                 let mut geometry = Vec::new();
                 for stage in 0..4 {
-                    app.rename_branch_dialog.as_mut().unwrap().name =
+                    app.branches.rename_branch_dialog.as_mut().unwrap().name =
                         if stage == 0 { "develop" } else { "new-name" }.into();
-                    app.refs_current = stage != 2;
+                    app.branches.current = stage != 2;
                     app.error = (stage == 3).then(|| "A very long Git error. ".repeat(80));
                     for frame in 0..3 {
                         let mut output = ctx.run_ui(
@@ -928,8 +933,8 @@ mod tests {
                 egui_extras::install_image_loaders(&ctx);
                 theme.apply(&ctx);
                 let mut app = SannyGitApp::with_theme(theme);
-                app.tag_dialog_open = true;
-                app.new_tag_name = "v1.0.0-b1".into();
+                app.branches.tag_dialog_open = true;
+                app.branches.new_tag_name = "v1.0.0-b1".into();
                 for frame in 0..3 {
                     let mut output = ctx.run_ui(
                         RawInput {
@@ -979,7 +984,7 @@ mod tests {
                 egui_extras::install_image_loaders(&ctx);
                 theme.apply(&ctx);
                 let mut app = SannyGitApp::with_theme(theme);
-                app.refs = vec![BranchRef {
+                app.branches.entries = vec![BranchRef {
                     name: "feature".into(),
                     full_name: "refs/heads/feature".into(),
                     hash: "a".repeat(40),
@@ -990,8 +995,8 @@ mod tests {
                 }];
                 let mut positions = Vec::new();
                 for stage in 0..3 {
-                    app.refs_loading = stage == 1;
-                    app.refs_error = (stage == 2).then(|| "Cannot load refs".into());
+                    app.branches.loading = stage == 1;
+                    app.branches.error = (stage == 2).then(|| "Cannot load refs".into());
                     for frame in 0..3 {
                         let mut output = ctx.run_ui(
                             RawInput {

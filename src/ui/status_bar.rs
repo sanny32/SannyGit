@@ -17,10 +17,10 @@ pub fn show(ui: &mut Ui, app: &SannyGitApp) {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 5.0;
                 icons::paint(ui, Icon::Branch, palette.text, 14.0);
-                ui.label(if app.current_branch.is_empty() {
+                ui.label(if app.branches.current_branch.is_empty() {
                     "No repository"
                 } else {
-                    &app.current_branch
+                    &app.branches.current_branch
                 });
                 let badge = app.tracking.badge();
                 if !badge.is_empty() {

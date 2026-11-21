@@ -32,13 +32,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         ui.add_enabled_ui(!app.busy(), |ui| {
             eframe::egui::ComboBox::from_id_salt("commit.contents")
                 .width(98.0)
-                .selected_text(app.commit_contents.label())
+                .selected_text(app.commit.contents.label())
                 .show_ui(ui, |ui| {
                     for mode in [
                         crate::git::CommitContents::All,
                         crate::git::CommitContents::Staged,
                     ] {
-                        ui.selectable_value(&mut app.commit_contents, mode, mode.label());
+                        ui.selectable_value(&mut app.commit.contents, mode, mode.label());
                     }
                 });
         });
@@ -57,7 +57,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 "Commit contents and message options",
                 || {
                     let mut entries = Vec::new();
-                    if app.generating_commit_message {
+                    if app.commit.generating_message {
                         entries.push(Entry::item(
                             "Cancel generation",
                             true,
@@ -88,7 +88,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             }
 
             let blocker = app.generate_commit_message_blocker();
-            let generating = app.generating_commit_message;
+            let generating = app.commit.generating_message;
             if icons::action(
                 ui,
                 if generating {
@@ -101,7 +101,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             .help_text(if generating {
                 "Cancel commit message generation"
             } else {
-                if app.commit_contents == crate::git::CommitContents::All {
+                if app.commit.contents == crate::git::CommitContents::All {
                     "Generate a commit message from all changes, including new files"
                 } else {
                     "Generate a commit message from staged contents only"
@@ -141,7 +141,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 ui.add(
-                                    TextEdit::multiline(&mut app.commit_message)
+                                    TextEdit::multiline(&mut app.commit.message)
                                         .id(eframe::egui::Id::unique("commit.message"))
                                         .frame(Frame::NONE.inner_margin(Margin::symmetric(6, 4)))
                                         .desired_rows(1)
@@ -162,7 +162,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     border,
                     StrokeKind::Inside,
                 );
-                if app.generating_commit_message {
+                if app.commit.generating_message {
                     let time = ui.input(|input| input.time);
                     draw_generation_animation(ui, editor.response.rect, time, palette);
                 }
@@ -170,7 +170,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 let blocker = app.amend_blocker();
-                let mut amend = app.amend;
+                let mut amend = app.commit.amend;
                 if ui.add_enabled(
                     blocker.is_none(),
                     eframe::egui::Checkbox::new(&mut amend, "Amend last commit"),
@@ -182,20 +182,20 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let blocker = app.commit_blocker();
-                    let label = if app.amend { "Amend" } else { "Commit" };
+                    let label = if app.commit.amend { "Amend" } else { "Commit" };
                     if ui
                         .add_enabled(
                             blocker.is_none(),
                             if app.interface_style == crate::theme::InterfaceStyle::Modern {
                                 super::controls::dialog_style::primary(
-                                    if app.amend { "✓  Amend" } else { "✓  Commit" },
+                                    if app.commit.amend { "✓  Amend" } else { "✓  Commit" },
                                     palette,
                                 )
                             } else {
                                 Button::new(label).min_size(Vec2::new(72.0, 24.0))
                             },
                         )
-                        .help_text(match (app.amend, app.commit_contents) {
+                        .help_text(match (app.commit.amend, app.commit.contents) {
                             (false, crate::git::CommitContents::All) => "Commit all changes, including new files",
                             (false, crate::git::CommitContents::Staged) => "Commit staged changes only; preserve unstaged changes",
                             (true, crate::git::CommitContents::All) => "Replace the last commit with this message and all changes, including new files",
@@ -331,20 +331,20 @@ mod tests {
                         .enumerate()
                     {
                         let draft = if frame < 4 { short_draft } else { &merge_draft };
-                        app.commit_message = draft.into();
+                        app.commit.message = draft.into();
                         let typed = frame == 3;
                         if typed {
                             context.memory_mut(|memory| {
                                 memory.request_focus(egui::Id::unique("commit.message"));
                             });
                         }
-                        app.commit_contents = if frame % 2 == 0 {
+                        app.commit.contents = if frame % 2 == 0 {
                             crate::git::CommitContents::All
                         } else {
                             crate::git::CommitContents::Staged
                         };
-                        app.generating_commit_message = generating;
-                        app.amend = generating;
+                        app.commit.generating_message = generating;
+                        app.commit.amend = generating;
                         let input = egui::RawInput {
                             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
                             time: Some(frame as f64 * 0.75),
@@ -370,13 +370,13 @@ mod tests {
                         });
                         output.textures_delta.clear();
                         if typed {
-                            assert_eq!(app.commit_message, format!("{draft} More text."));
+                            assert_eq!(app.commit.message, format!("{draft} More text."));
                             let text_pos = output
                                 .shapes
                                 .iter()
                                 .find_map(|shape| match &shape.shape {
                                     Shape::Text(text)
-                                        if text.galley.job.text == app.commit_message =>
+                                        if text.galley.job.text == app.commit.message =>
                                     {
                                         Some(text.pos)
                                     }
@@ -393,7 +393,7 @@ mod tests {
                                 memory.surrender_focus(egui::Id::unique("commit.message"));
                             });
                         } else {
-                            assert_eq!(app.commit_message, draft);
+                            assert_eq!(app.commit.message, draft);
                         }
                     }
                 }

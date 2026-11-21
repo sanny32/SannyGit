@@ -1,4 +1,5 @@
 use super::{SannyGitApp, WorkerResult};
+use crate::git::GitContext;
 use crate::{discard as backend, git, models::ChangeKind};
 use std::path::PathBuf;
 
@@ -113,27 +114,27 @@ impl SannyGitApp {
         let path = dialog.path.clone();
         let merging = self.merging;
         let remove = dialog.action == backend::Action::Remove;
-        let prepare = move |root: &PathBuf, path: &str| {
+        let prepare = move |git: &GitContext, root: &PathBuf, path: &str| {
             if merging || remove {
-                backend::prepare_action(root, path, remove, merging)
+                backend::prepare_action(git, root, path, remove, merging)
             } else {
-                backend::prepare(root, path)
+                backend::prepare(git, root, path)
             }
         };
         if dialog.paths.len() > 1 {
             let paths = dialog.paths.clone();
-            self.start_worker(move || WorkerResult::DiscardBatchPrepared {
+            self.start_worker(move |git| WorkerResult::DiscardBatchPrepared {
                 result: paths
                     .iter()
-                    .map(|path| prepare(&PathBuf::from(&root), path))
+                    .map(|path| prepare(git, &PathBuf::from(&root), path))
                     .collect(),
                 root,
                 paths,
             });
             return;
         }
-        if !self.start_worker(move || WorkerResult::DiscardPrepared {
-            result: prepare(&PathBuf::from(&root), &path),
+        if !self.start_worker(move |git| WorkerResult::DiscardPrepared {
+            result: prepare(git, &PathBuf::from(&root), &path),
             root,
             path,
         }) {
@@ -182,7 +183,7 @@ impl SannyGitApp {
         self.state_current = false;
         self.error = None;
         self.status = "Discard operation in progress…".into();
-        if !self.start_worker(move || WorkerResult::Operation {
+        if !self.start_worker(move |git| WorkerResult::Operation {
             committed: false,
             success: if prepared.action == backend::Action::Remove {
                 "Files removed"
@@ -196,8 +197,8 @@ impl SannyGitApp {
                     backend::Action::Remove => "Files removed",
                 }
             },
-            outcome: backend::execute_many(&root, &entries),
-            snapshot: git::load(&root),
+            outcome: backend::execute_many(git, &root, &entries),
+            snapshot: git::load(git, &root),
         }) {
             self.finish_discard(false);
         }
@@ -273,6 +274,7 @@ impl SannyGitApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SYSTEM_GIT;
     use crate::{test_support::TempRepo, theme::ThemeChoice};
     use std::time::{Duration, Instant};
 
@@ -288,13 +290,13 @@ mod tests {
     fn opened() -> (TempRepo, SannyGitApp) {
         let repo = TempRepo::new();
         repo.write("file", "base\n");
-        git::commit(&repo.0, "Base", git::CommitContents::All).unwrap();
+        git::commit(&SYSTEM_GIT, &repo.0, "Base", git::CommitContents::All).unwrap();
         repo.write("file", "staged\n");
         repo.git(&["add", "file"]);
         repo.write("file", "unstaged\n");
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-        app.apply_snapshot(git::load(&repo.0).unwrap());
-        app.commit_message = "Keep commit draft".into();
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        app.commit.message = "Keep commit draft".into();
         (repo, app)
     }
 
@@ -303,8 +305,8 @@ mod tests {
         let (repo, mut app) = opened();
         repo.write("new", "remove\n");
         repo.write("other", "keep\n");
-        app.apply_snapshot(git::load(&repo.0).unwrap());
-        app.selected_paths = ["file".into(), "new".into()].into_iter().collect();
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        app.selection.paths = ["file".into(), "new".into()].into_iter().collect();
         let index = repo.git(&["ls-files", "--stage"]);
         app.open_discard();
         wait(&mut app);
@@ -330,7 +332,7 @@ mod tests {
             "keep\n"
         );
         assert_eq!(repo.git(&["ls-files", "--stage"]), index);
-        assert_eq!(app.commit_message, "Keep commit draft");
+        assert_eq!(app.commit.message, "Keep commit draft");
     }
 
     #[test]
@@ -356,7 +358,7 @@ mod tests {
         assert_eq!(app.status, "File restored from index");
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"staged\n");
         assert_eq!(repo.git(&["ls-files", "--stage"]), index);
-        assert_eq!(app.commit_message, "Keep commit draft");
+        assert_eq!(app.commit.message, "Keep commit draft");
     }
 
     #[test]
@@ -396,7 +398,7 @@ mod tests {
     fn staged_only_changes_require_a_separate_unstage_action() {
         let (repo, mut app) = opened();
         repo.git(&["add", "file"]);
-        app.apply_snapshot(git::load(&repo.0).unwrap());
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
         assert!(app.discard_blocker().unwrap().contains("Unstage"));
         app.open_discard();
         assert!(app.discard_dialog.is_none());
@@ -411,7 +413,7 @@ mod tests {
         wait(&mut app);
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"base\n");
         assert!(repo.git(&["diff", "--cached", "--name-only"]).is_empty());
-        assert_eq!(app.commit_message, "Keep commit draft");
+        assert_eq!(app.commit.message, "Keep commit draft");
     }
 
     #[test]
@@ -419,7 +421,7 @@ mod tests {
         let repo = TempRepo::new();
         repo.write("new", "keep new\n");
         let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
-        app.apply_snapshot(git::load(&repo.0).unwrap());
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
         app.open_discard();
         wait(&mut app);
         assert_eq!(

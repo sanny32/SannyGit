@@ -13,7 +13,7 @@ use eframe::egui::{self, Button, ComboBox, RichText};
 pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let busy = app.busy();
     let current = app.state_current;
-    let Some(mut dialog) = app.ref_dialog.take() else {
+    let Some(mut dialog) = app.branches.ref_dialog.take() else {
         return;
     };
     let palette = app.palette();
@@ -238,7 +238,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         });
     });
     if !close {
-        app.ref_dialog = Some(dialog);
+        app.branches.ref_dialog = Some(dialog);
     }
     if add_remote {
         app.open_remote_manager();
@@ -327,7 +327,7 @@ fn show_tag_delete(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Dialo
     });
     if !close {
         dialog.confirmed = submit;
-        app.ref_dialog = Some(dialog);
+        app.branches.ref_dialog = Some(dialog);
     }
     if reload {
         app.reload_ref_dialog();
@@ -437,7 +437,7 @@ fn show_tag_reset(ctx: &egui::Context, app: &mut SannyGitApp, dialog: Dialog) {
         });
     });
     if !close {
-        app.ref_dialog = Some(dialog);
+        app.branches.ref_dialog = Some(dialog);
     }
     if reload {
         app.reload_ref_dialog();
@@ -577,7 +577,7 @@ fn show_advanced_reset(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: D
         });
     });
     if !close {
-        app.ref_dialog = Some(dialog);
+        app.branches.ref_dialog = Some(dialog);
     }
     if reload {
         app.reload_ref_dialog();
@@ -738,6 +738,7 @@ fn remote_editor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SYSTEM_GIT;
     use crate::{
         mock_data::{self, RefDialogFixture},
         theme::{install_fonts, InterfaceStyle, ThemeChoice},
@@ -750,7 +751,7 @@ mod tests {
         repo.git(&["tag", "release"]);
         repo.git(&["remote", "add", "origin", "https://example.test/repo"]);
         let source = "refs/tags/release";
-        let prepared = crate::remotes::preview_tag_delete(&repo.0, source).unwrap();
+        let prepared = crate::remotes::preview_tag_delete(&SYSTEM_GIT, &repo.0, source).unwrap();
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
             for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
                 let ctx = egui::Context::default();
@@ -759,7 +760,7 @@ mod tests {
                 theme.apply(&ctx);
                 let mut app = SannyGitApp::with_theme(theme);
                 app.state_current = true;
-                app.ref_dialog = Some(Dialog {
+                app.branches.ref_dialog = Some(Dialog {
                     root: repo.0.to_string_lossy().into_owned(),
                     kind: Kind::DeleteTag {
                         source: source.into(),
@@ -791,7 +792,7 @@ mod tests {
                 let id = egui::Id::unique("ref.tag.delete");
                 let loading = ctx.memory(|memory| memory.area_rect(id)).unwrap();
                 if let Kind::DeleteTag { prepared: slot, .. } =
-                    &mut app.ref_dialog.as_mut().unwrap().kind
+                    &mut app.branches.ref_dialog.as_mut().unwrap().kind
                 {
                     *slot = Some(prepared.clone());
                 }
@@ -811,7 +812,7 @@ mod tests {
                         modifiers: egui::Modifiers::NONE,
                     }],
                 );
-                assert!(app.ref_dialog.is_none());
+                assert!(app.branches.ref_dialog.is_none());
                 assert!(!app.busy());
             }
         }
@@ -830,7 +831,7 @@ mod tests {
                 let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
                 let mut previous = None;
                 for strategy in [ResetStrategy::Mixed, ResetStrategy::Hard] {
-                    app.ref_dialog = Some(Dialog {
+                    app.branches.ref_dialog = Some(Dialog {
                         root: "Fixture".into(),
                         kind: Kind::Reset {
                             source: "refs/tags/release".into(),
@@ -890,7 +891,7 @@ mod tests {
                         install_fonts(&ctx);
                         egui_extras::install_image_loaders(&ctx);
                         theme.apply(&ctx);
-                        let (_repo, dialog) = mock_data::ref_dialog(fixture);
+                        let (_repo, dialog) = mock_data::ref_dialog(&SYSTEM_GIT, fixture);
                         let saved_delete = if let Kind::Delete { prepared, .. } = &dialog.kind {
                             prepared.clone()
                         } else {
@@ -914,11 +915,11 @@ mod tests {
                         let mut app = SannyGitApp::with_theme(theme);
                         app.interface_style = style;
                         app.state_current = true;
-                        app.ref_dialog = Some(dialog);
+                        app.branches.ref_dialog = Some(dialog);
                         let mut baseline = None;
                         let mut buttons = None;
                         for stage in 0..6 {
-                            let dialog = app.ref_dialog.as_mut().unwrap();
+                            let dialog = app.branches.ref_dialog.as_mut().unwrap();
                             dialog.running = stage == 3;
                             dialog.confirmed = stage >= 2;
                             dialog.error = if stage == 4 {
@@ -1078,7 +1079,7 @@ mod tests {
             let ctx = egui::Context::default();
             install_fonts(&ctx);
             egui_extras::install_image_loaders(&ctx);
-            let (repo, mut dialog) = mock_data::ref_dialog(fixture);
+            let (repo, mut dialog) = mock_data::ref_dialog(&SYSTEM_GIT, fixture);
             dialog.confirmed = true;
             let refs = repo.git(&["show-ref"]);
             let config = repo.git(&["config", "--local", "--list"]);
@@ -1089,7 +1090,7 @@ mod tests {
                 path: dialog.root.clone(),
             });
             app.selected_repository = 0;
-            app.ref_dialog = Some(dialog);
+            app.branches.ref_dialog = Some(dialog);
             let render = |app: &mut SannyGitApp, events| {
                 let mut output = ctx.run_ui(
                     egui::RawInput {
@@ -1135,7 +1136,7 @@ mod tests {
                     ],
                 );
             }
-            assert!(app.ref_dialog.is_none());
+            assert!(app.branches.ref_dialog.is_none());
             assert!(!app.busy());
             assert_eq!(repo.git(&["show-ref"]), refs);
             assert_eq!(repo.git(&["config", "--local", "--list"]), config);

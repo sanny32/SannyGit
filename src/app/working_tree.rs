@@ -1,5 +1,6 @@
 //! Periodic, read-only working-tree checks, independent of interactive operations.
 use super::SannyGitApp;
+use crate::git::GitContext;
 use crate::{git, models::DiffPreview};
 use std::{
     path::Path,
@@ -25,8 +26,8 @@ struct FileDiff {
 }
 
 impl Update {
-    pub(super) fn read(path: String, selected: Option<String>) -> Self {
-        let snapshot = git::load(Path::new(&path));
+    pub(super) fn read(git: &GitContext, path: String, selected: Option<String>) -> Self {
+        let snapshot = git::load(git, Path::new(&path));
         let diff = snapshot.as_ref().ok().and_then(|snapshot| {
             let change = snapshot
                 .changes
@@ -35,6 +36,7 @@ impl Update {
             Some(FileDiff {
                 path: change.path.clone(),
                 result: git::diff(
+                    git,
                     Path::new(&path),
                     &change.path,
                     change.kind,
@@ -81,6 +83,31 @@ impl Monitor {
 }
 
 impl SannyGitApp {
+    pub(super) fn apply_selected_diff(
+        &mut self,
+        index: usize,
+        result: Result<(String, DiffPreview), String>,
+    ) {
+        if self.selection.active == index {
+            self.loaded_diff = Some(index);
+            match result {
+                Ok((diff, preview)) => {
+                    self.diff_preview = Some(preview);
+                    if let Some(change) = self.changes.get_mut(index) {
+                        change.diff = diff;
+                    }
+                    if self.status == "Loading diff…" {
+                        self.status = "Ready".into();
+                    }
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    self.status = "Could not load diff".into();
+                }
+            }
+        }
+    }
+
     pub(super) fn refresh_working_tree(&mut self) {
         if self.busy() || self.repositories.get(self.selected_repository).is_none() {
             return;
@@ -105,17 +132,17 @@ impl SannyGitApp {
         let path = repository.path.clone();
         let selected = self
             .changes
-            .get(self.selected_change)
+            .get(self.selection.active)
             .map(|c| c.path.clone());
         let context = context.clone();
         let (sender, receiver) = mpsc::channel();
         self.working_tree.next_read = Instant::now() + CHECK_INTERVAL;
-        let git_executable = self.preferences.git_executable.clone();
+        let git_context = crate::git::GitContext::new(self.preferences.git_executable.clone());
         match std::thread::Builder::new()
             .name("sannygit-working-tree".into())
             .spawn(move || {
-                git::set_executable(git_executable);
-                let _ = sender.send(Update::read(path, selected));
+                let git = &git_context;
+                let _ = sender.send(Update::read(git, path, selected));
                 context.request_repaint();
             }) {
             Ok(_) => self.working_tree.receiver = Some(receiver),
@@ -192,9 +219,9 @@ impl SannyGitApp {
             .into();
         }
         if refresh_requested {
-            self.refs_pending = true;
-            self.refs_loading = true;
-            self.refs_error = None;
+            self.branches.pending = true;
+            self.branches.loading = true;
+            self.branches.error = None;
             self.queue_history_reload();
         }
     }
@@ -219,7 +246,7 @@ impl SannyGitApp {
             "Index updated"
         };
         if outcome.is_ok() && staged && self.preferences.staged_only_after_staging {
-            self.commit_contents = git::CommitContents::Staged;
+            self.commit.contents = git::CommitContents::Staged;
         }
         let refresh_error = match update.snapshot {
             Ok(snapshot) => {
@@ -259,7 +286,7 @@ impl SannyGitApp {
     }
 
     fn apply_working_tree_snapshot(&mut self, snapshot: git::Snapshot) {
-        if snapshot.branch != self.current_branch
+        if snapshot.branch != self.branches.current_branch
             || !self
                 .repositories
                 .get(self.selected_repository)
@@ -271,13 +298,13 @@ impl SannyGitApp {
         self.state_current = true;
         let selected = self
             .changes
-            .get(self.selected_change)
+            .get(self.selection.active)
             .map(|c| c.path.clone());
         let previous_diff =
-            self.loaded_diff == Some(self.selected_change) && self.diff_preview.is_some();
+            self.loaded_diff == Some(self.selection.active) && self.diff_preview.is_some();
         let retained_diff = self
             .changes
-            .get_mut(self.selected_change)
+            .get_mut(self.selection.active)
             .map(|change| std::mem::take(&mut change.diff))
             .unwrap_or_default();
         let index = selected
@@ -288,7 +315,7 @@ impl SannyGitApp {
         self.update_commit_contents_after_refresh(false);
         // Row indices and file contents may have changed during the read.
         self.diff_refresh_pending |= self.diff_worker.take().is_some() && previous_diff;
-        self.selected_change = index
+        self.selection.active = index
             .or_else(|| (!self.changes.is_empty()).then_some(0))
             .unwrap_or(usize::MAX);
         self.retain_change_selection();
@@ -296,11 +323,11 @@ impl SannyGitApp {
             && previous_diff
             && self
                 .changes
-                .get(self.selected_change)
+                .get(self.selection.active)
                 .is_some_and(|c| Some(&c.path) == selected.as_ref())
         {
-            self.loaded_diff = Some(self.selected_change);
-            self.changes[self.selected_change].diff = retained_diff;
+            self.loaded_diff = Some(self.selection.active);
+            self.changes[self.selection.active].diff = retained_diff;
         } else {
             self.loaded_diff = None;
             self.diff_preview = None;
@@ -311,7 +338,7 @@ impl SannyGitApp {
     fn apply_working_tree_diff(&mut self, diff: FileDiff) -> Result<(), String> {
         if let Some(change) = self
             .changes
-            .get_mut(self.selected_change)
+            .get_mut(self.selection.active)
             .filter(|c| c.path == diff.path)
         {
             match diff.result {
@@ -320,7 +347,7 @@ impl SannyGitApp {
                         self.diff_preview = Some(preview);
                     }
                     change.diff = patch;
-                    self.loaded_diff = Some(self.selected_change);
+                    self.loaded_diff = Some(self.selection.active);
                     self.diff_refresh_pending = false;
                 }
                 Err(error) => return Err(error),
@@ -333,11 +360,12 @@ impl SannyGitApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SYSTEM_GIT;
     use crate::{models::ChangeKind, test_support::TempRepo, theme::ThemeChoice};
 
     fn opened(repo: &TempRepo) -> SannyGitApp {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-        app.apply_snapshot(git::load(&repo.0).unwrap());
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
         app
     }
 
@@ -354,11 +382,11 @@ mod tests {
         }
         let mut app = opened(&repo);
         refresh(&mut app);
-        app.commit_message = "Keep draft".into();
+        app.commit.message = "Keep draft".into();
         app.change_filter = super::super::ChangeFilter::Modified;
-        app.refs_current = true;
-        app.refs_pending = false;
-        app.refs_loading = false;
+        app.branches.current = true;
+        app.branches.pending = false;
+        app.branches.loading = false;
         app.history.history_pending = false;
         app.history.history_loading = false;
         app.history.loaded_commit = Some("commit-to-keep".into());
@@ -366,7 +394,7 @@ mod tests {
         let (history_sender, history_receiver) = mpsc::channel();
         app.history.history_worker = Some(history_receiver);
         let (refs_sender, refs_receiver) = mpsc::channel();
-        app.refs_worker = Some(refs_receiver);
+        app.branches.worker = Some(refs_receiver);
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         app.history.history_session.cancel = Some(cancel.clone());
 
@@ -374,16 +402,16 @@ mod tests {
         // Group edits must refresh its staged/unstaged sections without clearing it.
         for (group, staged) in [(false, true), (false, false), (true, true), (true, false)] {
             let preview = app.diff_preview.as_ref().unwrap().lines.as_ptr();
-            let patch = app.changes[app.selected_change].diff.clone();
+            let patch = app.changes[app.selection.active].diff.clone();
             if group {
-                app.selected_paths = ["a".into(), "b".into()].into_iter().collect();
+                app.selection.paths = ["a".into(), "b".into()].into_iter().collect();
                 app.set_selected_staged(staged);
             } else {
                 app.set_staged(1, staged);
             }
             assert!(app.busy());
             assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
-            assert_eq!(app.changes[app.selected_change].diff, patch);
+            assert_eq!(app.changes[app.selection.active].diff, patch);
             let deadline = Instant::now() + Duration::from_secs(10);
             while app.busy() {
                 assert!(Instant::now() < deadline);
@@ -391,28 +419,28 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(5));
             }
             assert!(app.error.is_none(), "{:?}", app.error);
-            assert_eq!(app.changes[app.selected_change].path, "a");
-            assert_eq!(app.changes[app.selected_change].staged, group && staged);
-            assert_eq!(app.loaded_diff, Some(app.selected_change));
+            assert_eq!(app.changes[app.selection.active].path, "a");
+            assert_eq!(app.changes[app.selection.active].staged, group && staged);
+            assert_eq!(app.loaded_diff, Some(app.selection.active));
             if !group {
                 assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
             } else {
-                assert_eq!(app.selected_paths.len(), 2);
+                assert_eq!(app.selection.paths.len(), 2);
                 assert_eq!(
-                    app.changes[app.selected_change]
+                    app.changes[app.selection.active]
                         .diff
                         .contains("Staged changes"),
                     staged
                 );
             }
-            assert_eq!(app.commit_message, "Keep draft");
+            assert_eq!(app.commit.message, "Keep draft");
             assert_eq!(app.change_filter, super::super::ChangeFilter::Modified);
-            assert!(app.refs_current);
-            assert!(!app.refs_pending && !app.refs_loading);
+            assert!(app.branches.current);
+            assert!(!app.branches.pending && !app.branches.loading);
             assert!(!app.history.history_pending && !app.history.history_loading);
             assert_eq!(app.history.history_session.generation, generation);
             assert_eq!(app.history.loaded_commit.as_deref(), Some("commit-to-keep"));
-            assert!(app.history.history_worker.is_some() && app.refs_worker.is_some());
+            assert!(app.history.history_worker.is_some() && app.branches.worker.is_some());
             assert!(!cancel.load(std::sync::atomic::Ordering::Relaxed));
         }
         drop((history_sender, refs_sender));
@@ -424,7 +452,7 @@ mod tests {
         repo.write("file", "contents\n");
         let mut app = opened(&repo);
         refresh(&mut app);
-        app.commit_message = "Keep draft".into();
+        app.commit.message = "Keep draft".into();
         let preview = app.diff_preview.as_ref().unwrap().lines.as_ptr();
         let path = app.repositories[app.selected_repository].path.clone();
         app.apply_index_update(
@@ -444,7 +472,7 @@ mod tests {
         app.apply_index_update(
             Update {
                 path,
-                snapshot: git::load(&repo.0),
+                snapshot: git::load(&SYSTEM_GIT, &repo.0),
                 diff: Some(FileDiff {
                     path: "file".into(),
                     result: Err("Diff failed".into()),
@@ -456,23 +484,23 @@ mod tests {
         assert!(app.state_current);
         assert!(app.error.as_ref().unwrap().contains("Diff failed"));
         assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
-        assert_eq!(app.commit_message, "Keep draft");
+        assert_eq!(app.commit.message, "Keep draft");
     }
 
     #[test]
     fn index_update_falls_back_to_full_refresh_after_external_branch_change() {
         let repo = TempRepo::new();
         let mut app = opened(&repo);
-        app.refs_pending = false;
+        app.branches.pending = false;
         app.history.history_pending = false;
         repo.git(&["symbolic-ref", "HEAD", "refs/heads/other"]);
         app.apply_index_update(
-            Update::read(app.repositories[0].path.clone(), None),
+            Update::read(&SYSTEM_GIT, app.repositories[0].path.clone(), None),
             true,
             Ok(()),
         );
-        assert_eq!(app.current_branch, "other");
-        assert!(app.refs_pending && app.history.history_pending);
+        assert_eq!(app.branches.current_branch, "other");
+        assert!(app.branches.pending && app.history.history_pending);
     }
 
     fn refresh(app: &mut SannyGitApp) {
@@ -495,20 +523,20 @@ mod tests {
             repo.git(&["add", "--", "file"]);
             let mut app = opened(&repo);
             app.preferences.staged_only_after_staging = enabled;
-            app.commit_contents = git::CommitContents::Staged;
-            app.commit_message = "Keep draft".into();
+            app.commit.contents = git::CommitContents::Staged;
+            app.commit.message = "Keep draft".into();
             repo.git(&["commit", "-m", "external commit"]);
             refresh(&mut app);
             assert!(app.changes.is_empty());
             assert_eq!(
-                app.commit_contents,
+                app.commit.contents,
                 if enabled {
                     git::CommitContents::All
                 } else {
                     git::CommitContents::Staged
                 }
             );
-            assert_eq!(app.commit_message, "Keep draft");
+            assert_eq!(app.commit.message, "Keep draft");
         }
     }
     #[test]
@@ -517,17 +545,17 @@ mod tests {
         repo.write("file", "contents");
         let mut app = opened(&repo);
         refresh(&mut app);
-        app.commit_message = "Keep draft".into();
+        app.commit.message = "Keep draft".into();
         let preview = app.diff_preview.as_ref().unwrap().lines.as_ptr();
-        app.refs_pending = false;
+        app.branches.pending = false;
         app.history.history_pending = false;
         app.refresh();
         assert!(!app.busy());
         assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
         refresh(&mut app);
         assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
-        assert_eq!(app.commit_message, "Keep draft");
-        assert!(app.refs_pending && app.history.history_pending);
+        assert_eq!(app.commit.message, "Keep draft");
+        assert!(app.branches.pending && app.history.history_pending);
 
         app.state_current = false;
         app.refresh();
@@ -546,10 +574,10 @@ mod tests {
         repo.git(&["commit", "-m", "base"]);
         repo.write("tracked", "first\n");
         let mut app = opened(&repo);
-        app.commit_message = "Draft to preserve".into();
+        app.commit.message = "Draft to preserve".into();
         app.change_filter = super::super::ChangeFilter::Modified;
         refresh(&mut app);
-        assert!(app.changes[app.selected_change].diff.contains("+first"));
+        assert!(app.changes[app.selection.active].diff.contains("+first"));
         let preview = app.diff_preview.as_ref().unwrap().lines.as_ptr();
         refresh(&mut app);
         assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
@@ -559,24 +587,24 @@ mod tests {
         repo.write("aaa", "new file\n");
         refresh(&mut app);
         assert_eq!(app.changes.len(), 2);
-        assert_eq!(app.changes[app.selected_change].path, "tracked");
-        assert!(app.changes[app.selected_change].diff.contains("+second"));
-        assert_eq!(app.commit_message, "Draft to preserve");
+        assert_eq!(app.changes[app.selection.active].path, "tracked");
+        assert!(app.changes[app.selection.active].diff.contains("+second"));
+        assert_eq!(app.commit.message, "Draft to preserve");
         assert_eq!(app.change_filter, super::super::ChangeFilter::Modified);
 
         repo.git(&["add", "tracked"]);
         refresh(&mut app);
-        assert!(app.changes[app.selected_change].staged);
-        assert!(!app.changes[app.selected_change].unstaged);
+        assert!(app.changes[app.selection.active].staged);
+        assert!(!app.changes[app.selection.active].unstaged);
         std::fs::remove_file(repo.0.join("tracked")).unwrap();
         refresh(&mut app);
-        assert_eq!(app.changes[app.selected_change].kind, ChangeKind::Deleted);
+        assert_eq!(app.changes[app.selection.active].kind, ChangeKind::Deleted);
         repo.git(&["restore", "--staged", "tracked"]);
         repo.git(&["restore", "tracked"]);
         std::fs::remove_file(repo.0.join("aaa")).unwrap();
         refresh(&mut app);
         assert!(app.changes.is_empty());
-        assert_eq!(app.selected_change, usize::MAX);
+        assert_eq!(app.selection.active, usize::MAX);
         assert!(app.selected_diff().is_none());
         assert_eq!(app.status, "Working tree clean");
         // The next frame must not start another Git check immediately.
@@ -635,7 +663,9 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         app.working_tree.receiver = Some(receiver);
         app.open_repository(path.clone());
-        assert!(sender.send(Update::read(path.clone(), None)).is_err());
+        assert!(sender
+            .send(Update::read(&SYSTEM_GIT, path.clone(), None))
+            .is_err());
         let deadline = Instant::now() + Duration::from_secs(10);
         while app.busy() {
             assert!(Instant::now() < deadline);
@@ -643,7 +673,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         app.selected_repository = usize::MAX;
-        deliver(&mut app, Update::read(path, None));
+        deliver(&mut app, Update::read(&SYSTEM_GIT, path, None));
         assert_eq!(app.selected_repository, usize::MAX);
         assert_eq!(app.changes.len(), 1);
     }

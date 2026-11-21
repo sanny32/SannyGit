@@ -1,3 +1,8 @@
+use crate::git::GitContext;
+mod commit;
+#[cfg(test)]
+use commit::CommitDraft;
+use commit::CommitState;
 pub mod conflict;
 pub mod discard;
 mod errors;
@@ -229,14 +234,6 @@ pub struct RenameBranchDialog {
     pub name: String,
 }
 
-/// Only user-authored text and the expected amend target belong in draft storage.
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
-struct CommitDraft {
-    message: String,
-    amend_head: Option<String>,
-    normal_message: Option<String>,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WelcomeAction {
     Add,
@@ -267,50 +264,22 @@ pub struct SannyGitApp {
     applied_theme: ThemeChoice,
     applied_interface_style: InterfaceStyle,
     pub repositories: Vec<Repository>,
-    pub refs: Vec<crate::models::BranchRef>,
-    pub refs_current: bool,
-    pub refs_loading: bool,
-    pub refs_error: Option<String>,
-    refs_pending: bool,
-    refs_worker: Option<Receiver<WorkerResult>>,
-    pub branch_head_exists: bool,
-    pub branch_dialog_open: bool,
-    pub rename_branch_dialog: Option<RenameBranchDialog>,
-    pub tag_dialog_open: bool,
-    last_reset_strategy: crate::branches::ResetStrategy,
-    pub remote_checkout: Option<RemoteCheckoutDialog>,
+    pub branches: ref_management::BranchState,
     pub network_dialog: Option<remotes::RemoteDialog>,
     pub background_progress_only: bool,
     pub stash_dialog: Option<stash::Dialog>,
     pub discard_dialog: Option<discard::Dialog>,
-    pub ref_dialog: Option<ref_management::Dialog>,
     pub merge_dialog: Option<merge::Dialog>,
     pub conflict_dialog: Option<conflict::Dialog>,
     pub abort_merge_dialog: Option<String>,
     pub skip_push_confirmation: bool,
-    pub new_branch_name: String,
-    pub new_tag_name: String,
-    pub new_tag_message: String,
-    pub switch_to_new_branch: bool,
     pub changes: Vec<ChangeFile>,
     pub history: history::View,
     tag_log: Option<history::View>,
     pub selected_repository: usize,
-    pub selected_change: usize,
-    pub selected_paths: std::collections::BTreeSet<String>,
-    pub selection_anchor: Option<String>,
-    pub selected_branch: String,
-    pub selected_ref_group: Option<crate::models::RefKind>,
+    pub selection: file_selection::FileSelection,
     pub change_filter: ChangeFilter,
-    pub current_branch: String,
-    pub commit_message: String,
-    pub commit_contents: git::CommitContents,
-    pub generating_commit_message: bool,
-    generation_cancel: Option<Arc<AtomicBool>>,
-    pub amend: bool,
-    amend_head: Option<String>,
-    amend_draft: Option<String>,
-    commit_drafts: BTreeMap<String, CommitDraft>,
+    pub commit: CommitState,
     pub repository_path: String,
     pub open_dialog: bool,
     pub error: Option<String>,
@@ -324,7 +293,6 @@ pub struct SannyGitApp {
     pub diff_preview: Option<crate::models::DiffPreview>,
     pub state_current: bool,
     pub merging: bool,
-    merge_default_message: Option<String>,
 }
 
 impl SannyGitApp {
@@ -373,7 +341,7 @@ impl SannyGitApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.skip_push_confirmation"))
             .unwrap_or(false);
-        app.last_reset_strategy = creation_context
+        app.branches.last_reset_strategy = creation_context
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.reset_strategy"))
             .unwrap_or_default();
@@ -438,47 +406,22 @@ impl SannyGitApp {
     }
 
     fn restore_commit_drafts(&mut self, storage: &dyn eframe::Storage) {
-        self.commit_drafts =
+        self.commit.commit_drafts =
             eframe::get_value(storage, "sannygit.commit_drafts").unwrap_or_default();
     }
 
     fn remember_commit_draft(&mut self) {
-        let Some(repository) = self.repositories.get(self.selected_repository) else {
-            return;
-        };
-        let draft = CommitDraft {
-            message: if self.merge_default_message.as_ref() == Some(&self.commit_message) {
-                String::new()
-            } else {
-                self.commit_message.clone()
-            },
-            amend_head: self.amend_head.clone().filter(|_| self.amend),
-            normal_message: self.amend_draft.clone().filter(|_| self.amend),
-        };
-        if draft.message.is_empty()
-            && draft
-                .normal_message
-                .as_deref()
-                .unwrap_or_default()
-                .is_empty()
-        {
-            self.commit_drafts.remove(&repository.path);
-        } else {
-            self.commit_drafts.insert(repository.path.clone(), draft);
+        if let Some(repo) = self.repositories.get(self.selected_repository) {
+            self.commit.remember(&repo.path);
         }
     }
 
     fn load_commit_draft(&mut self) {
-        let draft = self
+        let path = self
             .repositories
             .get(self.selected_repository)
-            .and_then(|repository| self.commit_drafts.get(&repository.path))
-            .cloned()
-            .unwrap_or_default();
-        self.commit_message = draft.message;
-        self.amend_head = draft.amend_head;
-        self.amend = self.amend_head.is_some();
-        self.amend_draft = draft.normal_message;
+            .map(|repo| repo.path.as_str());
+        self.commit.load(path);
     }
 
     fn restore_active_repository(&mut self, storage: &dyn eframe::Storage) {
@@ -523,50 +466,22 @@ impl SannyGitApp {
             applied_theme: theme,
             applied_interface_style: InterfaceStyle::default(),
             repositories: Vec::new(),
-            refs: Vec::new(),
-            refs_current: false,
-            refs_loading: false,
-            refs_error: None,
-            refs_pending: false,
-            refs_worker: None,
-            branch_head_exists: false,
-            branch_dialog_open: false,
-            rename_branch_dialog: None,
-            tag_dialog_open: false,
-            last_reset_strategy: Default::default(),
-            remote_checkout: None,
+            branches: Default::default(),
             network_dialog: None,
             background_progress_only: false,
             stash_dialog: None,
             discard_dialog: None,
-            ref_dialog: None,
             merge_dialog: None,
             conflict_dialog: None,
             abort_merge_dialog: None,
             skip_push_confirmation: false,
-            new_branch_name: String::new(),
-            new_tag_name: String::new(),
-            new_tag_message: String::new(),
-            switch_to_new_branch: true,
             changes: Vec::new(),
             history: history::View::default(),
             tag_log: None,
             selected_repository: usize::MAX,
-            selected_change: usize::MAX,
-            selected_paths: Default::default(),
-            selection_anchor: None,
-            selected_branch: String::new(),
-            selected_ref_group: None,
+            selection: Default::default(),
             change_filter: ChangeFilter::All,
-            current_branch: String::new(),
-            commit_message: String::new(),
-            commit_contents: git::CommitContents::default(),
-            generating_commit_message: false,
-            generation_cancel: None,
-            amend: false,
-            amend_head: None,
-            amend_draft: None,
-            commit_drafts: BTreeMap::new(),
+            commit: CommitState::default(),
             repository_path: String::new(),
             open_dialog: false,
             error: None,
@@ -580,11 +495,10 @@ impl SannyGitApp {
             diff_preview: None,
             state_current: false,
             merging: false,
-            merge_default_message: None,
         }
     }
     pub fn selected_diff(&self) -> Option<&crate::models::DiffPreview> {
-        (self.loaded_diff == Some(self.selected_change))
+        (self.loaded_diff == Some(self.selection.active))
             .then_some(self.diff_preview.as_ref())
             .flatten()
     }
@@ -618,37 +532,40 @@ impl SannyGitApp {
             || (self.network_dialog.is_some() && !self.remote_confirmation_hidden())
             || self.stash_dialog.is_some()
             || self.discard_dialog.is_some()
-            || self.ref_dialog.is_some()
+            || self.branches.ref_dialog.is_some()
             || self.merge_dialog.is_some()
             || self
                 .conflict_dialog
                 .as_ref()
                 .is_some_and(|dialog| dialog.action != crate::conflict::Action::Edit)
             || self.abort_merge_dialog.is_some()
-            || self.remote_checkout.is_some()
-            || self.branch_dialog_open
-            || self.rename_branch_dialog.is_some()
-            || self.tag_dialog_open
+            || self.branches.remote_checkout.is_some()
+            || self.branches.branch_dialog_open
+            || self.branches.rename_branch_dialog.is_some()
+            || self.branches.tag_dialog_open
             || self.error.is_some()
             || !self.error_dialogs.pending.is_empty()
     }
 
-    fn start_worker(&mut self, job: impl FnOnce() -> WorkerResult + Send + 'static) -> bool {
+    fn start_worker(
+        &mut self,
+        job: impl FnOnce(&GitContext) -> WorkerResult + Send + 'static,
+    ) -> bool {
         self.invalidate_view_reads();
         // An operation supersedes a ref read; reload after the operation completes.
-        if self.refs_worker.take().is_some() {
-            self.refs_pending = true;
+        if self.branches.worker.take().is_some() {
+            self.branches.pending = true;
         }
         // A user operation supersedes any in-flight automatic read.
         self.working_tree.invalidate();
         self.tracking.cancel();
         let (sender, receiver) = mpsc::channel();
-        let git_executable = self.preferences.git_executable.clone();
+        let git_context = crate::git::GitContext::new(self.preferences.git_executable.clone());
         match std::thread::Builder::new()
             .name("sannygit-reader".into())
             .spawn(move || {
-                git::set_executable(git_executable);
-                let _ = sender.send(job());
+                let git = &git_context;
+                let _ = sender.send(job(git));
             }) {
             Ok(_) => {
                 self.worker = Some(receiver);
@@ -665,15 +582,15 @@ impl SannyGitApp {
     fn spawn_reader(
         &self,
         repaint: Option<eframe::egui::Context>,
-        job: impl FnOnce() -> WorkerResult + Send + 'static,
+        job: impl FnOnce(&GitContext) -> WorkerResult + Send + 'static,
     ) -> Result<Receiver<WorkerResult>, String> {
         let (sender, receiver) = mpsc::channel();
-        let git_executable = self.preferences.git_executable.clone();
+        let git_context = crate::git::GitContext::new(self.preferences.git_executable.clone());
         std::thread::Builder::new()
             .name("sannygit-view".into())
             .spawn(move || {
-                git::set_executable(git_executable);
-                let _ = sender.send(job());
+                let git = &git_context;
+                let _ = sender.send(job(git));
                 if let Some(context) = repaint {
                     context.request_repaint();
                 }
@@ -749,7 +666,9 @@ impl SannyGitApp {
         self.error = None;
         self.state_current = false;
         self.status = "Loading repository…".into();
-        self.start_worker(move || WorkerResult::Repository(git::load(&PathBuf::from(path))));
+        self.start_worker(move |git| {
+            WorkerResult::Repository(git::load(git, &PathBuf::from(path)))
+        });
     }
 
     pub fn menu_action_enabled(&self, action: crate::menu::MenuAction) -> bool {
@@ -798,11 +717,14 @@ impl SannyGitApp {
             MenuAction::Unstage => self.selected_staging_allowed(false),
             MenuAction::Commit => self.commit_blocker().is_none(),
             MenuAction::CreateBranch => {
-                !self.busy() && self.state_current && self.refs_current && self.branch_head_exists
+                !self.busy()
+                    && self.state_current
+                    && self.branches.current
+                    && self.branches.branch_head_exists
             }
             MenuAction::SwitchBranch => self.switch_branch_blocker().is_none(),
             MenuAction::RenameBranch => self
-                .rename_branch_target_blocker(&self.selected_branch)
+                .rename_branch_target_blocker(&self.branches.selected_branch)
                 .is_none(),
             MenuAction::DeleteBranch => self.delete_branch_blocker().is_none(),
             MenuAction::PushTag => self.push_tag_blocker().is_none(),
@@ -880,7 +802,7 @@ impl SannyGitApp {
             MenuAction::Stashes => self.open_stashes(),
             MenuAction::Merge => self.open_merge(),
             MenuAction::Rebase => self.open_rebase(),
-            MenuAction::CreateBranch => self.branch_dialog_open = true,
+            MenuAction::CreateBranch => self.branches.branch_dialog_open = true,
             MenuAction::SwitchBranch => self.switch_branch(),
             MenuAction::RenameBranch => self.open_rename_branch(),
             MenuAction::Fetch => self.open_remote(crate::remotes::Operation::Fetch),
@@ -1034,8 +956,8 @@ impl SannyGitApp {
     fn apply_snapshot(&mut self, snapshot: git::Snapshot) {
         self.invalidate_worktree_availability();
         self.invalidate_view_reads();
-        self.refs_worker = None;
-        let same_branch = self.current_branch == snapshot.branch;
+        self.branches.worker = None;
+        let same_branch = self.branches.current_branch == snapshot.branch;
         if !same_branch {
             self.tracking.branch_changed();
         } else {
@@ -1044,7 +966,7 @@ impl SannyGitApp {
         self.state_current = true;
         let selected = self
             .changes
-            .get(self.selected_change)
+            .get(self.selection.active)
             .map(|c| c.path.clone());
         let existing_repository = self
             .repositories
@@ -1067,10 +989,10 @@ impl SannyGitApp {
             let path = self.repositories[index].path.clone();
             self.assign_group(&path, self.manager.preferences.selected_group.clone());
         }
-        self.current_branch = snapshot.branch;
+        self.branches.current_branch = snapshot.branch;
         let retained_diff = if same_repository && same_branch && self.selected_diff().is_some() {
             self.changes
-                .get_mut(self.selected_change)
+                .get_mut(self.selection.active)
                 .map(|change| std::mem::take(&mut change.diff))
         } else {
             None
@@ -1082,7 +1004,7 @@ impl SannyGitApp {
         } else {
             None
         };
-        self.selected_change = retained_selection
+        self.selection.active = retained_selection
             .or_else(|| (!self.changes.is_empty()).then_some(0))
             .unwrap_or(usize::MAX);
         if let (Some(index), Some(diff)) = (retained_selection, retained_diff) {
@@ -1096,14 +1018,14 @@ impl SannyGitApp {
         }
         self.open_dialog = false;
         if !same_repository {
-            self.selected_paths.clear();
-            self.selection_anchor = None;
+            self.selection.paths.clear();
+            self.selection.anchor = None;
         }
         self.retain_change_selection();
-        self.refs_current = false;
-        self.refs_pending = true;
-        self.refs_loading = true;
-        self.refs_error = None;
+        self.branches.current = false;
+        self.branches.pending = true;
+        self.branches.loading = true;
+        self.branches.error = None;
         self.queue_history_reload();
         if !same_repository {
             self.close_tag_log();
@@ -1111,26 +1033,26 @@ impl SannyGitApp {
             self.manager.dialog = None;
             self.manager.worktrees.clear();
             self.manager.settings = None;
-            self.selected_branch.clear();
-            self.selected_ref_group = None;
-            self.refs.clear();
-            self.branch_head_exists = false;
-            self.branch_dialog_open = false;
-            self.rename_branch_dialog = None;
-            self.tag_dialog_open = false;
-            self.new_tag_name.clear();
-            self.new_tag_message.clear();
-            self.remote_checkout = None;
+            self.branches.selected_branch.clear();
+            self.branches.selected_ref_group = None;
+            self.branches.entries.clear();
+            self.branches.branch_head_exists = false;
+            self.branches.branch_dialog_open = false;
+            self.branches.rename_branch_dialog = None;
+            self.branches.tag_dialog_open = false;
+            self.branches.new_tag_name.clear();
+            self.branches.new_tag_message.clear();
+            self.branches.remote_checkout = None;
             self.network_dialog = None;
             self.stash_dialog = None;
             self.discard_dialog = None;
-            self.ref_dialog = None;
+            self.branches.ref_dialog = None;
             self.merge_dialog = None;
             if !self.conflict_solver_open() {
                 self.conflict_dialog = None;
             }
             self.abort_merge_dialog = None;
-            self.new_branch_name.clear();
+            self.branches.new_branch_name.clear();
             self.history.commits.clear();
             self.history.history_session.clear_view();
             self.history.history_edges.clear();
@@ -1160,17 +1082,17 @@ impl SannyGitApp {
         same_repository: bool,
     ) {
         if !same_repository {
-            self.merge_default_message = None;
+            self.commit.merge_default_message = None;
         } else if self.merging
             && !merging
-            && self.merge_default_message.take().as_ref() == Some(&self.commit_message)
+            && self.commit.merge_default_message.take().as_ref() == Some(&self.commit.message)
         {
-            self.commit_message.clear();
+            self.commit.message.clear();
         }
-        if merging && (!self.merging || !same_repository) && self.commit_message.is_empty() {
+        if merging && (!self.merging || !same_repository) && self.commit.message.is_empty() {
             if let Some(message) = message {
-                self.commit_message.clone_from(&message);
-                self.merge_default_message = Some(message);
+                self.commit.message.clone_from(&message);
+                self.commit.merge_default_message = Some(message);
             }
         }
         self.merging = merging;
@@ -1181,9 +1103,9 @@ impl SannyGitApp {
             return;
         }
         if !self.changes.iter().any(|change| change.staged) {
-            self.commit_contents = git::CommitContents::All;
+            self.commit.contents = git::CommitContents::All;
         } else if opening_repository {
-            self.commit_contents = git::CommitContents::Staged;
+            self.commit.contents = git::CommitContents::Staged;
         }
     }
     pub fn reload_refs(&mut self) {
@@ -1191,16 +1113,16 @@ impl SannyGitApp {
             return;
         }
         // Keep the last successful snapshot usable during this read-only refresh.
-        self.refs_pending = true;
-        self.refs_loading = true;
-        self.refs_error = None;
+        self.branches.pending = true;
+        self.branches.loading = true;
+        self.branches.error = None;
     }
 
     fn load_refs(&mut self) {
         if self.busy()
             || self.history.history_pending
-            || self.refs_worker.is_some()
-            || !self.refs_pending
+            || self.branches.worker.is_some()
+            || !self.branches.pending
         {
             return;
         }
@@ -1208,43 +1130,43 @@ impl SannyGitApp {
             return;
         };
         let path = repository.path.clone();
-        self.refs_pending = false;
+        self.branches.pending = false;
         let (sender, receiver) = mpsc::channel();
-        let git_executable = self.preferences.git_executable.clone();
+        let git_context = crate::git::GitContext::new(self.preferences.git_executable.clone());
         match std::thread::Builder::new()
             .name("sannygit-refs".into())
             .spawn(move || {
-                git::set_executable(git_executable);
+                let git = &git_context;
                 let _ = sender.send(WorkerResult::Refs {
-                    result: crate::branches::load(&PathBuf::from(&path)),
+                    result: crate::branches::load(git, &PathBuf::from(&path)),
                     path,
                 });
             }) {
-            Ok(_) => self.refs_worker = Some(receiver),
+            Ok(_) => self.branches.worker = Some(receiver),
             Err(error) => self.ref_read_failed(format!("Cannot start background worker: {error}")),
         }
     }
 
     fn ref_read_failed(&mut self, error: String) {
-        self.refs_loading = false;
-        self.refs_current = false;
-        self.refs_error = Some(error);
+        self.branches.loading = false;
+        self.branches.current = false;
+        self.branches.error = Some(error);
     }
 
     fn poll_refs(&mut self) {
-        let Some(receiver) = &self.refs_worker else {
+        let Some(receiver) = &self.branches.worker else {
             return;
         };
         let result = match receiver.try_recv() {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.refs_worker = None;
+                self.branches.worker = None;
                 self.ref_read_failed("Background worker stopped unexpectedly".into());
                 return;
             }
         };
-        self.refs_worker = None;
+        self.branches.worker = None;
         self.apply_worker_result(result);
     }
 
@@ -1253,7 +1175,7 @@ impl SannyGitApp {
             Some("Wait for the current operation to finish")
         } else if self.repositories.get(self.selected_repository).is_none() {
             Some("Open a repository first")
-        } else if !self.state_current || !self.refs_current {
+        } else if !self.state_current || !self.branches.current {
             Some("Refresh the repository and branches before continuing")
         } else {
             None
@@ -1265,9 +1187,10 @@ impl SannyGitApp {
             return Some(reason);
         }
         let Some(target) = self
-            .refs
+            .branches
+            .entries
             .iter()
-            .find(|r| r.full_name == self.selected_branch)
+            .find(|r| r.full_name == self.branches.selected_branch)
         else {
             return Some("Select a branch or tag");
         };
@@ -1285,7 +1208,8 @@ impl SannyGitApp {
     fn rename_branch_target_blocker(&self, source: &str) -> Option<&'static str> {
         self.branch_base_blocker().or_else(|| {
             (!self
-                .refs
+                .branches
+                .entries
                 .iter()
                 .any(|r| r.full_name == source && r.kind == crate::models::RefKind::Local))
             .then_some("Select an existing local branch")
@@ -1294,14 +1218,15 @@ impl SannyGitApp {
 
     pub fn open_rename_branch(&mut self) {
         if self
-            .rename_branch_target_blocker(&self.selected_branch)
+            .rename_branch_target_blocker(&self.branches.selected_branch)
             .is_some()
         {
             return;
         }
-        self.rename_branch_dialog = Some(RenameBranchDialog {
-            source: self.selected_branch.clone(),
+        self.branches.rename_branch_dialog = Some(RenameBranchDialog {
+            source: self.branches.selected_branch.clone(),
             name: self
+                .branches
                 .selected_branch
                 .strip_prefix("refs/heads/")
                 .unwrap_or_default()
@@ -1311,11 +1236,12 @@ impl SannyGitApp {
     }
 
     pub fn rename_branch_blocker(&self) -> Option<&'static str> {
-        let dialog = self.rename_branch_dialog.as_ref()?;
+        let dialog = self.branches.rename_branch_dialog.as_ref()?;
         self.rename_branch_target_blocker(&dialog.source)
             .or_else(|| crate::branches::name_hint(&dialog.name))
             .or_else(|| {
-                self.refs
+                self.branches
+                    .entries
                     .iter()
                     .any(|r| r.full_name == format!("refs/heads/{}", dialog.name))
                     .then_some("A local branch with this name already exists")
@@ -1326,23 +1252,23 @@ impl SannyGitApp {
         if self.rename_branch_blocker().is_some() {
             return;
         }
-        let Some(dialog) = &self.rename_branch_dialog else {
+        let Some(dialog) = &self.branches.rename_branch_dialog else {
             return;
         };
         let source = dialog.source.clone();
         let name = dialog.name.clone();
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
         self.state_current = false;
-        self.refs_current = false;
+        self.branches.current = false;
         self.error = None;
         self.status = "Renaming branch…".into();
-        self.start_worker(move || {
-            let outcome = crate::branches::rename(&root, &source, &name);
+        self.start_worker(move |git| {
+            let outcome = crate::branches::rename(git, &root, &source, &name);
             WorkerResult::Operation {
                 committed: false,
                 success: "Branch renamed",
                 outcome,
-                snapshot: git::load(&root),
+                snapshot: git::load(git, &root),
             }
         });
     }
@@ -1350,14 +1276,20 @@ impl SannyGitApp {
     pub fn create_tag_blocker(&self) -> Option<&'static str> {
         self.branch_base_blocker()
             .or_else(|| {
-                (!self.branch_head_exists)
+                (!self.branches.branch_head_exists)
                     .then_some("Create the first commit before creating a tag")
             })
-            .or_else(|| crate::branches::tag_hint(&self.new_tag_name, &self.new_tag_message))
             .or_else(|| {
-                self.refs
+                crate::branches::tag_hint(
+                    &self.branches.new_tag_name,
+                    &self.branches.new_tag_message,
+                )
+            })
+            .or_else(|| {
+                self.branches
+                    .entries
                     .iter()
-                    .any(|r| r.full_name == format!("refs/tags/{}", self.new_tag_name))
+                    .any(|r| r.full_name == format!("refs/tags/{}", self.branches.new_tag_name))
                     .then_some("A tag with this name already exists")
             })
     }
@@ -1367,10 +1299,10 @@ impl SannyGitApp {
             return;
         }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
-        let name = self.new_tag_name.clone();
-        let message = self.new_tag_message.clone();
+        let name = self.branches.new_tag_name.clone();
+        let message = self.branches.new_tag_message.clone();
         self.state_current = false;
-        self.refs_current = false;
+        self.branches.current = false;
         self.error = None;
         let cancel = Arc::new(AtomicBool::new(false));
         self.status = if push {
@@ -1382,7 +1314,7 @@ impl SannyGitApp {
         if push {
             self.manager.cancel = Some(cancel.clone());
         }
-        if self.start_worker(move || WorkerResult::Operation {
+        if self.start_worker(move |git| WorkerResult::Operation {
             committed: false,
             success: if push {
                 "Tag created and pushed"
@@ -1390,13 +1322,13 @@ impl SannyGitApp {
                 "Tag created"
             },
             outcome: if push {
-                crate::remotes::create_and_push_tag(&root, &name, &message, &cancel)
+                crate::remotes::create_and_push_tag(git, &root, &name, &message, &cancel)
             } else {
-                crate::branches::create_tag(&root, &name, &message)
+                crate::branches::create_tag(git, &root, &name, &message)
             },
-            snapshot: git::load(&root),
+            snapshot: git::load(git, &root),
         }) {
-            self.tag_dialog_open = false;
+            self.branches.tag_dialog_open = false;
             self.background_progress_only = true;
         } else if push {
             self.manager.cancel = None;
@@ -1407,16 +1339,17 @@ impl SannyGitApp {
         if let Some(reason) = self.branch_base_blocker() {
             return Some(reason);
         }
-        if !self.branch_head_exists {
+        if !self.branches.branch_head_exists {
             return Some("Create the first commit before creating another branch");
         }
-        if let Some(reason) = crate::branches::name_hint(&self.new_branch_name) {
+        if let Some(reason) = crate::branches::name_hint(&self.branches.new_branch_name) {
             return Some(reason);
         }
         if self
-            .refs
+            .branches
+            .entries
             .iter()
-            .any(|r| r.full_name == format!("refs/heads/{}", self.new_branch_name))
+            .any(|r| r.full_name == format!("refs/heads/{}", self.branches.new_branch_name))
         {
             return Some("A local branch with this name already exists");
         }
@@ -1427,22 +1360,23 @@ impl SannyGitApp {
         if self.switch_branch_blocker().is_some() {
             return;
         }
-        if let Some(remote) = self.refs.iter().find(|r| {
-            r.full_name == self.selected_branch && r.kind == crate::models::RefKind::Remote
+        if let Some(remote) = self.branches.entries.iter().find(|r| {
+            r.full_name == self.branches.selected_branch && r.kind == crate::models::RefKind::Remote
         }) {
-            if let Some(local) = crate::branches::local_for_remote(&self.refs, remote) {
+            if let Some(local) = crate::branches::local_for_remote(&self.branches.entries, remote) {
                 let current = local.current;
-                self.selected_branch = local.full_name.clone();
+                self.branches.selected_branch = local.full_name.clone();
                 if current {
                     self.status = "Local branch already checked out".into();
                     return;
                 }
             } else {
-                self.remote_checkout = Some(RemoteCheckoutDialog {
+                self.branches.remote_checkout = Some(RemoteCheckoutDialog {
                     remote: remote.full_name.clone(),
                     mode: 1,
                     local: self
-                        .refs
+                        .branches
+                        .entries
                         .iter()
                         .find(|r| r.kind == crate::models::RefKind::Local)
                         .map(|r| r.full_name.clone())
@@ -1459,14 +1393,14 @@ impl SannyGitApp {
             }
         }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
-        let target = self.selected_branch.clone();
+        let target = self.branches.selected_branch.clone();
         self.state_current = false;
-        self.refs_current = false;
+        self.branches.current = false;
         self.error = None;
         self.status = "Switching branch or tag…".into();
-        self.start_worker(move || {
-            let outcome = crate::branches::switch(&root, &target);
-            let snapshot = git::load(&root);
+        self.start_worker(move |git| {
+            let outcome = crate::branches::switch(git, &root, &target);
+            let snapshot = git::load(git, &root);
             WorkerResult::Operation {
                 committed: false,
                 success: "Branch or tag switched",
@@ -1487,16 +1421,16 @@ impl SannyGitApp {
         }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
         self.state_current = false;
-        self.refs_current = false;
+        self.branches.current = false;
         self.error = None;
         self.status = "Checking out remote branch…".into();
-        self.start_worker(move || {
-            let outcome = crate::branches::checkout_remote(&root, &remote, &choice);
+        self.start_worker(move |git| {
+            let outcome = crate::branches::checkout_remote(git, &root, &remote, &choice);
             WorkerResult::Operation {
                 committed: false,
                 success: "Checkout complete",
                 outcome,
-                snapshot: git::load(&root),
+                snapshot: git::load(git, &root),
             }
         })
     }
@@ -1506,15 +1440,15 @@ impl SannyGitApp {
             return;
         }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
-        let name = self.new_branch_name.clone();
-        let switch_to = self.switch_to_new_branch;
+        let name = self.branches.new_branch_name.clone();
+        let switch_to = self.branches.switch_to_new_branch;
         self.state_current = false;
-        self.refs_current = false;
+        self.branches.current = false;
         self.error = None;
         self.status = "Creating branch…".into();
-        self.start_worker(move || {
-            let outcome = crate::branches::create(&root, &name, switch_to);
-            let snapshot = git::load(&root);
+        self.start_worker(move |git| {
+            let outcome = crate::branches::create(git, &root, &name, switch_to);
+            let snapshot = git::load(git, &root);
             WorkerResult::Operation {
                 committed: false,
                 success: if switch_to {
@@ -1606,8 +1540,8 @@ impl SannyGitApp {
         let generation = self.history.commit_preview_generation;
         if self.history.loaded_commit.as_ref() != Some(&hash) {
             self.history.loaded_commit = Some(hash.clone());
-            match self.spawn_reader(None, move || WorkerResult::CommitFiles {
-                result: crate::history::files(&root, &hash, parent.as_deref()),
+            match self.spawn_reader(None, move |git| WorkerResult::CommitFiles {
+                result: crate::history::files(git, &root, &hash, parent.as_deref()),
                 path,
                 hash,
                 generation,
@@ -1634,8 +1568,8 @@ impl SannyGitApp {
             return;
         }
         self.history.loaded_commit_file = Some(file.path.clone());
-        match self.spawn_reader(None, move || WorkerResult::CommitPatch {
-            result: crate::history::file_patch(&root, &hash, parent.as_deref(), &file)
+        match self.spawn_reader(None, move |git| WorkerResult::CommitPatch {
+            result: crate::history::file_patch(git, &root, &hash, parent.as_deref(), &file)
                 .map(|patch| crate::models::DiffPreview::new(&patch)),
             path,
             file: file.path,
@@ -1645,14 +1579,6 @@ impl SannyGitApp {
             Ok(receiver) => self.history.commit_preview_worker = Some(receiver),
             Err(error) => self.history.commit_preview_error = Some(error),
         }
-    }
-
-    fn commit_preview_matches(&self, path: &str, hash: &str, generation: u64) -> bool {
-        self.repositories
-            .get(self.selected_repository)
-            .is_some_and(|repo| repo.path == path)
-            && self.history.selected_commit.as_deref() == Some(hash)
-            && self.history.commit_preview_generation == generation
     }
 
     pub fn staging_allowed(&self, index: usize, staged: bool) -> bool {
@@ -1686,14 +1612,18 @@ impl SannyGitApp {
         .into();
         let selected = self
             .changes
-            .get(self.selected_change)
+            .get(self.selection.active)
             .map(|c| c.path.clone());
-        self.start_index_worker(move || {
-            let outcome = git::set_staged(&root, &path, staged);
+        self.start_index_worker(move |git| {
+            let outcome = git::set_staged(git, &root, &path, staged);
             WorkerResult::Index {
                 staged,
                 outcome,
-                update: working_tree::Update::read(root.to_string_lossy().into_owned(), selected),
+                update: working_tree::Update::read(
+                    git,
+                    root.to_string_lossy().into_owned(),
+                    selected,
+                ),
             }
         });
     }
@@ -1703,13 +1633,13 @@ impl SannyGitApp {
             Some("Wait for the current operation to finish")
         } else if self.repositories.get(self.selected_repository).is_none() {
             Some("Open a repository first")
-        } else if self.amend {
+        } else if self.commit.amend {
             None
-        } else if !self.state_current || !self.refs_current {
+        } else if !self.state_current || !self.branches.current {
             Some("Refresh the repository before amending")
         } else if self.merging {
             Some("Finish the merge before amending")
-        } else if !self.branch_head_exists {
+        } else if !self.branches.branch_head_exists {
             Some("There is no commit to amend")
         } else {
             None
@@ -1717,21 +1647,17 @@ impl SannyGitApp {
     }
 
     pub fn set_amend(&mut self, enabled: bool) {
-        if self.amend_blocker().is_some() || enabled == self.amend {
+        if self.amend_blocker().is_some() || enabled == self.commit.amend {
             return;
         }
         if !enabled {
-            self.amend = false;
-            self.amend_head = None;
-            if let Some(draft) = self.amend_draft.take() {
-                self.commit_message = draft;
-            }
+            self.commit.cancel_amend();
             return;
         }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
         self.error = None;
         self.status = "Loading last commit message…".into();
-        self.start_worker(move || WorkerResult::AmendMessage(git::amend_message(&root)));
+        self.start_worker(move |git| WorkerResult::AmendMessage(git::amend_message(git, &root)));
     }
 
     pub fn commit_blocker(&self) -> Option<&'static str> {
@@ -1747,21 +1673,21 @@ impl SannyGitApp {
             .any(|c| c.kind == crate::models::ChangeKind::Conflicted)
         {
             Some("Resolve all conflicts before committing")
-        } else if self.amend && self.amend_head.is_none() {
+        } else if self.commit.amend && self.commit.amend_head.is_none() {
             Some("Load the last commit before amending")
-        } else if self.merging && self.amend {
+        } else if self.merging && self.commit.amend {
             Some("Turn off Amend to finish the merge")
-        } else if self.changes.is_empty() && !self.amend && !self.merging {
+        } else if self.changes.is_empty() && !self.commit.amend && !self.merging {
             Some("There are no changes to commit")
-        } else if self.commit_contents == git::CommitContents::Staged
-            && !self.amend
+        } else if self.commit.contents == git::CommitContents::Staged
+            && !self.commit.amend
             && !self.merging
             && !self.changes.iter().any(|c| c.staged)
         {
             Some("There are no staged changes to commit")
-        } else if self.commit_message.trim().is_empty() {
+        } else if self.commit.message.trim().is_empty() {
             Some("Enter a commit message")
-        } else if self.commit_message.contains('\0') || self.commit_message.len() > 65_536 {
+        } else if self.commit.message.contains('\0') || self.commit.message.len() > 65_536 {
             Some("Use a message without NUL characters and no larger than 64 KiB")
         } else {
             None
@@ -1773,25 +1699,25 @@ impl SannyGitApp {
             return;
         }
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
-        let message = self.commit_message.clone();
-        let contents = self.commit_contents;
+        let message = self.commit.message.clone();
+        let contents = self.commit.contents;
         self.state_current = false;
         self.error = None;
-        let amend_head = self.amend_head.clone().filter(|_| self.amend);
-        self.status = if self.amend {
+        let amend_head = self.commit.amend_head.clone().filter(|_| self.commit.amend);
+        self.status = if self.commit.amend {
             "Amending last commit…"
         } else {
             "Creating commit…"
         }
         .into();
-        self.start_worker(move || {
+        self.start_worker(move |git| {
             let outcome = if let Some(head) = &amend_head {
-                git::amend_commit(&root, &message, head, contents)
+                git::amend_commit(git, &root, &message, head, contents)
             } else {
-                git::commit(&root, &message, contents)
+                git::commit(git, &root, &message, contents)
             };
             let committed = outcome.is_ok();
-            let snapshot = git::load(&root);
+            let snapshot = git::load(git, &root);
             WorkerResult::Operation {
                 committed,
                 success: if amend_head.is_some() {
@@ -1812,9 +1738,9 @@ impl SannyGitApp {
             Some("Open a repository first")
         } else if !self.state_current {
             Some("Refresh the repository before generating a message")
-        } else if self.amend && self.amend_head.is_none() {
+        } else if self.commit.amend && self.commit.amend_head.is_none() {
             Some("Load the last commit before generating a message")
-        } else if self.commit_contents == git::CommitContents::Staged
+        } else if self.commit.contents == git::CommitContents::Staged
             && !self.changes.iter().any(|c| c.staged)
         {
             Some("There are no staged changes to describe")
@@ -1854,17 +1780,17 @@ impl SannyGitApp {
             self.error = Some(error);
             return;
         }
-        let contents = self.commit_contents;
-        let head = self.amend_head.clone().filter(|_| self.amend);
+        let contents = self.commit.contents;
+        let head = self.commit.amend_head.clone().filter(|_| self.commit.amend);
         self.error = None;
         self.status = "Generating commit message…".into();
         let cancel = Arc::new(AtomicBool::new(false));
-        self.generation_cancel = Some(cancel.clone());
-        self.generating_commit_message = self.start_worker(move || {
+        self.commit.generation_cancel = Some(cancel.clone());
+        self.commit.generating_message = self.start_worker(move |git| {
             let result =
                 crate::llm::load_api_key_if_needed(&mut config, repository_scope.as_deref())
                     .and_then(|()| config.validate())
-                    .and_then(|()| git::commit_patch(&root, contents, head.as_deref()))
+                    .and_then(|()| git::commit_patch(git, &root, contents, head.as_deref()))
                     .and_then(git::limit_diff)
                     .and_then(|patch| {
                         if patch.trim().is_empty() {
@@ -1881,22 +1807,22 @@ impl SannyGitApp {
                 repository: repository_scope,
             }
         });
-        if !self.generating_commit_message {
-            self.generation_cancel = None;
+        if !self.commit.generating_message {
+            self.commit.generation_cancel = None;
         }
     }
 
     pub fn cancel_commit_message_generation(&mut self) {
-        if !self.generating_commit_message {
+        if !self.commit.generating_message {
             return;
         }
-        if let Some(cancel) = self.generation_cancel.take() {
+        if let Some(cancel) = self.commit.generation_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
         // Discard the receiver as well: a completed or late response from this
         // generation must never overwrite the draft or a subsequent operation.
         self.worker = None;
-        self.generating_commit_message = false;
+        self.commit.generating_message = false;
         self.status = "Commit message generation cancelled".into();
     }
 
@@ -1910,14 +1836,14 @@ impl SannyGitApp {
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.worker = None;
                 self.background_progress_only = false;
-                self.generating_commit_message = false;
-                self.generation_cancel = None;
+                self.commit.generating_message = false;
+                self.commit.generation_cancel = None;
                 self.manager.cancel = None;
                 self.error = Some("Background worker stopped unexpectedly".into());
-                if self.refs_loading && !self.refs_pending {
-                    self.refs_loading = false;
-                    self.refs_current = false;
-                    self.refs_error = self.error.clone();
+                if self.branches.loading && !self.branches.pending {
+                    self.branches.loading = false;
+                    self.branches.current = false;
+                    self.branches.error = self.error.clone();
                 }
                 if self.history.history_loading && !self.history.history_pending {
                     self.history.history_loading = false;
@@ -1989,46 +1915,7 @@ impl SannyGitApp {
                 self.apply_remote_info(operation, result)
             }
             WorkerResult::RepositoryTask(result) => self.apply_repository_result(*result),
-            WorkerResult::Refs { path, result } => {
-                if self
-                    .repositories
-                    .get(self.selected_repository)
-                    .is_some_and(|r| r.path == path)
-                {
-                    self.refs_loading = false;
-                    match result {
-                        Ok(snapshot) => {
-                            self.refs = snapshot.refs;
-                            self.branch_head_exists = snapshot.has_head;
-                            self.refs_current = true;
-                            self.refs_error = None;
-                            if self.selected_ref_group.is_some_and(|kind| {
-                                kind != crate::models::RefKind::Tag
-                                    && !self.refs.iter().any(|r| r.kind == kind)
-                            }) {
-                                self.selected_ref_group = None;
-                            }
-                            if self.selected_ref_group.is_none()
-                                && !self
-                                    .refs
-                                    .iter()
-                                    .any(|r| r.full_name == self.selected_branch)
-                            {
-                                self.selected_branch = self
-                                    .refs
-                                    .iter()
-                                    .find(|r| r.current)
-                                    .map(|r| r.full_name.clone())
-                                    .unwrap_or_default();
-                            }
-                        }
-                        Err(error) => {
-                            self.refs_current = false;
-                            self.refs_error = Some(error);
-                        }
-                    }
-                }
-            }
+            WorkerResult::Refs { path, result } => self.apply_refs(path, result),
             WorkerResult::History {
                 path,
                 all,
@@ -2041,43 +1928,17 @@ impl SannyGitApp {
                 hash,
                 generation,
                 result,
-            } => {
-                if self.commit_preview_matches(&path, &hash, generation) {
-                    match result {
-                        Ok(files) => {
-                            self.history.selected_commit_file =
-                                files.first().map(|file| file.path.clone());
-                            self.history.commit_files = Some(files);
-                            self.history.commit_preview_error = None;
-                        }
-                        Err(error) => self.history.commit_preview_error = Some(error),
-                    }
-                }
-            }
+            } => self.apply_commit_files(path, hash, generation, result),
             WorkerResult::CommitPatch {
                 path,
                 file,
                 hash,
                 generation,
                 result,
-            } => {
-                if self.commit_preview_matches(&path, &hash, generation)
-                    && self.history.selected_commit_file.as_ref() == Some(&file)
-                {
-                    match result {
-                        Ok(preview) => {
-                            self.history.commit_preview = Some(preview);
-                            self.history.commit_preview_error = None;
-                        }
-                        Err(error) => self.history.commit_preview_error = Some(error),
-                    }
-                }
-            }
+            } => self.apply_commit_patch(path, file, hash, generation, result),
             WorkerResult::AmendMessage(result) => match result {
                 Ok((head, message)) => {
-                    self.amend_draft = Some(std::mem::replace(&mut self.commit_message, message));
-                    self.amend_head = Some(head);
-                    self.amend = true;
+                    self.commit.begin_amend(head, message);
                     self.status = "Ready to amend last commit".into();
                 }
                 Err(error) => {
@@ -2090,8 +1951,8 @@ impl SannyGitApp {
                 config,
                 repository,
             } => {
-                self.generating_commit_message = false;
-                self.generation_cancel = None;
+                self.commit.generating_message = false;
+                self.commit.generation_cancel = None;
                 let current = match repository.as_deref() {
                     Some(path) => self.repository_llm_configs.get_mut(path),
                     None => Some(&mut self.llm_config),
@@ -2116,7 +1977,7 @@ impl SannyGitApp {
                             logging::Level::Info,
                             format_args!("Commit message generated"),
                         );
-                        self.commit_message = message;
+                        self.commit.message = message;
                         self.status = "Commit message generated".into();
                     }
                     Err(error) => {
@@ -2173,7 +2034,7 @@ impl SannyGitApp {
                     && success == "File staged"
                     && self.preferences.staged_only_after_staging
                 {
-                    self.commit_contents = git::CommitContents::Staged;
+                    self.commit.contents = git::CommitContents::Staged;
                 }
                 if success.starts_with("Stash ") {
                     if let Some(dialog) = &mut self.stash_dialog {
@@ -2215,33 +2076,32 @@ impl SannyGitApp {
                     }
                 }
                 if outcome.is_ok() && success == "Branch renamed" {
-                    if let Some(dialog) = self.rename_branch_dialog.take() {
-                        self.selected_branch = format!("refs/heads/{}", dialog.name);
-                        self.selected_ref_group = None;
+                    if let Some(dialog) = self.branches.rename_branch_dialog.take() {
+                        self.branches.selected_branch = format!("refs/heads/{}", dialog.name);
+                        self.branches.selected_ref_group = None;
                     }
                 }
                 if success == "Tag created and pushed" {
                     self.manager.cancel = None;
                 }
                 if outcome.is_ok() && matches!(success, "Tag created" | "Tag created and pushed") {
-                    self.selected_branch = format!("refs/tags/{}", self.new_tag_name);
-                    self.selected_ref_group = None;
-                    self.tag_dialog_open = false;
-                    self.new_tag_name.clear();
-                    self.new_tag_message.clear();
+                    self.branches.selected_branch =
+                        format!("refs/tags/{}", self.branches.new_tag_name);
+                    self.branches.selected_ref_group = None;
+                    self.branches.tag_dialog_open = false;
+                    self.branches.new_tag_name.clear();
+                    self.branches.new_tag_message.clear();
                 }
                 if committed {
-                    self.commit_message = self.amend_draft.take().unwrap_or_default();
-                    self.amend = false;
-                    self.amend_head = None;
+                    self.commit.finish_commit();
                     self.remember_commit_draft();
                 }
                 if outcome.is_ok() && success.starts_with("Branch created") {
-                    self.branch_dialog_open = false;
-                    self.new_branch_name.clear();
+                    self.branches.branch_dialog_open = false;
+                    self.branches.new_branch_name.clear();
                 }
                 if outcome.is_ok() && success == "Checkout complete" {
-                    self.remote_checkout = None;
+                    self.branches.remote_checkout = None;
                 }
                 let refresh_error = match snapshot {
                     Ok(snapshot) => {
@@ -2297,36 +2157,17 @@ impl SannyGitApp {
                     self.network_dialog = None;
                 }
             }
-            WorkerResult::Diff { index, result } => {
-                if self.selected_change == index {
-                    self.loaded_diff = Some(index);
-                    match result {
-                        Ok((diff, preview)) => {
-                            self.diff_preview = Some(preview);
-                            if let Some(change) = self.changes.get_mut(index) {
-                                change.diff = diff;
-                            }
-                            if self.status == "Loading diff…" {
-                                self.status = "Ready".into();
-                            }
-                        }
-                        Err(error) => {
-                            self.error = Some(error);
-                            self.status = "Could not load diff".into();
-                        }
-                    }
-                }
-            }
+            WorkerResult::Diff { index, result } => self.apply_selected_diff(index, result),
         }
     }
 
     fn load_selected_diff(&mut self, context: &eframe::egui::Context) {
         if self.busy()
-            || (!self.diff_refresh_pending && self.loaded_diff == Some(self.selected_change))
+            || (!self.diff_refresh_pending && self.loaded_diff == Some(self.selection.active))
         {
             return;
         }
-        let Some(change) = self.changes.get(self.selected_change) else {
+        let Some(change) = self.changes.get(self.selection.active) else {
             return;
         };
         let Some(repository) = self.repositories.get(self.selected_repository) else {
@@ -2336,7 +2177,7 @@ impl SannyGitApp {
         let path = change.path.clone();
         let kind = change.kind;
         let original_path = change.original_path.clone();
-        let index = self.selected_change;
+        let index = self.selection.active;
         let retain_preview = self.selected_diff().is_some();
         self.diff_refresh_pending = false;
         if !retain_preview {
@@ -2372,9 +2213,9 @@ impl SannyGitApp {
         {
             self.status = "Loading diff…".into();
         }
-        match self.spawn_reader(Some(context.clone()), move || WorkerResult::Diff {
+        match self.spawn_reader(Some(context.clone()), move |git| WorkerResult::Diff {
             index,
-            result: git::diff(&root, &path, kind, original_path.as_deref()).map(|patch| {
+            result: git::diff(git, &root, &path, kind, original_path.as_deref()).map(|patch| {
                 let preview = crate::models::DiffPreview::new(&patch);
                 (patch, preview)
             }),
@@ -2417,8 +2258,8 @@ impl eframe::App for SannyGitApp {
             .get(self.selected_repository)
             .map(|r| PathBuf::from(&r.path));
         let allow_tracking = !self.busy()
-            && !self.refs_pending
-            && !self.refs_loading
+            && !self.branches.pending
+            && !self.branches.loading
             && !self.history.history_pending
             && !self.history.history_loading
             && self.state_current
@@ -2428,11 +2269,11 @@ impl eframe::App for SannyGitApp {
             && self.network_dialog.is_none()
             && self.stash_dialog.is_none()
             && self.discard_dialog.is_none()
-            && self.ref_dialog.is_none()
+            && self.branches.ref_dialog.is_none()
             && self.merge_dialog.is_none()
             && self.conflict_dialog.is_none()
             && self.abort_merge_dialog.is_none()
-            && self.remote_checkout.is_none();
+            && self.branches.remote_checkout.is_none();
         self.tracking.update(
             root,
             allow_tracking,
@@ -2441,9 +2282,9 @@ impl eframe::App for SannyGitApp {
         );
         if self.tracking.refs_changed {
             self.tracking.refs_changed = false;
-            self.refs_pending = true;
-            self.refs_loading = true;
-            self.refs_current = false;
+            self.branches.pending = true;
+            self.branches.loading = true;
+            self.branches.current = false;
             if self.history.history_all_branches {
                 self.queue_history_reload();
             }
@@ -2488,7 +2329,7 @@ impl eframe::App for SannyGitApp {
             menu.update_enabled(|action| self.menu_action_enabled(action));
         }
         if self.busy()
-            || self.refs_worker.is_some()
+            || self.branches.worker.is_some()
             || self.history.history_worker.is_some()
             || self.diff_worker.is_some()
             || self.history.commit_preview_worker.is_some()
@@ -2503,7 +2344,7 @@ impl eframe::App for SannyGitApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.close_tag_log();
-        if let Some(cancel) = &self.generation_cancel {
+        if let Some(cancel) = &self.commit.generation_cancel {
             cancel.store(true, Ordering::Relaxed);
         }
         if let Some(cancel) = &self.history.history_session.cancel {
@@ -2520,7 +2361,11 @@ impl eframe::App for SannyGitApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.remember_commit_draft();
-        eframe::set_value(storage, "sannygit.commit_drafts", &self.commit_drafts);
+        eframe::set_value(
+            storage,
+            "sannygit.commit_drafts",
+            &self.commit.commit_drafts,
+        );
         self.llm_models.update();
         eframe::set_value(storage, llm_models::STORAGE_KEY, &self.llm_models);
         eframe::set_value(
@@ -2532,7 +2377,7 @@ impl eframe::App for SannyGitApp {
         eframe::set_value(
             storage,
             "sannygit.reset_strategy",
-            &self.last_reset_strategy,
+            &self.branches.last_reset_strategy,
         );
         eframe::set_value(storage, "sannygit.llm", &self.llm_config);
         eframe::set_value(

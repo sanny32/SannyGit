@@ -301,7 +301,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         ui.label("New branch name"); ui.add(crate::ui::controls::singleline(&mut app.manager.worktree_branch).desired_width(f32::INFINITY));
                     } else {
                         ComboBox::from_id_salt("worktree.branch").selected_text(if app.manager.worktree_branch.is_empty() { "Select a local branch" } else { &app.manager.worktree_branch }).show_ui(ui, |ui| {
-                            for branch in app.refs.iter().filter(|r| r.kind == crate::models::RefKind::Local) { ui.selectable_value(&mut app.manager.worktree_branch, branch.name.clone(), &branch.name); }
+                            for branch in app.branches.entries.iter().filter(|r| r.kind == crate::models::RefKind::Local) { ui.selectable_value(&mut app.manager.worktree_branch, branch.name.clone(), &branch.name); }
                         });
                     }
                     if ui.add_enabled(!app.manager.destination.is_empty() && !app.manager.worktree_branch.is_empty(), Button::new("Add Worktree")).clicked() { job = Some(Job::AddWorktree { destination: app.manager.destination.clone(), branch: app.manager.worktree_branch.clone(), new_branch: app.manager.worktree_new_branch }); }

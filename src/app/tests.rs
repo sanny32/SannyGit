@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::SYSTEM_GIT;
 use eframe::egui::{self, epaint::ClippedShape, Rect, Vec2};
 
 #[cfg(not(target_os = "macos"))]
@@ -23,7 +24,7 @@ fn shortcut_frame(
         app.handle_shortcuts(ui.ctx());
         let id = egui::Id::unique("commit.message");
         if ui.memory(|memory| memory.focused() == Some(id)) {
-            ui.add(egui::TextEdit::multiline(&mut app.commit_message).id(id));
+            ui.add(egui::TextEdit::multiline(&mut app.commit.message).id(id));
         }
     });
     output.textures_delta.clear();
@@ -111,9 +112,9 @@ fn modal_dialog_open_tracks_dialog_states_but_not_the_history_window() {
     app.welcome_open = true;
     assert!(app.modal_dialog_open());
     app.welcome_open = false;
-    app.branch_dialog_open = true;
+    app.branches.branch_dialog_open = true;
     assert!(app.modal_dialog_open());
-    app.branch_dialog_open = false;
+    app.branches.branch_dialog_open = false;
     app.error = Some("Failure".into());
     assert!(app.modal_dialog_open());
     app.error = None;
@@ -128,13 +129,13 @@ fn commit_shortcut_works_from_message_editor_without_repeating() {
     let repo = crate::test_support::TempRepo::new();
     repo.write("file", "shortcut commit\n");
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-    app.apply_snapshot(git::load(&repo.0).unwrap());
-    app.commit_message = "Commit using keyboard".into();
+    app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+    app.commit.message = "Commit using keyboard".into();
     let context = egui::Context::default();
     let mut output = context.run_ui(egui::RawInput::default(), |ui| {
         let id = egui::Id::unique("commit.message");
         ui.memory_mut(|memory| memory.request_focus(id));
-        ui.add(egui::TextEdit::multiline(&mut app.commit_message).id(id));
+        ui.add(egui::TextEdit::multiline(&mut app.commit.message).id(id));
     });
     output.textures_delta.clear();
     assert!(context.text_edit_focused());
@@ -295,13 +296,13 @@ fn repository_error_retains_view_and_refresh_preserves_selection() {
     app.repositories = crate::mock_data::repositories();
     app.changes = crate::mock_data::changes();
     app.selected_repository = 0;
-    app.selected_change = 2;
+    app.selection.active = 2;
     let selected = app.changes[2].path.clone();
     deliver(
         &mut app,
         WorkerResult::Repository(Err("Cannot read repository".into())),
     );
-    assert_eq!(app.changes[app.selected_change].path, selected);
+    assert_eq!(app.changes[app.selection.active].path, selected);
     assert!(app.error.is_some());
     let mut changes = crate::mock_data::changes();
     changes.reverse();
@@ -316,8 +317,8 @@ fn repository_error_retains_view_and_refresh_preserves_selection() {
         merge_message: None,
     };
     deliver(&mut app, WorkerResult::Repository(Ok(snapshot)));
-    assert_eq!(app.changes[app.selected_change].path, selected);
-    assert_eq!(app.current_branch, "real-branch");
+    assert_eq!(app.changes[app.selection.active].path, selected);
+    assert_eq!(app.branches.current_branch, "real-branch");
     assert!(app.history.commits.is_empty());
 }
 
@@ -325,11 +326,11 @@ fn repository_error_retains_view_and_refresh_preserves_selection() {
 fn changing_selection_hides_previous_diff_and_discards_late_result() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
     app.changes = crate::mock_data::changes();
-    app.selected_change = 0;
+    app.selection.active = 0;
     app.loaded_diff = Some(0);
     app.diff_preview = Some(crate::models::DiffPreview::new("+old"));
     assert!(app.selected_diff().is_some());
-    app.selected_change = 1;
+    app.selection.active = 1;
     assert!(app.selected_diff().is_none());
     deliver(
         &mut app,
@@ -345,10 +346,10 @@ fn changing_selection_hides_previous_diff_and_discards_late_result() {
 #[test]
 fn cancelling_generation_preserves_draft_and_discards_late_results() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-    app.commit_message = "Existing draft".into();
+    app.commit.message = "Existing draft".into();
     let cancel = Arc::new(AtomicBool::new(false));
-    app.generation_cancel = Some(cancel.clone());
-    app.generating_commit_message = true;
+    app.commit.generation_cancel = Some(cancel.clone());
+    app.commit.generating_message = true;
     let (sender, receiver) = mpsc::channel();
     app.worker = Some(receiver);
     sender
@@ -357,9 +358,9 @@ fn cancelling_generation_preserves_draft_and_discards_late_results() {
     app.cancel_commit_message_generation();
     assert!(cancel.load(Ordering::Relaxed));
     assert!(!app.busy());
-    assert!(!app.generating_commit_message);
-    assert!(app.generation_cancel.is_none());
-    assert_eq!(app.commit_message, "Existing draft");
+    assert!(!app.commit.generating_message);
+    assert!(app.commit.generation_cancel.is_none());
+    assert_eq!(app.commit.message, "Existing draft");
     assert!(app.error.is_none());
     assert_eq!(app.status, "Commit message generation cancelled");
     assert!(sender
@@ -367,9 +368,9 @@ fn cancelling_generation_preserves_draft_and_discards_late_results() {
         .is_err());
 
     // A new generation can finish normally; the old sender is isolated.
-    app.generating_commit_message = true;
+    app.commit.generating_message = true;
     deliver(&mut app, commit_message_result(Ok("New response".into())));
-    assert_eq!(app.commit_message, "New response");
+    assert_eq!(app.commit.message, "New response");
 }
 
 #[test]
@@ -386,40 +387,40 @@ fn cancelling_generation_does_not_cancel_other_workers() {
 #[test]
 fn generated_commit_message_updates_draft_and_errors_preserve_it() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-    app.commit_message = "Existing draft".into();
-    app.generating_commit_message = true;
+    app.commit.message = "Existing draft".into();
+    app.commit.generating_message = true;
     deliver(
         &mut app,
         commit_message_result(Ok("Generated message".into())),
     );
-    assert_eq!(app.commit_message, "Generated message");
+    assert_eq!(app.commit.message, "Generated message");
     assert_eq!(app.status, "Commit message generated");
-    assert!(!app.generating_commit_message);
+    assert!(!app.commit.generating_message);
 
-    app.generating_commit_message = true;
+    app.commit.generating_message = true;
     deliver(
         &mut app,
         commit_message_result(Err("Provider unavailable".into())),
     );
-    assert_eq!(app.commit_message, "Generated message");
+    assert_eq!(app.commit.message, "Generated message");
     assert_eq!(app.error.as_deref(), Some("Provider unavailable"));
-    assert!(!app.generating_commit_message);
+    assert!(!app.commit.generating_message);
 }
 
 #[test]
 fn staged_mode_gates_commit_preview_and_generation_but_allows_message_only_amend() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-    assert_eq!(app.commit_contents, git::CommitContents::All);
+    assert_eq!(app.commit.contents, git::CommitContents::All);
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
     app.state_current = true;
-    app.commit_message = "Draft".into();
+    app.commit.message = "Draft".into();
     app.changes = crate::mock_data::changes();
     for change in &mut app.changes {
         change.staged = false;
         change.kind = crate::models::ChangeKind::Modified;
     }
-    app.commit_contents = git::CommitContents::Staged;
+    app.commit.contents = git::CommitContents::Staged;
     assert!(app.commit_blocker().unwrap().contains("no staged"));
     assert!(app
         .generate_commit_message_blocker()
@@ -429,11 +430,11 @@ fn staged_mode_gates_commit_preview_and_generation_but_allows_message_only_amend
     assert!(app.commit_blocker().is_none());
     assert!(app.generate_commit_message_blocker().is_none());
     app.changes.clear();
-    app.amend = true;
-    app.amend_head = Some("a".repeat(40));
+    app.commit.amend = true;
+    app.commit.amend_head = Some("a".repeat(40));
     assert!(app.commit_blocker().is_none());
     assert!(app.generate_commit_message_blocker().is_some());
-    assert_eq!(app.commit_message, "Draft");
+    assert_eq!(app.commit.message, "Draft");
 }
 
 #[test]
@@ -442,18 +443,18 @@ fn generation_requires_files_in_the_selected_mode_even_when_amending() {
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
     app.state_current = true;
-    app.commit_message = "Draft".into();
+    app.commit.message = "Draft".into();
     for amend in [false, true] {
-        app.amend = amend;
-        app.amend_head = amend.then(|| "a".repeat(40));
+        app.commit.amend = amend;
+        app.commit.amend_head = amend.then(|| "a".repeat(40));
         for mode in [git::CommitContents::All, git::CommitContents::Staged] {
-            app.commit_contents = mode;
+            app.commit.contents = mode;
             app.changes.clear();
             assert!(app.generate_commit_message_blocker().is_some());
             app.generate_commit_message();
             assert!(!app.busy());
-            assert!(!app.generating_commit_message);
-            assert_eq!(app.commit_message, "Draft");
+            assert!(!app.commit.generating_message);
+            assert_eq!(app.commit.message, "Draft");
 
             app.changes = crate::mock_data::changes();
             for change in &mut app.changes {
@@ -476,7 +477,7 @@ fn commit_and_generation_accept_unstaged_and_untracked_files() {
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
     app.changes = crate::mock_data::changes();
-    app.commit_message = "Message".into();
+    app.commit.message = "Message".into();
     assert!(app.commit_blocker().unwrap().contains("Refresh"));
     app.state_current = true;
     for change in &mut app.changes {
@@ -494,11 +495,11 @@ fn commit_and_generation_accept_unstaged_and_untracked_files() {
     assert!(app.generate_commit_message_blocker().is_some());
     app.changes = changes;
     app.changes[0].kind = crate::models::ChangeKind::Modified;
-    app.commit_message = " \n\t".into();
+    app.commit.message = " \n\t".into();
     assert!(app.commit_blocker().unwrap().contains("message"));
     app.create_commit();
     assert!(!app.busy());
-    app.commit_message = "Valid message".into();
+    app.commit.message = "Valid message".into();
     assert!(app.commit_blocker().is_none());
     app.changes[0].staged = true;
     assert!(app.staging_allowed(0, false));
@@ -515,30 +516,30 @@ fn amend_loads_head_message_restores_draft_and_allows_rewording() {
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
     app.state_current = true;
-    app.refs_current = true;
+    app.branches.current = true;
     assert!(app.amend_blocker().unwrap().contains("no commit"));
-    app.branch_head_exists = true;
+    app.branches.branch_head_exists = true;
     assert!(app.amend_blocker().is_none());
-    app.commit_message = "Draft".into();
+    app.commit.message = "Draft".into();
     deliver(
         &mut app,
         WorkerResult::AmendMessage(Err("Cannot read HEAD".into())),
     );
-    assert_eq!(app.commit_message, "Draft");
-    assert!(!app.amend);
+    assert_eq!(app.commit.message, "Draft");
+    assert!(!app.commit.amend);
     deliver(
         &mut app,
         WorkerResult::AmendMessage(Ok(("a".repeat(40), "Last message\n\nBody".into()))),
     );
-    assert!(app.amend);
-    assert_eq!(app.commit_message, "Last message\n\nBody");
+    assert!(app.commit.amend);
+    assert_eq!(app.commit.message, "Last message\n\nBody");
     assert!(app.changes.is_empty());
     assert!(app.commit_blocker().is_none());
-    app.commit_message = "Edited message".into();
+    app.commit.message = "Edited message".into();
     app.set_amend(false);
-    assert_eq!(app.commit_message, "Draft");
-    assert!(!app.amend);
-    assert!(app.amend_head.is_none());
+    assert_eq!(app.commit.message, "Draft");
+    assert!(!app.commit.amend);
+    assert!(app.commit.amend_head.is_none());
     assert!(app.commit_blocker().unwrap().contains("no changes"));
 }
 
@@ -793,12 +794,12 @@ fn operation_outcomes_remain_distinct_from_refresh_and_cancellation() {
                     app.repositories = crate::mock_data::repositories();
                     app.selected_repository = 0;
                     app.changes = crate::mock_data::changes();
-                    app.selected_change = 2;
+                    app.selection.active = 2;
                     app.history.commits = crate::mock_data::commits();
                     app.history.selected_commit = Some(app.history.commits[1].hash.clone());
                     let selected_commit = app.history.selected_commit.clone();
                     let selected_path = app.changes[2].path.clone();
-                    app.commit_message = "Keep on failure".into();
+                    app.commit.message = "Keep on failure".into();
                     app.state_current = false;
                     app.manager.cancel = Some(Arc::new(AtomicBool::new(false)));
                     if cancelled {
@@ -833,9 +834,9 @@ fn operation_outcomes_remain_distinct_from_refresh_and_cancellation() {
                     );
                     assert_eq!(app.state_current, !refresh_failed);
                     assert_eq!(app.history.selected_commit, selected_commit);
-                    assert_eq!(app.changes[app.selected_change].path, selected_path);
+                    assert_eq!(app.changes[app.selection.active].path, selected_path);
                     assert_eq!(
-                        app.commit_message.is_empty(),
+                        app.commit.message.is_empty(),
                         !failed && success.starts_with("Commit")
                     );
                     if failed {
@@ -868,10 +869,10 @@ fn operation_outcomes_remain_distinct_from_refresh_and_cancellation() {
 #[test]
 fn operation_errors_keep_draft_and_success_restores_normal_draft_even_if_refresh_fails() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-    app.commit_message = "Keep draft".into();
-    app.amend = true;
-    app.amend_head = Some("a".repeat(40));
-    app.amend_draft = Some("Original draft".into());
+    app.commit.message = "Keep draft".into();
+    app.commit.amend = true;
+    app.commit.amend_head = Some("a".repeat(40));
+    app.commit.amend_draft = Some("Original draft".into());
     app.state_current = false;
     deliver(
         &mut app,
@@ -882,9 +883,9 @@ fn operation_errors_keep_draft_and_success_restores_normal_draft_even_if_refresh
             snapshot: Err("Refresh failed".into()),
         },
     );
-    assert_eq!(app.commit_message, "Keep draft");
-    assert!(app.amend);
-    assert!(app.amend_head.is_some());
+    assert_eq!(app.commit.message, "Keep draft");
+    assert!(app.commit.amend);
+    assert!(app.commit.amend_head.is_some());
     assert!(app.error.as_deref().unwrap().contains("Hook"));
     assert!(!app.state_current);
     deliver(
@@ -896,10 +897,10 @@ fn operation_errors_keep_draft_and_success_restores_normal_draft_even_if_refresh
             snapshot: Err("Refresh failed".into()),
         },
     );
-    assert_eq!(app.commit_message, "Original draft");
-    assert!(!app.amend);
-    assert!(app.amend_head.is_none());
-    assert!(app.amend_draft.is_none());
+    assert_eq!(app.commit.message, "Original draft");
+    assert!(!app.commit.amend);
+    assert!(app.commit.amend_head.is_none());
+    assert!(app.commit.amend_draft.is_none());
     assert!(app.error.as_deref().unwrap().contains("refresh"));
     assert!(!app.state_current);
     assert!(app.commit_blocker().is_some());
@@ -976,18 +977,18 @@ fn rename_requires_fresh_local_target_and_retains_draft_on_failure() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
-    app.refs = crate::mock_data::refs();
-    app.selected_branch = "refs/heads/develop".into();
+    app.branches.entries = crate::mock_data::refs();
+    app.branches.selected_branch = "refs/heads/develop".into();
     app.state_current = true;
     assert!(!app.menu_action_enabled(MenuAction::RenameBranch));
-    app.refs_current = true;
+    app.branches.current = true;
     assert!(app.menu_action_enabled(MenuAction::RenameBranch));
     app.open_rename_branch();
     assert!(app.rename_branch_blocker().is_some()); // unchanged name
-    app.rename_branch_dialog.as_mut().unwrap().name = "renamed".into();
+    app.branches.rename_branch_dialog.as_mut().unwrap().name = "renamed".into();
     app.changes = crate::mock_data::changes();
     assert!(app.rename_branch_blocker().is_none()); // dirty files are allowed
-    app.selected_branch = "refs/tags/v1.0.0".into();
+    app.branches.selected_branch = "refs/tags/v1.0.0".into();
     assert!(!app.menu_action_enabled(MenuAction::RenameBranch));
     assert!(app.rename_branch_blocker().is_none()); // dialog keeps its source
     deliver(
@@ -999,7 +1000,10 @@ fn rename_requires_fresh_local_target_and_retains_draft_on_failure() {
             snapshot: Err("Refresh failed".into()),
         },
     );
-    assert_eq!(app.rename_branch_dialog.as_ref().unwrap().name, "renamed");
+    assert_eq!(
+        app.branches.rename_branch_dialog.as_ref().unwrap().name,
+        "renamed"
+    );
     assert!(app.rename_branch_blocker().is_some());
     deliver(
         &mut app,
@@ -1010,8 +1014,8 @@ fn rename_requires_fresh_local_target_and_retains_draft_on_failure() {
             snapshot: Err("Refresh failed".into()),
         },
     );
-    assert!(app.rename_branch_dialog.is_none());
-    assert_eq!(app.selected_branch, "refs/heads/renamed");
+    assert!(app.branches.rename_branch_dialog.is_none());
+    assert_eq!(app.branches.selected_branch, "refs/heads/renamed");
 }
 
 #[test]
@@ -1019,14 +1023,14 @@ fn tag_creation_requires_fresh_state_and_keeps_draft_on_failure() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
-    app.new_tag_name = "release/new".into();
-    app.new_tag_message = "Release details".into();
-    app.tag_dialog_open = true;
+    app.branches.new_tag_name = "release/new".into();
+    app.branches.new_tag_message = "Release details".into();
+    app.branches.tag_dialog_open = true;
     app.state_current = true;
     assert!(app.create_tag_blocker().is_some());
-    app.refs_current = true;
+    app.branches.current = true;
     assert!(app.create_tag_blocker().is_some());
-    app.branch_head_exists = true;
+    app.branches.branch_head_exists = true;
     app.changes = crate::mock_data::changes();
     assert!(app.create_tag_blocker().is_none());
     deliver(
@@ -1038,9 +1042,9 @@ fn tag_creation_requires_fresh_state_and_keeps_draft_on_failure() {
             snapshot: Err("Refresh failed".into()),
         },
     );
-    assert!(app.tag_dialog_open);
-    assert_eq!(app.new_tag_name, "release/new");
-    assert_eq!(app.new_tag_message, "Release details");
+    assert!(app.branches.tag_dialog_open);
+    assert_eq!(app.branches.new_tag_name, "release/new");
+    assert_eq!(app.branches.new_tag_message, "Release details");
     assert!(app.create_tag_blocker().is_some());
     deliver(
         &mut app,
@@ -1051,10 +1055,10 @@ fn tag_creation_requires_fresh_state_and_keeps_draft_on_failure() {
             snapshot: Err("Refresh failed".into()),
         },
     );
-    assert!(!app.tag_dialog_open);
-    assert!(app.new_tag_name.is_empty());
-    assert!(app.new_tag_message.is_empty());
-    assert_eq!(app.selected_branch, "refs/tags/release/new");
+    assert!(!app.branches.tag_dialog_open);
+    assert!(app.branches.new_tag_name.is_empty());
+    assert!(app.branches.new_tag_message.is_empty());
+    assert_eq!(app.branches.selected_branch, "refs/tags/release/new");
 }
 
 #[test]
@@ -1062,26 +1066,26 @@ fn branch_actions_require_fresh_refs_and_allow_local_changes() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
-    app.refs = crate::mock_data::refs();
-    app.selected_branch = "refs/heads/develop".into();
+    app.branches.entries = crate::mock_data::refs();
+    app.branches.selected_branch = "refs/heads/develop".into();
     app.state_current = true;
-    app.branch_head_exists = true;
-    app.new_branch_name = "feature/new".into();
+    app.branches.branch_head_exists = true;
+    app.branches.new_branch_name = "feature/new".into();
     assert!(app.switch_branch_blocker().is_some());
-    app.refs_current = true;
+    app.branches.current = true;
     assert!(app.switch_branch_blocker().is_none());
     assert!(app.create_branch_blocker().is_none());
     app.changes = crate::mock_data::changes();
     assert!(app.switch_branch_blocker().is_none());
     assert!(app.create_branch_blocker().is_none());
-    assert!(app.switch_to_new_branch);
-    app.branch_head_exists = false;
+    assert!(app.branches.switch_to_new_branch);
+    app.branches.branch_head_exists = false;
     assert!(app
         .create_branch_blocker()
         .unwrap()
         .contains("first commit"));
     app.changes.clear();
-    app.selected_branch = "refs/tags/v1.0.0".into();
+    app.branches.selected_branch = "refs/tags/v1.0.0".into();
     assert!(app.switch_branch_blocker().is_none());
 }
 
@@ -1090,18 +1094,20 @@ fn remote_checkout_uses_current_tracking_branch_or_shows_choices() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
-    app.refs = crate::mock_data::refs();
+    app.branches.entries = crate::mock_data::refs();
     app.state_current = true;
-    app.refs_current = true;
+    app.branches.current = true;
     let remote = app
-        .refs
+        .branches
+        .entries
         .iter()
         .find(|r| r.kind == crate::models::RefKind::Remote)
         .unwrap();
     let remote_name = remote.name.clone();
-    app.selected_branch = remote.full_name.clone();
+    app.branches.selected_branch = remote.full_name.clone();
     let local = app
-        .refs
+        .branches
+        .entries
         .iter_mut()
         .find(|r| r.kind == crate::models::RefKind::Local)
         .unwrap();
@@ -1109,11 +1115,11 @@ fn remote_checkout_uses_current_tracking_branch_or_shows_choices() {
     local.current = true;
     let local_ref = local.full_name.clone();
     app.switch_branch();
-    assert_eq!(app.selected_branch, local_ref);
-    assert!(app.remote_checkout.is_none() && !app.busy());
-    app.selected_branch = "refs/remotes/origin/new-topic".into();
-    app.refs.push(crate::models::BranchRef {
-        full_name: app.selected_branch.clone(),
+    assert_eq!(app.branches.selected_branch, local_ref);
+    assert!(app.branches.remote_checkout.is_none() && !app.busy());
+    app.branches.selected_branch = "refs/remotes/origin/new-topic".into();
+    app.branches.entries.push(crate::models::BranchRef {
+        full_name: app.branches.selected_branch.clone(),
         tag_subject: None,
         name: "origin/new-topic".into(),
         hash: "a".repeat(40),
@@ -1122,7 +1128,7 @@ fn remote_checkout_uses_current_tracking_branch_or_shows_choices() {
         current: false,
     });
     app.switch_branch();
-    let dialog = app.remote_checkout.as_ref().unwrap();
+    let dialog = app.branches.remote_checkout.as_ref().unwrap();
     assert_eq!(dialog.new_name, "new-topic");
     assert_eq!(dialog.mode, 1);
     assert!(!app.busy());
@@ -1143,18 +1149,18 @@ fn branch_reload_keeps_controls_and_loaded_content_stable() {
             for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
                 let mut app = SannyGitApp::with_theme(theme);
                 app.interface_style = style;
-                app.apply_snapshot(git::load(&repo.0).unwrap());
+                app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
                 app.history.history_pending = false;
                 app.history.history_loading = false;
-                app.refs_pending = false;
-                app.refs_loading = false;
-                app.refs_current = true;
-                let refs = crate::branches::load(&repo.0).unwrap();
-                app.branch_head_exists = refs.has_head;
-                app.refs = refs.refs;
-                app.loaded_diff = Some(app.selected_change);
+                app.branches.pending = false;
+                app.branches.loading = false;
+                app.branches.current = true;
+                let refs = crate::branches::load(&SYSTEM_GIT, &repo.0).unwrap();
+                app.branches.branch_head_exists = refs.has_head;
+                app.branches.entries = refs.refs;
+                app.loaded_diff = Some(app.selection.active);
                 app.diff_preview = Some(crate::models::DiffPreview::new("+changed"));
-                app.commit_message = "Keep this draft".into();
+                app.commit.message = "Keep this draft".into();
                 let preview = app.diff_preview.as_ref().unwrap().lines.as_ptr();
                 let history_generation = app.history.history_session.generation;
                 let ctx = egui::Context::default();
@@ -1189,11 +1195,11 @@ fn branch_reload_keeps_controls_and_loaded_content_stable() {
                 let before = labels(&before);
                 app.reload_refs();
                 app.load_refs();
-                assert!(app.refs_worker.is_some());
+                assert!(app.branches.worker.is_some());
                 let deadline = Instant::now() + Duration::from_secs(10);
                 loop {
                     assert!(!app.busy());
-                    assert!(app.state_current && app.refs_current);
+                    assert!(app.state_current && app.branches.current);
                     assert!(!app.history.history_pending && !app.history.history_loading);
                     let mut output = ctx.run_ui(
                         egui::RawInput {
@@ -1204,15 +1210,15 @@ fn branch_reload_keeps_controls_and_loaded_content_stable() {
                     );
                     assert_eq!(labels(&output.shapes), before);
                     output.textures_delta.clear();
-                    if app.refs_worker.is_none() {
+                    if app.branches.worker.is_none() {
                         break;
                     }
                     assert!(Instant::now() < deadline, "Ref reload timed out");
                     app.poll_refs();
                     std::thread::sleep(Duration::from_millis(10));
                 }
-                assert!(!app.refs_loading && !app.refs_pending);
-                assert_eq!(app.commit_message, "Keep this draft");
+                assert!(!app.branches.loading && !app.branches.pending);
+                assert_eq!(app.commit.message, "Keep this draft");
                 assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
                 assert_eq!(app.history.history_session.generation, history_generation);
             }
@@ -1223,7 +1229,7 @@ fn branch_reload_keeps_controls_and_loaded_content_stable() {
 #[test]
 fn disconnected_view_readers_keep_drafts_and_report_modal_errors() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-    app.commit_message = "Keep draft".into();
+    app.commit.message = "Keep draft".into();
     app.changes = crate::mock_data::changes();
     app.history.history_loading = true;
     for slot in [
@@ -1240,7 +1246,7 @@ fn disconnected_view_readers_keep_drafts_and_report_modal_errors() {
     assert!(app.history.history_error.is_some() && app.history.commit_preview_error.is_some());
     assert!(app.error.is_some());
     assert!(!app.changes.is_empty());
-    assert_eq!(app.commit_message, "Keep draft");
+    assert_eq!(app.commit.message, "Keep draft");
     app.collect_errors();
     assert!(!app.error_dialogs.pending.is_empty());
 }
@@ -1250,7 +1256,7 @@ fn pull_keeps_the_selected_diff_visible_until_its_replacement_is_ready() {
     let repo = crate::test_support::TempRepo::new();
     repo.write("selected.txt", "old contents\n");
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-    app.apply_snapshot(git::load(&repo.0).unwrap());
+    app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
     let ctx = egui::Context::default();
 
     app.load_selected_diff(&ctx);
@@ -1271,10 +1277,10 @@ fn pull_keeps_the_selected_diff_visible_until_its_replacement_is_ready() {
             committed: false,
             success: "Pull complete",
             outcome: Ok(()),
-            snapshot: git::load(&repo.0),
+            snapshot: git::load(&SYSTEM_GIT, &repo.0),
         },
     );
-    assert_eq!(app.changes[app.selected_change].path, "selected.txt");
+    assert_eq!(app.changes[app.selection.active].path, "selected.txt");
     assert_eq!(app.selected_diff().unwrap().lines.as_ptr(), old_preview);
 
     app.load_selected_diff(&ctx);
@@ -1288,13 +1294,13 @@ fn pull_keeps_the_selected_diff_visible_until_its_replacement_is_ready() {
         .unwrap();
     app.apply_worker_result(updated_result);
     assert!(app.selected_diff().is_some());
-    assert!(app.changes[app.selected_change]
+    assert!(app.changes[app.selection.active]
         .diff
         .contains("+new contents"));
 
     std::fs::remove_file(repo.0.join("selected.txt")).unwrap();
-    app.apply_snapshot(git::load(&repo.0).unwrap());
-    assert_eq!(app.changes[app.selected_change].path, "earlier.txt");
+    app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+    assert_eq!(app.changes[app.selection.active].path, "earlier.txt");
     assert!(app.selected_diff().is_none());
 }
 
@@ -1312,7 +1318,7 @@ fn diff_reader_wakes_ui_after_publishing_result() {
         let _ = sender.send(());
     });
     let receiver = app
-        .spawn_reader(Some(context), || WorkerResult::Diff {
+        .spawn_reader(Some(context), |_| WorkerResult::Diff {
             index: 0,
             result: Ok(("+new".into(), crate::models::DiffPreview::new("+new"))),
         })
@@ -1344,14 +1350,14 @@ fn panel_reads_keep_repository_actions_available_and_reject_superseded_results()
             for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
                 let mut app = SannyGitApp::with_theme(theme);
                 app.interface_style = style;
-                app.apply_snapshot(git::load(&repo.0).unwrap());
-                let refs = crate::branches::load(&repo.0).unwrap();
-                app.branch_head_exists = refs.has_head;
-                app.refs = refs.refs;
-                app.refs_current = true;
+                app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+                let refs = crate::branches::load(&SYSTEM_GIT, &repo.0).unwrap();
+                app.branches.branch_head_exists = refs.has_head;
+                app.branches.entries = refs.refs;
+                app.branches.current = true;
                 app.history.history_loading = false;
                 app.history.history_pending = false;
-                app.commit_message = "Keep draft".into();
+                app.commit.message = "Keep draft".into();
                 let actions = |app: &SannyGitApp| {
                     [
                         MenuAction::Stage,
@@ -1416,7 +1422,7 @@ fn panel_reads_keep_repository_actions_available_and_reject_superseded_results()
                     std::thread::sleep(Duration::from_millis(5));
                 }
                 assert!(app.selected_diff().unwrap().added > 0);
-                assert!(app.changes[app.selected_change].diff.contains("+changed"));
+                assert!(app.changes[app.selection.active].diff.contains("+changed"));
                 app.select_commit(app.history.commits[0].hash.clone());
                 for _ in 0..2 {
                     app.load_commit_preview();
@@ -1431,12 +1437,12 @@ fn panel_reads_keep_repository_actions_available_and_reject_superseded_results()
                 }
                 assert_eq!(app.history.commit_files.as_ref().unwrap()[0].path, "file");
                 assert!(app.history.commit_preview.as_ref().unwrap().added > 0);
-                assert_eq!(app.commit_message, "Keep draft");
+                assert_eq!(app.commit.message, "Keep draft");
 
                 app.reload_history();
                 app.load_history();
                 let cancel = app.history.history_session.cancel.clone().unwrap();
-                app.start_worker(|| WorkerResult::Repository(Err("Read failed".into())));
+                app.start_worker(|_| WorkerResult::Repository(Err("Read failed".into())));
                 assert!(cancel.load(Ordering::Relaxed));
                 assert!(app.history.history_worker.is_none() && app.history.history_pending);
                 assert!(app.busy());
@@ -1450,29 +1456,29 @@ fn ref_reader_failure_and_superseding_operations_keep_previous_rows() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
-    app.refs = crate::mock_data::refs();
-    app.refs_current = true;
-    let count = app.refs.len();
+    app.branches.entries = crate::mock_data::refs();
+    app.branches.current = true;
+    let count = app.branches.entries.len();
     let (sender, receiver) = mpsc::channel();
-    app.refs_worker = Some(receiver);
-    app.refs_loading = true;
+    app.branches.worker = Some(receiver);
+    app.branches.loading = true;
     drop(sender);
     app.poll_refs();
-    assert!(!app.busy() && !app.refs_loading && !app.refs_current);
-    assert!(app.refs_error.is_some());
-    assert_eq!(app.refs.len(), count);
+    assert!(!app.busy() && !app.branches.loading && !app.branches.current);
+    assert!(app.branches.error.is_some());
+    assert_eq!(app.branches.entries.len(), count);
 
     let (sender, receiver) = mpsc::channel();
-    app.refs_worker = Some(receiver);
-    assert!(app.start_worker(|| WorkerResult::Repository(Err("Read failed".into()))));
-    assert!(app.refs_worker.is_none() && app.refs_pending);
+    app.branches.worker = Some(receiver);
+    assert!(app.start_worker(|_| WorkerResult::Repository(Err("Read failed".into()))));
+    assert!(app.branches.worker.is_none() && app.branches.pending);
     assert!(sender
         .send(WorkerResult::Refs {
             path: app.repositories[0].path.clone(),
             result: Err("Stale error".into()),
         })
         .is_err());
-    assert_eq!(app.refs.len(), count);
+    assert_eq!(app.branches.entries.len(), count);
 }
 
 #[test]
@@ -1480,10 +1486,10 @@ fn branch_load_errors_keep_rows_but_disable_branch_actions() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
     app.repositories = crate::mock_data::repositories();
     app.selected_repository = 0;
-    app.refs = crate::mock_data::refs();
+    app.branches.entries = crate::mock_data::refs();
     app.state_current = true;
-    app.refs_current = true;
-    let count = app.refs.len();
+    app.branches.current = true;
+    let count = app.branches.entries.len();
     deliver(
         &mut app,
         WorkerResult::Refs {
@@ -1494,8 +1500,8 @@ fn branch_load_errors_keep_rows_but_disable_branch_actions() {
             }),
         },
     );
-    assert_eq!(app.refs.len(), count);
-    assert!(app.refs_current);
+    assert_eq!(app.branches.entries.len(), count);
+    assert!(app.branches.current);
     let path = app.repositories[0].path.clone();
     deliver(
         &mut app,
@@ -1504,10 +1510,10 @@ fn branch_load_errors_keep_rows_but_disable_branch_actions() {
             result: Err("Cannot read refs".into()),
         },
     );
-    assert_eq!(app.refs.len(), count);
+    assert_eq!(app.branches.entries.len(), count);
     assert!(app.state_current);
-    assert!(!app.refs_current);
-    assert!(app.refs_error.is_some());
+    assert!(!app.branches.current);
+    assert!(app.branches.error.is_some());
     assert!(app.switch_branch_blocker().is_some());
     assert!(app.create_branch_blocker().is_some());
 }
@@ -1602,12 +1608,12 @@ fn adding_tags_closes_the_form_and_shows_progress_in_the_status_bar() {
         for size in [Vec2::new(1100.0, 700.0), Vec2::new(1536.0, 1024.0)] {
             for push in [false, true] {
                 let mut app = SannyGitApp::with_theme(theme);
-                app.apply_snapshot(git::load(&repo.0).unwrap());
-                app.refs_current = true;
-                app.branch_head_exists = true;
-                app.tag_dialog_open = true;
+                app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+                app.branches.current = true;
+                app.branches.branch_head_exists = true;
+                app.branches.tag_dialog_open = true;
                 let name = format!("release-{theme:?}-{}-{push}", size.x);
-                app.new_tag_name = name.clone();
+                app.branches.new_tag_name = name.clone();
 
                 app.create_tag(push);
                 assert!(app.busy());
@@ -1741,7 +1747,7 @@ fn double_click_staging_setting_changes_only_the_index() {
         let repo = crate::test_support::TempRepo::new();
         std::fs::write(repo.0.join("example.txt"), "Keep working-tree content\n").unwrap();
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-        app.apply_snapshot(git::load(&repo.0).unwrap());
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
         app.preferences.file_double_click = mode;
         let context = egui::Context::default();
         crate::theme::install_fonts(&context);
@@ -1756,7 +1762,7 @@ fn double_click_staging_setting_changes_only_the_index() {
             }
             assert!(!app.busy());
             assert!(app.error.is_none(), "{:?}", app.error);
-            let snapshot = git::load(&repo.0).unwrap();
+            let snapshot = git::load(&SYSTEM_GIT, &repo.0).unwrap();
             assert_eq!(
                 snapshot.changes[0].staged,
                 mode == FileDoubleClick::ToggleStage && round == 0
@@ -1784,6 +1790,7 @@ fn double_clicking_a_conflicted_file_opens_the_solver_in_both_modes() {
         theirs.trim()
     );
     git::run_with_input(
+        &SYSTEM_GIT,
         &repo.0,
         &["update-index", "--index-info"],
         Some(stages.as_bytes()),
@@ -1792,11 +1799,11 @@ fn double_clicking_a_conflicted_file_opens_the_solver_in_both_modes() {
     let working = "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> incoming\n";
     repo.write("conflict.txt", working);
     repo.write("another.txt", "Keep this file unchanged\n");
-    let index = git::run(&repo.0, &["ls-files", "--stage", "-z"]).unwrap();
+    let index = git::run(&SYSTEM_GIT, &repo.0, &["ls-files", "--stage", "-z"]).unwrap();
 
     for mode in [FileDoubleClick::ShowDiff, FileDoubleClick::ToggleStage] {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-        app.apply_snapshot(git::load(&repo.0).unwrap());
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
         let other = app
             .changes
             .iter()
@@ -1826,7 +1833,7 @@ fn double_clicking_a_conflicted_file_opens_the_solver_in_both_modes() {
         let dialog = app.conflict_dialog.as_ref().unwrap();
         assert_eq!(dialog.review.as_ref().unwrap().conflicts.len(), 1);
         assert_eq!(
-            git::run(&repo.0, &["ls-files", "--stage", "-z"]).unwrap(),
+            git::run(&SYSTEM_GIT, &repo.0, &["ls-files", "--stage", "-z"]).unwrap(),
             index
         );
         assert_eq!(
@@ -1848,9 +1855,9 @@ fn modern_layout_fits_both_sizes_and_color_themes_without_loading_jumps() {
             app.repositories = crate::mock_data::repositories();
             app.changes = crate::mock_data::changes();
             app.history.commits = crate::mock_data::commits();
-            app.refs = crate::mock_data::refs();
-            app.current_branch = "main".into();
-            app.selected_change = 2;
+            app.branches.entries = crate::mock_data::refs();
+            app.branches.current_branch = "main".into();
+            app.selection.active = 2;
             app.loaded_diff = Some(2);
             app.diff_preview = Some(crate::models::DiffPreview::new(&app.changes[2].diff));
             let render = |app: &mut SannyGitApp| {
@@ -1914,7 +1921,7 @@ fn modern_layout_fits_both_sizes_and_color_themes_without_loading_jumps() {
             let before = panels();
             app.changes.clear();
             app.history.commits.clear();
-            app.refs_loading = true;
+            app.branches.loading = true;
             app.history.history_loading = true;
             for _ in 0..3 {
                 render(&mut app);
@@ -2010,13 +2017,13 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
             app.history.commits = history.commits;
             app.history.history_edges = history.edges;
             app.history.history_max_lane = history.max_lane;
-            app.refs = crate::mock_data::refs();
-            app.refs_current = true;
-            app.branch_head_exists = true;
+            app.branches.entries = crate::mock_data::refs();
+            app.branches.current = true;
+            app.branches.branch_head_exists = true;
             app.selected_repository = 0;
             app.state_current = true;
-            app.commit_message = "Layout check".into();
-            app.selected_change = 2;
+            app.commit.message = "Layout check".into();
+            app.selection.active = 2;
             app.loaded_diff = Some(2);
             app.diff_preview = Some(crate::models::DiffPreview::new(&app.changes[2].diff));
             let input = egui::RawInput {
@@ -2064,9 +2071,9 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
                 "Rendering history must not run Git commands"
             );
             app.history.commit_details_open = false;
-            app.current_branch = "main".into();
-            app.branch_dialog_open = true;
-            app.new_branch_name = "feature/new-ui".into();
+            app.branches.current_branch = "main".into();
+            app.branches.branch_dialog_open = true;
+            app.branches.new_branch_name = "feature/new-ui".into();
             for _ in 0..3 {
                 output = context.run_ui(input.clone(), |ui| ui::show(ui, &mut app));
                 output.textures_delta.clear();
@@ -2081,8 +2088,8 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
                 app.worker.is_none(),
                 "Rendering branch controls must not run Git commands"
             );
-            app.branch_dialog_open = false;
-            app.remote_checkout = Some(RemoteCheckoutDialog {
+            app.branches.branch_dialog_open = false;
+            app.branches.remote_checkout = Some(RemoteCheckoutDialog {
                 remote: "refs/remotes/origin/topic".into(),
                 mode: 1,
                 local: "refs/heads/main".into(),
@@ -2104,7 +2111,7 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
                     "Remote checkout {label} clipped at {size:?} in {theme:?}"
                 );
             }
-            app.remote_checkout = None;
+            app.branches.remote_checkout = None;
             for operation in [
                 crate::remotes::Operation::Sync,
                 crate::remotes::Operation::Fetch,
@@ -2462,10 +2469,10 @@ fn check_generation_request(stage_first: bool) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-    app.apply_snapshot(git::load(&repo.0).unwrap());
+    app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
     app.llm_config.endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
     app.llm_config.store_api_key = false;
-    app.commit_message = "Keep draft".into();
+    app.commit.message = "Keep draft".into();
     if stage_first {
         let index = app
             .changes
@@ -2480,11 +2487,11 @@ fn check_generation_request(stage_first: bool) {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(app.error.is_none(), "{:?}", app.error);
-        assert_eq!(app.commit_contents, git::CommitContents::Staged);
+        assert_eq!(app.commit.contents, git::CommitContents::Staged);
         repo.write("review.txt", "unstaged edits in the staged file\n");
         repo.write("excluded.txt", "unstaged file must not reach the LLM\n");
     }
-    let patch = git::commit_patch(&repo.0, app.commit_contents, None).unwrap();
+    let patch = git::commit_patch(&SYSTEM_GIT, &repo.0, app.commit.contents, None).unwrap();
     if stage_first {
         assert!(!patch.contains("unstaged edits"));
         assert!(!patch.contains("excluded.txt"));
@@ -2534,8 +2541,8 @@ fn check_generation_request(stage_first: bool) {
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
     });
     app.generate_commit_message();
-    assert!(app.generating_commit_message);
-    assert_eq!(app.commit_message, "Keep draft");
+    assert!(app.commit.generating_message);
+    assert_eq!(app.commit.message, "Keep draft");
     let deadline = Instant::now() + Duration::from_secs(10);
     while app.busy() {
         assert!(Instant::now() < deadline);
@@ -2551,7 +2558,7 @@ fn check_generation_request(stage_first: bool) {
         request["messages"][1]["content"],
         format!("Generate a commit message for these changes:\n\n{patch}")
     );
-    assert_eq!(app.commit_message, "Reviewed message");
+    assert_eq!(app.commit.message, "Reviewed message");
     assert_eq!(
         std::fs::read_to_string(repo.0.join("review.txt")).unwrap(),
         if stage_first {
@@ -2569,23 +2576,23 @@ fn generation_preparation_failure_preserves_draft_and_reports_a_modal_error() {
     let repo = crate::test_support::TempRepo::new();
     repo.write("file", "initial contents\n");
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-    app.apply_snapshot(git::load(&repo.0).unwrap());
+    app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
     app.llm_config.endpoint = "http://127.0.0.1:1/v1".into();
     app.llm_config.store_api_key = false;
-    app.commit_message = "Keep draft".into();
+    app.commit.message = "Keep draft".into();
     // The selected changes disappear before the worker reads the diff.
     std::fs::remove_file(repo.0.join("file")).unwrap();
     app.generate_commit_message();
-    assert!(app.generating_commit_message);
+    assert!(app.commit.generating_message);
     let deadline = Instant::now() + Duration::from_secs(10);
     while app.busy() {
         assert!(Instant::now() < deadline);
         app.poll_worker();
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(!app.generating_commit_message);
-    assert!(app.generation_cancel.is_none());
-    assert_eq!(app.commit_message, "Keep draft");
+    assert!(!app.commit.generating_message);
+    assert!(app.commit.generation_cancel.is_none());
+    assert_eq!(app.commit.message, "Keep draft");
     assert_eq!(app.error.as_deref(), Some("The commit diff is empty"));
     app.collect_errors();
     assert!(app
@@ -2608,8 +2615,8 @@ fn automatic_staged_mode_requires_successful_staging_and_enabled_preference() {
             ("Fetch complete", Ok(()), false),
         ] {
             let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-            app.apply_snapshot(git::load(&repo.0).unwrap());
-            app.commit_contents = git::CommitContents::All;
+            app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+            app.commit.contents = git::CommitContents::All;
             app.preferences.staged_only_after_staging = enabled;
             deliver(
                 &mut app,
@@ -2617,10 +2624,10 @@ fn automatic_staged_mode_requires_successful_staging_and_enabled_preference() {
                     committed: false,
                     success,
                     outcome,
-                    snapshot: git::load(&repo.0),
+                    snapshot: git::load(&SYSTEM_GIT, &repo.0),
                 },
             );
-            assert_eq!(app.commit_contents == git::CommitContents::Staged, expected);
+            assert_eq!(app.commit.contents == git::CommitContents::Staged, expected);
         }
     }
 }
@@ -2637,20 +2644,20 @@ fn opening_repository_uses_staged_mode_only_when_enabled_and_index_has_changes()
             let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
             app.preferences.staged_only_after_staging = enabled;
             // Reproduce reopening a saved repository before its first snapshot arrives.
-            let snapshot = git::load(&repo.0).unwrap();
+            let snapshot = git::load(&SYSTEM_GIT, &repo.0).unwrap();
             app.repositories.push(Repository {
                 name: snapshot.repository.name.clone(),
                 path: snapshot.repository.path.clone(),
             });
             app.apply_snapshot(snapshot);
             assert_eq!(
-                app.commit_contents == git::CommitContents::Staged,
+                app.commit.contents == git::CommitContents::Staged,
                 enabled && staged
             );
-            app.commit_contents = git::CommitContents::All;
-            app.apply_snapshot(git::load(&repo.0).unwrap());
+            app.commit.contents = git::CommitContents::All;
+            app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
             assert_eq!(
-                app.commit_contents,
+                app.commit.contents,
                 git::CommitContents::All,
                 "Refresh must preserve the user's mode"
             );
@@ -2666,10 +2673,10 @@ fn empty_index_restores_all_changes_after_unstaging_last_file_when_enabled() {
         repo.write("last.txt", "last\n");
         repo.git(&["add", "--", "first.txt", "last.txt"]);
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-        app.apply_snapshot(git::load(&repo.0).unwrap());
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
         app.preferences.staged_only_after_staging = enabled;
-        app.commit_contents = git::CommitContents::Staged;
-        app.commit_message = "Keep draft".into();
+        app.commit.contents = git::CommitContents::Staged;
+        app.commit.message = "Keep draft".into();
         for path in ["first.txt", "last.txt"] {
             let index = app
                 .changes
@@ -2685,14 +2692,39 @@ fn empty_index_restores_all_changes_after_unstaging_last_file_when_enabled() {
             }
             assert!(app.error.is_none(), "{:?}", app.error);
             assert_eq!(
-                app.commit_contents,
+                app.commit.contents,
                 if enabled && path == "last.txt" {
                     git::CommitContents::All
                 } else {
                     git::CommitContents::Staged
                 }
             );
-            assert_eq!(app.commit_message, "Keep draft");
+            assert_eq!(app.commit.message, "Keep draft");
         }
     }
+}
+
+#[test]
+fn readers_capture_the_git_executable_at_launch() {
+    let repo = crate::test_support::TempRepo::new();
+    let missing = repo.0.join("missing git").to_string_lossy().into_owned();
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    let start = |app: &SannyGitApp| {
+        let path = repo.0.clone();
+        app.spawn_reader(None, move |git| {
+            WorkerResult::Repository(git::load(git, &path))
+        })
+        .unwrap()
+    };
+    app.preferences.git_executable.clone_from(&missing);
+    let configured = start(&app);
+    app.preferences.git_executable.clear();
+    let system = start(&app);
+    assert!(matches!(
+        system.recv().unwrap(),
+        WorkerResult::Repository(Ok(_))
+    ));
+    assert!(
+        matches!(configured.recv().unwrap(), WorkerResult::Repository(Err(error)) if error.contains(&missing))
+    );
 }

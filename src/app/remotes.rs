@@ -87,9 +87,9 @@ impl SannyGitApp {
         });
         self.error = None;
         self.status = "Loading remotes…".into();
-        if !self.start_worker(move || WorkerResult::RemoteInfo {
+        if !self.start_worker(move |git| WorkerResult::RemoteInfo {
             operation,
-            result: remotes::load(&root),
+            result: remotes::load(git, &root),
         }) && self.remote_confirmation_hidden()
         {
             self.finish_hidden_remote();
@@ -212,9 +212,10 @@ impl SannyGitApp {
         self.error = None;
         self.status = format!("{} in progress…", operation.label());
         self.state_current = false;
-        self.refs_current = false;
-        if !self.start_worker(move || {
+        self.branches.current = false;
+        if !self.start_worker(move |git| {
             let outcome = remotes::run_with_tags(
+                git,
                 &root,
                 operation,
                 &remote,
@@ -226,6 +227,7 @@ impl SannyGitApp {
             .and_then(|()| {
                 if set_upstream {
                     remotes::set_upstream(
+                        git,
                         &root,
                         expected_branch.as_deref().unwrap_or(""),
                         &remote,
@@ -242,7 +244,7 @@ impl SannyGitApp {
                 committed: false,
                 success: operation.success(),
                 outcome,
-                snapshot: crate::git::load(&root),
+                snapshot: crate::git::load(git, &root),
             }
         }) {
             self.manager.cancel = None;
@@ -259,6 +261,7 @@ impl SannyGitApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SYSTEM_GIT;
     use crate::theme::ThemeChoice;
 
     #[test]
@@ -275,7 +278,7 @@ mod tests {
             name: "Test".into(),
             path: repo.0.to_string_lossy().into_owned(),
         });
-        app.apply_snapshot(crate::git::load(&repo.0).unwrap());
+        app.apply_snapshot(crate::git::load(&SYSTEM_GIT, &repo.0).unwrap());
         app.open_remote(Operation::Pull);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while app.busy() {
@@ -291,17 +294,18 @@ mod tests {
             app.poll_worker();
         }
         assert_eq!(app.status, "Pull complete");
-        assert!(app.refs_pending);
+        assert!(app.branches.pending);
         app.load_history();
         app.load_refs();
-        while app.refs_loading {
+        while app.branches.loading {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(5));
             app.poll_refs();
         }
-        assert!(app.refs_current);
+        assert!(app.branches.current);
         assert!(app
-            .refs
+            .branches
+            .entries
             .iter()
             .any(|tag| tag.full_name == "refs/tags/release"));
     }

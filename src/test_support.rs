@@ -123,8 +123,13 @@ pub(crate) fn linear_repo(count: usize) -> TempRepo {
             contents.len()
         ));
     }
-    crate::git::run_with_input(&repo.0, &["fast-import", "--quiet"], Some(input.as_bytes()))
-        .unwrap();
+    crate::git::run_with_input(
+        &SYSTEM_GIT,
+        &repo.0,
+        &["fast-import", "--quiet"],
+        Some(input.as_bytes()),
+    )
+    .unwrap();
     repo.write("untracked", "keep local bytes\n");
     repo
 }
@@ -157,3 +162,6 @@ pub(crate) fn restart_memory(ctx: &eframe::egui::Context) -> eframe::egui::Memor
     eframe::set_value(&mut storage, "egui", &ctx.memory(|memory| memory.clone()));
     eframe::get_value(&storage, "egui").expect("egui memory must round-trip")
 }
+
+pub(crate) static SYSTEM_GIT: std::sync::LazyLock<crate::git::GitContext> =
+    std::sync::LazyLock::new(|| crate::git::GitContext::new(String::new()));

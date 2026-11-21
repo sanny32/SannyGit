@@ -1,4 +1,5 @@
 //! Stash commands and bounded, machine-readable output. Background workers only.
+use crate::git::GitContext;
 use crate::{git, models::ChangeKind};
 use std::path::{Component, Path};
 
@@ -25,8 +26,9 @@ fn valid_oid(oid: &str) -> bool {
     matches!(oid.len(), 40 | 64) && oid.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-pub fn list(root: &Path) -> Result<Vec<Entry>, String> {
+pub fn list(git: &GitContext, root: &Path) -> Result<Vec<Entry>, String> {
     parse_list(&git::run(
+        git,
         root,
         &["stash", "list", "-z", "-n", "1001", "--format=%H%x00%gs"],
     )?)
@@ -61,7 +63,7 @@ fn parse_list(bytes: &[u8]) -> Result<Vec<Entry>, String> {
         .collect()
 }
 
-fn diff(root: &Path, args: &[&str]) -> Result<String, String> {
+fn diff(git: &GitContext, root: &Path, args: &[&str]) -> Result<String, String> {
     let mut command = vec![
         "diff",
         "--no-ext-diff",
@@ -70,12 +72,16 @@ fn diff(root: &Path, args: &[&str]) -> Result<String, String> {
         "--full-index",
     ];
     command.extend_from_slice(args);
-    git::text(git::run(root, &command)?)
+    git::text(git::run(git, root, &command)?)
 }
 
-pub fn preview_save(root: &Path, include_untracked: bool) -> Result<SavePreview, String> {
-    git::require_no_operation(root)?;
-    let snapshot = git::load(root)?;
+pub fn preview_save(
+    git: &GitContext,
+    root: &Path,
+    include_untracked: bool,
+) -> Result<SavePreview, String> {
+    git::require_no_operation(git, root)?;
+    let snapshot = git::load(git, root)?;
     if snapshot
         .changes
         .iter()
@@ -91,18 +97,19 @@ pub fn preview_save(root: &Path, include_untracked: bool) -> Result<SavePreview,
         return Err("There are no selected changes to stash.".into());
     }
     let head = git::text(
-        git::run(root, &["rev-parse", "--verify", "HEAD^{commit}"])
+        git::run(git, root, &["rev-parse", "--verify", "HEAD^{commit}"])
             .map_err(|_| "Create the first commit before using stash.".to_owned())?,
     )?;
     let status = git::run(
+        git,
         root,
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
     )?;
-    let index = diff(root, &["--cached", head.trim(), "--"])?.into_bytes();
+    let index = diff(git, root, &["--cached", head.trim(), "--"])?.into_bytes();
     let mut patch = format!(
         "Staged changes\n{}\nUnstaged changes\n{}",
         String::from_utf8_lossy(&index),
-        diff(root, &["--"])?
+        diff(git, root, &["--"])?
     );
     let mut untracked = Vec::new();
     if include_untracked {
@@ -124,7 +131,11 @@ pub fn preview_save(root: &Path, include_untracked: bool) -> Result<SavePreview,
                     .ok_or("Non-UTF-8 symbolic link targets are not supported")?;
                 [b"link\0".as_slice(), target.as_bytes()].concat()
             } else if metadata.is_file() {
-                let oid = git::run(root, &["hash-object", "--no-filters", "--", &change.path])?;
+                let oid = git::run(
+                    git,
+                    root,
+                    &["hash-object", "--no-filters", "--", &change.path],
+                )?;
                 [b"file\0".as_slice(), &oid].concat()
             } else {
                 return Err(format!("Unsupported untracked file type: {}", change.path));
@@ -137,7 +148,7 @@ pub fn preview_save(root: &Path, include_untracked: bool) -> Result<SavePreview,
                 identity
             };
             patch.push_str(&format!("\nNew file: {}\n", change.path));
-            patch.push_str(&git::diff(root, &change.path, change.kind, None)?);
+            patch.push_str(&git::diff(git, root, &change.path, change.kind, None)?);
             untracked.push((change.path.clone(), identity));
             if patch.len() > PATCH_LIMIT {
                 return Err("Stash preview exceeds the 2 MiB limit".into());
@@ -157,14 +168,19 @@ pub fn preview_save(root: &Path, include_untracked: bool) -> Result<SavePreview,
     })
 }
 
-pub fn save(root: &Path, message: &str, expected: &SavePreview) -> Result<(), String> {
+pub fn save(
+    git: &GitContext,
+    root: &Path,
+    message: &str,
+    expected: &SavePreview,
+) -> Result<(), String> {
     if message.contains('\0') || message.len() > 4_096 {
         return Err("Use a stash message without NUL characters and no larger than 4 KiB.".into());
     }
-    if preview_save(root, expected.include_untracked)? != *expected {
+    if preview_save(git, root, expected.include_untracked)? != *expected {
         return Err("Changes have changed since the preview. Preview again before saving.".into());
     }
-    let before = list(root)?;
+    let before = list(git, root)?;
     let message = if message.trim().is_empty() {
         "SannyGit stash"
     } else {
@@ -175,12 +191,12 @@ pub fn save(root: &Path, message: &str, expected: &SavePreview) -> Result<(), St
         args.push("--include-untracked");
     }
     args.push("--");
-    git::run_stash(root, &args).map_err(|error| format!("Stash save did not complete: {error}. Inspect the stash list and working tree before retrying; some changes may already be stored."))?;
-    let after = list(root).map_err(|error| format!("Stash save completed, but its entry could not be verified: {error}. Reload before retrying."))?;
+    git::run_stash(git, root, &args).map_err(|error| format!("Stash save did not complete: {error}. Inspect the stash list and working tree before retrying; some changes may already be stored."))?;
+    let after = list(git, root).map_err(|error| format!("Stash save completed, but its entry could not be verified: {error}. Reload before retrying."))?;
     if after.len() != before.len() + 1 || after.get(1..) != Some(before.as_slice()) {
         return Err("Stash save completed, but the stash list changed unexpectedly. Inspect the list and working tree before retrying.".into());
     }
-    let remaining = git::load(root).map_err(|error| format!("Stash saved, but the working tree could not be checked: {error}. Inspect it before retrying."))?;
+    let remaining = git::load(git, root).map_err(|error| format!("Stash saved, but the working tree could not be checked: {error}. Inspect it before retrying."))?;
     if remaining
         .changes
         .iter()
@@ -191,11 +207,12 @@ pub fn save(root: &Path, message: &str, expected: &SavePreview) -> Result<(), St
     Ok(())
 }
 
-fn parents(root: &Path, entry: &Entry) -> Result<Vec<String>, String> {
+fn parents(git: &GitContext, root: &Path, entry: &Entry) -> Result<Vec<String>, String> {
     if !valid_oid(&entry.oid) {
         return Err("Invalid stash object ID".into());
     }
     let output = git::text(git::run(
+        git,
         root,
         &["rev-list", "--parents", "-n", "1", &entry.oid, "--"],
     )?)?;
@@ -211,22 +228,23 @@ fn parents(root: &Path, entry: &Entry) -> Result<Vec<String>, String> {
     Ok(fields)
 }
 
-pub fn preview_entry(root: &Path, entry: &Entry) -> Result<String, String> {
-    let parents = parents(root, entry)?;
+pub fn preview_entry(git: &GitContext, root: &Path, entry: &Entry) -> Result<String, String> {
+    let parents = parents(git, root, entry)?;
     let mut patch = format!(
         "Staged changes\n{}\nUnstaged changes\n{}",
-        diff(root, &[&parents[1], &parents[2], "--"])?,
-        diff(root, &[&parents[2], &entry.oid, "--"])?
+        diff(git, root, &[&parents[1], &parents[2], "--"])?,
+        diff(git, root, &[&parents[2], &entry.oid, "--"])?
     );
     if let Some(untracked) = parents.get(3) {
         let empty = git::text(git::run_with_input(
+            git,
             root,
             &["hash-object", "-t", "tree", "--stdin"],
             Some(b""),
         )?)?;
         patch.push_str(&format!(
             "\nUntracked files\n{}",
-            diff(root, &[empty.trim(), untracked, "--"])?
+            diff(git, root, &[empty.trim(), untracked, "--"])?
         ));
     }
     if patch.len() > PATCH_LIMIT {
@@ -235,36 +253,48 @@ pub fn preview_entry(root: &Path, entry: &Entry) -> Result<String, String> {
     Ok(patch)
 }
 
-fn check_list<'a>(root: &Path, expected: &'a [Entry], index: usize) -> Result<&'a Entry, String> {
+fn check_list<'a>(
+    git: &GitContext,
+    root: &Path,
+    expected: &'a [Entry],
+    index: usize,
+) -> Result<&'a Entry, String> {
     let entry = expected.get(index).ok_or("Select a stash entry first.")?;
-    if list(root)? != expected {
+    if list(git, root)? != expected {
         return Err("The stash list has changed. Reload and select the entry again.".into());
     }
     Ok(entry)
 }
 
-pub fn drop_entry(root: &Path, expected: &[Entry], index: usize) -> Result<(), String> {
-    git::require_no_operation(root)?;
-    check_list(root, expected, index)?;
-    git::run(root, &["stash", "drop", &format!("stash@{{{index}}}")]).map(|_| ())
+pub fn drop_entry(
+    git: &GitContext,
+    root: &Path,
+    expected: &[Entry],
+    index: usize,
+) -> Result<(), String> {
+    git::require_no_operation(git, root)?;
+    check_list(git, root, expected, index)?;
+    git::run(git, root, &["stash", "drop", &format!("stash@{{{index}}}")]).map(|_| ())
 }
 
 pub fn apply(
+    git: &GitContext,
     root: &Path,
     expected: &[Entry],
     index: usize,
     restore_index: bool,
     pop: bool,
 ) -> Result<(), String> {
-    git::require_no_operation(root)?;
-    let entry = check_list(root, expected, index)?;
-    if !git::load(root)?.changes.is_empty() {
+    git::require_no_operation(git, root)?;
+    let entry = check_list(git, root, expected, index)?;
+    if !git::load(git, root)?.changes.is_empty() {
         return Err("Commit or move aside local changes before applying a stash.".into());
     }
     // Git may overwrite ignored paths. Check every affected path absent from the
     // current index, including ignored files and symlink ancestors, before apply.
-    let parents = parents(root, entry)?;
+    let parents = parents(git, root, entry)?;
     let mut paths = git::run(
+        git,
         root,
         &[
             "diff",
@@ -278,11 +308,12 @@ pub fn apply(
     )?;
     if let Some(untracked) = parents.get(3) {
         paths.extend(git::run(
+            git,
             root,
             &["ls-tree", "-r", "--name-only", "-z", untracked, "--"],
         )?);
     }
-    let tracked = git::run(root, &["ls-files", "-z"])?;
+    let tracked = git::run(git, root, &["ls-files", "-z"])?;
     for path in paths
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
@@ -316,9 +347,9 @@ pub fn apply(
         args.push("--index");
     }
     args.push(&entry.oid);
-    git::run_stash(root, &args).map_err(|error| format!("Stash apply did not complete: {error}. The stash entry is retained. Inspect the working tree for conflicts or partially applied changes before retrying."))?;
+    git::run_stash(git, root, &args).map_err(|error| format!("Stash apply did not complete: {error}. The stash entry is retained. Inspect the working tree for conflicts or partially applied changes before retrying."))?;
     if pop {
-        drop_entry(root, expected, index).map_err(|error| format!("Stash applied, but its entry was retained: {error}. Do not apply it again; inspect the working tree and list."))?;
+        drop_entry(git, root, expected, index).map_err(|error| format!("Stash applied, but its entry was retained: {error}. Do not apply it again; inspect the working tree and list."))?;
     }
     Ok(())
 }
@@ -326,12 +357,13 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SYSTEM_GIT;
     use crate::{git::CommitContents, test_support::TempRepo};
 
     fn base() -> TempRepo {
         let repo = TempRepo::new();
         repo.write("file", "base\n");
-        git::commit(&repo.0, "Base", CommitContents::All).unwrap();
+        git::commit(&SYSTEM_GIT, &repo.0, "Base", CommitContents::All).unwrap();
         repo
     }
 
@@ -364,38 +396,38 @@ mod tests {
             repo.write("new file", "new contents\n");
             let head = repo.git(&["rev-parse", "HEAD"]);
             let index = repo.git(&["ls-files", "--stage"]);
-            let preview = preview_save(&repo.0, include).unwrap();
+            let preview = preview_save(&SYSTEM_GIT, &repo.0, include).unwrap();
             assert!(preview.patch.contains("+staged"));
             assert!(preview.patch.contains("+unstaged"));
             assert_eq!(preview.patch.contains("new contents"), include);
             assert_eq!(repo.git(&["ls-files", "--stage"]), index);
             assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"unstaged\n");
-            save(&repo.0, "Work in progress", &preview).unwrap();
-            let entries = list(&repo.0).unwrap();
+            save(&SYSTEM_GIT, &repo.0, "Work in progress", &preview).unwrap();
+            let entries = list(&SYSTEM_GIT, &repo.0).unwrap();
             assert_eq!(entries.len(), 1);
             assert!(entries[0].message.contains("Work in progress"));
             for _ in 0..3 {
-                assert_eq!(list(&repo.0).unwrap(), entries);
+                assert_eq!(list(&SYSTEM_GIT, &repo.0).unwrap(), entries);
             }
             assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
             assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"base\n");
             assert_eq!(repo.0.join("new file").exists(), !include);
-            let patch = preview_entry(&repo.0, &entries[0]).unwrap();
+            let patch = preview_entry(&SYSTEM_GIT, &repo.0, &entries[0]).unwrap();
             assert!(patch.contains("+staged") && patch.contains("+unstaged"));
             assert_eq!(patch.contains("new contents"), include);
             if !include {
                 std::fs::remove_file(repo.0.join("new file")).unwrap();
             }
-            apply(&repo.0, &entries, 0, true, false).unwrap();
+            apply(&SYSTEM_GIT, &repo.0, &entries, 0, true, false).unwrap();
             assert_eq!(repo.git(&["ls-files", "--stage"]), index);
             assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"unstaged\n");
             assert_eq!(repo.0.join("new file").exists(), include);
-            assert_eq!(list(&repo.0).unwrap(), entries);
+            assert_eq!(list(&SYSTEM_GIT, &repo.0).unwrap(), entries);
             assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
-            assert!(apply(&repo.0, &entries, 0, true, true)
+            assert!(apply(&SYSTEM_GIT, &repo.0, &entries, 0, true, true)
                 .unwrap_err()
                 .contains("local changes"));
-            assert_eq!(list(&repo.0).unwrap(), entries);
+            assert_eq!(list(&SYSTEM_GIT, &repo.0).unwrap(), entries);
         }
     }
 
@@ -404,17 +436,17 @@ mod tests {
         let repo = base();
         repo.write("file", "modified\n");
         repo.write("binary", "\0first");
-        let preview = preview_save(&repo.0, true).unwrap();
+        let preview = preview_save(&SYSTEM_GIT, &repo.0, true).unwrap();
         repo.write("binary", "\0second");
-        assert!(save(&repo.0, "Stale", &preview)
+        assert!(save(&SYSTEM_GIT, &repo.0, "Stale", &preview)
             .unwrap_err()
             .contains("Preview again"));
-        assert!(list(&repo.0).unwrap().is_empty());
+        assert!(list(&SYSTEM_GIT, &repo.0).unwrap().is_empty());
         assert!(repo.git(&["diff", "--cached", "--name-only"]).is_empty());
-        let preview = preview_save(&repo.0, true).unwrap();
+        let preview = preview_save(&SYSTEM_GIT, &repo.0, true).unwrap();
         repo.git(&["add", "file"]);
-        assert!(save(&repo.0, "Stale index", &preview).is_err());
-        assert!(list(&repo.0).unwrap().is_empty());
+        assert!(save(&SYSTEM_GIT, &repo.0, "Stale index", &preview).is_err());
+        assert!(list(&SYSTEM_GIT, &repo.0).unwrap().is_empty());
         assert_eq!(std::fs::read(repo.0.join("binary")).unwrap(), b"\0second");
     }
 
@@ -422,18 +454,18 @@ mod tests {
     fn save_rejects_unborn_empty_and_in_progress_repositories_without_writes() {
         let unborn = TempRepo::new();
         unborn.write("new", "contents");
-        assert!(preview_save(&unborn.0, true).is_err());
+        assert!(preview_save(&SYSTEM_GIT, &unborn.0, true).is_err());
         let repo = base();
-        assert!(preview_save(&repo.0, true).is_err());
+        assert!(preview_save(&SYSTEM_GIT, &repo.0, true).is_err());
         repo.write("new", "contents");
-        assert!(preview_save(&repo.0, false).is_err());
-        let preview = preview_save(&repo.0, true).unwrap();
+        assert!(preview_save(&SYSTEM_GIT, &repo.0, false).is_err());
+        let preview = preview_save(&SYSTEM_GIT, &repo.0, true).unwrap();
         std::fs::create_dir(repo.0.join(".git/rebase-merge")).unwrap();
-        assert!(save(&repo.0, "Blocked", &preview)
+        assert!(save(&SYSTEM_GIT, &repo.0, "Blocked", &preview)
             .unwrap_err()
             .contains("Finish"));
         assert!(repo.git(&["diff", "--cached", "--name-only"]).is_empty());
-        assert!(list(&repo.0).unwrap().is_empty());
+        assert!(list(&SYSTEM_GIT, &repo.0).unwrap().is_empty());
     }
 
     #[test]
@@ -441,18 +473,30 @@ mod tests {
     {
         let repo = base();
         repo.write("deleted", "remove me\n");
-        git::commit(&repo.0, "More files", CommitContents::All).unwrap();
+        git::commit(&SYSTEM_GIT, &repo.0, "More files", CommitContents::All).unwrap();
         repo.write("file", "older stash\n");
-        save(&repo.0, "Older", &preview_save(&repo.0, false).unwrap()).unwrap();
+        save(
+            &SYSTEM_GIT,
+            &repo.0,
+            "Older",
+            &preview_save(&SYSTEM_GIT, &repo.0, false).unwrap(),
+        )
+        .unwrap();
         repo.git(&["mv", "file", "renamed"]);
         std::fs::remove_file(repo.0.join("deleted")).unwrap();
         repo.write("new", "untracked\n");
         let index = repo.git(&["ls-files", "--stage"]);
-        save(&repo.0, "Newest", &preview_save(&repo.0, true).unwrap()).unwrap();
-        let entries = list(&repo.0).unwrap();
+        save(
+            &SYSTEM_GIT,
+            &repo.0,
+            "Newest",
+            &preview_save(&SYSTEM_GIT, &repo.0, true).unwrap(),
+        )
+        .unwrap();
+        let entries = list(&SYSTEM_GIT, &repo.0).unwrap();
         assert_eq!(entries.len(), 2);
-        apply(&repo.0, &entries, 0, true, true).unwrap();
-        assert_eq!(list(&repo.0).unwrap(), entries[1..]);
+        apply(&SYSTEM_GIT, &repo.0, &entries, 0, true, true).unwrap();
+        assert_eq!(list(&SYSTEM_GIT, &repo.0).unwrap(), entries[1..]);
         assert_eq!(repo.git(&["ls-files", "--stage"]), index);
         assert!(!repo.0.join("file").exists() && !repo.0.join("deleted").exists());
         assert_eq!(std::fs::read(repo.0.join("renamed")).unwrap(), b"base\n");
@@ -464,16 +508,22 @@ mod tests {
         for pop in [false, true] {
             let repo = base();
             repo.write("file", "stashed change\n");
-            save(&repo.0, "Conflict", &preview_save(&repo.0, false).unwrap()).unwrap();
-            let entries = list(&repo.0).unwrap();
+            save(
+                &SYSTEM_GIT,
+                &repo.0,
+                "Conflict",
+                &preview_save(&SYSTEM_GIT, &repo.0, false).unwrap(),
+            )
+            .unwrap();
+            let entries = list(&SYSTEM_GIT, &repo.0).unwrap();
             repo.write("file", "different commit\n");
-            git::commit(&repo.0, "Diverged", CommitContents::All).unwrap();
+            git::commit(&SYSTEM_GIT, &repo.0, "Diverged", CommitContents::All).unwrap();
             let head = repo.git(&["rev-parse", "HEAD"]);
-            let error = apply(&repo.0, &entries, 0, false, pop).unwrap_err();
+            let error = apply(&SYSTEM_GIT, &repo.0, &entries, 0, false, pop).unwrap_err();
             assert!(error.contains("retained") && error.contains("conflicts"));
-            assert_eq!(list(&repo.0).unwrap(), entries);
+            assert_eq!(list(&SYSTEM_GIT, &repo.0).unwrap(), entries);
             assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
-            assert!(git::load(&repo.0)
+            assert!(git::load(&SYSTEM_GIT, &repo.0)
                 .unwrap()
                 .changes
                 .iter()
@@ -485,18 +535,30 @@ mod tests {
     fn drop_rejects_stale_selection_and_preserves_worktree_and_other_entries() {
         let repo = base();
         repo.write("file", "first\n");
-        save(&repo.0, "First", &preview_save(&repo.0, false).unwrap()).unwrap();
-        let old = list(&repo.0).unwrap();
+        save(
+            &SYSTEM_GIT,
+            &repo.0,
+            "First",
+            &preview_save(&SYSTEM_GIT, &repo.0, false).unwrap(),
+        )
+        .unwrap();
+        let old = list(&SYSTEM_GIT, &repo.0).unwrap();
         repo.write("file", "second\n");
-        save(&repo.0, "Second", &preview_save(&repo.0, false).unwrap()).unwrap();
-        let current = list(&repo.0).unwrap();
-        assert!(drop_entry(&repo.0, &old, 0)
+        save(
+            &SYSTEM_GIT,
+            &repo.0,
+            "Second",
+            &preview_save(&SYSTEM_GIT, &repo.0, false).unwrap(),
+        )
+        .unwrap();
+        let current = list(&SYSTEM_GIT, &repo.0).unwrap();
+        assert!(drop_entry(&SYSTEM_GIT, &repo.0, &old, 0)
             .unwrap_err()
             .contains("list has changed"));
-        assert!(apply(&repo.0, &old, 0, true, true).is_err());
+        assert!(apply(&SYSTEM_GIT, &repo.0, &old, 0, true, true).is_err());
         repo.write("file", "local changes remain\n");
-        drop_entry(&repo.0, &current, 1).unwrap();
-        assert_eq!(list(&repo.0).unwrap(), current[..1]);
+        drop_entry(&SYSTEM_GIT, &repo.0, &current, 1).unwrap();
+        assert_eq!(list(&SYSTEM_GIT, &repo.0).unwrap(), current[..1]);
         assert_eq!(
             std::fs::read(repo.0.join("file")).unwrap(),
             b"local changes remain\n"
@@ -508,20 +570,26 @@ mod tests {
     fn ignored_destinations_are_never_overwritten_by_apply_or_pop() {
         let repo = base();
         repo.write("new", "stashed contents\n");
-        save(&repo.0, "Untracked", &preview_save(&repo.0, true).unwrap()).unwrap();
+        save(
+            &SYSTEM_GIT,
+            &repo.0,
+            "Untracked",
+            &preview_save(&SYSTEM_GIT, &repo.0, true).unwrap(),
+        )
+        .unwrap();
         repo.write(".git/info/exclude", "new\n");
         repo.write("new", "private ignored contents\n");
-        let entries = list(&repo.0).unwrap();
-        assert!(git::load(&repo.0).unwrap().changes.is_empty());
+        let entries = list(&SYSTEM_GIT, &repo.0).unwrap();
+        assert!(git::load(&SYSTEM_GIT, &repo.0).unwrap().changes.is_empty());
         for pop in [false, true] {
-            assert!(apply(&repo.0, &entries, 0, true, pop)
+            assert!(apply(&SYSTEM_GIT, &repo.0, &entries, 0, true, pop)
                 .unwrap_err()
                 .contains("overwrite"));
             assert_eq!(
                 std::fs::read(repo.0.join("new")).unwrap(),
                 b"private ignored contents\n"
             );
-            assert_eq!(list(&repo.0).unwrap(), entries);
+            assert_eq!(list(&SYSTEM_GIT, &repo.0).unwrap(), entries);
         }
     }
 
@@ -532,29 +600,30 @@ mod tests {
         repo.git(&["add", "file"]);
         repo.write("file", "unstaged\n");
         save(
+            &SYSTEM_GIT,
             &repo.0,
             "Unstaged apply",
-            &preview_save(&repo.0, false).unwrap(),
+            &preview_save(&SYSTEM_GIT, &repo.0, false).unwrap(),
         )
         .unwrap();
-        let entries = list(&repo.0).unwrap();
-        apply(&repo.0, &entries, 0, false, false).unwrap();
+        let entries = list(&SYSTEM_GIT, &repo.0).unwrap();
+        apply(&SYSTEM_GIT, &repo.0, &entries, 0, false, false).unwrap();
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"unstaged\n");
         assert!(repo.git(&["diff", "--cached", "--name-only"]).is_empty());
-        assert_eq!(list(&repo.0).unwrap(), entries);
+        assert_eq!(list(&SYSTEM_GIT, &repo.0).unwrap(), entries);
     }
 
     #[test]
     fn save_rejects_stale_head_and_locked_index_without_losing_files() {
         let repo = base();
         repo.write("file", "keep modified\n");
-        let stale = preview_save(&repo.0, false).unwrap();
+        let stale = preview_save(&SYSTEM_GIT, &repo.0, false).unwrap();
         repo.git(&["commit", "--allow-empty", "-m", "External HEAD"]);
-        assert!(save(&repo.0, "Stale HEAD", &stale).is_err());
-        let preview = preview_save(&repo.0, false).unwrap();
+        assert!(save(&SYSTEM_GIT, &repo.0, "Stale HEAD", &stale).is_err());
+        let preview = preview_save(&SYSTEM_GIT, &repo.0, false).unwrap();
         repo.write(".git/index.lock", "busy");
-        assert!(save(&repo.0, "Locked index", &preview).is_err());
-        assert!(list(&repo.0).unwrap().is_empty());
+        assert!(save(&SYSTEM_GIT, &repo.0, "Locked index", &preview).is_err());
+        assert!(list(&SYSTEM_GIT, &repo.0).unwrap().is_empty());
         assert_eq!(
             std::fs::read(repo.0.join("file")).unwrap(),
             b"keep modified\n"
@@ -568,16 +637,16 @@ mod tests {
         use std::os::unix::fs::symlink;
         let repo = base();
         symlink("missing-target", repo.0.join("link")).unwrap();
-        let preview = preview_save(&repo.0, true).unwrap();
-        save(&repo.0, "Link", &preview).unwrap();
-        let entries = list(&repo.0).unwrap();
+        let preview = preview_save(&SYSTEM_GIT, &repo.0, true).unwrap();
+        save(&SYSTEM_GIT, &repo.0, "Link", &preview).unwrap();
+        let entries = list(&SYSTEM_GIT, &repo.0).unwrap();
         assert!(repo.0.join("link").symlink_metadata().is_err());
-        apply(&repo.0, &entries, 0, true, true).unwrap();
+        apply(&SYSTEM_GIT, &repo.0, &entries, 0, true, true).unwrap();
         assert_eq!(
             std::fs::read_link(repo.0.join("link")).unwrap(),
             Path::new("missing-target")
         );
-        assert!(list(&repo.0).unwrap().is_empty());
+        assert!(list(&SYSTEM_GIT, &repo.0).unwrap().is_empty());
     }
 
     #[cfg(unix)]
@@ -588,7 +657,7 @@ mod tests {
             let repo = base();
             repo.write("file", "modified\n");
             repo.write("new", "new\n");
-            let preview = preview_save(&repo.0, true).unwrap();
+            let preview = preview_save(&SYSTEM_GIT, &repo.0, true).unwrap();
             let wrapper = repo.0.join(".git/literal-git");
             std::fs::write(
                 &wrapper,
@@ -596,10 +665,10 @@ mod tests {
             )
             .unwrap();
             std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
-            git::set_executable(wrapper.to_string_lossy().into_owned());
-            let error = save(&repo.0, "Partial cleanup", &preview).unwrap_err();
+            let git = &GitContext::new(wrapper.to_string_lossy().into_owned());
+            let error = save(git, &repo.0, "Partial cleanup", &preview).unwrap_err();
             assert!(error.contains("Stash saved") && error.contains("changes remain"));
-            assert_eq!(list(&repo.0).unwrap().len(), 1);
+            assert_eq!(list(git, &repo.0).unwrap().len(), 1);
             assert_eq!(std::fs::read(repo.0.join("new")).unwrap(), b"new\n");
             assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"base\n");
         })

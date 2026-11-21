@@ -1,3 +1,4 @@
+use crate::git::GitContext;
 use crate::models::{BranchRef, ChangeFile, ChangeKind, Commit, RefKind, Repository};
 
 pub fn repositories() -> Vec<Repository> {
@@ -360,11 +361,12 @@ pub fn stash_dialog() -> crate::app::stash::Dialog {
 }
 
 pub fn discard_dialog(
+    git: &GitContext,
     action: crate::discard::Action,
 ) -> (crate::test_support::TempRepo, crate::app::discard::Dialog) {
     let repo = crate::test_support::TempRepo::new();
     repo.write("file", "base\n");
-    crate::git::commit(&repo.0, "Base", crate::git::CommitContents::All).unwrap();
+    crate::git::commit(git, &repo.0, "Base", crate::git::CommitContents::All).unwrap();
     let path = match action {
         crate::discard::Action::Restore => {
             repo.write("file", "unstaged\n");
@@ -378,7 +380,7 @@ pub fn discard_dialog(
             panic!("This fixture only prepares ordinary discard actions")
         }
     };
-    let prepared = crate::discard::prepare(&repo.0, path).unwrap();
+    let prepared = crate::discard::prepare(git, &repo.0, path).unwrap();
     let dialog = crate::app::discard::Dialog {
         root: repo
             .0
@@ -406,6 +408,7 @@ pub enum RefDialogFixture {
 }
 
 pub fn ref_dialog(
+    git: &GitContext,
     fixture: RefDialogFixture,
 ) -> (
     crate::test_support::TempRepo,
@@ -414,14 +417,16 @@ pub fn ref_dialog(
     use crate::app::ref_management::{Dialog, Kind, RemoteEditor};
     let repo = crate::test_support::TempRepo::new();
     repo.write("file", "base\n");
-    crate::git::commit(&repo.0, "Base", crate::git::CommitContents::All).unwrap();
+    crate::git::commit(git, &repo.0, "Base", crate::git::CommitContents::All).unwrap();
     repo.git(&["branch", "merged"]);
     repo.git(&["tag", "chosen"]);
-    let root = crate::git::load(&repo.0).unwrap().repository.path;
+    let root = crate::git::load(git, &repo.0).unwrap().repository.path;
     let kind = match fixture {
         RefDialogFixture::Delete => Kind::Delete {
             source: "refs/heads/merged".into(),
-            prepared: Some(crate::branches::preview_delete(&repo.0, "refs/heads/merged").unwrap()),
+            prepared: Some(
+                crate::branches::preview_delete(git, &repo.0, "refs/heads/merged").unwrap(),
+            ),
         },
         RefDialogFixture::Tag => {
             let remote = repo.0.join("remote.git");
@@ -432,7 +437,7 @@ pub fn ref_dialog(
                 names: vec!["origin".into()],
                 remote: "origin".into(),
                 prepared: Some(
-                    crate::remotes::preview_tag_push(&repo.0, "refs/tags/chosen", "origin")
+                    crate::remotes::preview_tag_push(git, &repo.0, "refs/tags/chosen", "origin")
                         .unwrap(),
                 ),
             }
@@ -440,7 +445,7 @@ pub fn ref_dialog(
         RefDialogFixture::Remotes => {
             repo.git(&["remote", "add", "origin", "https://dummy-user:dummy-password@example.test/repo?private-query#private-fragment"]);
             let mut editor = RemoteEditor {
-                snapshot: Some(crate::remote_config::load(&repo.0).unwrap()),
+                snapshot: Some(crate::remote_config::load(git, &repo.0).unwrap()),
                 current: true,
                 ..Default::default()
             };

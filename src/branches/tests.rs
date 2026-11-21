@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_support::TempRepo;
+use crate::test_support::SYSTEM_GIT;
 
 fn committed_repo() -> TempRepo {
     let repo = TempRepo::new();
@@ -23,10 +24,11 @@ fn advanced_soft_and_mixed_keep_working_files_and_handle_the_index_differently()
         repo.write("file", "staged\n");
         repo.git(&["add", "file"]);
         repo.write("file", "unstaged\n");
-        let preview = preview_reset(&repo.0, "refs/tags/v1").unwrap();
+        let preview = preview_reset(&SYSTEM_GIT, &repo.0, "refs/tags/v1").unwrap();
         assert!(preview.has_tracked_changes);
 
         reset_tag(
+            &SYSTEM_GIT,
             &repo.0,
             &preview,
             ResetMode::Clean,
@@ -57,19 +59,19 @@ fn advanced_keep_and_merge_refuse_conflicting_files_and_preserve_unrelated_edits
         repo.git(&["commit", "-m", "before reset"]);
         let before = repo.git(&["rev-parse", "HEAD"]);
         repo.write("file", "conflict\n");
-        let preview = preview_reset(&repo.0, "refs/tags/v1").unwrap();
+        let preview = preview_reset(&SYSTEM_GIT, &repo.0, "refs/tags/v1").unwrap();
         let options = Some(AdvancedReset {
             strategy,
             fix_line_endings: false,
         });
 
-        assert!(reset_tag(&repo.0, &preview, ResetMode::Clean, options).is_err());
+        assert!(reset_tag(&SYSTEM_GIT, &repo.0, &preview, ResetMode::Clean, options).is_err());
         assert_eq!(repo.git(&["rev-parse", "HEAD"]), before);
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"conflict\n");
 
         repo.write("file", "new commit\n");
         repo.write("keep", "unrelated edit\n");
-        reset_tag(&repo.0, &preview, ResetMode::Clean, options).unwrap();
+        reset_tag(&SYSTEM_GIT, &repo.0, &preview, ResetMode::Clean, options).unwrap();
         assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), preview.target);
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"base\n");
         assert_eq!(
@@ -93,9 +95,10 @@ fn advanced_hard_refreshes_line_endings_even_for_an_unchanged_file() {
     repo.write("eol.txt", "first\nsecond\n");
     repo.git(&["update-index", "-q", "--refresh"]);
     repo.write("untracked", "keep\n");
-    let preview = preview_reset(&repo.0, "refs/tags/v1").unwrap();
+    let preview = preview_reset(&SYSTEM_GIT, &repo.0, "refs/tags/v1").unwrap();
     assert!(!preview.has_tracked_changes);
     reset_tag(
+        &SYSTEM_GIT,
         &repo.0,
         &preview,
         ResetMode::Clean,
@@ -137,11 +140,11 @@ fn reset_handles_tracked_changes_and_preserves_unrelated_untracked_files() {
         repo.write("collision", "an untracked file in the way\n");
         repo.write("keep", "unrelated\n");
 
-        let preview = preview_reset(&repo.0, "refs/tags/v1").unwrap();
+        let preview = preview_reset(&SYSTEM_GIT, &repo.0, "refs/tags/v1").unwrap();
         assert!(preview.has_tracked_changes);
         assert_eq!(preview.target, tagged.trim());
         assert_eq!(repo.git(&["rev-parse", "HEAD"]), before);
-        reset_tag(&repo.0, &preview, mode, None).unwrap();
+        reset_tag(&SYSTEM_GIT, &repo.0, &preview, mode, None).unwrap();
 
         assert_eq!(repo.git(&["rev-parse", "HEAD"]), tagged);
         assert_eq!(
@@ -175,28 +178,34 @@ fn reset_rejects_stale_tag_branch_and_new_changes_before_moving_head() {
     repo.git(&["tag", "v1"]);
     repo.git(&["commit", "--allow-empty", "-m", "before reset"]);
     let before = repo.git(&["rev-parse", "HEAD"]);
-    let preview = preview_reset(&repo.0, "refs/tags/v1").unwrap();
+    let preview = preview_reset(&SYSTEM_GIT, &repo.0, "refs/tags/v1").unwrap();
     assert!(!preview.has_tracked_changes);
     repo.git(&["switch", "-c", "other"]);
-    assert!(reset_tag(&repo.0, &preview, ResetMode::Clean, None)
-        .unwrap_err()
-        .contains("changed"));
+    assert!(
+        reset_tag(&SYSTEM_GIT, &repo.0, &preview, ResetMode::Clean, None)
+            .unwrap_err()
+            .contains("changed")
+    );
     assert_eq!(repo.git(&["rev-parse", "HEAD"]), before);
     repo.git(&["switch", "main"]);
     repo.git(&["tag", "-f", "v1"]);
-    assert!(reset_tag(&repo.0, &preview, ResetMode::Clean, None)
-        .unwrap_err()
-        .contains("changed"));
+    assert!(
+        reset_tag(&SYSTEM_GIT, &repo.0, &preview, ResetMode::Clean, None)
+            .unwrap_err()
+            .contains("changed")
+    );
     repo.git(&["tag", "-f", "v1", "HEAD~"]);
 
     repo.write("file", "new work\n");
-    assert!(reset_tag(&repo.0, &preview, ResetMode::Clean, None)
-        .unwrap_err()
-        .contains("Tracked changes appeared"));
+    assert!(
+        reset_tag(&SYSTEM_GIT, &repo.0, &preview, ResetMode::Clean, None)
+            .unwrap_err()
+            .contains("Tracked changes appeared")
+    );
     assert_eq!(repo.git(&["rev-parse", "HEAD"]), before);
     assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"new work\n");
     repo.write("file", "base\n");
-    reset_tag(&repo.0, &preview, ResetMode::Clean, None).unwrap();
+    reset_tag(&SYSTEM_GIT, &repo.0, &preview, ResetMode::Clean, None).unwrap();
     assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), preview.target);
 }
 
@@ -211,9 +220,9 @@ fn delete_removes_only_a_reviewed_merged_branch_and_preserves_dirty_index_and_fi
     repo.write("new", "keep new\n");
     let index = repo.git(&["ls-files", "--stage"]);
     let head = repo.git(&["rev-parse", "HEAD"]);
-    let preview = preview_delete(&repo.0, "refs/heads/merged").unwrap();
+    let preview = preview_delete(&SYSTEM_GIT, &repo.0, "refs/heads/merged").unwrap();
     assert!(repo.git(&["branch", "--list", "merged"]).contains("merged"));
-    delete(&repo.0, &preview).unwrap();
+    delete(&SYSTEM_GIT, &repo.0, &preview).unwrap();
     assert!(repo.git(&["branch", "--list", "merged"]).is_empty());
     assert!(repo.git(&["branch", "--list", "keep"]).contains("keep"));
     assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
@@ -226,18 +235,20 @@ fn delete_removes_only_a_reviewed_merged_branch_and_preserves_dirty_index_and_fi
 fn delete_rejects_current_unmerged_worktree_and_stale_branch_targets() {
     let repo = committed_repo();
     repo.git(&["branch", "other"]);
-    assert!(preview_delete(&repo.0, "refs/heads/main")
+    assert!(preview_delete(&SYSTEM_GIT, &repo.0, "refs/heads/main")
         .unwrap_err()
         .contains("current"));
-    let preview = preview_delete(&repo.0, "refs/heads/other").unwrap();
+    let preview = preview_delete(&SYSTEM_GIT, &repo.0, "refs/heads/other").unwrap();
     repo.git(&["commit", "--allow-empty", "-m", "HEAD advanced"]);
-    assert!(delete(&repo.0, &preview).unwrap_err().contains("changed"));
+    assert!(delete(&SYSTEM_GIT, &repo.0, &preview)
+        .unwrap_err()
+        .contains("changed"));
     repo.git(&["switch", "other"]);
     repo.write("file", "unmerged\n");
     repo.git(&["add", "file"]);
     repo.git(&["commit", "-m", "Unique"]);
     repo.git(&["switch", "main"]);
-    assert!(preview_delete(&repo.0, "refs/heads/other")
+    assert!(preview_delete(&SYSTEM_GIT, &repo.0, "refs/heads/other")
         .unwrap_err()
         .contains("not fully merged"));
     repo.git(&["branch", "worktree-branch"]);
@@ -248,9 +259,11 @@ fn delete_rejects_current_unmerged_worktree_and_stale_branch_targets() {
         linked.to_str().unwrap(),
         "worktree-branch",
     ]);
-    assert!(preview_delete(&repo.0, "refs/heads/worktree-branch")
-        .unwrap_err()
-        .contains("worktree"));
+    assert!(
+        preview_delete(&SYSTEM_GIT, &repo.0, "refs/heads/worktree-branch")
+            .unwrap_err()
+            .contains("worktree")
+    );
     repo.git(&["tag", "tag"]);
     for name in [
         "refs/tags/tag",
@@ -258,7 +271,7 @@ fn delete_rejects_current_unmerged_worktree_and_stale_branch_targets() {
         "other",
         "--all",
     ] {
-        assert!(preview_delete(&repo.0, name).is_err());
+        assert!(preview_delete(&SYSTEM_GIT, &repo.0, name).is_err());
     }
     assert!(repo.git(&["branch", "--list", "other"]).contains("other"));
 }
@@ -268,16 +281,22 @@ fn delete_rechecks_tip_worktree_occupancy_and_unfinished_operations_after_review
     let repo = committed_repo();
     repo.git(&["commit", "--allow-empty", "-m", "Next"]);
     repo.git(&["branch", "merged", "HEAD^"]);
-    let preview = preview_delete(&repo.0, "refs/heads/merged").unwrap();
+    let preview = preview_delete(&SYSTEM_GIT, &repo.0, "refs/heads/merged").unwrap();
     repo.git(&["branch", "-f", "merged", "HEAD"]);
-    assert!(delete(&repo.0, &preview).unwrap_err().contains("changed"));
-    let preview = preview_delete(&repo.0, "refs/heads/merged").unwrap();
+    assert!(delete(&SYSTEM_GIT, &repo.0, &preview)
+        .unwrap_err()
+        .contains("changed"));
+    let preview = preview_delete(&SYSTEM_GIT, &repo.0, "refs/heads/merged").unwrap();
     repo.write(".git/MERGE_HEAD", "busy");
-    assert!(delete(&repo.0, &preview).unwrap_err().contains("Finish"));
+    assert!(delete(&SYSTEM_GIT, &repo.0, &preview)
+        .unwrap_err()
+        .contains("Finish"));
     std::fs::remove_file(repo.0.join(".git/MERGE_HEAD")).unwrap();
     let path = repo.0.join("linked");
     repo.git(&["worktree", "add", path.to_str().unwrap(), "merged"]);
-    assert!(delete(&repo.0, &preview).unwrap_err().contains("worktree"));
+    assert!(delete(&SYSTEM_GIT, &repo.0, &preview)
+        .unwrap_err()
+        .contains("worktree"));
     assert!(repo.git(&["branch", "--list", "merged"]).contains("merged"));
 }
 
@@ -292,14 +311,14 @@ fn creates_lightweight_and_annotated_tags_without_touching_dirty_files() {
     let status = repo.git(&["status", "--porcelain=v1"]);
     let head = repo.git(&["rev-parse", "HEAD"]);
     repo.git(&["config", "tag.gpgSign", "true"]);
-    create_tag(&repo.0, "release/версия", " \n").unwrap();
+    create_tag(&SYSTEM_GIT, &repo.0, "release/версия", " \n").unwrap();
     assert_eq!(
         repo.git(&["cat-file", "-t", "refs/tags/release/версия"])
             .trim(),
         "commit"
     );
     repo.git(&["config", "tag.gpgSign", "false"]);
-    create_tag(&repo.0, "v1.0", "Release\n\nDetails #1\n").unwrap();
+    create_tag(&SYSTEM_GIT, &repo.0, "v1.0", "Release\n\nDetails #1\n").unwrap();
     assert_eq!(
         repo.git(&["cat-file", "-t", "refs/tags/v1.0"]).trim(),
         "tag"
@@ -320,18 +339,18 @@ fn creates_lightweight_and_annotated_tags_without_touching_dirty_files() {
         "untracked\n"
     );
     repo.git(&["checkout", "--detach"]);
-    create_tag(&repo.0, "detached", "").unwrap();
+    create_tag(&SYSTEM_GIT, &repo.0, "detached", "").unwrap();
     assert_eq!(repo.git(&["rev-parse", "refs/tags/detached"]), head);
 }
 
 #[test]
 fn tag_creation_rejects_invalid_names_duplicates_messages_and_unborn_head() {
     let empty = TempRepo::new();
-    assert!(create_tag(&empty.0, "v1", "")
+    assert!(create_tag(&SYSTEM_GIT, &empty.0, "v1", "")
         .unwrap_err()
         .contains("first commit"));
     let repo = committed_repo();
-    create_tag(&repo.0, "v1", "Original").unwrap();
+    create_tag(&SYSTEM_GIT, &repo.0, "v1", "Original").unwrap();
     let before = repo.git(&["show-ref"]);
     for name in [
         "",
@@ -349,12 +368,12 @@ fn tag_creation_rejects_invalid_names_duplicates_messages_and_unborn_head() {
         "v1",
     ] {
         assert!(
-            create_tag(&repo.0, name, "replacement").is_err(),
+            create_tag(&SYSTEM_GIT, &repo.0, name, "replacement").is_err(),
             "{name:?}"
         );
     }
-    assert!(create_tag(&repo.0, "bad-message", "bad\0message").is_err());
-    assert!(create_tag(&repo.0, "huge", &"x".repeat(1024 * 1024 + 1)).is_err());
+    assert!(create_tag(&SYSTEM_GIT, &repo.0, "bad-message", "bad\0message").is_err());
+    assert!(create_tag(&SYSTEM_GIT, &repo.0, "huge", &"x".repeat(1024 * 1024 + 1)).is_err());
     assert_eq!(repo.git(&["show-ref"]), before);
 }
 
@@ -369,8 +388,11 @@ fn rename_preserves_dirty_files_index_head_and_tracking_configuration() {
     repo.write("file", "unstaged\n");
     repo.write("new", "untracked\n");
     let index = std::fs::read(repo.0.join(".git/index")).unwrap();
-    rename(&repo.0, "refs/heads/main", "feature/новая").unwrap();
-    assert_eq!(git::load(&repo.0).unwrap().branch, "feature/новая");
+    rename(&SYSTEM_GIT, &repo.0, "refs/heads/main", "feature/новая").unwrap();
+    assert_eq!(
+        git::load(&SYSTEM_GIT, &repo.0).unwrap().branch,
+        "feature/новая"
+    );
     assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
     assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
     assert_eq!(
@@ -389,21 +411,24 @@ fn rename_preserves_dirty_files_index_head_and_tracking_configuration() {
         repo.git(&["config", "branch.feature/новая.merge"]).trim(),
         "refs/heads/main"
     );
-    assert!(!load(&repo.0)
+    assert!(!load(&SYSTEM_GIT, &repo.0)
         .unwrap()
         .refs
         .iter()
         .any(|r| r.full_name == "refs/heads/main"));
-    create(&repo.0, "other", false).unwrap();
-    rename(&repo.0, "refs/heads/other", "renamed-other").unwrap();
-    assert_eq!(git::load(&repo.0).unwrap().branch, "feature/новая");
+    create(&SYSTEM_GIT, &repo.0, "other", false).unwrap();
+    rename(&SYSTEM_GIT, &repo.0, "refs/heads/other", "renamed-other").unwrap();
+    assert_eq!(
+        git::load(&SYSTEM_GIT, &repo.0).unwrap().branch,
+        "feature/новая"
+    );
     assert_eq!(repo.git(&["rev-parse", "renamed-other"]), head);
 }
 
 #[test]
 fn rename_rejects_invalid_missing_nonlocal_and_existing_targets_without_writes() {
     let repo = committed_repo();
-    create(&repo.0, "existing", false).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "existing", false).unwrap();
     repo.git(&["tag", "release"]);
     repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
     let before = repo.git(&["show-ref"]);
@@ -422,7 +447,7 @@ fn rename_rejects_invalid_missing_nonlocal_and_existing_targets_without_writes()
         "main",
     ] {
         assert!(
-            rename(&repo.0, "refs/heads/main", name).is_err(),
+            rename(&SYSTEM_GIT, &repo.0, "refs/heads/main", name).is_err(),
             "{name:?}"
         );
     }
@@ -433,11 +458,11 @@ fn rename_rejects_invalid_missing_nonlocal_and_existing_targets_without_writes()
         "refs/remotes/origin/main",
         "--all",
     ] {
-        assert!(rename(&repo.0, source, "new-name").is_err());
+        assert!(rename(&SYSTEM_GIT, &repo.0, source, "new-name").is_err());
     }
     assert_eq!(repo.git(&["show-ref"]), before);
     assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
-    assert_eq!(git::load(&repo.0).unwrap().branch, "main");
+    assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "main");
 }
 
 #[test]
@@ -472,7 +497,7 @@ fn lists_current_local_remote_upstream_and_annotated_tags_without_writes() {
         "Версия 1.0\ncontinued\n\nDetails",
     ]);
     let index = std::fs::read(repo.0.join(".git/index")).unwrap();
-    let snapshot = load(&repo.0).unwrap();
+    let snapshot = load(&SYSTEM_GIT, &repo.0).unwrap();
     assert!(snapshot.has_head);
     assert_eq!(snapshot.refs.len(), 5);
     let current = snapshot.refs.iter().find(|r| r.current).unwrap();
@@ -513,30 +538,37 @@ fn lists_current_local_remote_upstream_and_annotated_tags_without_writes() {
 fn creates_branches_with_and_without_switching_and_handles_detached_head() {
     let repo = committed_repo();
     let head = repo.git(&["rev-parse", "HEAD"]);
-    create(&repo.0, "feature/новая", false).unwrap();
-    assert_eq!(git::load(&repo.0).unwrap().branch, "main");
+    create(&SYSTEM_GIT, &repo.0, "feature/новая", false).unwrap();
+    assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "main");
     assert_eq!(repo.git(&["rev-parse", "feature/новая"]), head);
-    create(&repo.0, "another", true).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "another", true).unwrap();
     repo.git(&["tag", "main"]);
-    assert_eq!(git::load(&repo.0).unwrap().branch, "another");
-    switch(&repo.0, "refs/heads/main").unwrap();
-    assert_eq!(git::load(&repo.0).unwrap().branch, "main");
-    assert!(switch(&repo.0, "refs/heads/main").is_err());
+    assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "another");
+    switch(&SYSTEM_GIT, &repo.0, "refs/heads/main").unwrap();
+    assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "main");
+    assert!(switch(&SYSTEM_GIT, &repo.0, "refs/heads/main").is_err());
     repo.git(&["checkout", "--detach"]);
-    assert!(load(&repo.0).unwrap().refs.iter().all(|r| !r.current));
-    create(&repo.0, "from-detached", true).unwrap();
-    assert_eq!(git::load(&repo.0).unwrap().branch, "from-detached");
+    assert!(load(&SYSTEM_GIT, &repo.0)
+        .unwrap()
+        .refs
+        .iter()
+        .all(|r| !r.current));
+    create(&SYSTEM_GIT, &repo.0, "from-detached", true).unwrap();
+    assert_eq!(
+        git::load(&SYSTEM_GIT, &repo.0).unwrap().branch,
+        "from-detached"
+    );
     assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
 }
 
 #[test]
 fn carries_staged_unstaged_and_untracked_changes_across_branch_switches() {
     let repo = committed_repo();
-    create(&repo.0, "other", true).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "other", true).unwrap();
     repo.write("target-only", "from other\n");
     repo.git(&["add", "target-only"]);
     repo.git(&["commit", "-m", "Add target file"]);
-    switch(&repo.0, "refs/heads/main").unwrap();
+    switch(&SYSTEM_GIT, &repo.0, "refs/heads/main").unwrap();
 
     repo.write("file", "staged\n");
     repo.git(&["add", "file"]);
@@ -545,14 +577,14 @@ fn carries_staged_unstaged_and_untracked_changes_across_branch_switches() {
     let status = repo.git(&["status", "--porcelain"]);
     let staged = repo.git(&["show", ":file"]);
 
-    switch(&repo.0, "refs/heads/other").unwrap();
-    assert_eq!(git::load(&repo.0).unwrap().branch, "other");
+    switch(&SYSTEM_GIT, &repo.0, "refs/heads/other").unwrap();
+    assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "other");
     assert_eq!(
         std::fs::read_to_string(repo.0.join("target-only")).unwrap(),
         "from other\n"
     );
-    create(&repo.0, "new", true).unwrap();
-    assert_eq!(git::load(&repo.0).unwrap().branch, "new");
+    create(&SYSTEM_GIT, &repo.0, "new", true).unwrap();
+    assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "new");
     assert_eq!(repo.git(&["status", "--porcelain"]), status);
     assert_eq!(repo.git(&["show", ":file"]), staged);
     for (path, contents) in [("file", "unstaged\n"), ("untracked", "keep\n")] {
@@ -566,15 +598,15 @@ fn carries_staged_unstaged_and_untracked_changes_across_branch_switches() {
 #[test]
 fn refuses_switch_that_would_overwrite_untracked_file() {
     let repo = committed_repo();
-    create(&repo.0, "other", true).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "other", true).unwrap();
     repo.write("collision", "tracked\n");
     repo.git(&["add", "collision"]);
     repo.git(&["commit", "-m", "Track collision"]);
-    switch(&repo.0, "refs/heads/main").unwrap();
+    switch(&SYSTEM_GIT, &repo.0, "refs/heads/main").unwrap();
 
     repo.write("collision", "untracked\n");
-    assert!(switch(&repo.0, "refs/heads/other").is_err());
-    assert_eq!(git::load(&repo.0).unwrap().branch, "main");
+    assert!(switch(&SYSTEM_GIT, &repo.0, "refs/heads/other").is_err());
+    assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "main");
     assert_eq!(
         std::fs::read_to_string(repo.0.join("collision")).unwrap(),
         "untracked\n"
@@ -587,25 +619,25 @@ fn never_overwrites_ignored_files_when_switching() {
     repo.write(".gitignore", "ignored.data\n");
     repo.git(&["add", ".gitignore"]);
     repo.git(&["commit", "-m", "ignore"]);
-    create(&repo.0, "target", true).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "target", true).unwrap();
     repo.write("ignored.data", "tracked target\n");
     repo.git(&["add", "-f", "ignored.data"]);
     repo.git(&["commit", "-m", "target file"]);
-    switch(&repo.0, "refs/heads/main").unwrap();
+    switch(&SYSTEM_GIT, &repo.0, "refs/heads/main").unwrap();
     repo.write("ignored.data", "private local contents\n");
-    assert!(git::load(&repo.0).unwrap().changes.is_empty());
-    assert!(switch(&repo.0, "refs/heads/target").is_err());
+    assert!(git::load(&SYSTEM_GIT, &repo.0).unwrap().changes.is_empty());
+    assert!(switch(&SYSTEM_GIT, &repo.0, "refs/heads/target").is_err());
     assert_eq!(
         std::fs::read_to_string(repo.0.join("ignored.data")).unwrap(),
         "private local contents\n"
     );
-    assert_eq!(git::load(&repo.0).unwrap().branch, "main");
+    assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "main");
 }
 
 #[test]
 fn refuses_branch_in_another_worktree_and_missing_local_targets() {
     let repo = committed_repo();
-    create(&repo.0, "occupied", false).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "occupied", false).unwrap();
     repo.git(&[
         "worktree",
         "add",
@@ -613,18 +645,18 @@ fn refuses_branch_in_another_worktree_and_missing_local_targets() {
         "occupied",
     ]);
     repo.write(".git/info/exclude", "linked/\n");
-    assert!(git::load(&repo.0).unwrap().changes.is_empty());
-    assert!(switch(&repo.0, "refs/heads/occupied").is_err());
+    assert!(git::load(&SYSTEM_GIT, &repo.0).unwrap().changes.is_empty());
+    assert!(switch(&SYSTEM_GIT, &repo.0, "refs/heads/occupied").is_err());
     repo.git(&["tag", "main"]);
     repo.git(&["update-ref", "refs/remotes/origin/remote-only", "HEAD"]);
-    assert!(switch(&repo.0, "refs/heads/remote-only").is_err());
-    assert_eq!(git::load(&repo.0).unwrap().branch, "main");
+    assert!(switch(&SYSTEM_GIT, &repo.0, "refs/heads/remote-only").is_err());
+    assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "main");
 }
 
 #[test]
 fn switches_tags_and_remote_refs_to_detached_commits_without_creating_branches() {
     let repo = committed_repo();
-    let original = git::run(&repo.0, &["rev-parse", "HEAD"]).unwrap();
+    let original = git::run(&SYSTEM_GIT, &repo.0, &["rev-parse", "HEAD"]).unwrap();
     repo.git(&["tag", "lightweight"]);
     repo.git(&["tag", "-a", "release", "-m", "Release"]);
     repo.git(&["update-ref", "refs/remotes/origin/remote-only", "HEAD"]);
@@ -635,17 +667,20 @@ fn switches_tags_and_remote_refs_to_detached_commits_without_creating_branches()
         "refs/tags/release",
         "refs/remotes/origin/remote-only",
     ] {
-        switch(&repo.0, target).unwrap();
-        assert_eq!(git::run(&repo.0, &["rev-parse", "HEAD"]).unwrap(), original);
-        assert!(git::run(&repo.0, &["symbolic-ref", "-q", "HEAD"]).is_err());
+        switch(&SYSTEM_GIT, &repo.0, target).unwrap();
+        assert_eq!(
+            git::run(&SYSTEM_GIT, &repo.0, &["rev-parse", "HEAD"]).unwrap(),
+            original
+        );
+        assert!(git::run(&SYSTEM_GIT, &repo.0, &["symbolic-ref", "-q", "HEAD"]).is_err());
         assert_eq!(
             std::fs::read_to_string(repo.0.join("file")).unwrap(),
             "base\n"
         );
-        switch(&repo.0, "refs/heads/main").unwrap();
+        switch(&SYSTEM_GIT, &repo.0, "refs/heads/main").unwrap();
     }
     assert_eq!(
-        load(&repo.0)
+        load(&SYSTEM_GIT, &repo.0)
             .unwrap()
             .refs
             .iter()
@@ -656,13 +691,13 @@ fn switches_tags_and_remote_refs_to_detached_commits_without_creating_branches()
     repo.write("file", "staged edits\n");
     repo.git(&["add", "file"]);
     repo.write("file", "local edits\n");
-    assert!(switch(&repo.0, "refs/tags/release").is_err());
+    assert!(switch(&SYSTEM_GIT, &repo.0, "refs/tags/release").is_err());
     assert_eq!(
         std::fs::read_to_string(repo.0.join("file")).unwrap(),
         "local edits\n"
     );
     assert_eq!(repo.git(&["show", ":file"]), "staged edits\n");
-    assert_eq!(git::load(&repo.0).unwrap().branch, "main");
+    assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "main");
 }
 
 #[test]
@@ -680,29 +715,51 @@ fn remote_checkout_creates_tracking_branch_at_remote_commit_and_preserves_existi
     ]);
     repo.git(&["update-ref", "refs/remotes/origin/topic", "HEAD"]);
     let remote = "refs/remotes/origin/topic";
-    let original = git::run(&repo.0, &["rev-parse", "HEAD"]).unwrap();
+    let original = git::run(&SYSTEM_GIT, &repo.0, &["rev-parse", "HEAD"]).unwrap();
     repo.write("file", "next\n");
     repo.git(&["commit", "-am", "next"]);
-    checkout_remote(&repo.0, remote, &RemoteChoice::Create("topic".into())).unwrap();
-    assert_eq!(git::run(&repo.0, &["rev-parse", "HEAD"]).unwrap(), original);
-    let refs = load(&repo.0).unwrap().refs;
+    checkout_remote(
+        &SYSTEM_GIT,
+        &repo.0,
+        remote,
+        &RemoteChoice::Create("topic".into()),
+    )
+    .unwrap();
+    assert_eq!(
+        git::run(&SYSTEM_GIT, &repo.0, &["rev-parse", "HEAD"]).unwrap(),
+        original
+    );
+    let refs = load(&SYSTEM_GIT, &repo.0).unwrap().refs;
     let target = refs.iter().find(|r| r.full_name == remote).unwrap();
     let local = local_for_remote(&refs, target).unwrap();
     assert_eq!(local.name, "topic");
     assert_eq!(local.upstream.as_deref(), Some("origin/topic"));
     checkout_remote(
+        &SYSTEM_GIT,
         &repo.0,
         remote,
         &RemoteChoice::Local("refs/heads/main".into()),
     )
     .unwrap();
-    assert_eq!(git::load(&repo.0).unwrap().branch, "main");
-    assert!(checkout_remote(&repo.0, remote, &RemoteChoice::Create("main".into())).is_err());
-    checkout_remote(&repo.0, remote, &RemoteChoice::Detached).unwrap();
-    assert!(git::run(&repo.0, &["symbolic-ref", "-q", "HEAD"]).is_err());
+    assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "main");
+    assert!(checkout_remote(
+        &SYSTEM_GIT,
+        &repo.0,
+        remote,
+        &RemoteChoice::Create("main".into())
+    )
+    .is_err());
+    checkout_remote(&SYSTEM_GIT, &repo.0, remote, &RemoteChoice::Detached).unwrap();
+    assert!(git::run(&SYSTEM_GIT, &repo.0, &["symbolic-ref", "-q", "HEAD"]).is_err());
     repo.write("file", "local\n");
-    checkout_remote(&repo.0, remote, &RemoteChoice::Create("safe".into())).unwrap();
-    assert_eq!(git::load(&repo.0).unwrap().branch, "safe");
+    checkout_remote(
+        &SYSTEM_GIT,
+        &repo.0,
+        remote,
+        &RemoteChoice::Create("safe".into()),
+    )
+    .unwrap();
+    assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "safe");
     assert_eq!(
         std::fs::read_to_string(repo.0.join("file")).unwrap(),
         "local\n"
@@ -724,7 +781,7 @@ fn remote_local_matching_avoids_other_remotes_and_ambiguous_tracking() {
         "+refs/heads/*:refs/remotes/origin/*",
     ]);
     repo.git(&["update-ref", "refs/remotes/origin/topic", "HEAD"]);
-    let mut refs = load(&repo.0).unwrap().refs;
+    let mut refs = load(&SYSTEM_GIT, &repo.0).unwrap().refs;
     let remote_index = refs.iter().position(|r| r.kind == RefKind::Remote).unwrap();
     assert_eq!(
         local_for_remote(&refs, &refs[remote_index]).unwrap().name,
@@ -742,10 +799,10 @@ fn remote_local_matching_avoids_other_remotes_and_ambiguous_tracking() {
 #[test]
 fn validates_names_rejects_duplicates_and_handles_unborn_head() {
     let repo = TempRepo::new();
-    let snapshot = load(&repo.0).unwrap();
+    let snapshot = load(&SYSTEM_GIT, &repo.0).unwrap();
     assert!(!snapshot.has_head);
     assert!(snapshot.refs.is_empty());
-    assert!(create(&repo.0, "new", false)
+    assert!(create(&SYSTEM_GIT, &repo.0, "new", false)
         .unwrap_err()
         .contains("first commit"));
     repo.write("file", "fixture\n");
@@ -763,12 +820,15 @@ fn validates_names_rejects_duplicates_and_handles_unborn_head() {
         "a.lock",
         "a\0b",
     ] {
-        assert!(create(&repo.0, name, false).is_err(), "accepted {name:?}");
+        assert!(
+            create(&SYSTEM_GIT, &repo.0, name, false).is_err(),
+            "accepted {name:?}"
+        );
     }
-    assert!(create(&repo.0, "main", false)
+    assert!(create(&SYSTEM_GIT, &repo.0, "main", false)
         .unwrap_err()
         .contains("already exists"));
-    assert_eq!(load(&repo.0).unwrap().refs.len(), 1);
+    assert_eq!(load(&SYSTEM_GIT, &repo.0).unwrap().refs.len(), 1);
 }
 
 #[test]

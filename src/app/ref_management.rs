@@ -1,4 +1,5 @@
 use super::{SannyGitApp, WorkerResult};
+use crate::git::GitContext;
 use crate::{branches, git, models::RefKind, remote_config, remotes};
 use std::{
     path::PathBuf,
@@ -113,8 +114,13 @@ enum RefAction {
     PushTag(remotes::TagPushPreview),
 }
 
-fn tag_details(root: &std::path::Path, source: String, selected: String) -> ResultMessage {
-    let names = match remote_config::load(root) {
+fn tag_details(
+    git: &GitContext,
+    root: &std::path::Path,
+    source: String,
+    selected: String,
+) -> ResultMessage {
+    let names = match remote_config::load(git, root) {
         Ok(snapshot) => snapshot
             .entries
             .into_iter()
@@ -137,7 +143,7 @@ fn tag_details(root: &std::path::Path, source: String, selected: String) -> Resu
     let result = if remote.is_empty() {
         Ok(None)
     } else {
-        remotes::preview_tag_push(root, &source, &remote).map(Some)
+        remotes::preview_tag_push(git, root, &source, &remote).map(Some)
     };
     ResultMessage::Tag {
         source,
@@ -147,11 +153,112 @@ fn tag_details(root: &std::path::Path, source: String, selected: String) -> Resu
     }
 }
 
+pub struct BranchState {
+    pub entries: Vec<crate::models::BranchRef>,
+    pub current: bool,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub(super) pending: bool,
+    pub(super) worker: Option<std::sync::mpsc::Receiver<WorkerResult>>,
+    pub branch_head_exists: bool,
+    pub branch_dialog_open: bool,
+    pub rename_branch_dialog: Option<super::RenameBranchDialog>,
+    pub tag_dialog_open: bool,
+    pub(super) last_reset_strategy: crate::branches::ResetStrategy,
+    pub remote_checkout: Option<super::RemoteCheckoutDialog>,
+    pub ref_dialog: Option<Dialog>,
+    pub new_branch_name: String,
+    pub new_tag_name: String,
+    pub new_tag_message: String,
+    pub switch_to_new_branch: bool,
+    pub selected_branch: String,
+    pub selected_ref_group: Option<crate::models::RefKind>,
+    pub current_branch: String,
+}
+
+impl Default for BranchState {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            current: false,
+            loading: false,
+            error: None,
+            pending: false,
+            worker: None,
+            branch_head_exists: false,
+            branch_dialog_open: false,
+            rename_branch_dialog: None,
+            tag_dialog_open: false,
+            last_reset_strategy: Default::default(),
+            remote_checkout: None,
+            ref_dialog: None,
+            new_branch_name: String::new(),
+            new_tag_name: String::new(),
+            new_tag_message: String::new(),
+            switch_to_new_branch: true,
+            selected_branch: String::new(),
+            selected_ref_group: None,
+            current_branch: String::new(),
+        }
+    }
+}
+
+impl BranchState {
+    fn apply(&mut self, result: Result<crate::models::RefSnapshot, String>) {
+        self.loading = false;
+        match result {
+            Ok(snapshot) => {
+                self.entries = snapshot.refs;
+                self.branch_head_exists = snapshot.has_head;
+                self.current = true;
+                self.error = None;
+                if self.selected_ref_group.is_some_and(|kind| {
+                    kind != crate::models::RefKind::Tag
+                        && !self.entries.iter().any(|r| r.kind == kind)
+                }) {
+                    self.selected_ref_group = None;
+                }
+                if self.selected_ref_group.is_none()
+                    && !self
+                        .entries
+                        .iter()
+                        .any(|r| r.full_name == self.selected_branch)
+                {
+                    self.selected_branch = self
+                        .entries
+                        .iter()
+                        .find(|r| r.current)
+                        .map(|r| r.full_name.clone())
+                        .unwrap_or_default();
+                }
+            }
+            Err(error) => {
+                self.current = false;
+                self.error = Some(error);
+            }
+        }
+    }
+}
+
 impl SannyGitApp {
+    pub(super) fn apply_refs(
+        &mut self,
+        path: String,
+        result: Result<crate::models::RefSnapshot, String>,
+    ) {
+        if self
+            .repositories
+            .get(self.selected_repository)
+            .is_some_and(|r| r.path == path)
+        {
+            self.branches.apply(result);
+        }
+    }
+
     pub fn delete_branch_blocker(&self) -> Option<&'static str> {
         self.branch_base_blocker().or_else(|| {
-            match self.refs.iter().find(|entry| {
-                entry.full_name == self.selected_branch && entry.kind == RefKind::Local
+            match self.branches.entries.iter().find(|entry| {
+                entry.full_name == self.branches.selected_branch && entry.kind == RefKind::Local
             }) {
                 None => Some("Select a local branch"),
                 Some(entry) if entry.current => Some("The current branch cannot be deleted"),
@@ -162,10 +269,9 @@ impl SannyGitApp {
 
     pub fn push_tag_blocker(&self) -> Option<&'static str> {
         self.branch_base_blocker().or_else(|| {
-            (!self
-                .refs
-                .iter()
-                .any(|entry| entry.full_name == self.selected_branch && entry.kind == RefKind::Tag))
+            (!self.branches.entries.iter().any(|entry| {
+                entry.full_name == self.branches.selected_branch && entry.kind == RefKind::Tag
+            }))
             .then_some("Select a tag to push")
         })
     }
@@ -175,7 +281,7 @@ impl SannyGitApp {
             return;
         }
         self.open_ref_dialog(Kind::Delete {
-            source: self.selected_branch.clone(),
+            source: self.branches.selected_branch.clone(),
             prepared: None,
         });
     }
@@ -183,7 +289,7 @@ impl SannyGitApp {
     pub fn open_delete_tag(&mut self) {
         if self.push_tag_blocker().is_none() {
             self.open_ref_dialog(Kind::DeleteTag {
-                source: self.selected_branch.clone(),
+                source: self.branches.selected_branch.clone(),
                 prepared: None,
                 also_remote: false,
             });
@@ -194,7 +300,7 @@ impl SannyGitApp {
         if self.push_tag_blocker().is_some() {
             return;
         }
-        self.open_tag_push_to(self.selected_branch.clone(), String::new());
+        self.open_tag_push_to(self.branches.selected_branch.clone(), String::new());
     }
 
     fn open_tag_push_to(&mut self, source: String, remote: String) {
@@ -210,11 +316,9 @@ impl SannyGitApp {
         if self.branch_base_blocker().is_some() {
             return;
         }
-        let Some(tag) = self
-            .refs
-            .iter()
-            .find(|entry| entry.full_name == self.selected_branch && entry.kind == RefKind::Tag)
-        else {
+        let Some(tag) = self.branches.entries.iter().find(|entry| {
+            entry.full_name == self.branches.selected_branch && entry.kind == RefKind::Tag
+        }) else {
             return;
         };
         let source = tag.full_name.clone();
@@ -223,9 +327,9 @@ impl SannyGitApp {
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = cancel.clone();
         self.error = None;
-        if self.start_worker(move || {
+        if self.start_worker(move |git| {
             let path = PathBuf::from(&root);
-            let outcome = match remotes::load(&path) {
+            let outcome = match remotes::load(git, &path) {
                 Ok(state) => {
                     let remote = match state.remotes.as_slice() {
                         [only] => Some(only),
@@ -240,13 +344,13 @@ impl SannyGitApp {
                             preferred_remote,
                         };
                     };
-                    remotes::preview_tag_push(&path, &source, remote).and_then(|preview| {
+                    remotes::preview_tag_push(git, &path, &source, remote).and_then(|preview| {
                         if preview.oid != oid {
                             return Err(
                                 "The selected tag changed. Refresh branches and retry.".into()
                             );
                         }
-                        remotes::push_tag(&path, &preview, &worker_cancel)
+                        remotes::push_tag(git, &path, &preview, &worker_cancel)
                     })
                 }
                 Err(error) => Err(error),
@@ -255,7 +359,7 @@ impl SannyGitApp {
                 committed: false,
                 success: "Tag pushed",
                 outcome,
-                snapshot: git::load(&path),
+                snapshot: git::load(git, &path),
             }
         }) {
             self.manager.cancel = Some(cancel);
@@ -314,7 +418,7 @@ impl SannyGitApp {
     }
 
     pub fn tag_reset_allowed(&self) -> bool {
-        self.branch_head_exists && !self.merging && self.branch_base_blocker().is_none()
+        self.branches.branch_head_exists && !self.merging && self.branch_base_blocker().is_none()
     }
 
     pub fn open_tag_reset(&mut self, source: String) {
@@ -325,7 +429,7 @@ impl SannyGitApp {
         self.open_tag_reset_dialog(
             source,
             Some(branches::AdvancedReset {
-                strategy: self.last_reset_strategy,
+                strategy: self.branches.last_reset_strategy,
                 fix_line_endings: false,
             }),
         );
@@ -334,7 +438,8 @@ impl SannyGitApp {
     fn open_tag_reset_dialog(&mut self, source: String, advanced: Option<branches::AdvancedReset>) {
         if !self.tag_reset_allowed()
             || !self
-                .refs
+                .branches
+                .entries
                 .iter()
                 .any(|entry| entry.kind == RefKind::Tag && entry.full_name == source)
         {
@@ -350,7 +455,7 @@ impl SannyGitApp {
 
     fn open_ref_dialog(&mut self, kind: Kind) {
         let reload_pending = !matches!(kind, Kind::AddTagRemote);
-        self.ref_dialog = Some(Dialog {
+        self.branches.ref_dialog = Some(Dialog {
             root: self.repositories[self.selected_repository].path.clone(),
             kind,
             confirmed: false,
@@ -367,7 +472,7 @@ impl SannyGitApp {
         if self.busy() {
             return;
         }
-        if let Some(dialog) = &mut self.ref_dialog {
+        if let Some(dialog) = &mut self.branches.ref_dialog {
             dialog.confirmed = false;
             dialog.error = None;
             dialog.reload_pending = true;
@@ -406,7 +511,7 @@ impl SannyGitApp {
         if self.busy() {
             return;
         }
-        let Some(dialog) = &mut self.ref_dialog else {
+        let Some(dialog) = &mut self.branches.ref_dialog else {
             return;
         };
         if !dialog.reload_pending {
@@ -422,23 +527,23 @@ impl SannyGitApp {
             Kind::AddTagRemote => return,
             Kind::Remotes(_) => LoadRequest::Remotes,
         };
-        if !self.start_worker(move || {
+        if !self.start_worker(move |git| {
             let path = PathBuf::from(&root);
             let result = match target {
                 LoadRequest::Delete(source) => ResultMessage::Delete {
-                    result: branches::preview_delete(&path, &source),
+                    result: branches::preview_delete(git, &path, &source),
                     source,
                 },
                 LoadRequest::DeleteTag(source) => ResultMessage::DeleteTag {
-                    result: remotes::preview_tag_delete(&path, &source),
+                    result: remotes::preview_tag_delete(git, &path, &source),
                     source,
                 },
-                LoadRequest::Tag(source, remote) => tag_details(&path, source, remote),
+                LoadRequest::Tag(source, remote) => tag_details(git, &path, source, remote),
                 LoadRequest::Reset(source) => ResultMessage::Reset {
-                    result: branches::preview_reset(&path, &source),
+                    result: branches::preview_reset(git, &path, &source),
                     source,
                 },
-                LoadRequest::Remotes => ResultMessage::Remotes(remote_config::load(&path)),
+                LoadRequest::Remotes => ResultMessage::Remotes(remote_config::load(git, &path)),
             };
             WorkerResult::RefDetails {
                 root,
@@ -453,7 +558,7 @@ impl SannyGitApp {
         if self.busy() || !self.state_current {
             return;
         }
-        let Some(dialog) = &mut self.ref_dialog else {
+        let Some(dialog) = &mut self.branches.ref_dialog else {
             return;
         };
         if !dialog.confirmed
@@ -495,24 +600,25 @@ impl SannyGitApp {
         self.state_current = false;
         self.error = None;
         self.status = "Ref operation in progress…".into();
-        if !self.start_worker(move || {
+        if !self.start_worker(move |git| {
             let (outcome, success) = match action {
                 RefAction::DeleteBranch(prepared) => {
-                    (branches::delete(&root, &prepared), "Branch deleted")
+                    (branches::delete(git, &root, &prepared), "Branch deleted")
                 }
                 RefAction::DeleteTag(prepared, also_remote) => (
-                    remotes::delete_tag(&root, &prepared, also_remote, &cancel),
+                    remotes::delete_tag(git, &root, &prepared, also_remote, &cancel),
                     "Tag deleted",
                 ),
-                RefAction::PushTag(prepared) => {
-                    (remotes::push_tag(&root, &prepared, &cancel), "Tag pushed")
-                }
+                RefAction::PushTag(prepared) => (
+                    remotes::push_tag(git, &root, &prepared, &cancel),
+                    "Tag pushed",
+                ),
             };
             WorkerResult::Operation {
                 committed: false,
                 success,
                 outcome,
-                snapshot: git::load(&root),
+                snapshot: git::load(git, &root),
             }
         }) {
             self.manager.cancel = None;
@@ -524,7 +630,7 @@ impl SannyGitApp {
         if self.busy() || !self.state_current {
             return;
         }
-        let Some(dialog) = &mut self.ref_dialog else {
+        let Some(dialog) = &mut self.branches.ref_dialog else {
             return;
         };
         if dialog.running
@@ -550,7 +656,7 @@ impl SannyGitApp {
             return;
         }
         if let Some(options) = advanced {
-            self.last_reset_strategy = options.strategy;
+            self.branches.last_reset_strategy = options.strategy;
         }
         let hard = advanced.is_none_or(|options| options.strategy == branches::ResetStrategy::Hard);
         if hard && mode == branches::ResetMode::Clean && prepared.has_tracked_changes {
@@ -565,11 +671,11 @@ impl SannyGitApp {
         self.state_current = false;
         self.error = None;
         self.status = "Resetting HEAD…".into();
-        if !self.start_worker(move || WorkerResult::Operation {
+        if !self.start_worker(move |git| WorkerResult::Operation {
             committed: false,
             success: "Reset complete",
-            outcome: branches::reset_tag(&root, &prepared, mode, advanced),
-            snapshot: git::load(&root),
+            outcome: branches::reset_tag(git, &root, &prepared, mode, advanced),
+            snapshot: git::load(git, &root),
         }) {
             self.state_current = true;
             self.ref_worker_failed();
@@ -580,7 +686,7 @@ impl SannyGitApp {
         if self.busy() || !self.state_current {
             return;
         }
-        let Some(dialog) = &mut self.ref_dialog else {
+        let Some(dialog) = &mut self.branches.ref_dialog else {
             return;
         };
         if !self
@@ -626,11 +732,11 @@ impl SannyGitApp {
         self.state_current = false;
         self.error = None;
         self.status = "Updating remote configuration…".into();
-        if !self.start_worker(move || WorkerResult::Operation {
+        if !self.start_worker(move |git| WorkerResult::Operation {
             committed: false,
             success: "Remote configuration updated",
-            outcome: remote_config::change(&root, &snapshot, &change),
-            snapshot: git::load(&root),
+            outcome: remote_config::change(git, &root, &snapshot, &change),
+            snapshot: git::load(git, &root),
         }) {
             self.ref_worker_failed();
         }
@@ -638,6 +744,7 @@ impl SannyGitApp {
 
     pub(super) fn apply_ref_details(&mut self, root: String, result: ResultMessage) {
         let Some(dialog) = self
+            .branches
             .ref_dialog
             .as_mut()
             .filter(|dialog| dialog.root == root)
@@ -733,7 +840,7 @@ impl SannyGitApp {
         if success == "Remote configuration updated" {
             self.tracking.branch_changed();
             self.invalidate_repository_hosting();
-            if let Some(dialog) = &mut self.ref_dialog {
+            if let Some(dialog) = &mut self.branches.ref_dialog {
                 if let Kind::Remotes(editor) = &mut dialog.kind {
                     editor.keep_draft = !succeeded;
                     if succeeded && editor.selected.is_none() {
@@ -745,14 +852,14 @@ impl SannyGitApp {
                 dialog.reload_pending = true;
             }
         } else if succeeded {
-            self.ref_dialog = None;
+            self.branches.ref_dialog = None;
         } else {
             self.ref_worker_failed();
         }
     }
 
     pub(super) fn ref_worker_failed(&mut self) {
-        if let Some(dialog) = &mut self.ref_dialog {
+        if let Some(dialog) = &mut self.branches.ref_dialog {
             dialog.running = false;
             dialog.confirmed = false;
             dialog.error = self.error.clone();
@@ -788,6 +895,7 @@ impl SannyGitApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SYSTEM_GIT;
     use crate::{test_support::TempRepo, theme::ThemeChoice};
     use std::time::{Duration, Instant};
 
@@ -807,43 +915,43 @@ mod tests {
     fn opened() -> (TempRepo, SannyGitApp) {
         let repo = TempRepo::new();
         repo.write("file", "base\n");
-        git::commit(&repo.0, "Base", git::CommitContents::All).unwrap();
+        git::commit(&SYSTEM_GIT, &repo.0, "Base", git::CommitContents::All).unwrap();
         repo.git(&["branch", "merged"]);
         repo.git(&["tag", "chosen"]);
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
-        app.apply_snapshot(git::load(&repo.0).unwrap());
-        let refs = branches::load(&repo.0).unwrap();
-        app.branch_head_exists = refs.has_head;
-        app.refs = refs.refs;
-        app.refs_current = true;
-        app.commit_message = "Keep commit draft".into();
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        let refs = branches::load(&SYSTEM_GIT, &repo.0).unwrap();
+        app.branches.branch_head_exists = refs.has_head;
+        app.branches.entries = refs.refs;
+        app.branches.current = true;
+        app.commit.message = "Keep commit draft".into();
         (repo, app)
     }
 
     #[test]
     fn delete_tag_waits_for_confirmation_and_keeps_the_commit_draft() {
         let (repo, mut app) = opened();
-        app.selected_branch = "refs/tags/chosen".into();
+        app.branches.selected_branch = "refs/tags/chosen".into();
         app.open_delete_tag();
         wait(&mut app);
         app.run_ref_action();
         assert!(!app.busy());
         assert_eq!(repo.git(&["tag", "--list", "chosen"]).trim(), "chosen");
         assert!(matches!(
-            app.ref_dialog.as_ref().unwrap().kind,
+            app.branches.ref_dialog.as_ref().unwrap().kind,
             Kind::DeleteTag {
                 also_remote: false,
                 ..
             }
         ));
-        app.ref_dialog.as_mut().unwrap().confirmed = true;
+        app.branches.ref_dialog.as_mut().unwrap().confirmed = true;
         app.run_ref_action();
         wait(&mut app);
         assert!(app.error.is_none(), "{:?}", app.error);
         assert_eq!(app.status, "Tag deleted");
-        assert!(app.ref_dialog.is_none());
+        assert!(app.branches.ref_dialog.is_none());
         assert!(repo.git(&["tag", "--list", "chosen"]).is_empty());
-        assert_eq!(app.commit_message, "Keep commit draft");
+        assert_eq!(app.commit.message, "Keep commit draft");
     }
 
     #[test]
@@ -856,7 +964,7 @@ mod tests {
         let Kind::Reset {
             advanced: Some(options),
             ..
-        } = &mut app.ref_dialog.as_mut().unwrap().kind
+        } = &mut app.branches.ref_dialog.as_mut().unwrap().kind
         else {
             panic!("Expected Reset Advanced");
         };
@@ -866,16 +974,16 @@ mod tests {
         assert!(app.busy());
         wait(&mut app);
         assert!(app.error.is_none(), "{:?}", app.error);
-        assert!(app.ref_dialog.is_none());
+        assert!(app.branches.ref_dialog.is_none());
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"dirty\n");
 
-        app.refs_current = true;
+        app.branches.current = true;
         app.open_advanced_tag_reset("refs/tags/chosen".into());
         wait(&mut app);
         let Kind::Reset {
             advanced: Some(options),
             ..
-        } = &app.ref_dialog.as_ref().unwrap().kind
+        } = &app.branches.ref_dialog.as_ref().unwrap().kind
         else {
             panic!("Expected Reset Advanced");
         };
@@ -895,7 +1003,7 @@ mod tests {
         app.confirm_tag_reset(branches::ResetMode::Clean);
         assert!(!app.busy());
         assert!(matches!(
-            app.ref_dialog.as_ref().unwrap().kind,
+            app.branches.ref_dialog.as_ref().unwrap().kind,
             Kind::Reset {
                 choose_changes: true,
                 ..
@@ -907,41 +1015,41 @@ mod tests {
         app.confirm_tag_reset(branches::ResetMode::Discard);
         wait(&mut app);
         assert!(app.error.is_none(), "{:?}", app.error);
-        assert!(app.ref_dialog.is_none());
+        assert!(app.branches.ref_dialog.is_none());
         assert_eq!(app.status, "Reset complete");
         assert_eq!(
             repo.git(&["rev-parse", "HEAD"]),
             repo.git(&["rev-parse", "refs/tags/chosen"])
         );
-        assert_eq!(app.commit_message, "Keep commit draft");
+        assert_eq!(app.commit.message, "Keep commit draft");
     }
 
     #[test]
     fn branch_deletion_needs_confirmation_and_errors_reset_it_without_losing_drafts() {
         let (repo, mut app) = opened();
-        app.selected_branch = "refs/heads/merged".into();
+        app.branches.selected_branch = "refs/heads/merged".into();
         app.open_delete_branch();
         wait(&mut app);
         app.run_ref_action();
         assert!(!app.busy());
         assert!(repo.git(&["branch", "--list", "merged"]).contains("merged"));
         repo.git(&["commit", "--allow-empty", "-m", "External HEAD"]);
-        app.ref_dialog.as_mut().unwrap().confirmed = true;
+        app.branches.ref_dialog.as_mut().unwrap().confirmed = true;
         app.run_ref_action();
         wait(&mut app);
         assert!(app.error.as_deref().unwrap().contains("changed"));
-        assert!(!app.ref_dialog.as_ref().unwrap().confirmed);
-        assert_eq!(app.commit_message, "Keep commit draft");
+        assert!(!app.branches.ref_dialog.as_ref().unwrap().confirmed);
+        assert_eq!(app.commit.message, "Keep commit draft");
         app.reload_ref_dialog();
         wait(&mut app);
-        app.ref_dialog.as_mut().unwrap().confirmed = true;
+        app.branches.ref_dialog.as_mut().unwrap().confirmed = true;
         app.run_ref_action();
         wait(&mut app);
         assert!(app.error.is_none());
-        assert!(app.ref_dialog.is_none());
+        assert!(app.branches.ref_dialog.is_none());
         assert!(repo.git(&["branch", "--list", "merged"]).is_empty());
         assert_eq!(app.status, "Branch deleted");
-        assert_eq!(app.commit_message, "Keep commit draft");
+        assert_eq!(app.commit.message, "Keep commit draft");
     }
 
     #[test]
@@ -950,21 +1058,21 @@ mod tests {
         let (repo, mut app) = opened();
         app.open_remote_manager();
         wait(&mut app);
-        if let Kind::Remotes(editor) = &mut app.ref_dialog.as_mut().unwrap().kind {
+        if let Kind::Remotes(editor) = &mut app.branches.ref_dialog.as_mut().unwrap().kind {
             editor.name = "origin".into();
             editor.url = "https://example.test/repo.git".into();
         }
         app.change_remote(false);
         wait(&mut app);
         assert!(app.error.is_none());
-        if let Kind::Remotes(editor) = &mut app.ref_dialog.as_mut().unwrap().kind {
+        if let Kind::Remotes(editor) = &mut app.branches.ref_dialog.as_mut().unwrap().kind {
             assert_eq!(editor.selected.as_deref(), Some("origin"));
             editor.url = "https://dummy-token@example.test/repo".into();
         }
         app.change_remote(false);
         wait(&mut app);
         assert!(app.error.is_some());
-        if let Kind::Remotes(editor) = &mut app.ref_dialog.as_mut().unwrap().kind {
+        if let Kind::Remotes(editor) = &mut app.branches.ref_dialog.as_mut().unwrap().kind {
             assert!(editor.url.contains("dummy-token"));
             editor.url = "ssh://git@example.test/new.git".into();
         }
@@ -974,14 +1082,14 @@ mod tests {
         app.change_remote(true);
         assert!(!app.busy());
         assert!(repo.git(&["remote"]).contains("origin"));
-        if let Kind::Remotes(editor) = &mut app.ref_dialog.as_mut().unwrap().kind {
+        if let Kind::Remotes(editor) = &mut app.branches.ref_dialog.as_mut().unwrap().kind {
             editor.confirm_remove = true;
         }
         app.change_remote(true);
         wait(&mut app);
         assert!(app.error.is_none());
         assert!(repo.git(&["remote"]).is_empty());
-        assert_eq!(app.commit_message, "Keep commit draft");
+        assert_eq!(app.commit.message, "Keep commit draft");
     }
 
     #[test]
@@ -996,29 +1104,32 @@ mod tests {
         let remote = repo.0.join("remote.git");
         repo.git(&["init", "--bare", remote.to_str().unwrap()]);
         repo.git(&["remote", "add", "z-good", remote.to_str().unwrap()]);
-        app.selected_branch = "refs/tags/chosen".into();
+        app.branches.selected_branch = "refs/tags/chosen".into();
         app.open_push_tag();
         wait(&mut app);
-        assert!(app.ref_dialog.as_ref().unwrap().error.is_some());
-        if let Kind::Tag { names, remote, .. } = &mut app.ref_dialog.as_mut().unwrap().kind {
+        assert!(app.branches.ref_dialog.as_ref().unwrap().error.is_some());
+        if let Kind::Tag { names, remote, .. } = &mut app.branches.ref_dialog.as_mut().unwrap().kind
+        {
             assert_eq!(names.len(), 2);
             *remote = "z-good".into();
         }
         app.reload_ref_dialog();
         wait(&mut app);
-        assert!(app.ref_dialog.as_ref().unwrap().error.is_none());
+        assert!(app.branches.ref_dialog.as_ref().unwrap().error.is_none());
         app.run_ref_action();
         assert!(!app.busy());
-        app.ref_dialog.as_mut().unwrap().confirmed = true;
+        app.branches.ref_dialog.as_mut().unwrap().confirmed = true;
         app.run_ref_action();
         wait(&mut app);
-        assert!(app.ref_dialog.is_none());
+        assert!(app.branches.ref_dialog.is_none());
         assert!(app.error.is_none());
         assert_eq!(app.status, "Tag pushed");
-        assert!(git::text(git::run(&remote, &["tag", "--list"]).unwrap())
-            .unwrap()
-            .contains("chosen"));
-        assert_eq!(app.commit_message, "Keep commit draft");
+        assert!(
+            git::text(git::run(&SYSTEM_GIT, &remote, &["tag", "--list"]).unwrap())
+                .unwrap()
+                .contains("chosen")
+        );
+        assert_eq!(app.commit.message, "Keep commit draft");
     }
 
     #[test]
@@ -1033,59 +1144,68 @@ mod tests {
         repo.git(&["push", "-u", "team", "HEAD"]);
         repo.git(&["config", "remote.pushDefault", "team"]);
         repo.git(&["tag", "other"]);
-        app.selected_branch = "refs/tags/chosen".into();
+        app.branches.selected_branch = "refs/tags/chosen".into();
 
         app.push_selected_tag();
         assert!(app.busy());
-        assert!(app.ref_dialog.is_none());
+        assert!(app.branches.ref_dialog.is_none());
         wait(&mut app);
         assert!(app.error.is_none(), "{:?}", app.error);
-        assert!(app.ref_dialog.is_none());
+        assert!(app.branches.ref_dialog.is_none());
         assert_eq!(app.status, "Tag pushed");
         assert_eq!(
-            git::text(git::run(&origin, &["for-each-ref", "--format=%(refname)"]).unwrap())
+            git::text(
+                git::run(
+                    &SYSTEM_GIT,
+                    &origin,
+                    &["for-each-ref", "--format=%(refname)"]
+                )
                 .unwrap()
-                .trim(),
+            )
+            .unwrap()
+            .trim(),
             "refs/tags/chosen"
         );
-        assert!(git::run(&team, &["tag", "--list"]).unwrap().is_empty());
+        assert!(git::run(&SYSTEM_GIT, &team, &["tag", "--list"])
+            .unwrap()
+            .is_empty());
 
         repo.git(&["remote", "remove", "origin"]);
-        app.refs_current = true;
+        app.branches.current = true;
         app.push_selected_tag();
         wait(&mut app);
         assert!(app.error.is_none(), "{:?}", app.error);
-        assert!(app.ref_dialog.is_none());
+        assert!(app.branches.ref_dialog.is_none());
         assert_eq!(
-            git::text(git::run(&team, &["tag", "--list"]).unwrap())
+            git::text(git::run(&SYSTEM_GIT, &team, &["tag", "--list"]).unwrap())
                 .unwrap()
                 .trim(),
             "chosen"
         );
-        assert_eq!(app.commit_message, "Keep commit draft");
+        assert_eq!(app.commit.message, "Keep commit draft");
     }
 
     #[test]
     fn direct_tag_push_requests_configuration_or_remote_choice_when_needed() {
         let (repo, mut app) = opened();
-        app.selected_branch = "refs/tags/chosen".into();
+        app.branches.selected_branch = "refs/tags/chosen".into();
         app.push_selected_tag();
         wait(&mut app);
         assert!(matches!(
-            app.ref_dialog.as_ref().unwrap().kind,
+            app.branches.ref_dialog.as_ref().unwrap().kind,
             Kind::AddTagRemote
         ));
-        app.ref_dialog = None;
+        app.branches.ref_dialog = None;
 
         let remote = repo.0.join("team.git");
         repo.git(&["init", "--bare", remote.to_str().unwrap()]);
         repo.git(&["remote", "add", "team", remote.to_str().unwrap()]);
         repo.git(&["remote", "add", "archive", remote.to_str().unwrap()]);
         repo.git(&["push", "-u", "team", "HEAD"]);
-        app.refs_current = true;
+        app.branches.current = true;
         app.push_selected_tag();
         wait(&mut app);
-        let dialog = app.ref_dialog.as_ref().unwrap();
+        let dialog = app.branches.ref_dialog.as_ref().unwrap();
         let Kind::Tag {
             remote: selected,
             prepared,
@@ -1097,7 +1217,9 @@ mod tests {
         assert_eq!(selected, "team");
         assert_eq!(prepared.as_ref().unwrap().full_name, "refs/tags/chosen");
         assert!(!dialog.confirmed);
-        assert!(git::run(&remote, &["tag", "--list"]).unwrap().is_empty());
+        assert!(git::run(&SYSTEM_GIT, &remote, &["tag", "--list"])
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -1108,11 +1230,11 @@ mod tests {
         repo.git(&["remote", "add", "origin", "https://example.test/repo"]);
         repo.git(&["remote", "add", "team", remote.to_str().unwrap()]);
         repo.git(&["push", "-u", "team", "HEAD"]);
-        app.tag_dialog_open = true;
-        app.new_tag_name = "release".into();
-        app.new_tag_message = "Release notes".into();
+        app.branches.tag_dialog_open = true;
+        app.branches.new_tag_name = "release".into();
+        app.branches.new_tag_message = "Release notes".into();
         app.create_tag(true);
-        assert!(!app.tag_dialog_open);
+        assert!(!app.branches.tag_dialog_open);
         assert!(app.busy());
         wait(&mut app);
         assert!(app.error.is_none());
@@ -1120,8 +1242,9 @@ mod tests {
             repo.git(&["cat-file", "-t", "refs/tags/release"]).trim(),
             "tag"
         );
-        let remote_tags = || git::text(git::run(&remote, &["tag", "--list"]).unwrap()).unwrap();
-        assert!(app.ref_dialog.is_none());
+        let remote_tags =
+            || git::text(git::run(&SYSTEM_GIT, &remote, &["tag", "--list"]).unwrap()).unwrap();
+        assert!(app.branches.ref_dialog.is_none());
         assert_eq!(remote_tags().trim(), "release");
     }
 
@@ -1131,8 +1254,8 @@ mod tests {
         let remote = repo.0.join("remote.git");
         repo.git(&["init", "--bare", remote.to_str().unwrap()]);
         repo.git(&["remote", "add", "team", remote.to_str().unwrap()]);
-        app.tag_dialog_open = true;
-        app.new_tag_name = "release".into();
+        app.branches.tag_dialog_open = true;
+        app.branches.new_tag_name = "release".into();
         app.create_tag(true);
         wait(&mut app);
         assert!(app
@@ -1140,12 +1263,14 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("Configure an upstream"));
-        assert!(!app.tag_dialog_open);
-        assert_eq!(app.new_tag_name, "release");
+        assert!(!app.branches.tag_dialog_open);
+        assert_eq!(app.branches.new_tag_name, "release");
         assert!(repo.git(&["tag", "--list", "release"]).is_empty());
-        assert!(git::text(git::run(&remote, &["tag", "--list"]).unwrap())
-            .unwrap()
-            .is_empty());
+        assert!(
+            git::text(git::run(&SYSTEM_GIT, &remote, &["tag", "--list"]).unwrap())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1154,7 +1279,7 @@ mod tests {
         app.open_remote_manager();
         wait(&mut app);
         app.selected_repository = usize::MAX;
-        if let Kind::Remotes(editor) = &mut app.ref_dialog.as_mut().unwrap().kind {
+        if let Kind::Remotes(editor) = &mut app.branches.ref_dialog.as_mut().unwrap().kind {
             editor.name = "unsafe".into();
             editor.url = "https://example.test/repo".into();
         }
@@ -1165,10 +1290,10 @@ mod tests {
             "/another-repository".into(),
             ResultMessage::Remotes(Err("Late error".into())),
         );
-        assert!(app.ref_dialog.as_ref().unwrap().error.is_none());
-        let root = app.ref_dialog.as_ref().unwrap().root.clone();
-        app.ref_dialog = None;
+        assert!(app.branches.ref_dialog.as_ref().unwrap().error.is_none());
+        let root = app.branches.ref_dialog.as_ref().unwrap().root.clone();
+        app.branches.ref_dialog = None;
         app.apply_ref_details(root, ResultMessage::Remotes(Err("Late error".into())));
-        assert!(app.ref_dialog.is_none());
+        assert!(app.branches.ref_dialog.is_none());
     }
 }

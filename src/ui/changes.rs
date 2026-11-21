@@ -117,12 +117,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             input.consume_key(eframe::egui::Modifiers::COMMAND, eframe::egui::Key::A)
         })
     {
-        app.selected_paths = visible
+        app.selection.paths = visible
             .iter()
             .map(|&i| app.changes[i].path.clone())
             .collect();
-        if !visible.contains(&app.selected_change) {
-            app.selected_change = visible.first().copied().unwrap_or(usize::MAX);
+        if !visible.contains(&app.selection.active) {
+            app.selection.active = visible.first().copied().unwrap_or(usize::MAX);
         }
     }
     let row_height = 23.0;
@@ -250,7 +250,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     response.ctx.data_mut(|data| data.insert_temp(click_id, frame));
                     click_handled = true;
                 } else if response.secondary_clicked() && !click_handled {
-                    if app.change_is_selected(index) { app.selected_change = index; }
+                    if app.change_is_selected(index) { app.selection.active = index; }
                     else { app.select_change(index, false, false, &visible); }
                     response.ctx.data_mut(|data| data.insert_temp(focus_id, true));
                     response.ctx.data_mut(|data| data.insert_temp(click_id, frame));
@@ -279,7 +279,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         }
     }
     if let Some((index, action)) = file_request {
-        app.selected_change = index;
+        app.selection.active = index;
         match action {
             FileAction::ShowChanges => {}
             FileAction::Commit => ui.ctx().memory_mut(|memory| {
@@ -334,7 +334,7 @@ fn keyboard_selection(
     for (key, extend) in keys {
         let active = visible
             .iter()
-            .position(|&index| index == app.selected_change);
+            .position(|&index| index == app.selection.active);
         let last = visible.len().saturating_sub(1);
         let position = match key {
             Key::ArrowUp => active
@@ -632,27 +632,27 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         }
         if response.clicked() {
             app.change_filter = filter;
-            app.selected_paths.retain(|path| {
+            app.selection.paths.retain(|path| {
                 app.changes
                     .iter()
                     .any(|change| &change.path == path && filter_matches(filter, change.kind))
             });
             if !app
                 .changes
-                .get(app.selected_change)
+                .get(app.selection.active)
                 .is_some_and(|change| filter_matches(filter, change.kind))
             {
-                app.selected_change = app
+                app.selection.active = app
                     .changes
                     .iter()
                     .position(|change| {
                         filter_matches(filter, change.kind)
-                            && (app.selected_paths.is_empty()
-                                || app.selected_paths.contains(&change.path))
+                            && (app.selection.paths.is_empty()
+                                || app.selection.paths.contains(&change.path))
                     })
                     .unwrap_or(usize::MAX);
             }
-            app.selection_anchor = None;
+            app.selection.anchor = None;
         }
     }
 }
@@ -691,7 +691,7 @@ mod tests {
             let mut app = SannyGitApp::with_theme(theme);
             app.changes = crate::mock_data::changes();
             app.changes[0].kind = ChangeKind::Conflicted;
-            app.selected_change = 0;
+            app.selection.active = 0;
             let conflict = app.changes[0].path.clone();
             let added = app.changes[3].path.clone();
             let render = |app: &mut SannyGitApp, events| {
@@ -734,10 +734,10 @@ mod tests {
             let output = render(&mut app, vec![]);
             let output = click(&mut app, find(&output, "Status").unwrap());
             assert!(find(&output, &added).unwrap().y < find(&output, &conflict).unwrap().y);
-            assert_eq!(app.selected_change, 0);
+            assert_eq!(app.selection.active, 0);
             let output = click(&mut app, find(&output, "Status ↑").unwrap());
             assert!(find(&output, &added).unwrap().y > find(&output, &conflict).unwrap().y);
-            assert_eq!(app.selected_change, 0);
+            assert_eq!(app.selection.active, 0);
             let output = click(&mut app, find(&output, "Conflicted").unwrap());
             assert_eq!(app.change_filter, ChangeFilter::Conflicted);
             assert!(find(&output, &conflict).is_some());
@@ -895,7 +895,7 @@ mod tests {
             click(&mut app, 4, PointerButton::Primary, Modifiers::SHIFT);
             click(&mut app, 3, PointerButton::Secondary, Modifiers::NONE);
             assert_eq!(app.selected_change_indices(), vec![2, 3, 4]);
-            assert_eq!(app.selected_change, 3);
+            assert_eq!(app.selection.active, 3);
             assert!(!app.busy());
         }
     }
@@ -908,7 +908,7 @@ mod tests {
             theme.apply(&ctx);
             let mut app = SannyGitApp::with_theme(theme);
             app.changes = crate::mock_data::changes();
-            app.selected_change = 2;
+            app.selection.active = 2;
             for _ in 0..3 {
                 let mut output = ctx.run_ui(
                     RawInput {
@@ -1002,7 +1002,7 @@ mod tests {
                     app.repositories = crate::mock_data::repositories();
                     app.selected_repository = 0;
                     app.changes = crate::mock_data::changes();
-                    app.selected_change = 1;
+                    app.selection.active = 1;
                     app.state_current = false;
                     let render = |app: &mut SannyGitApp, events| {
                         let mut output = ctx.run_ui(
@@ -1056,7 +1056,7 @@ mod tests {
                             ],
                         );
                     }
-                    assert_eq!(app.selected_change, 0);
+                    assert_eq!(app.selection.active, 0);
                     for _ in 0..3 {
                         render(&mut app, vec![]);
                     }

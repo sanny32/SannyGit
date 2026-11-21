@@ -184,16 +184,16 @@ impl Monitor {
         let flag = cancel.clone();
         let (sender, receiver) = mpsc::channel();
         let context = context.clone();
-        let git_executable = git_executable.to_owned();
+        let git_context = crate::git::GitContext::new(git_executable.to_owned());
         match std::thread::Builder::new()
             .name("sannygit-upstream".into())
             .spawn(move || {
-                crate::git::set_executable(git_executable);
+                let git = &git_context;
                 let mut error = None;
                 let mut fetched = false;
-                let result = tracking::read(&root).and_then(|status| {
+                let result = tracking::read(git, &root).and_then(|status| {
                     if fetch {
-                        match tracking::fetch_upstream(&root, &status, &flag) {
+                        match tracking::fetch_upstream(git, &root, &status, &flag) {
                             Ok(checked) => {
                                 fetched = checked || status.remote.as_deref() == Some(".")
                             }
@@ -201,7 +201,7 @@ impl Monitor {
                         }
                     }
                     if fetch {
-                        tracking::read(&root)
+                        tracking::read(git, &root)
                     } else {
                         Ok(status)
                     }

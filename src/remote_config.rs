@@ -1,6 +1,7 @@
 //! Local remote configuration and credential-free URL validation.
 //! Raw legacy values stay private; only redacted summaries reach rendering code.
 use crate::git;
+use crate::git::GitContext;
 use std::path::Path;
 
 const REMOTE_LIMIT: usize = 100;
@@ -210,12 +211,13 @@ fn values<'a>(records: &'a [(String, String)], key: &str) -> Vec<&'a str> {
         .collect()
 }
 
-pub fn load(root: &Path) -> Result<Snapshot, String> {
+pub fn load(git: &GitContext, root: &Path) -> Result<Snapshot, String> {
     let local = records(&git::run(
+        git,
         root,
         &["config", "--local", "--no-includes", "--null", "--list"],
     )?)?;
-    let effective = records(&git::run(root, &["config", "--null", "--list"])?)?;
+    let effective = records(&git::run(git, root, &["config", "--null", "--list"])?)?;
     let mut names: Vec<_> = effective
         .iter()
         .filter_map(|(key, _)| {
@@ -292,8 +294,13 @@ pub fn load(root: &Path) -> Result<Snapshot, String> {
     })
 }
 
-pub fn change(root: &Path, expected: &Snapshot, change: &Change) -> Result<(), String> {
-    if load(root)? != *expected {
+pub fn change(
+    git: &GitContext,
+    root: &Path,
+    expected: &Snapshot,
+    change: &Change,
+) -> Result<(), String> {
+    if load(git, root)? != *expected {
         return Err(
             "Remote configuration changed after loading. Reload before editing or removing it."
                 .into(),
@@ -316,6 +323,7 @@ pub fn change(root: &Path, expected: &Snapshot, change: &Change) -> Result<(), S
         return Err(reason.into());
     }
     git::run(
+        git,
         root,
         &[
             "check-ref-format",
@@ -335,9 +343,9 @@ pub fn change(root: &Path, expected: &Snapshot, change: &Change) -> Result<(), S
             if existing.is_some() {
                 return Err("A remote with this name already exists.".into());
             }
-            git::run(root, &["remote", "add", "--", name, url])?;
+            git::run(git, root, &["remote", "add", "--", name, url])?;
             if !push_url.is_empty() {
-                git::run(root, &["config", "--local", "--replace-all", &format!("remote.{name}.pushurl"), push_url])
+                git::run(git, root, &["config", "--local", "--replace-all", &format!("remote.{name}.pushurl"), push_url])
                     .map_err(|_| "Remote added, but its push URL could not be set. Reload and inspect its configuration before retrying.".to_owned())?;
             }
         }
@@ -347,12 +355,12 @@ pub fn change(root: &Path, expected: &Snapshot, change: &Change) -> Result<(), S
                     "This remote cannot be edited safely here. Use Edit Git Config.".into(),
                 );
             }
-            git::run(root, &["remote", "set-url", "--", name, url])?;
+            git::run(git, root, &["remote", "set-url", "--", name, url])?;
             if !push_url.is_empty() {
-                git::run(root, &["config", "--local", "--replace-all", &format!("remote.{name}.pushurl"), push_url])
+                git::run(git, root, &["config", "--local", "--replace-all", &format!("remote.{name}.pushurl"), push_url])
                     .map_err(|_| "Fetch URL updated, but push URL update failed. Reload and inspect the remote before retrying.".to_owned())?;
             } else if !values(&expected.local, &format!("remote.{name}.pushurl")).is_empty() {
-                git::run(root, &["config", "--local", "--unset-all", &format!("remote.{name}.pushurl")])
+                git::run(git, root, &["config", "--local", "--unset-all", &format!("remote.{name}.pushurl")])
                     .map_err(|_| "Fetch URL updated, but the old push URL could not be removed. Reload before retrying.".to_owned())?;
             }
         }
@@ -360,15 +368,19 @@ pub fn change(root: &Path, expected: &Snapshot, change: &Change) -> Result<(), S
             if !existing.is_some_and(|entry| entry.can_remove) {
                 return Err("Remote removal is disabled for inherited settings or custom fetch destinations.".into());
             }
-            git::run(root, &["remote", "remove", "--", name])?;
+            git::run(git, root, &["remote", "remove", "--", name])?;
         }
     }
     Ok(())
 }
 
 /// Resolve one actual push endpoint; reject fan-out and unsafe/custom transports.
-pub fn push_endpoint(root: &Path, name: &str) -> Result<(String, Snapshot), String> {
-    let snapshot = load(root)?;
+pub fn push_endpoint(
+    git: &GitContext,
+    root: &Path,
+    name: &str,
+) -> Result<(String, Snapshot), String> {
+    let snapshot = load(git, root)?;
     if !snapshot.entries.iter().any(|entry| entry.name == name) {
         return Err("Choose a configured remote.".into());
     }
@@ -376,6 +388,7 @@ pub fn push_endpoint(root: &Path, name: &str) -> Result<(String, Snapshot), Stri
         return Err("Custom remote helpers are not supported for tag pushes.".into());
     }
     let output = git::text(git::run(
+        git,
         root,
         &["remote", "get-url", "--push", "--all", "--", name],
     )?)?;
@@ -415,6 +428,7 @@ pub fn push_endpoint(root: &Path, name: &str) -> Result<(String, Snapshot), Stri
 mod tests {
     use super::*;
     use crate::test_support::TempRepo;
+    use crate::test_support::SYSTEM_GIT;
 
     #[test]
     fn url_validation_and_redaction_never_return_embedded_credentials() {
@@ -464,8 +478,9 @@ mod tests {
         repo.git(&["add", "file"]);
         repo.git(&["commit", "-m", "Base"]);
         change(
+            &SYSTEM_GIT,
             &repo.0,
-            &load(&repo.0).unwrap(),
+            &load(&SYSTEM_GIT, &repo.0).unwrap(),
             &Change::Add {
                 name: "origin".into(),
                 url: "../remote.git".into(),
@@ -484,8 +499,9 @@ mod tests {
         repo.write("file", "unstaged\n");
         let index = repo.git(&["ls-files", "--stage"]);
         let head = repo.git(&["rev-parse", "HEAD"]);
-        let snapshot = load(&repo.0).unwrap();
+        let snapshot = load(&SYSTEM_GIT, &repo.0).unwrap();
         change(
+            &SYSTEM_GIT,
             &repo.0,
             &snapshot,
             &Change::Update {
@@ -495,7 +511,7 @@ mod tests {
             },
         )
         .unwrap();
-        let updated = load(&repo.0).unwrap();
+        let updated = load(&SYSTEM_GIT, &repo.0).unwrap();
         let origin = updated
             .entries
             .iter()
@@ -504,6 +520,7 @@ mod tests {
         assert_eq!(origin.fetch_display, "https://example.test/new.git");
         assert_eq!(origin.push_display, "Same as fetch");
         assert!(change(
+            &SYSTEM_GIT,
             &repo.0,
             &snapshot,
             &Change::Remove {
@@ -513,6 +530,7 @@ mod tests {
         .unwrap_err()
         .contains("changed"));
         change(
+            &SYSTEM_GIT,
             &repo.0,
             &updated,
             &Change::Remove {
@@ -520,7 +538,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(load(&repo.0).unwrap().entries.len(), 1);
+        assert_eq!(load(&SYSTEM_GIT, &repo.0).unwrap().entries.len(), 1);
         assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
         assert_eq!(repo.git(&["ls-files", "--stage"]), index);
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"unstaged\n");
@@ -546,12 +564,13 @@ mod tests {
             "origin",
             "https://token@example.test/repo?key=secret",
         ]);
-        let snapshot = load(&repo.0).unwrap();
+        let snapshot = load(&SYSTEM_GIT, &repo.0).unwrap();
         let entry = &snapshot.entries[0];
         assert!(!entry.fetch_display.contains("token") && !entry.fetch_display.contains("secret"));
         assert!(entry.edit_url.is_empty());
         let before = repo.git(&["config", "--local", "--get", "remote.origin.url"]);
         assert!(change(
+            &SYSTEM_GIT,
             &repo.0,
             &snapshot,
             &Change::Update {
@@ -571,11 +590,12 @@ mod tests {
             "remote.origin.url",
             "https://example.test/second",
         ]);
-        assert!(!load(&repo.0).unwrap().entries[0].can_edit);
+        assert!(!load(&SYSTEM_GIT, &repo.0).unwrap().entries[0].can_edit);
         repo.git(&["config", "remote.origin.fetch", "+refs/*:refs/*"]);
-        let snapshot = load(&repo.0).unwrap();
+        let snapshot = load(&SYSTEM_GIT, &repo.0).unwrap();
         assert!(!snapshot.entries[0].can_remove);
         assert!(change(
+            &SYSTEM_GIT,
             &repo.0,
             &snapshot,
             &Change::Remove {
@@ -586,7 +606,7 @@ mod tests {
         let included = repo.0.join("included-config");
         std::fs::write(&included, "[remote \"inherited\"]\nurl = https://example.test/inherited.git\nfetch = +refs/heads/*:refs/remotes/inherited/*\n").unwrap();
         repo.git(&["config", "include.path", included.to_str().unwrap()]);
-        let snapshot = load(&repo.0).unwrap();
+        let snapshot = load(&SYSTEM_GIT, &repo.0).unwrap();
         let inherited = snapshot
             .entries
             .iter()
@@ -594,6 +614,7 @@ mod tests {
             .unwrap();
         assert!(!inherited.can_edit && !inherited.can_remove);
         assert!(change(
+            &SYSTEM_GIT,
             &repo.0,
             &snapshot,
             &Change::Remove {
@@ -615,7 +636,7 @@ mod tests {
             "url.https://dummy-token@example.test/.insteadOf",
             "safe:",
         ]);
-        let error = push_endpoint(&repo.0, "origin").err().unwrap();
+        let error = push_endpoint(&SYSTEM_GIT, &repo.0, "origin").err().unwrap();
         assert!(error.contains("credentials"));
         assert!(!error.contains("dummy-token"));
     }
@@ -626,14 +647,14 @@ mod tests {
         std::thread::spawn(|| {
             use std::os::unix::fs::PermissionsExt;
             let repo = TempRepo::new(); repo.git(&["remote", "add", "origin", "https://example.test/old.git"]);
-            let snapshot = load(&repo.0).unwrap();
+            let snapshot = load(&SYSTEM_GIT, &repo.0).unwrap();
             let wrapper = repo.0.join(".git/failing-config-git");
             std::fs::write(&wrapper, "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = remote.origin.pushurl ]; then exit 1; fi\ndone\nexec git \"$@\"\n").unwrap();
             std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
-            git::set_executable(wrapper.to_string_lossy().into_owned());
-            let error = change(&repo.0, &snapshot, &Change::Update { name: "origin".into(), url: "https://example.test/new.git".into(), push_url: "https://example.test/push.git".into() }).unwrap_err();
+            let git = &GitContext::new(wrapper.to_string_lossy().into_owned());
+            let error = change(git, &repo.0, &snapshot, &Change::Update { name: "origin".into(), url: "https://example.test/new.git".into(), push_url: "https://example.test/push.git".into() }).unwrap_err();
             assert!(error.contains("Fetch URL updated") && error.contains("push URL update failed"));
-            assert_eq!(load(&repo.0).unwrap().entries[0].fetch_display, "https://example.test/new.git");
+            assert_eq!(load(git, &repo.0).unwrap().entries[0].fetch_display, "https://example.test/new.git");
         }).join().unwrap();
     }
 }
