@@ -1,7 +1,16 @@
 use super::{SannyGitApp, WorkerResult};
 use crate::git::GitContext;
 use crate::{git, models::ChangeKind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+pub struct IgnoreDialog {
+    pub root: String,
+    pub paths: Vec<String>,
+    pub parent: Option<PathBuf>,
+    pub use_parent: bool,
+    pub use_pattern: bool,
+    pub pattern: String,
+}
 
 pub struct FileSelection {
     pub active: usize,
@@ -143,6 +152,86 @@ impl SannyGitApp {
 
     pub(super) fn retain_change_selection(&mut self) {
         self.selection.retain(&self.changes);
+    }
+
+    pub fn can_ignore_selected_changes(&self) -> bool {
+        let selected = self.selected_change_indices();
+        !self.busy()
+            && self.state_current
+            && self.repositories.get(self.selected_repository).is_some()
+            && !selected.is_empty()
+            && selected.iter().all(|&index| {
+                let change = &self.changes[index];
+                change.kind == ChangeKind::Untracked
+                    && crate::git::ignore_pattern(&change.path).is_ok()
+            })
+    }
+
+    pub fn open_ignore_dialog(&mut self) {
+        if !self.can_ignore_selected_changes() {
+            return;
+        }
+        let paths: Vec<_> = self
+            .selected_change_indices()
+            .into_iter()
+            .map(|index| self.changes[index].path.clone())
+            .collect();
+        let first = Path::new(&paths[0]);
+        let parent = first.parent().filter(|parent| {
+            paths
+                .iter()
+                .all(|path| Path::new(path).parent() == Some(parent))
+        });
+        let pattern = first
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .filter(|extension| !extension.is_empty())
+            .map(|extension| format!("*.{extension}"))
+            .unwrap_or_default();
+        self.ignore_dialog = Some(IgnoreDialog {
+            root: self.repositories[self.selected_repository].path.clone(),
+            parent: parent.map(Path::to_path_buf),
+            use_parent: parent.is_some_and(|path| !path.as_os_str().is_empty()),
+            paths,
+            use_pattern: false,
+            pattern,
+        });
+    }
+
+    pub fn confirm_ignore(&mut self) {
+        let Some(dialog) = &self.ignore_dialog else {
+            return;
+        };
+        if self.busy()
+            || !self.state_current
+            || self
+                .repositories
+                .get(self.selected_repository)
+                .map(|repo| &repo.path)
+                != Some(&dialog.root)
+            || (dialog.use_pattern
+                && (dialog.parent.is_none() || !git::valid_ignore_glob(&dialog.pattern)))
+        {
+            return;
+        }
+        let root = PathBuf::from(&dialog.root);
+        let paths = dialog.paths.clone();
+        let target_dir = if dialog.use_parent {
+            dialog.parent.clone().unwrap_or_default()
+        } else {
+            PathBuf::new()
+        };
+        let pattern = dialog.use_pattern.then(|| dialog.pattern.clone());
+        self.error = None;
+        self.status = "Updating .gitignore…".into();
+        if self.start_worker(move |git| WorkerResult::Operation {
+            committed: false,
+            success: ".gitignore updated",
+            outcome: git::ignore_paths(git, &root, &paths, &target_dir, pattern.as_deref()),
+            snapshot: git::load(git, &root),
+        }) {
+            self.state_current = false;
+        }
     }
 
     pub fn selected_staging_allowed(&self, staged: bool) -> bool {

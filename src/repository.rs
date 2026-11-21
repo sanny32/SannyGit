@@ -740,6 +740,45 @@ pub fn edit_config(path: &Path) -> Result<(), String> {
     });
     Ok(())
 }
+pub fn open_file(path: &Path) -> Result<(), String> {
+    let path = path
+        .canonicalize()
+        .map_err(|error| format!("Cannot open file: {error}"))?;
+    if !path.is_file() {
+        return Err("The working-tree path is not a file".into());
+    }
+    #[cfg(target_os = "macos")]
+    let command = Command::new("open");
+    #[cfg(target_os = "windows")]
+    let command = Command::new("explorer.exe");
+    #[cfg(target_os = "linux")]
+    let command = Command::new("xdg-open");
+    run_desktop_command(command, &path, "open the file")
+}
+
+pub fn reveal_file(path: &Path) -> Result<(), String> {
+    let folder = path.parent().ok_or("The file has no containing folder")?;
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    if path.symlink_metadata().is_ok() {
+        // Keep the final path component so that revealing a symlink selects the link.
+        let folder = folder
+            .canonicalize()
+            .map_err(|error| format!("Cannot open containing folder: {error}"))?;
+        let name = path.file_name().ok_or("The file has no name")?;
+        let path = folder.join(name);
+        #[cfg(target_os = "macos")]
+        let mut command = Command::new("open");
+        #[cfg(target_os = "macos")]
+        command.arg("-R");
+        #[cfg(target_os = "windows")]
+        let mut command = Command::new("explorer.exe");
+        #[cfg(target_os = "windows")]
+        command.arg("/select,");
+        return run_desktop_command(command, &path, "reveal the file");
+    }
+    reveal(folder)
+}
+
 pub fn reveal(path: &Path) -> Result<(), String> {
     let path = path
         .canonicalize()
@@ -748,22 +787,26 @@ pub fn reveal(path: &Path) -> Result<(), String> {
         return Err("Repository folder does not exist".into());
     }
     #[cfg(target_os = "macos")]
-    let mut command = Command::new("open");
+    let command = Command::new("open");
     #[cfg(target_os = "windows")]
-    let mut command = Command::new("explorer.exe");
+    let command = Command::new("explorer.exe");
     #[cfg(target_os = "linux")]
-    let mut command = Command::new("xdg-open");
+    let command = Command::new("xdg-open");
+    run_desktop_command(command, &path, "open the repository folder")
+}
+
+fn run_desktop_command(mut command: Command, path: &Path, action: &str) -> Result<(), String> {
     let status = command
         .arg(path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map_err(|error| format!("Cannot open file manager: {error}"))?;
+        .map_err(|error| format!("Cannot {action}: {error}"))?;
     if status.success() {
         Ok(())
     } else {
-        Err("File manager could not open repository folder".into())
+        Err(format!("The system could not {action}"))
     }
 }
 

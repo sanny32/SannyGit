@@ -267,6 +267,7 @@ pub struct SannyGitApp {
     pub network_dialog: Option<remotes::RemoteDialog>,
     pub background_progress_only: bool,
     pub stash_dialog: Option<stash::Dialog>,
+    pub ignore_dialog: Option<file_selection::IgnoreDialog>,
     pub discard_dialog: Option<discard::Dialog>,
     pub merge_dialog: Option<merge::Dialog>,
     pub conflict_dialog: Option<conflict::Dialog>,
@@ -471,6 +472,7 @@ impl SannyGitApp {
             network_dialog: None,
             background_progress_only: false,
             stash_dialog: None,
+            ignore_dialog: None,
             discard_dialog: None,
             merge_dialog: None,
             conflict_dialog: None,
@@ -533,6 +535,7 @@ impl SannyGitApp {
             || (self.network_dialog.is_some() && !self.remote_confirmation_hidden())
             || self.stash_dialog.is_some()
             || self.discard_dialog.is_some()
+            || self.ignore_dialog.is_some()
             || self.branches.ref_dialog.is_some()
             || self.merge_dialog.is_some()
             || self
@@ -1047,6 +1050,7 @@ impl SannyGitApp {
             self.network_dialog = None;
             self.stash_dialog = None;
             self.discard_dialog = None;
+            self.ignore_dialog = None;
             self.branches.ref_dialog = None;
             self.merge_dialog = None;
             if !self.conflict_solver_open() {
@@ -2143,6 +2147,9 @@ impl SannyGitApp {
                     self.status
                         .push_str("; refresh required before further operations");
                 }
+                if operation_succeeded && success == ".gitignore updated" {
+                    self.ignore_dialog = None;
+                }
                 if discarding {
                     self.finish_discard(operation_succeeded);
                 }
@@ -2271,6 +2278,7 @@ impl eframe::App for SannyGitApp {
             && self.network_dialog.is_none()
             && self.stash_dialog.is_none()
             && self.discard_dialog.is_none()
+            && self.ignore_dialog.is_none()
             && self.branches.ref_dialog.is_none()
             && self.merge_dialog.is_none()
             && self.conflict_dialog.is_none()

@@ -114,6 +114,8 @@ pub enum Job {
     NewWindow,
     NewRepositoryWindow(String),
     Reveal(String),
+    OpenFile(PathBuf),
+    RevealFile(PathBuf),
     AddOrCreate(String),
     InspectClone(String),
     Clone {
@@ -316,6 +318,8 @@ impl SannyGitApp {
         self.status = match &job {
             Job::NewWindow | Job::NewRepositoryWindow(_) => "Opening new window…",
             Job::Reveal(_) => "Opening repository folder…",
+            Job::OpenFile(_) => "Opening file…",
+            Job::RevealFile(_) => "Opening containing folder…",
             Job::AddOrCreate(_) => "Opening repository…",
             Job::InspectClone(_) => "Inspecting repository…",
             Job::Clone { .. } => "Cloning repository…",
@@ -345,6 +349,8 @@ impl SannyGitApp {
                 Job::Reveal(path) => {
                     ResultMessage::Editor(repository::reveal(&PathBuf::from(path)))
                 }
+                Job::OpenFile(path) => ResultMessage::Editor(repository::open_file(&path)),
+                Job::RevealFile(path) => ResultMessage::Editor(repository::reveal_file(&path)),
                 Job::AddOrCreate(path) => {
                     ResultMessage::Open(repository::add_or_create(git, &path))
                 }

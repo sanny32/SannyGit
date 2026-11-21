@@ -2,12 +2,13 @@ use super::controls::icons::{self, Icon};
 use super::controls::popup_menu;
 use super::controls::tooltips::TooltipResponse;
 use crate::{
-    app::{ChangeFilter, SannyGitApp},
+    app::{ChangeFilter, RepositoryJob, SannyGitApp},
     models::ChangeKind,
     theme::{semibold_family, Palette},
 };
 use eframe::egui::{Align, Align2, Color32, FontId, Layout, Rect, RichText, Sense, Ui, Vec2};
 use egui_extras::{Column, TableBuilder};
+use std::path::{Path, PathBuf};
 
 const FILTER_WIDTH: f32 = 366.0;
 const MERGE_BANNER_HEIGHT: f32 = 36.0;
@@ -281,10 +282,27 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if let Some((index, action)) = file_request {
         app.selection.active = index;
         match action {
-            FileAction::ShowChanges => {}
+            FileAction::ShowChanges => app.select_change(index, false, false, &visible),
             FileAction::Commit => ui.ctx().memory_mut(|memory| {
                 memory.request_focus(eframe::egui::Id::unique("commit.message"));
             }),
+            FileAction::Open(path) => app.run_repository_job(RepositoryJob::OpenFile(path)),
+            FileAction::Reveal(path) => app.run_repository_job(RepositoryJob::RevealFile(path)),
+            FileAction::Ignore => app.open_ignore_dialog(),
+            FileAction::SelectDirectory | FileAction::SelectRepository => {
+                let change = &app.changes[index];
+                let directory = Path::new(&change.path).parent();
+                app.selection.anchor = Some(change.path.clone());
+                app.selection.paths = visible
+                    .iter()
+                    .map(|&index| &app.changes[index].path)
+                    .filter(|path| {
+                        matches!(action, FileAction::SelectRepository)
+                            || directory.is_some_and(|dir| Path::new(path).starts_with(dir))
+                    })
+                    .cloned()
+                    .collect();
+            }
             FileAction::Copy(text) => ui.ctx().copy_text(text),
             FileAction::Stage => app.set_selected_staged(true),
             FileAction::Unstage => app.set_selected_staged(false),
@@ -354,6 +372,11 @@ fn keyboard_selection(
 
 #[derive(Clone)]
 enum FileAction {
+    Open(PathBuf),
+    Reveal(PathBuf),
+    Ignore,
+    SelectDirectory,
+    SelectRepository,
     Copy(String),
     ShowChanges,
     Commit,
@@ -370,7 +393,31 @@ fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<F
         return Vec::new();
     };
     let repository = app.repositories.get(app.selected_repository);
-    let mut entries = vec![
+    let mut entries = Vec::new();
+    if let Some(repository) = repository {
+        let path = Path::new(&repository.path).join(&change.path);
+        let reveal = if cfg!(target_os = "macos") {
+            "Reveal in Finder"
+        } else if cfg!(target_os = "windows") {
+            "Show in Explorer"
+        } else {
+            "Open Containing Folder"
+        };
+        entries.push(E::submenu(
+            "Open",
+            vec![
+                E::item(
+                    "Open File",
+                    !app.busy() && change.kind != ChangeKind::Deleted,
+                    FileAction::Open(path.clone()),
+                )
+                .help("The file must exist in the working tree and no operation can be running"),
+                E::item(reveal, !app.busy(), FileAction::Reveal(path))
+                    .help("Wait for the current operation to finish"),
+            ],
+        ));
+    }
+    entries.extend([
         E::item("Show Changes", true, FileAction::ShowChanges),
         E::Separator,
         E::item(
@@ -396,8 +443,14 @@ fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<F
         .help(
             "Select a staged file after refreshing",
         ),
+        E::item(
+            "Ignore…",
+            app.can_ignore_selected_changes(),
+            FileAction::Ignore,
+        )
+        .help("Select untracked files with supported names, then refresh if needed"),
         E::Separator,
-    ];
+    ]);
     use crate::conflict::Action;
     if change.kind == ChangeKind::Conflicted {
         entries.push(E::item(
@@ -493,6 +546,19 @@ fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<F
             FileAction::Copy(text.unwrap_or_default()),
         ));
     }
+    entries.extend([
+        E::Separator,
+        E::item(
+            "Select Directory",
+            Path::new(&change.path)
+                .parent()
+                .is_some_and(|folder| !folder.as_os_str().is_empty()),
+            FileAction::SelectDirectory,
+        )
+        .help("Select visible changes in this folder and its subfolders"),
+        E::item("Select Repository Root", true, FileAction::SelectRepository)
+            .help("Select all visible changes in this repository"),
+    ]);
     entries
 }
 
@@ -1066,6 +1132,9 @@ mod tests {
                         "Commit…",
                         "Stage",
                         "Unstage",
+                        "Ignore…",
+                        "Select Directory",
+                        "Select Repository Root",
                         "Discard…",
                         "Copy Name",
                         "Copy Path",

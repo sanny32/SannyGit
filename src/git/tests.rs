@@ -3,6 +3,99 @@ use crate::test_support::TempRepo;
 use crate::test_support::SYSTEM_GIT;
 
 #[test]
+fn ignore_selection_appends_literal_root_rules_without_staging() {
+    let repo = TempRepo::new();
+    std::fs::create_dir(repo.0.join("nested")).unwrap();
+    repo.write(".gitignore", "# existing rule without final newline");
+    repo.write("nested/report [1].txt", "keep these bytes");
+    repo.write("nested/report 1.txt", "neighbor");
+    repo.write("report [1].txt", "different directory");
+    repo.write("!local.txt", "keep this too");
+
+    let paths = ["nested/report [1].txt".into(), "!local.txt".into()];
+    ignore_paths(&SYSTEM_GIT, &repo.0, &paths, Path::new(""), None).unwrap();
+
+    let rules = std::fs::read_to_string(repo.0.join(".gitignore")).unwrap();
+    assert_eq!(
+        rules,
+        "# existing rule without final newline\n/nested/report\\ \\[1\\].txt\n/!local.txt\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.0.join(&paths[0])).unwrap(),
+        "keep these bytes"
+    );
+    assert!(repo.git(&["ls-files"]).is_empty());
+    let remaining: BTreeSet<_> = load_changes(&SYSTEM_GIT, &repo.0)
+        .unwrap()
+        .into_iter()
+        .map(|change| change.path)
+        .collect();
+    assert_eq!(
+        remaining,
+        BTreeSet::from([
+            ".gitignore".into(),
+            "nested/report 1.txt".into(),
+            "report [1].txt".into(),
+        ])
+    );
+    assert!(ignore_paths(&SYSTEM_GIT, &repo.0, &paths, Path::new(""), None).is_err());
+    assert_eq!(
+        std::fs::read_to_string(repo.0.join(".gitignore")).unwrap(),
+        rules
+    );
+}
+
+#[test]
+fn ignore_pattern_is_scoped_to_the_selected_folder() {
+    for destination in ["", "nested"] {
+        let repo = TempRepo::new();
+        std::fs::create_dir(repo.0.join("nested")).unwrap();
+        repo.write("nested/input.log", "");
+        repo.write("nested/output.log", "");
+        repo.write("other.log", "");
+        ignore_paths(
+            &SYSTEM_GIT,
+            &repo.0,
+            &["nested/input.log".into()],
+            Path::new(destination),
+            Some("*.log"),
+        )
+        .unwrap();
+        let remaining: Vec<_> = load_changes(&SYSTEM_GIT, &repo.0)
+            .unwrap()
+            .into_iter()
+            .map(|change| change.path)
+            .collect();
+        assert!(remaining.iter().any(|path| path == "other.log"));
+        assert!(!remaining
+            .iter()
+            .any(|path| path.starts_with("nested/") && path.ends_with(".log")));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn ignore_selection_does_not_follow_a_symlinked_gitignore() {
+    let repo = TempRepo::new();
+    repo.write("other", "untouched");
+    repo.write("selected", "");
+    std::os::unix::fs::symlink("other", repo.0.join(".gitignore")).unwrap();
+
+    assert!(ignore_paths(
+        &SYSTEM_GIT,
+        &repo.0,
+        &["selected".into()],
+        Path::new(""),
+        None
+    )
+    .is_err());
+    assert_eq!(
+        std::fs::read_to_string(repo.0.join("other")).unwrap(),
+        "untouched"
+    );
+}
+
+#[test]
 fn staging_round_trip_command_budget() {
     let mut repo = TempRepo::new();
     // Match load() on symlinked temporary directories and Windows path prefixes.

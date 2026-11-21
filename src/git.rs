@@ -559,6 +559,146 @@ fn command_error(operation: &str) -> String {
     format!("Git {operation} failed. {reason}")
 }
 
+pub(crate) fn ignore_pattern(path: &str) -> Result<String, &'static str> {
+    if path.is_empty()
+        || path.ends_with('/')
+        || path.contains(['\0', '\r', '\n'])
+        || path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case(".gitignore"))
+        || Path::new(path)
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err("The selected path cannot be added to .gitignore.");
+    }
+    Ok(format!("/{}", escape_ignore_path(path)))
+}
+
+fn escape_ignore_path(path: &str) -> String {
+    let mut pattern = String::new();
+    for character in path.chars() {
+        if matches!(character, '\\' | '*' | '?' | '[' | ']' | ' ') {
+            pattern.push('\\');
+        }
+        pattern.push(character);
+    }
+    pattern
+}
+
+pub(crate) fn valid_ignore_glob(pattern: &str) -> bool {
+    !pattern.trim().is_empty()
+        && pattern.trim_end() == pattern
+        && !pattern.ends_with('\\')
+        && !pattern.contains(['/', '\0', '\r', '\n'])
+}
+
+pub(crate) fn ignore_paths(
+    git: &GitContext,
+    root: &Path,
+    paths: &[String],
+    directory: &Path,
+    glob: Option<&str>,
+) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("Select untracked files to ignore.".into());
+    }
+    let mut patterns = Vec::new();
+    for path in paths {
+        let exact = ignore_pattern(path)?;
+        if directory.as_os_str().is_empty() {
+            patterns.push(exact);
+        } else {
+            let file = Path::new(path);
+            if file.parent() != Some(directory) {
+                return Err("The selected files must share the ignore file's folder.".into());
+            }
+            let name = path.rsplit('/').next().unwrap_or(path);
+            patterns.push(ignore_pattern(name)?);
+        }
+    }
+    if let Some(glob) = glob {
+        let parent = Path::new(&paths[0]).parent();
+        if !valid_ignore_glob(glob) || paths.iter().any(|path| Path::new(path).parent() != parent) {
+            return Err("Enter a filename pattern for files from one folder.".into());
+        }
+        let prefix = if directory.as_os_str().is_empty() {
+            paths[0]
+                .rsplit_once('/')
+                .map(|(folder, _)| escape_ignore_path(folder))
+        } else {
+            None
+        };
+        patterns = vec![match prefix {
+            Some(folder) => format!("/{folder}/{glob}"),
+            None => format!("/{glob}"),
+        }];
+    }
+    let untracked: BTreeSet<_> = load_changes(git, root)?
+        .into_iter()
+        .filter(|change| change.kind == ChangeKind::Untracked)
+        .map(|change| change.path)
+        .collect();
+    if paths.iter().any(|path| !untracked.contains(path)) {
+        return Err("A selected file is no longer untracked. Refresh and select it again.".into());
+    }
+
+    use std::io::{Seek, SeekFrom, Write as _};
+
+    let relative_target = directory.join(".gitignore");
+    let target = crate::discard::safe_path(
+        root,
+        relative_target.to_str().ok_or("Invalid .gitignore path")?,
+    )?;
+    let update = || -> std::io::Result<()> {
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).read(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.custom_flags(0x00200000); // FILE_FLAG_OPEN_REPARSE_POINT
+        }
+        let mut file = options.open(target)?;
+        let metadata = file.metadata()?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            if metadata.file_attributes() & 0x400 != 0 {
+                return Err(std::io::Error::other(
+                    "The .gitignore cannot be a reparse point",
+                ));
+            }
+        }
+        if !metadata.is_file() {
+            return Err(std::io::Error::other(
+                "The .gitignore must be a regular file",
+            ));
+        }
+
+        let mut contents = String::new();
+        if metadata.len() > 0 {
+            file.seek(SeekFrom::End(-1))?;
+            let mut last = [0];
+            file.read_exact(&mut last)?;
+            if last[0] != b'\n' {
+                contents.push('\n');
+            }
+        }
+        for pattern in patterns {
+            contents.push_str(&pattern);
+            contents.push('\n');
+        }
+        file.write_all(contents.as_bytes())
+    };
+    update().map_err(|error| format!("Cannot update .gitignore: {error}"))
+}
+
 /// Stages or unstages the complete selected file; never changes working-tree bytes.
 pub fn set_staged(git: &GitContext, root: &Path, path: &str, staged: bool) -> Result<(), String> {
     set_staged_paths(git, root, &[path.to_owned()], staged)

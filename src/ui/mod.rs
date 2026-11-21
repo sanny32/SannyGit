@@ -10,6 +10,7 @@ mod conflict;
 mod controls;
 mod diff_view;
 mod discard;
+mod ignore;
 mod journal;
 mod merge;
 mod ref_management;
@@ -163,6 +164,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     repository_dialogs::show(ui, app);
     stash::show(ui.ctx(), app);
     discard::show(ui.ctx(), app);
+    ignore::show(ui.ctx(), app);
     ref_management::show(ui.ctx(), app);
     merge::show(ui.ctx(), app);
     merge::show_abort(ui.ctx(), app);
