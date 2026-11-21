@@ -25,6 +25,16 @@ pub struct Snapshot {
     effective: Vec<(String, String)>,
 }
 
+impl Snapshot {
+    pub fn has_standard_branch_fetch(&self, remote: &str) -> bool {
+        let standard = format!("refs/heads/*:refs/remotes/{remote}/*");
+        matches!(
+            values(&self.effective, &format!("remote.{remote}.fetch")).as_slice(),
+            [refspec] if refspec.strip_prefix('+').unwrap_or(refspec) == standard
+        )
+    }
+}
+
 #[derive(Clone)]
 pub enum Change {
     Add {
@@ -385,7 +395,7 @@ pub fn push_endpoint(
         return Err("Choose a configured remote.".into());
     }
     if !values(&snapshot.effective, &format!("remote.{name}.vcs")).is_empty() {
-        return Err("Custom remote helpers are not supported for tag pushes.".into());
+        return Err("Custom remote helpers are not supported for reviewed pushes.".into());
     }
     let output = git::text(git::run(
         git,
@@ -399,13 +409,12 @@ pub fn push_endpoint(
         .collect();
     if urls.len() != 1 {
         return Err(
-            "Tag push requires exactly one push URL; multiple destinations are not supported."
-                .into(),
+            "Push requires exactly one push URL; multiple destinations are not supported.".into(),
         );
     }
     let url = urls[0];
     if url_hint(url).is_some() {
-        return Err("Push URL contains credentials or unsupported syntax. Use Git credential helpers and a supported URL before pushing tags.".into());
+        return Err("Push URL contains credentials or unsupported syntax. Use Git credential helpers and a supported URL before pushing.".into());
     }
     let drive = url.as_bytes().get(1) == Some(&b':')
         && url.as_bytes().first().is_some_and(u8::is_ascii_alphabetic);

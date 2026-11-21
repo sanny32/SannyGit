@@ -895,3 +895,67 @@ fn remote_labels_mask_credentials() {
         assert!(!label.contains(secret));
     }
 }
+
+#[test]
+fn remote_branch_push_and_delete_touch_only_the_reviewed_refs() {
+    let repo = TempRepo::new();
+    repo.git(&["commit", "--allow-empty", "-m", "base"]);
+    let oid = repo.git(&["rev-parse", "HEAD"]);
+    let origin = repo.0.join("origin.git");
+    let backup = repo.0.join("backup.git");
+    for (name, remote) in [("origin", &origin), ("backup", &backup)] {
+        repo.git(&["init", "--bare", remote.to_str().unwrap()]);
+        repo.git(&["remote", "add", name, remote.to_str().unwrap()]);
+        repo.git(&["push", name, "HEAD:refs/heads/keep"]);
+    }
+    let branch = "refs/heads/team/topic";
+    let tracking = "refs/remotes/origin/team/topic";
+    repo.git(&["push", "origin", &format!("HEAD:{branch}")]);
+    repo.git(&["tag", "keep-local"]);
+    repo.git(&["commit", "--allow-empty", "-m", "new local head"]);
+
+    let cancel = AtomicBool::new(false);
+    let preview = preview_branch(&SYSTEM_GIT, &repo.0, tracking).unwrap();
+    push_branch(&SYSTEM_GIT, &repo.0, &preview, None, &cancel).unwrap();
+    push_branch(
+        &SYSTEM_GIT,
+        &repo.0,
+        &preview,
+        Some("refs/heads/review/topic"),
+        &cancel,
+    )
+    .unwrap();
+    assert!(push_branch(&SYSTEM_GIT, &repo.0, &preview, Some("bad:ref"), &cancel).is_err());
+    let custom = "refs/heads/review/topic";
+    let read_ref = |root: &Path, name| {
+        git::run(&SYSTEM_GIT, root, &["rev-parse", "--verify", name]).and_then(git::text)
+    };
+    assert_eq!(read_ref(&origin, custom).unwrap(), oid);
+    assert!(read_ref(&backup, branch).is_err());
+    assert_eq!(read_ref(&backup, "refs/heads/keep").unwrap(), oid);
+    assert!(read_ref(&backup, "refs/tags/keep-local").is_err());
+
+    delete_branch(&SYSTEM_GIT, &repo.0, &preview, false, &cancel).unwrap();
+    assert!(read_ref(&repo.0, tracking).is_err());
+    assert_eq!(read_ref(&origin, branch).unwrap(), oid);
+
+    repo.git(&["fetch", "origin"]);
+    repo.git(&["push", "origin", &format!("HEAD:{branch}")]);
+    repo.git(&["update-ref", tracking, oid.trim()]);
+    let stale = preview_branch(&SYSTEM_GIT, &repo.0, tracking).unwrap();
+    assert!(delete_branch(&SYSTEM_GIT, &repo.0, &stale, true, &cancel).is_err());
+    assert_eq!(read_ref(&repo.0, tracking).unwrap(), oid);
+    assert_eq!(
+        read_ref(&origin, branch).unwrap(),
+        repo.git(&["rev-parse", "HEAD"])
+    );
+
+    repo.git(&["fetch", "origin"]);
+    let fresh = preview_branch(&SYSTEM_GIT, &repo.0, tracking).unwrap();
+    delete_branch(&SYSTEM_GIT, &repo.0, &fresh, true, &cancel).unwrap();
+    assert!(read_ref(&repo.0, tracking).is_err());
+    assert!(read_ref(&origin, branch).is_err());
+    assert_eq!(read_ref(&origin, "refs/heads/keep").unwrap(), oid);
+    assert_eq!(read_ref(&origin, custom).unwrap(), oid);
+    assert!(read_ref(&backup, branch).is_err());
+}

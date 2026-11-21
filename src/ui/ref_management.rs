@@ -2,7 +2,7 @@ use super::controls::dialog_style::DialogResponse;
 use super::controls::{dialog_style, icons::Icon, tooltips::TooltipResponse};
 use crate::{
     app::{
-        ref_management::{Dialog, Kind, RemoteEditor},
+        ref_management::{Dialog, Kind, RemoteBranchAction, RemoteEditor},
         SannyGitApp,
     },
     branches::{ResetMode, ResetStrategy},
@@ -18,6 +18,10 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     };
     let palette = app.palette();
     let (id, title, description, icon, width) = match &dialog.kind {
+        Kind::RemoteBranch { .. } => {
+            show_remote_branch(ctx, app, dialog);
+            return;
+        }
         Kind::Delete { .. } => ("ref.delete", "Delete Local Branch", "Delete a local branch only after it is fully merged into the current HEAD. No force deletion; current and worktree branches are protected.", Icon::Branch, 580.0),
         Kind::DeleteTag { .. } => {
             show_tag_delete(ctx, app, dialog);
@@ -160,7 +164,10 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 Kind::Remotes(editor) => {
                     config_change = remote_editor(ui, editor, busy, current);
                 }
-                Kind::AddTagRemote | Kind::Reset { .. } | Kind::DeleteTag { .. } => {}
+                Kind::AddTagRemote
+                | Kind::Reset { .. }
+                | Kind::DeleteTag { .. }
+                | Kind::RemoteBranch { .. } => {}
             }
             let message = if dialog.running {
                 app.status.as_str()
@@ -192,7 +199,8 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     Kind::AddTagRemote
                     | Kind::Reset { .. }
                     | Kind::Remotes(_)
-                    | Kind::DeleteTag { .. } => false,
+                    | Kind::DeleteTag { .. }
+                    | Kind::RemoteBranch { .. } => false,
                 };
                 if !matches!(dialog.kind, Kind::Remotes(_))
                     && ui
@@ -251,6 +259,126 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     }
     if let Some(remove) = config_change {
         app.change_remote(remove);
+    }
+}
+
+fn show_remote_branch(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Dialog) {
+    let Kind::RemoteBranch {
+        source,
+        prepared,
+        action,
+    } = &mut dialog.kind
+    else {
+        return;
+    };
+    let name = source.strip_prefix("refs/remotes/").unwrap_or(source);
+    let owner = prepared
+        .as_ref()
+        .map(|preview| preview.owner.as_str())
+        .or_else(|| name.split_once('/').map(|(remote, _)| remote))
+        .unwrap_or("");
+    let deleting = matches!(action, RemoteBranchAction::Delete { .. });
+    let (title, description, icon, button) = if deleting {
+        (
+            format!("Delete branch '{name}'?"),
+            "If the branch remains on the remote, it may come back with the next fetch.",
+            Icon::Warning,
+            "Delete",
+        )
+    } else {
+        (
+            format!("Push '{name}' to remote '{owner}'"),
+            "Select the destination ref for the push.",
+            Icon::Push,
+            "Push",
+        )
+    };
+    let palette = app.palette();
+    let busy = app.busy();
+    let mut close = false;
+    let mut submit = false;
+    let mut reload = false;
+    let dialog_id = if deleting {
+        "ref.remote_branch.delete"
+    } else {
+        "ref.remote_branch.push"
+    };
+    dialog_style::modal(ctx, palette, dialog_id).show(ctx, |ui| {
+        ui.set_width(500.0);
+        dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        dialog_style::header_with_icon(ui, palette, &title, description, icon);
+        dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 8), |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+            let mut ready = prepared.is_some();
+            match action {
+                RemoteBranchAction::Delete { also_remote } => {
+                    let label = format!("Delete from remote repository '{owner}'");
+                    let supported = prepared.as_ref().is_some_and(|preview| preview.can_delete_remote);
+                    let response = ui.add_enabled(!busy && supported, egui::Checkbox::new(also_remote, &label));
+                    response.help_text(if ready && !supported {
+                        "Deleting on the server requires a configured remote with the standard branch fetch mapping."
+                    } else {
+                        &label
+                    });
+                }
+                RemoteBranchAction::Push { custom, destination } => {
+                    egui::Grid::new("remote_branch.push_target")
+                        .spacing([12.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.label("Push To");
+                            ui.add_enabled_ui(!busy, |ui| {
+                                ui.radio_value(custom, false, "Tracked or matching branch")
+                            }).inner.help_text(prepared.as_ref().map_or("", |preview| preview.branch.as_str()));
+                            ui.end_row();
+                            ui.label("");
+                            ui.horizontal(|ui| {
+                                ui.add_enabled_ui(!busy, |ui| {
+                                    ui.radio_value(custom, true, "Custom Ref");
+                                });
+                                ui.add_enabled(
+                                    !busy && *custom,
+                                    egui::TextEdit::singleline(destination)
+                                        .hint_text("refs/heads/branch")
+                                        .desired_width(240.0),
+                                );
+                            });
+                            ui.end_row();
+                        });
+                    ready = prepared.as_ref().is_some_and(|preview| preview.has_owner)
+                        && (!*custom || !destination.trim().is_empty());
+                }
+            }
+            let status = if busy {
+                "Checking branch…"
+            } else if !deleting && prepared.as_ref().is_some_and(|preview| !preview.has_owner) {
+                "The source remote is no longer configured"
+            } else {
+                ""
+            };
+            dialog_style::text_line(ui, RichText::new(status).color(palette.muted), 18.0);
+            dialog_style::button_row(ui, |ui| {
+                submit = ui.add_enabled(
+                    !busy && app.state_current && ready,
+                    dialog_style::primary(button, palette),
+                ).clicked();
+                close = ui.add_enabled(!busy, dialog_style::button("Cancel")).dialog_close();
+                if !busy && prepared.is_none() && dialog.error.is_some() {
+                    reload = ui.add(dialog_style::button("Reload Details")).clicked();
+                }
+            });
+        });
+    });
+    if !close {
+        dialog.confirmed = submit;
+        app.branches.ref_dialog = Some(dialog);
+    }
+    if reload {
+        app.reload_ref_dialog();
+    }
+    if submit && !close {
+        app.run_ref_action();
     }
 }
 
@@ -350,7 +478,10 @@ fn show_tag_reset(ctx: &egui::Context, app: &mut SannyGitApp, dialog: Dialog) {
     let palette = app.palette();
     let busy = app.busy();
     let enabled = !busy && app.state_current && prepared.is_some();
-    let name = source.strip_prefix("refs/tags/").unwrap_or(source);
+    let name = source
+        .strip_prefix("refs/tags/")
+        .or_else(|| source.strip_prefix("refs/remotes/"))
+        .unwrap_or(source);
     let target = match prepared {
         Some(prepared) => format!(
             "{name} · {}",
@@ -368,8 +499,12 @@ fn show_tag_reset(ctx: &egui::Context, app: &mut SannyGitApp, dialog: Dialog) {
         dialog_style::header_with_icon(
             ui,
             palette,
-            "Reset to Tag",
-            "Move HEAD, the index and the working tree to the tag’s commit.",
+            if source.starts_with("refs/remotes/") {
+                "Reset to Remote Branch"
+            } else {
+                "Reset to Tag"
+            },
+            "Move HEAD, the index and the working tree to the selected commit.",
             Icon::Warning,
         );
         dialog_style::section(ui, palette.panel, egui::Margin::symmetric(18, 10), |ui| {
@@ -379,7 +514,7 @@ fn show_tag_reset(ctx: &egui::Context, app: &mut SannyGitApp, dialog: Dialog) {
             } else if *choose_changes {
                 "Save the staged and unstaged changes to a stash, or discard them."
             } else if prepared.is_none() && busy {
-                "Checking the tag and working tree…"
+                "Checking the target and working tree…"
             } else {
                 "Reset will discard any staged and unstaged changes unless you save them."
             };
@@ -463,7 +598,10 @@ fn show_advanced_reset(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: D
     let palette = app.palette();
     let busy = app.busy();
     let enabled = !busy && app.state_current && prepared.is_some();
-    let name = source.strip_prefix("refs/tags/").unwrap_or(source);
+    let name = source
+        .strip_prefix("refs/tags/")
+        .or_else(|| source.strip_prefix("refs/remotes/"))
+        .unwrap_or(source);
     let target = prepared.as_ref().map_or_else(
         || name.to_owned(),
         |preview| {
@@ -484,7 +622,7 @@ fn show_advanced_reset(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: D
             ui,
             palette,
             "Reset Advanced",
-            "Move HEAD to the tag’s commit. Choose what to update in the index and working tree.",
+            "Move HEAD to the selected commit. Choose what to update in the index and working tree.",
             Icon::Warning,
         );
         dialog_style::section(ui, palette.panel, egui::Margin::symmetric(18, 8), |ui| {
@@ -552,7 +690,7 @@ fn show_advanced_reset(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: D
             let notice = if dialog.running {
                 "Resetting HEAD…"
             } else if prepared.is_none() && busy {
-                "Checking the tag and working tree…"
+                "Checking the target and working tree…"
             } else if options.strategy == ResetStrategy::Hard {
                 "Untracked or ignored files in the way may be overwritten or removed."
             } else {
@@ -820,6 +958,72 @@ mod tests {
     }
 
     #[test]
+    fn remote_branch_dialogs_use_the_same_geometry_after_loading() {
+        let repo = crate::test_support::TempRepo::new();
+        repo.git(&["commit", "--allow-empty", "-m", "base"]);
+        repo.git(&["remote", "add", "origin", "https://example.test/repo"]);
+        let source = "refs/remotes/origin/team/topic";
+        repo.git(&["update-ref", source, "HEAD"]);
+        let preview = crate::remotes::preview_branch(&SYSTEM_GIT, &repo.0, source).unwrap();
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
+                let ctx = egui::Context::default();
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                for (id, action) in [
+                    (
+                        "ref.remote_branch.delete",
+                        RemoteBranchAction::Delete { also_remote: false },
+                    ),
+                    (
+                        "ref.remote_branch.push",
+                        RemoteBranchAction::Push {
+                            custom: false,
+                            destination: String::new(),
+                        },
+                    ),
+                ] {
+                    let mut previous = None;
+                    for prepared in [None, Some(preview.clone())] {
+                        app.branches.ref_dialog = Some(Dialog {
+                            root: repo.0.to_string_lossy().into_owned(),
+                            kind: Kind::RemoteBranch {
+                                source: source.into(),
+                                prepared,
+                                action: action.clone(),
+                            },
+                            confirmed: false,
+                            running: false,
+                            reload_pending: false,
+                            error: None,
+                            status: String::new(),
+                        });
+                        for _ in 0..3 {
+                            let mut output = ctx.run_ui(
+                                egui::RawInput {
+                                    screen_rect: Some(screen),
+                                    ..Default::default()
+                                },
+                                |ui| show(ui.ctx(), &mut app),
+                            );
+                            output.textures_delta.clear();
+                        }
+                        let rect = ctx
+                            .memory(|memory| memory.area_rect(egui::Id::unique(id)))
+                            .unwrap();
+                        assert!(screen.contains_rect(rect));
+                        if let Some(previous) = previous {
+                            assert_eq!(rect, previous);
+                        }
+                        previous = Some(rect);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn advanced_reset_stays_compact_when_switching_modes() {
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
             for size in [egui::vec2(1100.0, 700.0), egui::vec2(1536.0, 1024.0)] {
@@ -961,7 +1165,8 @@ mod tests {
                                 }
                                 Kind::AddTagRemote
                                 | Kind::Reset { .. }
-                                | Kind::DeleteTag { .. } => {}
+                                | Kind::DeleteTag { .. }
+                                | Kind::RemoteBranch { .. } => {}
                             }
                             for frame in 0..4 {
                                 let mut output = ctx.run_ui(

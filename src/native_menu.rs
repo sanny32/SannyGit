@@ -503,6 +503,7 @@ fn popup_items<T: Clone>(
                 enabled,
                 action,
                 help,
+                shortcut,
             } => {
                 // SAFETY: PopupHandler implements this selector with NSMenuItem's action ABI.
                 let item = unsafe {
@@ -513,6 +514,20 @@ fn popup_items<T: Clone>(
                         &NSString::from_str(""),
                     )
                 };
+                if let Some(shortcut) = shortcut {
+                    use eframe::egui::Key;
+                    use objc2_app_kit::NSEventModifierFlags as Flags;
+                    let key = match shortcut.logical_key {
+                        Key::ArrowUp => "\u{f700}".into(),
+                        key => key.name().to_ascii_lowercase(),
+                    };
+                    let mut modifiers = Flags::Command;
+                    if shortcut.modifiers.shift {
+                        modifiers |= Flags::Shift;
+                    }
+                    item.setKeyEquivalent(&NSString::from_str(&key));
+                    item.setKeyEquivalentModifierMask(modifiers);
+                }
                 item.setTag(actions.len() as isize);
                 actions.push(action.clone());
                 item.setEnabled(*enabled);

@@ -25,6 +25,7 @@ pub(crate) enum Entry<T> {
         enabled: bool,
         action: T,
         help: String,
+        shortcut: Option<eframe::egui::KeyboardShortcut>,
     },
     Submenu {
         label: String,
@@ -40,11 +41,21 @@ impl<T> Entry<T> {
             enabled,
             action,
             help: String::new(),
+            shortcut: None,
         }
     }
     pub(crate) fn help(mut self, text: impl Into<String>) -> Self {
         if let Self::Item { help, .. } = &mut self {
             *help = text.into();
+        }
+        self
+    }
+    pub(crate) fn shortcut(mut self, shortcut: eframe::egui::KeyboardShortcut) -> Self {
+        if let Self::Item {
+            shortcut: value, ..
+        } = &mut self
+        {
+            *value = Some(shortcut);
         }
         self
     }
@@ -96,9 +107,14 @@ fn show_entries<T: Clone>(ui: &mut Ui, entries: &[Entry<T>]) -> Option<T> {
                 enabled,
                 action,
                 help,
+                shortcut,
             } => {
+                let mut button = Button::new(label);
+                if let Some(shortcut) = shortcut {
+                    button = button.shortcut_text(ui.ctx().format_shortcut(shortcut));
+                }
                 if ui
-                    .add_enabled(*enabled, Button::new(label))
+                    .add_enabled(*enabled, button)
                     .on_disabled_hover_text(help)
                     .clicked()
                 {

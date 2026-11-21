@@ -3,7 +3,7 @@ use super::controls::icons::{self, Icon};
 use super::controls::popup_menu;
 use super::controls::tooltips::TooltipResponse;
 use crate::{
-    app::SannyGitApp,
+    app::{ref_management::RemoteBranchAction, SannyGitApp},
     models::{BranchRef, RefKind},
     theme::{semibold_family, Palette},
 };
@@ -21,10 +21,14 @@ enum BranchRequest {
     PushTag(String),
     PushTagTo(String),
     MergeTag(String),
-    LogTag(String),
-    ResetTag(String),
-    ResetTagAdvanced(String),
-    CopyTagName(String),
+    LogRef(String),
+    ResetRef(String),
+    ResetRefAdvanced(String),
+    CopyRefName(String),
+    MergeBranch(String),
+    RebaseBranch(String),
+    PushRemoteBranch(String),
+    DeleteRemoteBranch(String),
     Unavailable,
 }
 
@@ -36,7 +40,7 @@ struct BranchRequests {
     tag_actions_allowed: bool,
     tag_merge_allowed: bool,
     tag_log_allowed: bool,
-    tag_reset_allowed: bool,
+    ref_reset_allowed: bool,
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -80,18 +84,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         header.response.rect.expand2(Vec2::new(8.0, 0.0)),
         palette,
     );
-    let refs_current = !app.busy() && app.state_current && app.branches.current;
-    let tag_actions_allowed =
-        refs_current && app.repositories.get(app.selected_repository).is_some();
-    let mut requested = BranchRequests {
-        rename_allowed: refs_current,
-        tag_add_allowed: !app.busy(),
-        tag_actions_allowed,
-        tag_merge_allowed: app.merge_allowed(),
-        tag_log_allowed: !app.busy() && app.repositories.get(app.selected_repository).is_some(),
-        tag_reset_allowed: app.tag_reset_allowed(),
-        ..Default::default()
-    };
+    let mut requested = branch_requests(app);
     let mut add_tag_requested = false;
     let height = ui.available_height();
     ScrollArea::vertical()
@@ -114,60 +107,165 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             }
         });
     if let Some(request) = requested.action {
-        app.branches.selected_ref_group = None;
-        match request {
-            BranchRequest::Switch(target) => {
-                app.branches.selected_branch = target;
-                if let Some(reason) = app.switch_branch_blocker() {
-                    app.error = Some(reason.into());
-                } else {
-                    app.switch_branch();
-                }
-            }
-            BranchRequest::Delete(target) => {
-                app.branches.selected_branch = target;
-                app.open_delete_branch();
-            }
-            BranchRequest::DeleteTag(target) => {
-                app.branches.selected_branch = target;
-                app.open_delete_tag();
-            }
-            BranchRequest::PushTag(target) => {
-                app.branches.selected_branch = target;
-                app.push_selected_tag();
-            }
-            BranchRequest::PushTagTo(target) => {
-                app.branches.selected_branch = target;
-                app.open_push_tag();
-            }
-            BranchRequest::MergeTag(target) => {
-                app.branches.selected_branch = target.clone();
-                app.open_merge_tag(target);
-            }
-            BranchRequest::LogTag(target) => {
-                app.branches.selected_branch = target.clone();
-                app.open_tag_log(target);
-                super::journal::focus_history(ui.ctx());
-            }
-            BranchRequest::ResetTag(target) => {
-                app.branches.selected_branch = target.clone();
-                app.open_tag_reset(target);
-            }
-            BranchRequest::ResetTagAdvanced(target) => {
-                app.branches.selected_branch = target.clone();
-                app.open_advanced_tag_reset(target);
-            }
-            BranchRequest::Rename(target) => {
-                app.branches.selected_branch = target;
-                app.open_rename_branch();
-            }
-            BranchRequest::CopyTagName(name) => ui.ctx().copy_text(name),
-            BranchRequest::Unavailable => {}
-        }
+        dispatch_branch_request(ui.ctx(), app, request);
     }
     if add_tag_requested {
         app.branches.tag_dialog_open = true;
         app.error = None;
+    }
+}
+
+fn branch_requests(app: &SannyGitApp) -> BranchRequests {
+    let refs_current = !app.busy() && app.state_current && app.branches.current;
+    let tag_actions_allowed =
+        refs_current && app.repositories.get(app.selected_repository).is_some();
+    BranchRequests {
+        rename_allowed: refs_current,
+        tag_add_allowed: !app.busy(),
+        tag_actions_allowed,
+        tag_merge_allowed: app.merge_allowed(),
+        tag_log_allowed: !app.busy() && app.repositories.get(app.selected_repository).is_some(),
+        ref_reset_allowed: app.ref_reset_allowed(),
+        ..Default::default()
+    }
+}
+
+fn dispatch_branch_request(ctx: &egui::Context, app: &mut SannyGitApp, request: BranchRequest) {
+    app.branches.selected_ref_group = None;
+    match request {
+        BranchRequest::Switch(target) => {
+            app.branches.selected_branch = target;
+            if let Some(reason) = app.switch_branch_blocker() {
+                app.error = Some(reason.into());
+            } else {
+                app.switch_branch();
+            }
+        }
+        BranchRequest::Delete(target) => {
+            app.branches.selected_branch = target;
+            app.open_delete_branch();
+        }
+        BranchRequest::DeleteTag(target) => {
+            app.branches.selected_branch = target;
+            app.open_delete_tag();
+        }
+        BranchRequest::PushTag(target) => {
+            app.branches.selected_branch = target;
+            app.push_selected_tag();
+        }
+        BranchRequest::PushTagTo(target) => {
+            app.branches.selected_branch = target;
+            app.open_push_tag();
+        }
+        BranchRequest::MergeTag(target) => {
+            app.branches.selected_branch = target.clone();
+            app.open_merge_tag(target);
+        }
+        BranchRequest::LogRef(target) => {
+            app.branches.selected_branch = target.clone();
+            app.open_ref_log(target);
+            super::journal::focus_history(ctx);
+        }
+        BranchRequest::ResetRef(target) => {
+            app.branches.selected_branch = target.clone();
+            app.open_ref_reset(target);
+        }
+        BranchRequest::ResetRefAdvanced(target) => {
+            app.branches.selected_branch = target.clone();
+            app.open_advanced_ref_reset(target);
+        }
+        BranchRequest::MergeBranch(target) => {
+            app.branches.selected_branch = target;
+            app.open_merge();
+        }
+        BranchRequest::RebaseBranch(target) => {
+            app.branches.selected_branch = target;
+            app.open_rebase();
+        }
+        BranchRequest::PushRemoteBranch(target) => app.open_remote_branch_action(
+            target,
+            RemoteBranchAction::Push {
+                custom: false,
+                destination: String::new(),
+            },
+        ),
+        BranchRequest::DeleteRemoteBranch(target) => {
+            app.open_remote_branch_action(target, RemoteBranchAction::Delete { also_remote: false })
+        }
+        BranchRequest::Rename(target) => {
+            app.branches.selected_branch = target;
+            app.open_rename_branch();
+        }
+        BranchRequest::CopyRefName(name) => ctx.copy_text(name),
+        BranchRequest::Unavailable => {}
+    }
+}
+
+pub(crate) fn handle_remote_branch_shortcuts(ctx: &egui::Context, app: &mut SannyGitApp) {
+    if app.branches.selected_ref_group.is_some()
+        || app.modal_dialog_open()
+        || app.history_window().commit_details_open
+        || ctx.text_edit_focused()
+        || ctx.memory(|memory| memory.top_modal_layer().is_some())
+        || egui::Popup::is_any_open(ctx)
+    {
+        return;
+    }
+    let Some(branch) = app.branches.entries.iter().find(|branch| {
+        branch.kind == RefKind::Remote && branch.full_name == app.branches.selected_branch
+    }) else {
+        return;
+    };
+    let request = ctx.input_mut(|input| {
+        if !input.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Key { pressed: true, .. } | egui::Event::Copy
+            )
+        }) {
+            return None;
+        }
+        let mut request = None;
+        let entries = remote_branch_menu(branch, &branch_requests(app));
+        input.events.retain(|event| {
+            let Some((action, enabled)) = entries.iter().find_map(|entry| {
+                let popup_menu::Entry::Item {
+                    action,
+                    enabled,
+                    shortcut: Some(shortcut),
+                    ..
+                } = entry
+                else {
+                    return None;
+                };
+                let matches = match event {
+                    egui::Event::Key {
+                        key,
+                        modifiers,
+                        pressed: true,
+                        ..
+                    } => {
+                        shortcut.logical_key == *key && modifiers.matches_exact(shortcut.modifiers)
+                    }
+                    egui::Event::Copy => matches!(action, BranchRequest::CopyRefName(_)),
+                    _ => false,
+                };
+                matches.then_some((action, *enabled))
+            }) else {
+                return true;
+            };
+            if enabled
+                && request.is_none()
+                && !matches!(event, egui::Event::Key { repeat: true, .. })
+            {
+                request = Some(action.clone());
+            }
+            false
+        });
+        request
+    });
+    if let Some(request) = request {
+        dispatch_branch_request(ctx, app, request);
     }
 }
 
@@ -306,9 +404,6 @@ fn branch_group(
                 if response.double_clicked() {
                     requested.action = Some(BranchRequest::Switch(branch.full_name.clone()));
                 }
-                if kind == RefKind::Remote {
-                    return;
-                }
                 if let Some(action) = popup_menu::context(&response, palette, || {
                     use popup_menu::Entry as E;
                     match kind {
@@ -325,7 +420,7 @@ fn branch_group(
                             ).help("Select a non-current local branch after refreshing; worktree and merge safety are checked before deletion"),
                         ],
                         RefKind::Tag => tag_menu(branch, requested),
-                        RefKind::Remote => Vec::new(),
+                        RefKind::Remote => remote_branch_menu(branch, requested),
                     }
                 }) {
                     requested.action = Some(action);
@@ -348,6 +443,91 @@ fn branch_group(
         .is_some();
     }
     add_tag_requested
+}
+
+fn remote_branch_menu(
+    branch: &BranchRef,
+    requested: &BranchRequests,
+) -> Vec<popup_menu::Entry<BranchRequest>> {
+    use egui::{Key, KeyboardShortcut, Modifiers};
+    use popup_menu::Entry as E;
+
+    let target = || branch.full_name.clone();
+    let cmd = |key| KeyboardShortcut::new(Modifiers::COMMAND, key);
+    let shift_cmd = |key| KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), key);
+    let refresh = "Refresh the repository and wait for the current operation";
+    let needs_head = "An existing HEAD and fresh repository data are required";
+    vec![
+        E::item(
+            "Check Out…",
+            requested.rename_allowed,
+            BranchRequest::Switch(target()),
+        )
+        .help(refresh)
+        .shortcut(cmd(Key::G)),
+        E::Separator,
+        E::item(
+            "Merge…",
+            requested.tag_merge_allowed,
+            BranchRequest::MergeBranch(target()),
+        )
+        .help(needs_head),
+        E::item(
+            "Rebase…",
+            requested.tag_merge_allowed,
+            BranchRequest::RebaseBranch(target()),
+        )
+        .help(needs_head)
+        .shortcut(cmd(Key::D)),
+        E::Separator,
+        E::item("Push", false, BranchRequest::Unavailable)
+            .help("Direct push is available for local branches")
+            .shortcut(cmd(Key::ArrowUp)),
+        E::item(
+            "Push To…",
+            requested.rename_allowed,
+            BranchRequest::PushRemoteBranch(target()),
+        )
+        .help(refresh)
+        .shortcut(shift_cmd(Key::ArrowUp)),
+        E::Separator,
+        E::item(
+            "Log",
+            requested.tag_log_allowed,
+            BranchRequest::LogRef(target()),
+        )
+        .help("Wait for the current operation to finish")
+        .shortcut(cmd(Key::L)),
+        E::Separator,
+        E::item(
+            "Reset…",
+            requested.ref_reset_allowed,
+            BranchRequest::ResetRef(target()),
+        )
+        .help(needs_head)
+        .shortcut(cmd(Key::R)),
+        E::item(
+            "Reset Advanced…",
+            requested.ref_reset_allowed,
+            BranchRequest::ResetRefAdvanced(target()),
+        )
+        .help(needs_head)
+        .shortcut(shift_cmd(Key::R)),
+        E::Separator,
+        E::item(
+            "Delete…",
+            requested.rename_allowed,
+            BranchRequest::DeleteRemoteBranch(target()),
+        )
+        .help(refresh),
+        E::Separator,
+        E::item(
+            "Copy",
+            true,
+            BranchRequest::CopyRefName(branch.name.clone()),
+        )
+        .shortcut(cmd(Key::C)),
+    ]
 }
 
 fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entry<BranchRequest>> {
@@ -390,22 +570,22 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
         E::item(
             "Log",
             requested.tag_log_allowed,
-            BranchRequest::LogTag(tag.full_name.clone()),
+            BranchRequest::LogRef(tag.full_name.clone()),
         )
         .help("Wait for the current operation to finish"),
         E::Separator,
         E::item(
             "Reset…",
-            requested.tag_reset_allowed,
-            BranchRequest::ResetTag(tag.full_name.clone()),
+            requested.ref_reset_allowed,
+            BranchRequest::ResetRef(tag.full_name.clone()),
         )
         .help(
             "Reset requires an existing HEAD, fresh repository data and no operation in progress",
         ),
         E::item(
             "Reset Advanced…",
-            requested.tag_reset_allowed,
-            BranchRequest::ResetTagAdvanced(tag.full_name.clone()),
+            requested.ref_reset_allowed,
+            BranchRequest::ResetRefAdvanced(tag.full_name.clone()),
         )
         .help(
             "Reset requires an existing HEAD, fresh repository data and no operation in progress",
@@ -417,7 +597,7 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
         )
         .help("Refresh the repository and wait for the current operation"),
         E::Separator,
-        E::item("Copy", true, BranchRequest::CopyTagName(tag.name.clone())),
+        E::item("Copy", true, BranchRequest::CopyRefName(tag.name.clone())),
         unavailable("Copy Message"),
         E::Separator,
         unavailable("Format Patch"),
@@ -1108,6 +1288,58 @@ mod tests {
     }
 
     #[test]
+    fn remote_branch_copy_shortcut_targets_only_the_selected_ref() {
+        let ctx = Context::default();
+        let mut app = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
+        app.branches.entries = vec![BranchRef {
+            name: "origin/team/topic".into(),
+            full_name: "refs/remotes/origin/team/topic".into(),
+            hash: "a".repeat(40),
+            tag_subject: None,
+            upstream: None,
+            current: false,
+            kind: RefKind::Remote,
+        }];
+        app.branches.selected_branch = app.branches.entries[0].full_name.clone();
+        for (modifiers, repeat, selected_group, copies) in [
+            (Modifiers::COMMAND, false, None, true),
+            (Modifiers::COMMAND, true, None, false),
+            (
+                Modifiers::COMMAND.plus(Modifiers::SHIFT),
+                false,
+                None,
+                false,
+            ),
+            (Modifiers::COMMAND, false, Some(RefKind::Remote), false),
+        ] {
+            app.branches.selected_ref_group = selected_group;
+            let mut output = ctx.run_ui(RawInput::default(), |ui| {
+                ui.input_mut(|input| {
+                    input.events.push(Event::Key {
+                        key: egui::Key::C,
+                        physical_key: None,
+                        pressed: true,
+                        repeat,
+                        modifiers,
+                    });
+                });
+                handle_remote_branch_shortcuts(ui.ctx(), &mut app);
+            });
+            output.textures_delta.clear();
+            assert_eq!(
+                output
+                    .platform_output
+                    .commands
+                    .iter()
+                    .any(|command| matches!(
+                        command, egui::OutputCommand::CopyText(text) if text == "origin/team/topic"
+                    )),
+                copies,
+            );
+        }
+    }
+
+    #[test]
     fn secondary_click_selects_ref_before_dispatching_a_menu_action() {
         for theme in [
             crate::theme::ThemeChoice::Light,
@@ -1177,14 +1409,30 @@ mod tests {
                         },
                     );
                     output.textures_delta.clear();
-                    if frame == 6 && kind == RefKind::Tag {
-                        for item in ["Check Out…", "Push To…", "Copy", "Fast-Forward Merge"] {
+                    if frame == 6 && kind != RefKind::Local {
+                        let items: &[&str] = if kind == RefKind::Tag {
+                            &["Check Out…", "Push To…", "Copy", "Fast-Forward Merge"]
+                        } else {
+                            &[
+                                "Check Out…",
+                                "Merge…",
+                                "Rebase…",
+                                "Push",
+                                "Push To…",
+                                "Log",
+                                "Reset…",
+                                "Reset Advanced…",
+                                "Delete…",
+                                "Copy",
+                            ]
+                        };
+                        for &item in items {
                             assert!(
                                 output.shapes.iter().any(|shape| matches!(
                                     &shape.shape,
                                     eframe::egui::Shape::Text(text) if text.galley.text() == item
                                 )),
-                                "Missing tag menu item {item}"
+                                "Missing context menu item {item}"
                             );
                         }
                     }

@@ -234,21 +234,21 @@ fn first_with_limits(
     let initial = basis(git, root, all, tag, cancel)?;
     let tag_commit = tag
         .map(|tag| -> Result<String, String> {
-            let revision = tag
-                .strip_prefix("refs/tags/")
+            tag.strip_prefix("refs/tags/")
+                .or_else(|| tag.strip_prefix("refs/remotes/"))
                 .filter(|name| !name.is_empty())
-                .ok_or("Select a tag to open its history.")?;
-            let revision = format!("refs/tags/{revision}^{{commit}}");
+                .ok_or("Select a tag or remote branch to open its history.")?;
+            let revision = format!("{tag}^{{commit}}");
             let output = run(
                 git,
                 root,
                 &["rev-parse", "--verify", "--end-of-options", &revision],
                 cancel,
             )
-            .map_err(|error| format!("Could not resolve tag '{tag}' to a commit.\n{error}"))?;
+            .map_err(|error| format!("Could not resolve '{tag}' to a commit.\n{error}"))?;
             let commit = git::text(output)?.trim().to_owned();
             if !valid_hash(&commit) {
-                return Err("Git returned an invalid tag commit ID.".into());
+                return Err("Git returned an invalid commit ID.".into());
             }
             Ok(commit)
         })

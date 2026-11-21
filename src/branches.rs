@@ -539,8 +539,10 @@ pub fn preview_reset(git: &GitContext, root: &Path, tag: &str) -> Result<ResetPr
     let source = refs
         .refs
         .iter()
-        .find(|entry| entry.full_name == tag && entry.kind == RefKind::Tag)
-        .ok_or("The selected tag no longer exists. Refresh branches and tags.")?;
+        .find(|entry| {
+            entry.full_name == tag && matches!(entry.kind, RefKind::Tag | RefKind::Remote)
+        })
+        .ok_or("The selected reference no longer exists. Refresh branches and tags.")?;
     let revision = format!("{}^{{commit}}", source.hash);
     let target = git::text(
         git::run(
@@ -548,12 +550,7 @@ pub fn preview_reset(git: &GitContext, root: &Path, tag: &str) -> Result<ResetPr
             root,
             &["rev-parse", "--verify", "--end-of-options", &revision],
         )
-        .map_err(|error| {
-            format!(
-                "Could not resolve tag '{}' to a commit.\n{error}",
-                source.name
-            )
-        })?,
+        .map_err(|error| format!("Could not resolve '{}' to a commit.\n{error}", source.name))?,
     )?;
     let (head, branch) = reset_head(git, root)?;
     let target = target.trim();
@@ -585,7 +582,7 @@ fn check_reset(
         || current.head != expected.head
     {
         return Err(
-            "The tag, HEAD or current branch changed. Reload details and confirm Reset again."
+            "The selected reference, HEAD or current branch changed. Reload details and confirm Reset again."
                 .into(),
         );
     }

@@ -363,6 +363,171 @@ pub fn set_upstream(
     .map(|_| ())
 }
 
+/// A reviewed operation on one remote-tracking ref.
+#[derive(Clone, PartialEq, Eq)]
+pub struct BranchPreview {
+    full_name: String,
+    oid: String,
+    pub owner: String,
+    pub branch: String,
+    pub has_owner: bool,
+    pub can_delete_remote: bool,
+    config: crate::remote_config::Snapshot,
+}
+
+pub fn preview_branch(
+    git: &GitContext,
+    root: &Path,
+    full_name: &str,
+) -> Result<BranchPreview, String> {
+    let refs = branches::load(git, root)?;
+    let source = refs
+        .refs
+        .iter()
+        .find(|entry| entry.kind == RefKind::Remote && entry.full_name == full_name)
+        .ok_or("The remote-tracking branch no longer exists. Refresh branches and tags.")?;
+    let config = crate::remote_config::load(git, root)?;
+    let (owner, branch) = config
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            let branch = source.name.strip_prefix(&entry.name)?.strip_prefix('/')?;
+            Some((entry.name.as_str(), branch))
+        })
+        .max_by_key(|(name, _)| name.len())
+        .or_else(|| source.name.split_once('/'))
+        .ok_or("The remote-tracking branch has no remote name.")?;
+    let has_owner = config.entries.iter().any(|entry| entry.name == owner);
+    let can_delete_remote = config.has_standard_branch_fetch(owner)
+        && !config.entries.iter().any(|entry| {
+            entry.name != owner
+                && source
+                    .name
+                    .strip_prefix(&entry.name)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+                && config.has_standard_branch_fetch(&entry.name)
+        });
+    Ok(BranchPreview {
+        full_name: full_name.into(),
+        oid: source.hash.clone(),
+        owner: owner.into(),
+        branch: branch.into(),
+        has_owner,
+        can_delete_remote,
+        config,
+    })
+}
+
+pub fn push_branch(
+    git: &GitContext,
+    root: &Path,
+    expected: &BranchPreview,
+    custom_ref: Option<&str>,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    if preview_branch(git, root, &expected.full_name)? != *expected {
+        return Err(
+            "The branch or remote configuration changed. Reload details and review the push again."
+                .into(),
+        );
+    }
+    let (endpoint, config) = crate::remote_config::push_endpoint(git, root, &expected.owner)?;
+    if config != expected.config {
+        return Err(
+            "The remote configuration changed. Reload details and review the push again.".into(),
+        );
+    }
+    let destination = match custom_ref {
+        Some(name) if name.starts_with("refs/") => name.to_owned(),
+        Some(name) => format!("refs/heads/{name}"),
+        None => format!("refs/heads/{}", expected.branch),
+    };
+    git::run(git, root, &["check-ref-format", &destination])
+        .map_err(|_| "Enter a valid Git ref for the push destination.".to_owned())?;
+    git::run_controlled(
+        git,
+        root,
+        &[
+            "push",
+            "--porcelain",
+            "--no-force",
+            "--no-mirror",
+            "--no-follow-tags",
+            "--recurse-submodules=no",
+            "--",
+            &endpoint,
+            &format!("{}:{destination}", expected.oid),
+        ],
+        Duration::from_secs(600),
+        Some(cancel),
+    )
+    .map(|_| ())
+}
+
+pub fn delete_branch(
+    git: &GitContext,
+    root: &Path,
+    expected: &BranchPreview,
+    also_remote: bool,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    if preview_branch(git, root, &expected.full_name)? != *expected {
+        return Err("The branch or remote configuration changed. Reload details and review the deletion again.".into());
+    }
+    if also_remote {
+        if !expected.can_delete_remote {
+            return Err("The remote does not use the standard branch fetch mapping.".into());
+        }
+        let (endpoint, config) = crate::remote_config::push_endpoint(git, root, &expected.owner)?;
+        if config != expected.config {
+            return Err(
+                "The remote configuration changed. Reload details and review the deletion again."
+                    .into(),
+            );
+        }
+        let destination = format!("refs/heads/{}", expected.branch);
+        git::run_controlled(
+            git,
+            root,
+            &[
+                "push",
+                "--porcelain",
+                "--no-mirror",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
+                &format!("--force-with-lease={destination}:{}", expected.oid),
+                "--",
+                &endpoint,
+                &format!(":{destination}"),
+            ],
+            Duration::from_secs(600),
+            Some(cancel),
+        )?;
+    }
+    git::run(
+        git,
+        root,
+        &[
+            "update-ref",
+            "--no-deref",
+            "-d",
+            &expected.full_name,
+            &expected.oid,
+        ],
+    )
+    .map(|_| ())
+    .map_err(|error| {
+        if also_remote {
+            format!(
+                "The branch was deleted from '{}', but local deletion did not complete.\n{error}",
+                expected.owner
+            )
+        } else {
+            error
+        }
+    })
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct TagPushPreview {
     pub full_name: String,

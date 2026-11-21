@@ -40,8 +40,11 @@ pub struct View {
 }
 
 impl View {
-    pub fn tag_name(&self) -> Option<&str> {
-        self.tag.as_deref()?.strip_prefix("refs/tags/")
+    pub fn ref_name(&self) -> Option<&str> {
+        let reference = self.tag.as_deref()?;
+        reference
+            .strip_prefix("refs/tags/")
+            .or_else(|| reference.strip_prefix("refs/remotes/"))
     }
 
     pub fn tag_commit(&self) -> Option<&str> {
@@ -146,14 +149,12 @@ impl SannyGitApp {
         }
     }
 
-    pub fn open_tag_log(&mut self, tag: String) {
+    pub fn open_ref_log(&mut self, tag: String) {
         if self.busy()
             || self.repositories.get(self.selected_repository).is_none()
-            || !self
-                .branches
-                .entries
-                .iter()
-                .any(|entry| entry.kind == RefKind::Tag && entry.full_name == tag)
+            || !self.branches.entries.iter().any(|entry| {
+                matches!(entry.kind, RefKind::Tag | RefKind::Remote) && entry.full_name == tag
+            })
         {
             return;
         }
@@ -443,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn tag_log_selects_the_peeled_commit_and_loads_its_diff_without_changing_the_journal() {
+    fn ref_log_selects_the_target_commit_and_preserves_the_journal() {
         let repo = crate::test_support::TempRepo::new();
         repo.write("base.txt", "Base\n");
         repo.git(&["add", "base.txt"]);
@@ -454,6 +455,7 @@ mod tests {
         repo.git(&["commit", "-m", "Release"]);
         let tag_commit = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
         repo.git(&["tag", "-a", "-m", "Release notes", "v1"]);
+        repo.git(&["update-ref", "refs/remotes/origin/release", &tag_commit]);
         repo.git(&["switch", "main"]);
         repo.git(&["commit", "--allow-empty", "-m", "Main only"]);
         let head = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
@@ -467,43 +469,49 @@ mod tests {
         wait(&mut app);
         app.history.selected_commit = Some(head.clone());
         app.history.journal_filter = "Main only".into();
-        app.open_tag_log("refs/tags/v1".into());
-        assert!(app.history_window().commit_details_open);
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while app.history_window().commit_preview.is_none() {
-            app.with_history_window(|app| {
-                app.load_history();
-                app.load_commit_preview();
-            });
-            app.poll_view_reads();
+        for (reference, name) in [
+            ("refs/tags/v1", "v1"),
+            ("refs/remotes/origin/release", "origin/release"),
+        ] {
+            app.open_ref_log(reference.into());
+            assert_eq!(app.history_window().ref_name(), Some(name));
+            assert!(app.history_window().commit_details_open);
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while app.history_window().commit_preview.is_none() {
+                app.with_history_window(|app| {
+                    app.load_history();
+                    app.load_commit_preview();
+                });
+                app.poll_view_reads();
+                let view = app.history_window();
+                assert!(view.history_error.is_none(), "{:?}", view.history_error);
+                assert!(
+                    view.commit_preview_error.is_none(),
+                    "{:?}",
+                    view.commit_preview_error
+                );
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(5));
+            }
             let view = app.history_window();
-            assert!(view.history_error.is_none(), "{:?}", view.history_error);
-            assert!(
-                view.commit_preview_error.is_none(),
-                "{:?}",
-                view.commit_preview_error
-            );
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(5));
+            assert_eq!(view.selected_commit.as_ref(), Some(&tag_commit));
+            assert_eq!(view.reveal_commit.as_ref(), Some(&tag_commit));
+            assert_eq!(view.selected_commit_file.as_deref(), Some("release.txt"));
+            assert_eq!(view.commit_preview.as_ref().unwrap().added, 1);
+            assert!(view.commits.iter().any(|commit| commit.hash == head));
+            assert!(!view
+                .commits
+                .iter()
+                .any(|commit| commit.subject() == "Unrelated only"));
+            assert_eq!(app.history.selected_commit.as_ref(), Some(&head));
+            assert_eq!(app.history.journal_filter, "Main only");
+            assert!(!app
+                .history
+                .commits
+                .iter()
+                .any(|commit| commit.hash == tag_commit));
+            app.close_history_window();
         }
-        let view = app.history_window();
-        assert_eq!(view.selected_commit.as_ref(), Some(&tag_commit));
-        assert_eq!(view.reveal_commit.as_ref(), Some(&tag_commit));
-        assert_eq!(view.selected_commit_file.as_deref(), Some("release.txt"));
-        assert_eq!(view.commit_preview.as_ref().unwrap().added, 1);
-        assert!(view.commits.iter().any(|commit| commit.hash == head));
-        assert!(!view
-            .commits
-            .iter()
-            .any(|commit| commit.subject() == "Unrelated only"));
-        assert_eq!(app.history.selected_commit.as_ref(), Some(&head));
-        assert_eq!(app.history.journal_filter, "Main only");
-        assert!(!app
-            .history
-            .commits
-            .iter()
-            .any(|commit| commit.hash == tag_commit));
-        app.close_history_window();
         assert!(!app.history_window().commit_details_open);
         assert!(!app.history_window().history_loading);
         assert_eq!(app.history_window().selected_commit.as_ref(), Some(&head));

@@ -3,6 +3,7 @@ use self::controls::dialog_style::DialogResponse;
 pub(crate) use controls::popup_menu::Entry as PopupMenuEntry;
 mod about;
 mod branches;
+pub(crate) use branches::handle_remote_branch_shortcuts;
 mod changes;
 mod clone_dialog;
 mod commit_panel;

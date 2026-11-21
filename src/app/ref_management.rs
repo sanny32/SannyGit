@@ -43,6 +43,11 @@ impl RemoteEditor {
 }
 
 pub enum Kind {
+    RemoteBranch {
+        source: String,
+        prepared: Option<remotes::BranchPreview>,
+        action: RemoteBranchAction,
+    },
     Delete {
         source: String,
         prepared: Option<branches::DeletePreview>,
@@ -68,6 +73,12 @@ pub enum Kind {
     Remotes(RemoteEditor),
 }
 
+#[derive(Clone)]
+pub enum RemoteBranchAction {
+    Delete { also_remote: bool },
+    Push { custom: bool, destination: String },
+}
+
 pub struct Dialog {
     pub root: String,
     pub kind: Kind,
@@ -79,6 +90,10 @@ pub struct Dialog {
 }
 
 pub enum ResultMessage {
+    RemoteBranch {
+        source: String,
+        result: Result<remotes::BranchPreview, String>,
+    },
     Delete {
         source: String,
         result: Result<branches::DeletePreview, String>,
@@ -101,6 +116,7 @@ pub enum ResultMessage {
 }
 
 enum LoadRequest {
+    RemoteBranch(String),
     Delete(String),
     DeleteTag(String),
     Tag(String, String),
@@ -109,6 +125,7 @@ enum LoadRequest {
 }
 
 enum RefAction {
+    RemoteBranch(remotes::BranchPreview, RemoteBranchAction),
     DeleteBranch(branches::DeletePreview),
     DeleteTag(remotes::TagDeletePreview, bool),
     PushTag(remotes::TagPushPreview),
@@ -417,16 +434,16 @@ impl SannyGitApp {
         }));
     }
 
-    pub fn tag_reset_allowed(&self) -> bool {
+    pub fn ref_reset_allowed(&self) -> bool {
         self.branches.branch_head_exists && !self.merging && self.branch_base_blocker().is_none()
     }
 
-    pub fn open_tag_reset(&mut self, source: String) {
-        self.open_tag_reset_dialog(source, None);
+    pub fn open_ref_reset(&mut self, source: String) {
+        self.open_ref_reset_dialog(source, None);
     }
 
-    pub fn open_advanced_tag_reset(&mut self, source: String) {
-        self.open_tag_reset_dialog(
+    pub fn open_advanced_ref_reset(&mut self, source: String) {
+        self.open_ref_reset_dialog(
             source,
             Some(branches::AdvancedReset {
                 strategy: self.branches.last_reset_strategy,
@@ -435,13 +452,11 @@ impl SannyGitApp {
         );
     }
 
-    fn open_tag_reset_dialog(&mut self, source: String, advanced: Option<branches::AdvancedReset>) {
-        if !self.tag_reset_allowed()
-            || !self
-                .branches
-                .entries
-                .iter()
-                .any(|entry| entry.kind == RefKind::Tag && entry.full_name == source)
+    fn open_ref_reset_dialog(&mut self, source: String, advanced: Option<branches::AdvancedReset>) {
+        if !self.ref_reset_allowed()
+            || !self.branches.entries.iter().any(|entry| {
+                matches!(entry.kind, RefKind::Tag | RefKind::Remote) && entry.full_name == source
+            })
         {
             return;
         }
@@ -450,6 +465,23 @@ impl SannyGitApp {
             prepared: None,
             choose_changes: false,
             advanced,
+        });
+    }
+
+    pub fn open_remote_branch_action(&mut self, source: String, action: RemoteBranchAction) {
+        if self.branch_base_blocker().is_some()
+            || !self
+                .branches
+                .entries
+                .iter()
+                .any(|entry| entry.kind == RefKind::Remote && entry.full_name == source)
+        {
+            return;
+        }
+        self.open_ref_dialog(Kind::RemoteBranch {
+            source,
+            prepared: None,
+            action,
         });
     }
 
@@ -479,6 +511,7 @@ impl SannyGitApp {
             dialog.status = "Loading details…".into();
             match &mut dialog.kind {
                 Kind::Delete { prepared, .. } => *prepared = None,
+                Kind::RemoteBranch { prepared, .. } => *prepared = None,
                 Kind::DeleteTag {
                     prepared,
                     also_remote,
@@ -521,6 +554,7 @@ impl SannyGitApp {
         let root = dialog.root.clone();
         let target = match &dialog.kind {
             Kind::Delete { source, .. } => LoadRequest::Delete(source.clone()),
+            Kind::RemoteBranch { source, .. } => LoadRequest::RemoteBranch(source.clone()),
             Kind::DeleteTag { source, .. } => LoadRequest::DeleteTag(source.clone()),
             Kind::Tag { source, remote, .. } => LoadRequest::Tag(source.clone(), remote.clone()),
             Kind::Reset { source, .. } => LoadRequest::Reset(source.clone()),
@@ -530,6 +564,10 @@ impl SannyGitApp {
         if !self.start_worker(move |git| {
             let path = PathBuf::from(&root);
             let result = match target {
+                LoadRequest::RemoteBranch(source) => ResultMessage::RemoteBranch {
+                    result: remotes::preview_branch(git, &path, &source),
+                    source,
+                },
                 LoadRequest::Delete(source) => ResultMessage::Delete {
                     result: branches::preview_delete(git, &path, &source),
                     source,
@@ -572,6 +610,11 @@ impl SannyGitApp {
         }
         let root = PathBuf::from(&dialog.root);
         let action = match &dialog.kind {
+            Kind::RemoteBranch {
+                prepared: Some(prepared),
+                action,
+                ..
+            } => RefAction::RemoteBranch(prepared.clone(), action.clone()),
             Kind::Delete {
                 prepared: Some(prepared),
                 ..
@@ -588,10 +631,20 @@ impl SannyGitApp {
             } if prepared.remote == *remote => RefAction::PushTag(prepared.clone()),
             _ => return,
         };
+        let remote_branch_progress = match &action {
+            RefAction::RemoteBranch(_, RemoteBranchAction::Push { .. }) => Some("Pushing branch…"),
+            RefAction::RemoteBranch(_, RemoteBranchAction::Delete { .. }) => {
+                Some("Deleting branch…")
+            }
+            _ => None,
+        };
         let cancel = Arc::new(AtomicBool::new(false));
         if matches!(
             action,
-            RefAction::PushTag(_) | RefAction::DeleteTag(_, true)
+            RefAction::PushTag(_)
+                | RefAction::DeleteTag(_, true)
+                | RefAction::RemoteBranch(_, RemoteBranchAction::Push { .. })
+                | RefAction::RemoteBranch(_, RemoteBranchAction::Delete { also_remote: true })
         ) {
             self.manager.cancel = Some(cancel.clone());
         }
@@ -599,9 +652,31 @@ impl SannyGitApp {
         dialog.error = None;
         self.state_current = false;
         self.error = None;
-        self.status = "Ref operation in progress…".into();
+        self.status = remote_branch_progress
+            .unwrap_or("Ref operation in progress…")
+            .into();
         if !self.start_worker(move |git| {
             let (outcome, success) = match action {
+                RefAction::RemoteBranch(
+                    prepared,
+                    RemoteBranchAction::Push {
+                        custom,
+                        destination,
+                    },
+                ) => (
+                    remotes::push_branch(
+                        git,
+                        &root,
+                        &prepared,
+                        custom.then_some(destination.as_str()),
+                        &cancel,
+                    ),
+                    "Remote branch pushed",
+                ),
+                RefAction::RemoteBranch(prepared, RemoteBranchAction::Delete { also_remote }) => (
+                    remotes::delete_branch(git, &root, &prepared, also_remote, &cancel),
+                    "Remote branch deleted",
+                ),
                 RefAction::DeleteBranch(prepared) => {
                     (branches::delete(git, &root, &prepared), "Branch deleted")
                 }
@@ -623,6 +698,8 @@ impl SannyGitApp {
         }) {
             self.manager.cancel = None;
             self.ref_worker_failed();
+        } else if remote_branch_progress.is_some() {
+            self.branches.ref_dialog = None;
         }
     }
 
@@ -753,6 +830,30 @@ impl SannyGitApp {
         };
         match (&mut dialog.kind, result) {
             (
+                Kind::RemoteBranch {
+                    source,
+                    prepared,
+                    action,
+                },
+                ResultMessage::RemoteBranch {
+                    source: requested,
+                    result,
+                },
+            ) if *source == requested => match result {
+                Ok(details) => {
+                    match action {
+                        RemoteBranchAction::Delete { also_remote }
+                            if !details.can_delete_remote =>
+                        {
+                            *also_remote = false;
+                        }
+                        _ => {}
+                    }
+                    *prepared = Some(details);
+                }
+                Err(error) => dialog.error = Some(error),
+            },
+            (
                 Kind::DeleteTag {
                     source, prepared, ..
                 },
@@ -834,6 +935,10 @@ impl SannyGitApp {
     }
 
     pub(super) fn finish_ref_operation(&mut self, success: &str, succeeded: bool) {
+        if matches!(success, "Remote branch pushed" | "Remote branch deleted") {
+            self.manager.cancel = None;
+            return;
+        }
         if matches!(success, "Tag pushed" | "Tag deleted") {
             self.manager.cancel = None;
         }
@@ -865,6 +970,7 @@ impl SannyGitApp {
             dialog.error = self.error.clone();
             match &mut dialog.kind {
                 Kind::Delete { prepared, .. } => *prepared = None,
+                Kind::RemoteBranch { prepared, .. } => *prepared = None,
                 Kind::DeleteTag {
                     prepared,
                     also_remote,
@@ -929,6 +1035,48 @@ mod tests {
     }
 
     #[test]
+    fn remote_branch_operations_close_confirmation_when_the_worker_starts() {
+        let (repo, mut app) = opened();
+        let remote = repo.0.join("origin.git");
+        repo.git(&["init", "--bare", remote.to_str().unwrap()]);
+        repo.git(&["remote", "add", "origin", remote.to_str().unwrap()]);
+        let source = "refs/remotes/origin/topic";
+        repo.git(&["update-ref", source, "HEAD"]);
+        app.branches.entries = branches::load(&SYSTEM_GIT, &repo.0).unwrap().refs;
+
+        for (action, progress, success) in [
+            (
+                RemoteBranchAction::Push {
+                    custom: false,
+                    destination: String::new(),
+                },
+                "Pushing branch…",
+                "Remote branch pushed",
+            ),
+            (
+                RemoteBranchAction::Delete { also_remote: false },
+                "Deleting branch…",
+                "Remote branch deleted",
+            ),
+        ] {
+            app.branches.current = true;
+            app.open_remote_branch_action(source.into(), action);
+            wait(&mut app);
+            app.run_ref_action();
+            assert!(!app.busy());
+            app.branches.ref_dialog.as_mut().unwrap().confirmed = true;
+            app.run_ref_action();
+            assert!(app.busy());
+            assert!(app.branches.ref_dialog.is_none());
+            assert_eq!(app.status, progress);
+            wait(&mut app);
+            assert!(app.error.is_none(), "{:?}", app.error);
+            assert!(app.branches.ref_dialog.is_none());
+            assert_eq!(app.status, success);
+        }
+    }
+
+    #[test]
     fn delete_tag_waits_for_confirmation_and_keeps_the_commit_draft() {
         let (repo, mut app) = opened();
         app.branches.selected_branch = "refs/tags/chosen".into();
@@ -955,11 +1103,34 @@ mod tests {
     }
 
     #[test]
+    fn reset_rejects_a_remote_tracking_ref_that_moved_after_preview() {
+        let (repo, _) = opened();
+        let reference = "refs/remotes/origin/topic";
+        repo.git(&["update-ref", reference, "HEAD"]);
+        repo.git(&["commit", "--allow-empty", "-m", "before reset"]);
+        let head = repo.git(&["rev-parse", "HEAD"]);
+        let prepared = branches::preview_reset(&SYSTEM_GIT, &repo.0, reference).unwrap();
+        assert_eq!(prepared.target, repo.git(&["rev-parse", "HEAD^"]).trim());
+
+        repo.git(&["update-ref", reference, "HEAD"]);
+        let error = branches::reset_tag(
+            &SYSTEM_GIT,
+            &repo.0,
+            &prepared,
+            branches::ResetMode::Clean,
+            None,
+        )
+        .unwrap_err();
+        assert!(error.contains("changed"), "{error}");
+        assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
+    }
+
+    #[test]
     fn advanced_tag_reset_remembers_the_confirmed_strategy() {
         let (repo, mut app) = opened();
         repo.git(&["commit", "--allow-empty", "-m", "before reset"]);
         repo.write("file", "dirty\n");
-        app.open_advanced_tag_reset("refs/tags/chosen".into());
+        app.open_advanced_ref_reset("refs/tags/chosen".into());
         wait(&mut app);
         let Kind::Reset {
             advanced: Some(options),
@@ -978,7 +1149,7 @@ mod tests {
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"dirty\n");
 
         app.branches.current = true;
-        app.open_advanced_tag_reset("refs/tags/chosen".into());
+        app.open_advanced_ref_reset("refs/tags/chosen".into());
         wait(&mut app);
         let Kind::Reset {
             advanced: Some(options),
@@ -996,7 +1167,7 @@ mod tests {
         repo.git(&["commit", "--allow-empty", "-m", "before reset"]);
         let before = repo.git(&["rev-parse", "HEAD"]);
         repo.write("file", "dirty\n");
-        app.open_tag_reset("refs/tags/chosen".into());
+        app.open_ref_reset("refs/tags/chosen".into());
         wait(&mut app);
         app.confirm_tag_reset(branches::ResetMode::Discard);
         assert!(!app.busy());

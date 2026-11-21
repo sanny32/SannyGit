@@ -50,7 +50,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
         ui.spacing_mut().interact_size.y = search.rect.height();
         ui.spacing_mut().button_padding.y = 2.0;
         let mut all = app.history.history_all_branches;
-        if let Some(tag) = app.history.tag_name() {
+        if let Some(tag) = app.history.ref_name() {
             let scope = format!("HEAD + {tag}");
             ui.add_sized([110.0, search.rect.height()], Label::new(&scope).truncate())
                 .help_text(scope);
@@ -389,14 +389,14 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
         .get(app.selected_repository)
         .map_or("Repository", |repository| repository.name.as_str());
     let history_title = view
-        .tag_name()
+        .ref_name()
         .map_or_else(|| "History".to_owned(), |tag| format!("Log: {tag}"));
     let title = format!("SannyGit — {name} — {history_title}");
     let ctx = ui.ctx().clone();
     if ctx.embed_viewports() {
         let mut open = true;
         Window::new(
-            view.tag_name()
+            view.ref_name()
                 .map_or("Repository history", |_| history_title.as_str()),
         )
         .id(egui::Id::unique("journal.details"))
@@ -534,7 +534,7 @@ fn history_panels(ui: &mut Ui, app: &mut SannyGitApp) {
     Panel::top("history.header")
         .frame(Frame::new().fill(palette.panel))
         .show(ui, |ui| {
-            let title = app.history.tag_name().map_or_else(
+            let title = app.history.ref_name().map_or_else(
                 || "Repository history".to_owned(),
                 |tag| format!("Log: {tag}"),
             );
@@ -700,7 +700,7 @@ fn metadata(ui: &mut Ui, app: &SannyGitApp) {
                     .filter(|reference| reference.hash == commit.hash)
                     .map(|reference| reference.name.as_str())
                     .collect::<Vec<_>>();
-                if let Some(tag) = app.history.tag_name().filter(|tag| {
+                if let Some(tag) = app.history.ref_name().filter(|tag| {
                     app.history.tag_commit() == Some(commit.hash.as_str()) && !refs.contains(tag)
                 }) {
                     refs.push(tag);
