@@ -1,11 +1,32 @@
 //! Native ownership, modality and first presentation for egui viewports.
-use eframe::egui::{Context, Id};
+use crate::theme::SystemThemeInput;
+use eframe::egui::{self, Context, Id};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use std::{ffi::c_void, io};
+use std::{
+    ffi::c_void,
+    io,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 type Hwnd = *mut c_void;
 const GWLP_HWNDPARENT: i32 = -8;
 const DWMWA_CLOAK: u32 = 13;
+const HKEY_CURRENT_USER: isize = 0x8000_0001_u32 as i32 as isize;
+const RRF_RT_REG_DWORD: u32 = 0x10;
+
+#[link(name = "advapi32")]
+extern "system" {
+    fn RegGetValueW(
+        key: isize,
+        subkey: *const u16,
+        name: *const u16,
+        flags: u32,
+        value_type: *mut u32,
+        data: *mut c_void,
+        size: *mut u32,
+    ) -> i32;
+}
 
 #[link(name = "dwmapi")]
 extern "system" {
@@ -33,6 +54,52 @@ extern "system" {
 #[link(name = "kernel32")]
 extern "system" {
     fn SetLastError(error: u32);
+}
+
+pub fn install_system_theme(context: &Context) {
+    let theme = Arc::new(Mutex::new(None));
+    let worker_theme = Arc::downgrade(&theme);
+    let subkey: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"
+        .encode_utf16()
+        .chain([0])
+        .collect();
+    let name: Vec<u16> = "AppsUseLightTheme".encode_utf16().chain([0]).collect();
+    // The main UI already repaints once a second. The worker stops after egui
+    // drops the plugin and keeps registry reads off the UI thread.
+    if std::thread::Builder::new()
+        .name("windows-system-theme".into())
+        .spawn(move || {
+            while let Some(theme) = worker_theme.upgrade() {
+                let mut value = 0_u32;
+                let mut size = std::mem::size_of_val(&value) as u32;
+                // SAFETY: the names are NUL-terminated UTF-16 and the output
+                // buffer and size describe a writable DWORD.
+                let status = unsafe {
+                    RegGetValueW(
+                        HKEY_CURRENT_USER,
+                        subkey.as_ptr(),
+                        name.as_ptr(),
+                        RRF_RT_REG_DWORD,
+                        std::ptr::null_mut(),
+                        (&mut value as *mut u32).cast(),
+                        &mut size,
+                    )
+                };
+                if let Ok(mut theme) = theme.lock() {
+                    *theme = match (status, value) {
+                        (0, 0) => Some(egui::Theme::Dark),
+                        (0, 1) => Some(egui::Theme::Light),
+                        _ => None,
+                    };
+                }
+                drop(theme);
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        })
+        .is_ok()
+    {
+        context.add_plugin(SystemThemeInput(theme));
+    }
 }
 
 fn owner_key() -> Id {
@@ -404,5 +471,34 @@ mod tests {
         assert!(context.data(|data| data.get_temp::<FirstPresentation>(key).is_none()));
         set_cloaked(window.0, false).unwrap();
         finish_first_presentation(&context).unwrap();
+    }
+}
+#[test]
+fn system_theme_input_prefers_the_current_windows_setting() {
+    use egui::Plugin as _;
+
+    let context = Context::default();
+    let theme = Arc::new(Mutex::new(None));
+    let mut plugin = SystemThemeInput(Arc::clone(&theme));
+    for (registered, reported, expected) in [
+        (None, egui::Theme::Light, egui::Theme::Light),
+        (
+            Some(egui::Theme::Dark),
+            egui::Theme::Light,
+            egui::Theme::Dark,
+        ),
+        (
+            Some(egui::Theme::Light),
+            egui::Theme::Dark,
+            egui::Theme::Light,
+        ),
+    ] {
+        *theme.lock().unwrap() = registered;
+        let mut input = egui::RawInput {
+            system_theme: Some(reported),
+            ..Default::default()
+        };
+        plugin.input_hook(&context, &mut input);
+        assert_eq!(input.system_theme, Some(expected));
     }
 }

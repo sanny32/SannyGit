@@ -261,7 +261,6 @@ pub struct SannyGitApp {
     pub(crate) welcome_action: WelcomeAction,
     pub(crate) welcome_repository: Option<String>,
     welcome_pending: bool,
-    applied_theme: ThemeChoice,
     applied_interface_style: InterfaceStyle,
     pub repositories: Vec<Repository>,
     pub branches: ref_management::BranchState,
@@ -299,6 +298,8 @@ impl SannyGitApp {
     pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
         crate::theme::install_fonts(&creation_context.egui_ctx);
         egui_extras::install_image_loaders(&creation_context.egui_ctx);
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        crate::native_window::install_system_theme(&creation_context.egui_ctx);
         let system_theme = if creation_context.egui_ctx.global_style().visuals.dark_mode {
             ThemeChoice::Dark
         } else {
@@ -319,11 +320,12 @@ impl SannyGitApp {
         } else {
             saved_theme.unwrap_or(system_theme)
         };
-        let interface_style = creation_context
+        let interface_style: InterfaceStyle = creation_context
             .storage
             .and_then(|storage| eframe::get_value(storage, INTERFACE_STYLE_STORAGE_KEY))
             .unwrap_or_default();
-        theme.apply_style(&creation_context.egui_ctx, interface_style);
+        interface_style.apply(&creation_context.egui_ctx);
+        theme.select(&creation_context.egui_ctx, preferences.follow_system_theme);
 
         let mut app = Self::with_theme(theme);
         app.preferences = preferences;
@@ -463,7 +465,6 @@ impl SannyGitApp {
             welcome_action: WelcomeAction::Reopen,
             welcome_repository: None,
             welcome_pending: false,
-            applied_theme: theme,
             applied_interface_style: InterfaceStyle::default(),
             repositories: Vec::new(),
             branches: Default::default(),
@@ -2240,12 +2241,13 @@ impl eframe::App for SannyGitApp {
         if self.preferences.follow_system_theme {
             self.theme = ThemeChoice::from_system(ui.ctx(), self.theme);
         }
-        if self.applied_theme != self.theme || self.applied_interface_style != self.interface_style
-        {
-            self.theme.apply_style(ui.ctx(), self.interface_style);
+        if self.applied_interface_style != self.interface_style {
+            self.interface_style.apply(ui.ctx());
             self.applied_interface_style = self.interface_style;
-            self.applied_theme = self.theme;
         }
+        self.theme
+            .select(ui.ctx(), self.preferences.follow_system_theme);
+        ui.set_style(ui.ctx().global_style());
         self.poll_worker();
         self.poll_refs();
         self.poll_view_reads();

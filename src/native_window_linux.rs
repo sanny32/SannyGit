@@ -1,11 +1,104 @@
 //! Linux window-manager and compositor hints for modal viewports.
-use eframe::egui::{Context, Id};
+use crate::theme::SystemThemeInput;
+use dbus::{
+    arg::{self, PropMap, RefArg, Variant},
+    blocking::Connection,
+    message::MatchRule,
+};
+use eframe::egui::{self, Context, Id};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use std::{error::Error, io};
+use std::{
+    collections::HashMap,
+    error::Error,
+    io,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use x11rb::{
     protocol::xproto::{AtomEnum, ConnectionExt, MapState, PropMode, Window},
     wrapper::ConnectionExt as _,
 };
+
+const PORTAL: &str = "org.freedesktop.portal.Desktop";
+const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
+const SETTINGS: &str = "org.freedesktop.portal.Settings";
+const APPEARANCE: &str = "org.freedesktop.appearance";
+const COLOR_SCHEME: &str = "color-scheme";
+
+pub fn install_system_theme(context: &Context) {
+    let theme = Arc::new(Mutex::new(None));
+    let worker_theme = Arc::downgrade(&theme);
+    let worker = std::thread::Builder::new()
+        .name("linux-system-theme".into())
+        .spawn(move || -> Result<(), dbus::Error> {
+            let connection = Connection::new_session()?;
+            let proxy = connection.with_proxy(PORTAL, PORTAL_PATH, Duration::from_secs(3));
+            let signal = MatchRule::new_signal(SETTINGS, "SettingChanged")
+                .with_sender(PORTAL)
+                .with_path(PORTAL_PATH);
+            let cache = worker_theme.clone();
+            let save_theme = move |value: &(dyn RefArg + 'static)| {
+                if let Some(theme) = cache.upgrade() {
+                    if let Ok(mut theme) = theme.lock() {
+                        *theme = portal_color_scheme(value);
+                    }
+                }
+            };
+            let save_signal_theme = save_theme.clone();
+            // Subscribe before reading so a concurrent change is queued.
+            connection.add_match(
+                signal,
+                move |(namespace, key, value): (String, String, Variant<Box<dyn RefArg>>), _, _| {
+                    if namespace == APPEARANCE && key == COLOR_SCHEME {
+                        save_signal_theme(&*value.0);
+                    }
+                    true
+                },
+            )?;
+            let settings: Result<(HashMap<String, PropMap>,), _> =
+                proxy.method_call(SETTINGS, "ReadAll", (vec![APPEARANCE],));
+            if let Ok((settings,)) = settings {
+                if let Some(value) = settings
+                    .get(APPEARANCE)
+                    .and_then(|values| values.get(COLOR_SCHEME))
+                {
+                    save_theme(&*value.0);
+                }
+            }
+            // The existing periodic UI repaint applies the cached value.
+            // Use a bounded wait so dropping the plugin also stops the worker.
+            while worker_theme.strong_count() != 0 {
+                connection.process(Duration::from_secs(1))?;
+            }
+            Ok(())
+        });
+    if worker.is_ok() {
+        context.add_plugin(SystemThemeInput(theme));
+    }
+}
+
+fn portal_color_scheme(value: &(dyn RefArg + 'static)) -> Option<egui::Theme> {
+    // The portal treats unknown values as no preference. Use light for that
+    // case so changing from dark to the desktop default also updates the UI.
+    arg::cast::<u32>(value).map(|scheme| match scheme {
+        1 => egui::Theme::Dark,
+        _ => egui::Theme::Light,
+    })
+}
+
+#[cfg(test)]
+mod system_theme_tests {
+    use super::*;
+
+    #[test]
+    fn portal_default_restores_light_after_dark() {
+        assert_eq!(portal_color_scheme(&1_u32), Some(egui::Theme::Dark));
+        for scheme in [0_u32, 2, 3] {
+            assert_eq!(portal_color_scheme(&scheme), Some(egui::Theme::Light));
+        }
+        assert_eq!(portal_color_scheme(&String::from("invalid")), None);
+    }
+}
 
 fn owner_key() -> Id {
     Id::unique("sannygit.x11_modal_owner")

@@ -56,6 +56,11 @@ impl InterfaceStyle {
         }
     }
 
+    pub fn apply(self, context: &Context) {
+        ThemeChoice::Light.configure_style(context, self);
+        ThemeChoice::Dark.configure_style(context, self);
+    }
+
     pub fn palette(self, theme: ThemeChoice) -> Palette {
         let mut palette = theme.palette();
         if self == Self::Modern && theme == ThemeChoice::Light {
@@ -137,6 +142,25 @@ pub fn install_fonts(context: &Context) {
     context.set_fonts(fonts);
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub(crate) struct SystemThemeInput(
+    pub(crate) std::sync::Arc<std::sync::Mutex<Option<egui::Theme>>>,
+);
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+impl egui::Plugin for SystemThemeInput {
+    fn debug_name(&self) -> &'static str {
+        "Desktop system theme"
+    }
+
+    fn input_hook(&mut self, _context: &Context, input: &mut egui::RawInput) {
+        if let Ok(theme) = self.0.lock() {
+            // Apply to every viewport, including native Preferences and Log windows.
+            input.system_theme = (*theme).or(input.system_theme);
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeChoice {
     Light,
@@ -166,17 +190,37 @@ impl ThemeChoice {
         }
     }
 
+    pub fn select(self, context: &Context, follow_system: bool) {
+        context.options_mut(|options| {
+            options.theme_preference = if follow_system {
+                egui::ThemePreference::System
+            } else {
+                self.egui_theme().into()
+            };
+            options.fallback_theme = self.egui_theme();
+        });
+    }
+
+    fn egui_theme(self) -> egui::Theme {
+        match self {
+            Self::Light => egui::Theme::Light,
+            Self::Dark => egui::Theme::Dark,
+        }
+    }
+
     #[cfg(test)]
     pub fn apply(self, context: &Context) {
         self.apply_style(context, InterfaceStyle::Classic);
     }
 
+    #[cfg(test)]
     pub fn apply_style(self, context: &Context, interface: InterfaceStyle) {
-        let theme = match self {
-            Self::Light => egui::Theme::Light,
-            Self::Dark => egui::Theme::Dark,
-        };
-        context.set_theme(theme);
+        self.configure_style(context, interface);
+        self.select(context, false);
+    }
+
+    fn configure_style(self, context: &Context, interface: InterfaceStyle) {
+        let theme = self.egui_theme();
         let palette = interface.palette(self);
         let mut visuals = match self {
             Self::Light => Visuals::light(),
@@ -412,6 +456,60 @@ mod tests {
                 },
             );
             output.textures_delta.clear();
+        }
+    }
+
+    #[test]
+    fn system_mode_keeps_the_native_window_unpinned() {
+        let context = Context::default();
+        install_fonts(&context);
+        let interface = InterfaceStyle::Modern;
+        interface.apply(&context);
+        ThemeChoice::Light.select(&context, true);
+
+        for (system, expected, window_theme) in [
+            (
+                egui::Theme::Light,
+                ThemeChoice::Light,
+                Some(egui::SystemTheme::SystemDefault),
+            ),
+            (egui::Theme::Dark, ThemeChoice::Dark, None),
+            (egui::Theme::Light, ThemeChoice::Light, None),
+            (
+                egui::Theme::Dark,
+                ThemeChoice::Light,
+                Some(egui::SystemTheme::Light),
+            ),
+            (
+                egui::Theme::Dark,
+                ThemeChoice::Dark,
+                Some(egui::SystemTheme::SystemDefault),
+            ),
+        ] {
+            match window_theme {
+                Some(egui::SystemTheme::Light) => ThemeChoice::Light.select(&context, false),
+                Some(egui::SystemTheme::SystemDefault) => expected.select(&context, true),
+                _ => {}
+            }
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    system_theme: Some(system),
+                    ..Default::default()
+                },
+                |ui| {
+                    assert_eq!(ui.ctx().theme(), expected.egui_theme());
+                    assert_eq!(ui.visuals().panel_fill, interface.palette(expected).panel);
+                },
+            );
+            let command = output.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .iter()
+                .find_map(|command| match command {
+                    egui::ViewportCommand::SetTheme(theme) => Some(*theme),
+                    _ => None,
+                });
+            output.textures_delta.clear();
+            assert_eq!(command, window_theme);
         }
     }
 
