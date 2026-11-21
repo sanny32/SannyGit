@@ -2352,7 +2352,10 @@ impl eframe::App for SannyGitApp {
         }
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(
+        &mut self,
+        #[cfg(any(target_os = "linux", target_os = "windows"))] _gl: Option<&eframe::glow::Context>,
+    ) {
         #[cfg(target_os = "linux")]
         crate::native_window::shutdown();
         self.close_tag_log();

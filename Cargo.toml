@@ -10,7 +10,7 @@ description = "A simple, fast, modern, open-source Git GUI client"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 rfd = "0.17.2"
 eframe = { version = "0.37", default-features = false, features = [
-    "accesskit", "clipboard", "default_fonts", "glow", "persistence", "wayland", "x11",
+    "accesskit", "clipboard", "default_fonts", "persistence", "wayland", "x11",
 ] }
 egui_extras = { version = "0.37", features = ["svg", "image"] }
 serde = { version = "1", features = ["derive"] }
@@ -21,6 +21,8 @@ display-info = "0.5.10"
 mouse_position = "0.1.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+eframe = { version = "0.37", default-features = false, features = ["wgpu_no_default_features"] }
+wgpu = { version = "30", default-features = false, features = ["metal"] }
 security-framework = { version = "3.7", features = ["OSX_10_15"] }
 block2 = "0.6"
 objc2 = "0.6"
@@ -30,6 +32,9 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+eframe = { version = "0.37", default-features = false, features = ["glow"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = "0.9"

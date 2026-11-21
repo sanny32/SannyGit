@@ -59,6 +59,10 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport,
+        #[cfg(target_os = "macos")]
+        renderer: eframe::Renderer::Wgpu,
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        renderer: eframe::Renderer::Glow,
         persist_window: true,
         persistence_path: if std::env::var_os("SANNYGIT_SECONDARY_WINDOW").is_some() {
             Some(std::env::temp_dir().join(format!(
