@@ -17,6 +17,12 @@ mod mock_data;
 mod models;
 #[cfg(target_os = "macos")]
 mod native_menu;
+#[cfg(target_os = "linux")]
+#[path = "native_window_linux.rs"]
+mod native_window;
+#[cfg(target_os = "macos")]
+#[path = "native_window_macos.rs"]
+mod native_window;
 #[cfg(target_os = "windows")]
 mod native_window;
 mod preferences;
@@ -79,7 +85,7 @@ fn main() -> eframe::Result<()> {
         "SannyGit",
         options,
         Box::new(|creation_context| {
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             native_window::remember_owner(creation_context)?;
             #[allow(unused_mut)]
             let mut app = SannyGitApp::new(creation_context);

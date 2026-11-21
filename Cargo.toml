@@ -22,8 +22,10 @@ mouse_position = "0.1.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "3.7", features = ["OSX_10_15"] }
+block2 = "0.6"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSPasteboard", "NSEvent", "NSResponder", "NSView", "NSFont", "objc2-core-foundation"] }
+raw-window-handle = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSApplication", "NSGraphics", "NSWindow", "NSMenu", "NSMenuItem", "NSPasteboard", "NSEvent", "NSResponder", "NSView", "NSFont", "objc2-core-foundation"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString"] }
 
 [target.'cfg(unix)'.dependencies]
@@ -31,6 +33,12 @@ libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["sync-secret-service"] }
+raw-window-handle = "0.6"
+x11rb = "0.13"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+winit = { version = "0.30", default-features = false, features = ["wayland"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
@@ -40,5 +48,8 @@ raw-window-handle = "0.6"
 winresource = "0.1"
 
 [patch.crates-io]
+# egui PR #8890 exposes the native winit window of child viewports.
+eframe = { git = "https://github.com/quazardous/egui.git", rev = "5a5cc7f6a70adfb7eb4f6ab9d887ae51c29d0681" }
+egui_extras = { git = "https://github.com/quazardous/egui.git", rev = "5a5cc7f6a70adfb7eb4f6ab9d887ae51c29d0681" }
 # winit 0.30.13 with the Windows mixed-DPI drag fix from upstream PR #4694.
 winit = { git = "https://github.com/rust-windowing/winit", rev = "39c4009c41e5977d779cf8a365792c8153ca77c5" }

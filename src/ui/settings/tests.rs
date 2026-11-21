@@ -674,7 +674,7 @@ fn thumbnails_load_and_support_image_and_radio_selection() {
                     }
                 }
             };
-            assert_eq!(image.size, [224, 224]);
+            assert_eq!(image.resolution(), [224, 224]);
         }
         let classic_radio = output
             .shapes

@@ -29,7 +29,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         ctx.data_mut(|data| data.insert_temp(state_id, position));
         position
     });
-    let mut builder = crate::theme::native_viewport()
+    let builder = crate::theme::native_viewport()
         .with_title(TITLE)
         .with_inner_size(SIZE)
         .with_resizable(false)
@@ -37,9 +37,12 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         .with_taskbar(false)
         .with_minimize_button(false)
         .with_maximize_button(false);
-    if let Some(position) = position {
-        builder = builder.with_position(position);
-    }
+    #[cfg(target_os = "linux")]
+    let builder = builder.with_window_type(egui::X11WindowType::Dialog);
+    let builder = match position {
+        Some(position) => builder.with_position(position),
+        None => builder,
+    };
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("sannygit.about"),
         builder,
@@ -48,7 +51,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 close(ui.ctx(), app);
                 return;
             }
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             if first_frame && class == egui::ViewportClass::Immediate {
                 if let Err(error) = crate::native_window::begin_modal(ui.ctx(), TITLE) {
                     app.error = Some(format!("Cannot attach About to the main window: {error}"));
@@ -88,10 +91,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
 
 fn close(ctx: &egui::Context, app: &mut SannyGitApp) {
     #[cfg(target_os = "windows")]
-    {
-        crate::native_window::cancel_first_presentation(ctx);
-        crate::native_window::end_modal(ctx);
-    }
+    crate::native_window::cancel_first_presentation(ctx);
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    crate::native_window::end_modal(ctx);
     app.about_dialog = false;
     if ctx.viewport_id() != egui::ViewportId::ROOT {
         ctx.send_viewport_cmd(ViewportCommand::Close);

@@ -10,15 +10,19 @@ use eframe::egui::{
     ViewportCommand, ViewportId,
 };
 
+const PREFERENCES_SIZE: Vec2 = egui::vec2(740.0, 420.0);
+
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if !app.settings_window.open {
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         if !app.about_dialog {
             crate::native_window::end_modal(ui.ctx());
         }
         return;
     }
     if app.settings_window.llm_repository.is_some() {
+        #[cfg(target_os = "macos")]
+        crate::native_window::end_modal(ui.ctx());
         repository_llm_dialog(ui, app);
         return;
     }
@@ -26,40 +30,40 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
 }
 
 fn preferences_window(ctx: &egui::Context, app: &mut SannyGitApp) {
-    let (title, size, min_size) = ("SannyGit Preferences", [740.0, 420.0], [680.0, 380.0]);
+    let (title, min_size) = ("SannyGit Preferences", [680.0, 380.0]);
     if !app.settings_window.initial_position_set {
         app.settings_window.initial_position = ctx.input(|input| {
             let viewport = input.viewport();
             viewport
                 .outer_rect
-                .map(|outer| centered_position(outer, viewport.inner_rect, Vec2::from(size)))
+                .map(|outer| centered_position(outer, viewport.inner_rect, PREFERENCES_SIZE))
         });
         app.settings_window.initial_position_set = true;
     }
-    let mut builder = crate::theme::native_viewport()
+    let builder = crate::theme::native_viewport()
         .with_title(title)
-        .with_inner_size(size)
+        .with_inner_size(PREFERENCES_SIZE)
         .with_min_inner_size(min_size)
         .with_decorations(true)
         .with_taskbar(false)
         .with_minimize_button(false)
         .with_maximize_button(false);
-    if let Some(position) = app.settings_window.initial_position {
-        builder = builder.with_position(position);
-    }
+    #[cfg(target_os = "linux")]
+    let builder = builder.with_window_type(egui::X11WindowType::Dialog);
+    let builder = match app.settings_window.initial_position {
+        Some(position) => builder.with_position(position),
+        None => builder,
+    };
     let viewport_id = ViewportId::from_hash_of("sannygit.preferences");
     ctx.show_viewport_immediate(viewport_id, builder, |ui, class| {
         #[cfg(target_os = "macos")]
         ui.input_mut(|input| input.events.append(&mut app.pending_native_edit_events));
-        let escape = app.error_dialogs.pending.is_empty()
-            && !egui::Popup::is_any_open(ui.ctx())
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape));
-        if escape || ui.input(|input| input.viewport().close_requested()) {
+        if escape_pressed(ui.ctx(), app) || ui.input(|input| input.viewport().close_requested()) {
             close(ui.ctx(), app);
             return;
         }
 
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         if app.settings_window.needs_reveal && class == egui::ViewportClass::Immediate {
             if let Err(error) = crate::native_window::begin_modal(ui.ctx(), title) {
                 app.error = Some(format!(
@@ -90,14 +94,21 @@ fn preferences_window(ctx: &egui::Context, app: &mut SannyGitApp) {
     });
 }
 
+fn escape_pressed(ctx: &egui::Context, app: &SannyGitApp) -> bool {
+    app.error_dialogs.pending.is_empty()
+        && !egui::Popup::is_any_open(ctx)
+        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape))
+}
+
 fn close(ctx: &egui::Context, app: &mut SannyGitApp) {
     #[cfg(target_os = "windows")]
-    {
-        crate::native_window::cancel_first_presentation(ctx);
-        crate::native_window::end_modal(ctx);
-    }
+    crate::native_window::cancel_first_presentation(ctx);
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    crate::native_window::end_modal(ctx);
     app.settings_window.open = false;
-    ctx.send_viewport_cmd(ViewportCommand::Close);
+    if ctx.viewport_id() != ViewportId::ROOT {
+        ctx.send_viewport_cmd(ViewportCommand::Close);
+    }
 }
 
 fn centered_position(outer: egui::Rect, inner: Option<egui::Rect>, size: Vec2) -> egui::Pos2 {

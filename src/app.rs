@@ -2343,6 +2343,8 @@ impl eframe::App for SannyGitApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        #[cfg(target_os = "linux")]
+        crate::native_window::shutdown();
         self.close_tag_log();
         if let Some(cancel) = &self.commit.generation_cancel {
             cancel.store(true, Ordering::Relaxed);
