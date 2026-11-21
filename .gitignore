@@ -3,3 +3,4 @@ Cargo.lock
 .review/
 .vscode/
 .idea/
+/.DS_Store
