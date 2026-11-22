@@ -3,7 +3,7 @@ use super::controls::icons::{self, Icon};
 use super::controls::popup_menu;
 use super::controls::tooltips::TooltipResponse;
 use crate::{
-    app::{ref_management::RemoteBranchAction, SannyGitApp},
+    app::{ref_management::BranchAction, SannyGitApp},
     models::{BranchRef, RefKind},
     theme::{semibold_family, Palette},
 };
@@ -27,6 +27,10 @@ enum BranchRequest {
     CopyRefName(String),
     MergeBranch(String),
     RebaseBranch(String),
+    FastForward(String),
+    PushLocal(String, bool),
+    SetTracking(String),
+    StopTracking(String),
     PushRemoteBranch(String),
     DeleteRemoteBranch(String),
     Unavailable,
@@ -41,6 +45,7 @@ struct BranchRequests {
     tag_merge_allowed: bool,
     tag_log_allowed: bool,
     ref_reset_allowed: bool,
+    has_remote_refs: bool,
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -126,6 +131,11 @@ fn branch_requests(app: &SannyGitApp) -> BranchRequests {
         tag_merge_allowed: app.merge_allowed(),
         tag_log_allowed: !app.busy() && app.repositories.get(app.selected_repository).is_some(),
         ref_reset_allowed: app.ref_reset_allowed(),
+        has_remote_refs: app
+            .branches
+            .entries
+            .iter()
+            .any(|entry| entry.kind == RefKind::Remote),
         ..Default::default()
     }
 }
@@ -182,15 +192,34 @@ fn dispatch_branch_request(ctx: &egui::Context, app: &mut SannyGitApp, request: 
             app.branches.selected_branch = target;
             app.open_rebase();
         }
-        BranchRequest::PushRemoteBranch(target) => app.open_remote_branch_action(
+        BranchRequest::FastForward(target) => app.open_fast_forward_branch(target),
+        BranchRequest::PushLocal(target, choose_destination) => app.open_branch_action(
             target,
-            RemoteBranchAction::Push {
+            BranchAction::PushLocal {
+                remote: String::new(),
+                custom: false,
+                destination: String::new(),
+                choose_destination,
+            },
+        ),
+        BranchRequest::SetTracking(target) => app.open_branch_action(
+            target,
+            BranchAction::SetTracking {
+                upstream: String::new(),
+            },
+        ),
+        BranchRequest::StopTracking(target) => {
+            app.open_branch_action(target, BranchAction::StopTracking)
+        }
+        BranchRequest::PushRemoteBranch(target) => app.open_branch_action(
+            target,
+            BranchAction::Push {
                 custom: false,
                 destination: String::new(),
             },
         ),
         BranchRequest::DeleteRemoteBranch(target) => {
-            app.open_remote_branch_action(target, RemoteBranchAction::Delete { also_remote: false })
+            app.open_branch_action(target, BranchAction::Delete { also_remote: false })
         }
         BranchRequest::Rename(target) => {
             app.branches.selected_branch = target;
@@ -201,7 +230,7 @@ fn dispatch_branch_request(ctx: &egui::Context, app: &mut SannyGitApp, request: 
     }
 }
 
-pub(crate) fn handle_remote_branch_shortcuts(ctx: &egui::Context, app: &mut SannyGitApp) {
+pub(crate) fn handle_branch_shortcuts(ctx: &egui::Context, app: &mut SannyGitApp) {
     if app.branches.selected_ref_group.is_some()
         || app.modal_dialog_open()
         || app.history_window().commit_details_open
@@ -212,7 +241,7 @@ pub(crate) fn handle_remote_branch_shortcuts(ctx: &egui::Context, app: &mut Sann
         return;
     }
     let Some(branch) = app.branches.entries.iter().find(|branch| {
-        branch.kind == RefKind::Remote && branch.full_name == app.branches.selected_branch
+        branch.kind != RefKind::Tag && branch.full_name == app.branches.selected_branch
     }) else {
         return;
     };
@@ -226,7 +255,7 @@ pub(crate) fn handle_remote_branch_shortcuts(ctx: &egui::Context, app: &mut Sann
             return None;
         }
         let mut request = None;
-        let entries = remote_branch_menu(branch, &branch_requests(app));
+        let entries = branch_menu(branch, &branch_requests(app));
         input.events.retain(|event| {
             let Some((action, enabled)) = entries.iter().find_map(|entry| {
                 let popup_menu::Entry::Item {
@@ -348,11 +377,21 @@ fn branch_group(
                         };
                         let text = if let Some(subject) = &branch.tag_subject {
                             let mut text = LayoutJob::default();
-                            name.append_to(&mut text, ui.style(), FontSelection::Default, Align::Center);
+                            name.append_to(
+                                &mut text,
+                                ui.style(),
+                                FontSelection::Default,
+                                Align::Center,
+                            );
                             RichText::new(format!(" - {subject}"))
                                 .text_style(egui::TextStyle::Body)
                                 .color(palette.muted.lerp_to_gamma(palette.text, 0.25))
-                                .append_to(&mut text, ui.style(), FontSelection::Default, Align::Center);
+                                .append_to(
+                                    &mut text,
+                                    ui.style(),
+                                    FontSelection::Default,
+                                    Align::Center,
+                                );
                             egui::WidgetText::from(text)
                         } else {
                             egui::WidgetText::from(name)
@@ -360,7 +399,11 @@ fn branch_group(
                         let label = egui::Label::new(text)
                             .show_tooltip_when_elided(false)
                             .sense(egui::Sense::hover());
-                        ui.add(if kind == RefKind::Tag { label.truncate() } else { label });
+                        ui.add(if kind == RefKind::Tag {
+                            label.truncate()
+                        } else {
+                            label
+                        });
                         if branch.current {
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 icons::paint(ui, Icon::Star, palette.accent, 14.0)
@@ -404,24 +447,9 @@ fn branch_group(
                 if response.double_clicked() {
                     requested.action = Some(BranchRequest::Switch(branch.full_name.clone()));
                 }
-                if let Some(action) = popup_menu::context(&response, palette, || {
-                    use popup_menu::Entry as E;
-                    match kind {
-                        RefKind::Local => vec![
-                            E::item(
-                                "Rename…",
-                                requested.rename_allowed,
-                                BranchRequest::Rename(branch.full_name.clone()),
-                            ).help("Refresh the repository and wait for the current operation"),
-                            E::item(
-                                "Delete…",
-                                requested.rename_allowed && !branch.current,
-                                BranchRequest::Delete(branch.full_name.clone()),
-                            ).help("Select a non-current local branch after refreshing; worktree and merge safety are checked before deletion"),
-                        ],
-                        RefKind::Tag => tag_menu(branch, requested),
-                        RefKind::Remote => remote_branch_menu(branch, requested),
-                    }
+                if let Some(action) = popup_menu::context(&response, palette, || match kind {
+                    RefKind::Tag => tag_menu(branch, requested),
+                    RefKind::Local | RefKind::Remote => branch_menu(branch, requested),
                 }) {
                     requested.action = Some(action);
                 }
@@ -445,7 +473,7 @@ fn branch_group(
     add_tag_requested
 }
 
-fn remote_branch_menu(
+fn branch_menu(
     branch: &BranchRef,
     requested: &BranchRequests,
 ) -> Vec<popup_menu::Entry<BranchRequest>> {
@@ -457,36 +485,66 @@ fn remote_branch_menu(
     let shift_cmd = |key| KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), key);
     let refresh = "Refresh the repository and wait for the current operation";
     let needs_head = "An existing HEAD and fresh repository data are required";
-    vec![
+    let local = branch.kind == RefKind::Local;
+    let other_branch = !branch.current;
+    let mut entries = vec![
         E::item(
             "Check Out…",
-            requested.rename_allowed,
+            requested.rename_allowed && other_branch,
             BranchRequest::Switch(target()),
         )
-        .help(refresh)
+        .help("Select a branch that is not checked out and refresh the repository")
         .shortcut(cmd(Key::G)),
         E::Separator,
         E::item(
             "Merge…",
-            requested.tag_merge_allowed,
+            requested.tag_merge_allowed && other_branch,
             BranchRequest::MergeBranch(target()),
         )
         .help(needs_head),
         E::item(
             "Rebase…",
-            requested.tag_merge_allowed,
+            requested.tag_merge_allowed && other_branch,
             BranchRequest::RebaseBranch(target()),
         )
         .help(needs_head)
         .shortcut(cmd(Key::D)),
-        E::Separator,
-        E::item("Push", false, BranchRequest::Unavailable)
-            .help("Direct push is available for local branches")
-            .shortcut(cmd(Key::ArrowUp)),
+    ];
+    if local {
+        entries.push(
+            E::item(
+                "Fast-Forward Merge",
+                requested.tag_merge_allowed && other_branch,
+                BranchRequest::FastForward(target()),
+            )
+            .help("Select another branch while a current HEAD is available"),
+        );
+    }
+    entries.push(E::Separator);
+    entries.extend([
+        E::item(
+            "Push",
+            local && requested.rename_allowed,
+            if local {
+                BranchRequest::PushLocal(target(), false)
+            } else {
+                BranchRequest::Unavailable
+            },
+        )
+        .help(if local {
+            refresh
+        } else {
+            "Direct push is available for local branches"
+        })
+        .shortcut(cmd(Key::ArrowUp)),
         E::item(
             "Push To…",
             requested.rename_allowed,
-            BranchRequest::PushRemoteBranch(target()),
+            if local {
+                BranchRequest::PushLocal(target(), true)
+            } else {
+                BranchRequest::PushRemoteBranch(target())
+            },
         )
         .help(refresh)
         .shortcut(shift_cmd(Key::ArrowUp)),
@@ -513,13 +571,49 @@ fn remote_branch_menu(
         )
         .help(needs_head)
         .shortcut(shift_cmd(Key::R)),
-        E::Separator,
+    ]);
+    entries.push(E::Separator);
+    if local {
+        entries.push(
+            E::item(
+                "Rename…",
+                requested.rename_allowed,
+                BranchRequest::Rename(target()),
+            )
+            .help(refresh)
+            .shortcut(KeyboardShortcut::new(Modifiers::NONE, Key::F2)),
+        );
+    }
+    entries.push(
         E::item(
             "Delete…",
-            requested.rename_allowed,
-            BranchRequest::DeleteRemoteBranch(target()),
+            requested.rename_allowed && other_branch,
+            if local {
+                BranchRequest::Delete(target())
+            } else {
+                BranchRequest::DeleteRemoteBranch(target())
+            },
         )
-        .help(refresh),
+        .help("Select a branch that is not checked out and refresh the repository"),
+    );
+    if local {
+        entries.extend([
+            E::Separator,
+            E::item(
+                "Set Tracked Branch…",
+                requested.rename_allowed && requested.has_remote_refs,
+                BranchRequest::SetTracking(target()),
+            )
+            .help("Fetch remote branches and refresh the repository"),
+            E::item(
+                "Stop Tracking…",
+                requested.rename_allowed && branch.upstream.is_some(),
+                BranchRequest::StopTracking(target()),
+            )
+            .help("The selected branch must have a tracked branch"),
+        ]);
+    }
+    entries.extend([
         E::Separator,
         E::item(
             "Copy",
@@ -527,7 +621,8 @@ fn remote_branch_menu(
             BranchRequest::CopyRefName(branch.name.clone()),
         )
         .shortcut(cmd(Key::C)),
-    ]
+    ]);
+    entries
 }
 
 fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entry<BranchRequest>> {
@@ -1323,7 +1418,7 @@ mod tests {
                         modifiers,
                     });
                 });
-                handle_remote_branch_shortcuts(ui.ctx(), &mut app);
+                handle_branch_shortcuts(ui.ctx(), &mut app);
             });
             output.textures_delta.clear();
             assert_eq!(
@@ -1409,9 +1504,26 @@ mod tests {
                         },
                     );
                     output.textures_delta.clear();
-                    if frame == 6 && kind != RefKind::Local {
+                    if frame == 6 {
                         let items: &[&str] = if kind == RefKind::Tag {
                             &["Check Out…", "Push To…", "Copy", "Fast-Forward Merge"]
+                        } else if kind == RefKind::Local {
+                            &[
+                                "Check Out…",
+                                "Merge…",
+                                "Rebase…",
+                                "Fast-Forward Merge",
+                                "Push",
+                                "Push To…",
+                                "Log",
+                                "Reset…",
+                                "Reset Advanced…",
+                                "Rename…",
+                                "Delete…",
+                                "Set Tracked Branch…",
+                                "Stop Tracking…",
+                                "Copy",
+                            ]
                         } else {
                             &[
                                 "Check Out…",

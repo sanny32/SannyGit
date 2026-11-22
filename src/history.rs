@@ -236,8 +236,9 @@ fn first_with_limits(
         .map(|tag| -> Result<String, String> {
             tag.strip_prefix("refs/tags/")
                 .or_else(|| tag.strip_prefix("refs/remotes/"))
+                .or_else(|| tag.strip_prefix("refs/heads/"))
                 .filter(|name| !name.is_empty())
-                .ok_or("Select a tag or remote branch to open its history.")?;
+                .ok_or("Select a branch or tag to open its history.")?;
             let revision = format!("{tag}^{{commit}}");
             let output = run(
                 git,

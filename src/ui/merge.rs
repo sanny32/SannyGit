@@ -60,7 +60,10 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let palette = app.palette();
     let busy = app.busy();
     if let Some(tag) = &dialog.tag {
-        let name = tag.strip_prefix("refs/tags/").unwrap_or(tag);
+        let name = tag
+            .strip_prefix("refs/tags/")
+            .or_else(|| tag.strip_prefix("refs/heads/"))
+            .unwrap_or(tag);
         let (close, mode) = tag_confirmation(ctx, &dialog, name, busy, palette);
         if !close {
             app.merge_dialog = Some(dialog);
@@ -137,6 +140,10 @@ fn tag_confirmation(
     busy: bool,
     palette: Palette,
 ) -> (bool, Option<Mode>) {
+    let branch = dialog
+        .tag
+        .as_ref()
+        .is_some_and(|reference| reference.starts_with("refs/heads/"));
     let target = dialog
         .snapshot
         .as_ref()
@@ -152,31 +159,35 @@ fn tag_confirmation(
         dialog_style::header_with_icon(
             ui,
             palette,
-            "Merge Tag",
-            "Choose how to merge the selected tag into the current branch.",
+            if branch { "Fast-Forward Merge" } else { "Merge Tag" },
+            if branch {
+                "Move the current branch to the selected branch’s commit without creating a merge commit."
+            } else {
+                "Choose how to merge the selected tag into the current branch."
+            },
             Icon::Merge,
         );
         dialog_style::section(ui, palette.panel, egui::Margin::symmetric(12, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            let tag_name = format!("Tag: {name}");
+            let tag_name = if branch { format!("Branch: {name}") } else { format!("Tag: {name}") };
             dialog_style::text_line(ui, &tag_name, 20.0).help_text(tag_name);
             let status = match target {
                 Some(_) if busy => "Merging…",
-                Some(tag) if tag.already_merged => "The current branch already contains this tag’s commit.",
-                Some(tag) if tag.fast_forward => "Fast-forward can move the current branch to the tag’s commit.",
-                Some(_) => "Fast-forward is unavailable for this tag.",
+                Some(tag) if tag.already_merged => "The current branch already contains the selected commit.",
+                Some(tag) if tag.fast_forward => "Fast-forward can move the current branch to the selected commit.",
+                Some(_) => "Fast-forward is unavailable for the selected commit.",
                 None if busy => "Checking merge options…",
                 None => "Close and reopen Merge to retry.",
             };
             dialog_style::text_line(ui, RichText::new(status).color(palette.muted), 20.0);
             dialog_style::button_row(ui, |ui| {
                 close = ui.add_enabled(!busy, dialog_style::button("Cancel")).dialog_cancel();
-                if ui.add_enabled(enabled, dialog_style::button("Merge to Working Tree"))
+                if !branch && ui.add_enabled(enabled, dialog_style::button("Merge to Working Tree"))
                     .help_text("Start the merge and leave it open for review and conflict resolution.")
                     .clicked() {
                     mode = Some(Mode::WorkingTree);
                 }
-                if ui.add_enabled(enabled, dialog_style::button("Create Merge-Commit"))
+                if !branch && ui.add_enabled(enabled, dialog_style::button("Create Merge-Commit"))
                     .help_text("Create a merge commit even when fast-forward is possible.")
                     .clicked() {
                     mode = Some(Mode::Commit);

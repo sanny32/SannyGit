@@ -27,7 +27,7 @@ security-framework = { version = "3.7", features = ["OSX_10_15"] }
 block2 = "0.6"
 objc2 = "0.6"
 raw-window-handle = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSApplication", "NSGraphics", "NSWindow", "NSMenu", "NSMenuItem", "NSPasteboard", "NSEvent", "NSResponder", "NSView", "NSFont", "objc2-core-foundation"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSApplication", "NSGraphics", "NSWindow", "NSScreen", "NSMenu", "NSMenuItem", "NSPasteboard", "NSEvent", "NSResponder", "NSView", "NSFont", "objc2-core-foundation"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString"] }
 
 [target.'cfg(unix)'.dependencies]

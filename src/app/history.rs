@@ -1,7 +1,7 @@
 use super::{SannyGitApp, WorkerResult};
 use crate::{
     history as backend,
-    models::{Commit, DiffPreview, HistoryEdge, RefKind},
+    models::{Commit, DiffPreview, HistoryEdge},
 };
 use std::{
     path::PathBuf,
@@ -45,6 +45,7 @@ impl View {
         reference
             .strip_prefix("refs/tags/")
             .or_else(|| reference.strip_prefix("refs/remotes/"))
+            .or_else(|| reference.strip_prefix("refs/heads/"))
     }
 
     pub fn tag_commit(&self) -> Option<&str> {
@@ -152,9 +153,11 @@ impl SannyGitApp {
     pub fn open_ref_log(&mut self, tag: String) {
         if self.busy()
             || self.repositories.get(self.selected_repository).is_none()
-            || !self.branches.entries.iter().any(|entry| {
-                matches!(entry.kind, RefKind::Tag | RefKind::Remote) && entry.full_name == tag
-            })
+            || !self
+                .branches
+                .entries
+                .iter()
+                .any(|entry| entry.full_name == tag)
         {
             return;
         }

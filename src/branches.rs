@@ -539,9 +539,7 @@ pub fn preview_reset(git: &GitContext, root: &Path, tag: &str) -> Result<ResetPr
     let source = refs
         .refs
         .iter()
-        .find(|entry| {
-            entry.full_name == tag && matches!(entry.kind, RefKind::Tag | RefKind::Remote)
-        })
+        .find(|entry| entry.full_name == tag)
         .ok_or("The selected reference no longer exists. Refresh branches and tags.")?;
     let revision = format!("{}^{{commit}}", source.hash);
     let target = git::text(

@@ -959,3 +959,57 @@ fn remote_branch_push_and_delete_touch_only_the_reviewed_refs() {
     assert_eq!(read_ref(&origin, custom).unwrap(), oid);
     assert!(read_ref(&backup, branch).is_err());
 }
+
+#[test]
+fn local_branch_push_and_tracking_target_the_selected_branch() {
+    let repo = TempRepo::new();
+    repo.git(&["commit", "--allow-empty", "-m", "base"]);
+    repo.git(&["branch", "topic"]);
+    let topic = repo.git(&["rev-parse", "topic"]);
+    repo.git(&["commit", "--allow-empty", "-m", "current only"]);
+    let origin = repo.0.join("origin.git");
+    repo.git(&["init", "--bare", origin.to_str().unwrap()]);
+    repo.git(&["remote", "add", "origin", origin.to_str().unwrap()]);
+    repo.git(&["push", "origin", "topic:refs/heads/upstream-topic"]);
+
+    let selected = "refs/heads/topic";
+    let prepared = preview_branch(&SYSTEM_GIT, &repo.0, selected).unwrap();
+    update_branch_tracking(
+        &SYSTEM_GIT,
+        &repo.0,
+        &prepared,
+        Some("refs/remotes/origin/upstream-topic"),
+    )
+    .unwrap();
+    let tracked = preview_branch(&SYSTEM_GIT, &repo.0, selected).unwrap();
+    assert_eq!(tracked.branch, "upstream-topic");
+    push_branch_to(
+        &SYSTEM_GIT,
+        &repo.0,
+        &tracked,
+        "origin",
+        Some("review/topic"),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(
+        git::text(
+            git::run(
+                &SYSTEM_GIT,
+                &origin,
+                &["rev-parse", "refs/heads/review/topic"]
+            )
+            .unwrap()
+        )
+        .unwrap(),
+        topic
+    );
+    update_branch_tracking(&SYSTEM_GIT, &repo.0, &tracked, None).unwrap();
+    assert_eq!(
+        preview_branch(&SYSTEM_GIT, &repo.0, selected)
+            .unwrap()
+            .upstream,
+        None
+    );
+    assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "main");
+}

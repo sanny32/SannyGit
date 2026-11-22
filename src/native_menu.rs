@@ -468,15 +468,64 @@ pub(crate) fn popup<T: Clone>(entries: &[crate::ui::PopupMenuEntry<T>]) -> Optio
     let handler: Retained<PopupHandler> = unsafe { msg_send![super(allocated), init] };
     let mut actions = Vec::new();
     let menu = popup_items(marker, entries, &handler, &mut actions);
-    menu.popUpMenuPositioningItem_atLocation_inView(
-        None,
-        objc2_app_kit::NSEvent::mouseLocation(),
-        None,
-    );
+    let pointer = objc2_app_kit::NSEvent::mouseLocation();
+    let screen = objc2_app_kit::NSScreen::screens(marker)
+        .iter()
+        .find(|screen| {
+            let frame = screen.frame();
+            pointer.x >= frame.origin.x
+                && pointer.x < frame.origin.x + frame.size.width
+                && pointer.y >= frame.origin.y
+                && pointer.y < frame.origin.y + frame.size.height
+        });
+    let origin = screen.map_or(pointer, |screen| {
+        popup_origin(pointer, menu.size(), screen.visibleFrame())
+    });
+    menu.popUpMenuPositioningItem_atLocation_inView(None, origin, None);
     handler
         .ivars()
         .get()
         .and_then(|index| actions.get(index).cloned())
+}
+
+fn popup_origin(
+    pointer: objc2_foundation::NSPoint,
+    menu: objc2_foundation::NSSize,
+    visible: objc2_foundation::NSRect,
+) -> objc2_foundation::NSPoint {
+    // Leave room for AppKit's menu padding around the content frame.
+    const INSET: f64 = 8.0;
+    let left = visible.origin.x + INSET;
+    let right = visible.origin.x + visible.size.width - INSET;
+    let bottom = visible.origin.y + INSET;
+    let top = visible.origin.y + visible.size.height - INSET;
+    let y = if pointer.y - menu.height < bottom {
+        pointer.y + menu.height
+    } else {
+        pointer.y
+    };
+    objc2_foundation::NSPoint::new(
+        pointer.x.min(right - menu.width).max(left),
+        y.max(bottom + menu.height).min(top),
+    )
+}
+
+#[cfg(test)]
+#[test]
+fn popup_position_uses_the_usable_bounds_of_the_clicked_display() {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    let visible = NSRect::new(NSPoint::new(-800.0, -400.0), NSSize::new(800.0, 600.0));
+    let menu = NSSize::new(180.0, 240.0);
+    for (pointer, expected) in [
+        ((-550.0, 100.0), (-550.0, 100.0)),
+        ((-550.0, -350.0), (-550.0, -110.0)),
+        ((-30.0, -370.0), (-188.0, -130.0)),
+        ((-550.0, 199.0), (-550.0, 192.0)),
+    ] {
+        let origin = popup_origin(NSPoint::new(pointer.0, pointer.1), menu, visible);
+        assert_eq!(origin, NSPoint::new(expected.0, expected.1));
+    }
 }
 
 #[cfg(not(test))]
@@ -519,9 +568,13 @@ fn popup_items<T: Clone>(
                     use objc2_app_kit::NSEventModifierFlags as Flags;
                     let key = match shortcut.logical_key {
                         Key::ArrowUp => "\u{f700}".into(),
+                        Key::F2 => "\u{f705}".into(),
                         key => key.name().to_ascii_lowercase(),
                     };
-                    let mut modifiers = Flags::Command;
+                    let mut modifiers = Flags::empty();
+                    if shortcut.modifiers.command {
+                        modifiers |= Flags::Command;
+                    }
                     if shortcut.modifiers.shift {
                         modifiers |= Flags::Shift;
                     }

@@ -371,6 +371,9 @@ pub struct BranchPreview {
     pub owner: String,
     pub branch: String,
     pub has_owner: bool,
+    pub destinations: Vec<String>,
+    pub tracking_refs: Vec<String>,
+    upstream: Option<String>,
     pub can_delete_remote: bool,
     config: crate::remote_config::Snapshot,
 }
@@ -384,21 +387,64 @@ pub fn preview_branch(
     let source = refs
         .refs
         .iter()
-        .find(|entry| entry.kind == RefKind::Remote && entry.full_name == full_name)
-        .ok_or("The remote-tracking branch no longer exists. Refresh branches and tags.")?;
+        .find(|entry| entry.kind != RefKind::Tag && entry.full_name == full_name)
+        .ok_or("The selected branch no longer exists. Refresh branches and tags.")?;
     let config = crate::remote_config::load(git, root)?;
-    let (owner, branch) = config
-        .entries
-        .iter()
-        .filter_map(|entry| {
-            let branch = source.name.strip_prefix(&entry.name)?.strip_prefix('/')?;
-            Some((entry.name.as_str(), branch))
-        })
-        .max_by_key(|(name, _)| name.len())
-        .or_else(|| source.name.split_once('/'))
-        .ok_or("The remote-tracking branch has no remote name.")?;
+    let split_remote = |name: &str| {
+        config
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let branch = name.strip_prefix(&entry.name)?.strip_prefix('/')?;
+                Some((entry.name.as_str(), branch))
+            })
+            .max_by_key(|(owner, _)| owner.len())
+            .map(|(owner, branch)| (owner.to_owned(), branch.to_owned()))
+    };
+    let (owner, branch) = if source.kind == RefKind::Local {
+        let output = git::text(git::run(
+            git,
+            root,
+            &[
+                "for-each-ref",
+                "--count=1",
+                "--format=%(upstream:remotename)%00%(upstream:remoteref)",
+                "--",
+                full_name,
+            ],
+        )?)?;
+        output
+            .trim_end_matches('\n')
+            .split_once('\0')
+            .and_then(|(remote, reference)| {
+                reference
+                    .strip_prefix("refs/heads/")
+                    .map(|name| (remote, name))
+            })
+            .filter(|(remote, _)| config.entries.iter().any(|entry| entry.name == *remote))
+            .map(|(remote, name)| (remote.to_owned(), name.to_owned()))
+            .unwrap_or_else(|| {
+                let owner = config
+                    .entries
+                    .iter()
+                    .find(|entry| entry.name == "origin")
+                    .or_else(|| config.entries.first())
+                    .map_or_else(String::new, |entry| entry.name.clone());
+                (owner, source.name.clone())
+            })
+    } else {
+        split_remote(&source.name)
+            .or_else(|| {
+                source
+                    .name
+                    .split_once('/')
+                    .map(|(owner, branch)| (owner.into(), branch.into()))
+            })
+            .ok_or("The remote-tracking branch has no remote name.")?
+    };
     let has_owner = config.entries.iter().any(|entry| entry.name == owner);
-    let can_delete_remote = config.has_standard_branch_fetch(owner)
+    let can_delete_remote = source.kind == RefKind::Remote
+        && config.has_standard_branch_fetch(&owner)
         && !config.entries.iter().any(|entry| {
             entry.name != owner
                 && source
@@ -407,12 +453,31 @@ pub fn preview_branch(
                     .is_some_and(|suffix| suffix.starts_with('/'))
                 && config.has_standard_branch_fetch(&entry.name)
         });
+    let (destinations, tracking_refs) = if source.kind == RefKind::Local {
+        (
+            config
+                .entries
+                .iter()
+                .map(|entry| entry.name.clone())
+                .collect(),
+            refs.refs
+                .iter()
+                .filter(|entry| entry.kind == RefKind::Remote)
+                .map(|entry| entry.full_name.clone())
+                .collect(),
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
     Ok(BranchPreview {
         full_name: full_name.into(),
         oid: source.hash.clone(),
-        owner: owner.into(),
-        branch: branch.into(),
+        owner,
+        branch,
         has_owner,
+        destinations,
+        tracking_refs,
+        upstream: source.upstream.clone(),
         can_delete_remote,
         config,
     })
@@ -425,13 +490,24 @@ pub fn push_branch(
     custom_ref: Option<&str>,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
+    push_branch_to(git, root, expected, &expected.owner, custom_ref, cancel)
+}
+
+pub fn push_branch_to(
+    git: &GitContext,
+    root: &Path,
+    expected: &BranchPreview,
+    remote: &str,
+    custom_ref: Option<&str>,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
     if preview_branch(git, root, &expected.full_name)? != *expected {
         return Err(
             "The branch or remote configuration changed. Reload details and review the push again."
                 .into(),
         );
     }
-    let (endpoint, config) = crate::remote_config::push_endpoint(git, root, &expected.owner)?;
+    let (endpoint, config) = crate::remote_config::push_endpoint(git, root, remote)?;
     if config != expected.config {
         return Err(
             "The remote configuration changed. Reload details and review the push again.".into(),
@@ -440,7 +516,8 @@ pub fn push_branch(
     let destination = match custom_ref {
         Some(name) if name.starts_with("refs/") => name.to_owned(),
         Some(name) => format!("refs/heads/{name}"),
-        None => format!("refs/heads/{}", expected.branch),
+        None if remote == expected.owner => format!("refs/heads/{}", expected.branch),
+        None => expected.full_name.clone(),
     };
     git::run(git, root, &["check-ref-format", &destination])
         .map_err(|_| "Enter a valid Git ref for the push destination.".to_owned())?;
@@ -464,6 +541,36 @@ pub fn push_branch(
     .map(|_| ())
 }
 
+pub fn update_branch_tracking(
+    git: &GitContext,
+    root: &Path,
+    expected: &BranchPreview,
+    upstream: Option<&str>,
+) -> Result<(), String> {
+    let branch = expected
+        .full_name
+        .strip_prefix("refs/heads/")
+        .ok_or("Select a local branch to change tracking.")?;
+    if preview_branch(git, root, &expected.full_name)? != *expected {
+        return Err(
+            "Branches or remote configuration changed. Reload details and review again.".into(),
+        );
+    }
+    let option = if let Some(upstream) = upstream {
+        if !expected
+            .tracking_refs
+            .iter()
+            .any(|reference| reference == upstream)
+        {
+            return Err("Select a remote-tracking branch.".into());
+        }
+        format!("--set-upstream-to={upstream}")
+    } else {
+        "--unset-upstream".into()
+    };
+    git::run(git, root, &["branch", &option, "--", branch]).map(|_| ())
+}
+
 pub fn delete_branch(
     git: &GitContext,
     root: &Path,
@@ -471,6 +578,9 @@ pub fn delete_branch(
     also_remote: bool,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
+    if !expected.full_name.starts_with("refs/remotes/") {
+        return Err("Select a remote-tracking branch to delete.".into());
+    }
     if preview_branch(git, root, &expected.full_name)? != *expected {
         return Err("The branch or remote configuration changed. Reload details and review the deletion again.".into());
     }

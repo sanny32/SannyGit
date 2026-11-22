@@ -2012,6 +2012,9 @@ impl SannyGitApp {
                         | "Tag pushed"
                         | "Remote branch pushed"
                         | "Remote branch deleted"
+                        | "Local branch pushed"
+                        | "Branch tracking updated"
+                        | "Branch tracking stopped"
                         | "Reset complete"
                         | "Remote configuration updated"
                 );
@@ -2216,6 +2219,9 @@ impl SannyGitApp {
                     | "Tag pushed"
                     | "Remote branch pushed"
                     | "Remote branch deleted"
+                    | "Local branch pushed"
+                    | "Branch tracking updated"
+                    | "Branch tracking stopped"
                     | "Remote configuration updated"
                     | "Branch switched"
                     | "Branch renamed"
@@ -2324,7 +2330,7 @@ impl eframe::App for SannyGitApp {
         }
         #[cfg(not(target_os = "macos"))]
         self.handle_shortcuts(ui.ctx());
-        ui::handle_remote_branch_shortcuts(ui.ctx(), self);
+        ui::handle_branch_shortcuts(ui.ctx(), self);
         ui::show(ui, self);
         self.load_ref_pending();
         self.load_pending_stashes();

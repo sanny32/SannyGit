@@ -122,15 +122,17 @@ fn load(
     let (tag, history) = if let Some(full_name) = tag {
         let tag = refs
             .iter()
-            .find(|entry| entry.kind == RefKind::Tag && entry.full_name == full_name)
-            .ok_or("The selected tag no longer exists. Refresh branches and tags.")?;
+            .find(|entry| {
+                entry.full_name == full_name && matches!(entry.kind, RefKind::Tag | RefKind::Local)
+            })
+            .ok_or("The selected reference no longer exists. Refresh branches and tags.")?;
         let revision = format!("{}^{{commit}}", tag.hash);
         let output = crate::git::run(
             git,
             root,
             &["rev-parse", "--verify", "--end-of-options", &revision],
         )
-        .map_err(|error| format!("Could not resolve tag '{}' to a commit.\n{error}", tag.name))?;
+        .map_err(|error| format!("Could not resolve '{}' to a commit.\n{error}", tag.name))?;
         let commit = crate::git::text(output)?.trim().to_owned();
         let already_merged = crate::git::is_ancestor(git, root, &commit, &head)?;
         let fast_forward = !already_merged && crate::git::is_ancestor(git, root, &head, &commit)?;
@@ -213,6 +215,10 @@ impl SannyGitApp {
 
     pub fn open_merge_tag(&mut self, tag: String) {
         self.open_commit_picker(Operation::Merge, Some(tag));
+    }
+
+    pub fn open_fast_forward_branch(&mut self, reference: String) {
+        self.open_commit_picker(Operation::Merge, Some(reference));
     }
 
     pub fn open_rebase(&mut self) {
@@ -331,6 +337,13 @@ impl SannyGitApp {
         let Some(snapshot) = &dialog.snapshot else {
             return;
         };
+        let fast_forward_branch = dialog
+            .tag
+            .as_ref()
+            .is_some_and(|reference| reference.starts_with("refs/heads/"));
+        if fast_forward_branch && mode != Some(merge::Mode::FastForward) {
+            return;
+        }
         let target = if let Some(tag) = &snapshot.tag {
             (!tag.already_merged && (mode != Some(merge::Mode::FastForward) || tag.fast_forward))
                 .then_some(&tag.commit)
@@ -380,6 +393,9 @@ impl SannyGitApp {
                 snapshot,
             }
         }) {
+            if fast_forward_branch {
+                self.merge_dialog = None;
+            }
             self.status = if operation == Operation::Rebase {
                 "Rebasing…"
             } else {
