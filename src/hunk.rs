@@ -78,13 +78,12 @@ fn apply_patch(
     edit: DiffEdit,
     patch: &str,
 ) -> Result<(), String> {
-    let mut patch = patch.to_owned();
-    if patch.contains("new file mode 100644") {
-        #[cfg(unix)]
-        if executable(root, path) {
-            patch = patch.replacen("new file mode 100644", "new file mode 100755", 1);
-        }
-    }
+    // `git diff` reports a new file as mode 100644. Keep an executable worktree bit.
+    let patch = if patch.contains("new file mode 100644") && executable(root, path) {
+        patch.replacen("new file mode 100644", "new file mode 100755", 1)
+    } else {
+        patch.to_owned()
+    };
     let mut args = vec!["apply", "--whitespace=nowarn"];
     if edit != DiffEdit::Stage {
         args.push("--reverse");
