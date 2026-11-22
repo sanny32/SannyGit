@@ -18,6 +18,7 @@ pub(super) struct Update {
     path: String,
     snapshot: Result<git::Snapshot, String>,
     diff: Option<FileDiff>,
+    ignored: Vec<crate::models::ChangeFile>,
 }
 
 struct FileDiff {
@@ -26,21 +27,42 @@ struct FileDiff {
 }
 
 impl Update {
-    pub(super) fn read(git: &GitContext, path: String, selected: Option<String>) -> Self {
+    pub(super) fn read(
+        git: &GitContext,
+        path: String,
+        selected: Option<String>,
+        ignore_whitespace: bool,
+        show_ignored: bool,
+    ) -> Self {
         let snapshot = git::load(git, Path::new(&path));
+        let ignored = if show_ignored && snapshot.is_ok() {
+            git::ignored_changes(git, Path::new(&path))
+        } else {
+            Ok(Vec::new())
+        };
+        let (snapshot, ignored) = match (snapshot, ignored) {
+            (Ok(snapshot), Ok(ignored)) => (Ok(snapshot), ignored),
+            (Err(error), _) | (Ok(_), Err(error)) => (Err(error), Vec::new()),
+        };
         let diff = snapshot.as_ref().ok().and_then(|snapshot| {
             let change = snapshot
                 .changes
                 .iter()
-                .find(|change| Some(&change.path) == selected.as_ref())?;
+                .find(|change| Some(&change.path) == selected.as_ref())
+                .or_else(|| {
+                    ignored
+                        .iter()
+                        .find(|change| Some(&change.path) == selected.as_ref())
+                })?;
             Some(FileDiff {
                 path: change.path.clone(),
-                result: git::diff(
+                result: git::file_diff(
                     git,
                     Path::new(&path),
                     &change.path,
                     change.kind,
                     change.original_path.as_deref(),
+                    ignore_whitespace,
                 )
                 .map(|patch| {
                     let preview = DiffPreview::new(&patch);
@@ -52,6 +74,7 @@ impl Update {
             path,
             snapshot,
             diff,
+            ignored,
         }
     }
 }
@@ -80,6 +103,10 @@ impl Monitor {
         self.next_read = Instant::now() + CHECK_INTERVAL;
         self.refresh_requested = false;
     }
+
+    pub(super) fn read_soon(&mut self) {
+        self.next_read = Instant::now();
+    }
 }
 
 impl SannyGitApp {
@@ -92,6 +119,13 @@ impl SannyGitApp {
             self.loaded_diff = Some(index);
             match result {
                 Ok((diff, preview)) => {
+                    let changed = self
+                        .changes
+                        .get(index)
+                        .is_some_and(|change| change.diff != diff);
+                    if changed {
+                        self.diff_line_selection.clear();
+                    }
                     self.diff_preview = Some(preview);
                     if let Some(change) = self.changes.get_mut(index) {
                         change.diff = diff;
@@ -138,11 +172,19 @@ impl SannyGitApp {
         let (sender, receiver) = mpsc::channel();
         self.working_tree.next_read = Instant::now() + CHECK_INTERVAL;
         let git_context = crate::git::GitContext::new(self.preferences.git_executable.clone());
+        let ignore_whitespace = self.preferences.diff_ignore_whitespace;
+        let show_ignored = self.preferences.show_ignored_files;
         match std::thread::Builder::new()
             .name("sannygit-working-tree".into())
             .spawn(move || {
                 let git = &git_context;
-                let _ = sender.send(Update::read(git, path, selected));
+                let _ = sender.send(Update::read(
+                    git,
+                    path,
+                    selected,
+                    ignore_whitespace,
+                    show_ignored,
+                ));
                 context.request_repaint();
             }) {
             Ok(_) => self.working_tree.receiver = Some(receiver),
@@ -193,8 +235,18 @@ impl SannyGitApp {
         {
             return;
         }
-        let snapshot = match update.snapshot {
-            Ok(snapshot) => snapshot,
+        let show_ignored = self.preferences.show_ignored_files;
+        let Update {
+            snapshot,
+            diff,
+            ignored,
+            ..
+        } = update;
+        let snapshot = match snapshot {
+            Ok(mut snapshot) => {
+                attach_ignored(&mut snapshot, ignored, show_ignored);
+                snapshot
+            }
             Err(error) => {
                 self.working_tree_error(error, refresh_requested);
                 return;
@@ -205,7 +257,7 @@ impl SannyGitApp {
         }
         self.working_tree.error = None;
         self.apply_working_tree_snapshot(snapshot);
-        if let Some(diff) = update.diff {
+        if let Some(diff) = diff {
             if let Err(error) = self.apply_working_tree_diff(diff) {
                 self.working_tree_error(error, refresh_requested);
             }
@@ -232,14 +284,25 @@ impl SannyGitApp {
         staged: bool,
         outcome: Result<(), String>,
     ) {
+        let show_ignored = self.preferences.show_ignored_files;
+        let Update {
+            path,
+            snapshot,
+            diff,
+            ignored,
+        } = update;
         if !self
             .repositories
             .get(self.selected_repository)
-            .is_some_and(|r| crate::repository::same_path(&r.path, &update.path))
+            .is_some_and(|r| crate::repository::same_path(&r.path, &path))
         {
             return;
         }
         self.working_tree.invalidate();
+        let snapshot = snapshot.map(|mut snapshot| {
+            attach_ignored(&mut snapshot, ignored, show_ignored);
+            snapshot
+        });
         let success = if staged {
             "File staged"
         } else {
@@ -248,7 +311,7 @@ impl SannyGitApp {
         if outcome.is_ok() && staged && self.preferences.staged_only_after_staging {
             self.commit.contents = git::CommitContents::Staged;
         }
-        let refresh_error = match update.snapshot {
+        let refresh_error = match snapshot {
             Ok(snapshot) => {
                 self.apply_working_tree_snapshot(snapshot);
                 None
@@ -274,7 +337,7 @@ impl SannyGitApp {
         if !self.state_current {
             self.status
                 .push_str("; refresh required before further operations");
-        } else if let Some(diff) = update.diff {
+        } else if let Some(diff) = diff {
             if let Err(error) = self.apply_working_tree_diff(diff) {
                 let refresh = format!("Could not refresh diff: {error}");
                 self.error = Some(match self.error.take() {
@@ -336,24 +399,82 @@ impl SannyGitApp {
     }
 
     fn apply_working_tree_diff(&mut self, diff: FileDiff) -> Result<(), String> {
-        if let Some(change) = self
+        let active = self.selection.active;
+        if !self
             .changes
-            .get_mut(self.selection.active)
-            .filter(|c| c.path == diff.path)
+            .get(active)
+            .is_some_and(|change| change.path == diff.path)
         {
-            match diff.result {
-                Ok((patch, preview)) => {
-                    if change.diff != patch || self.diff_preview.is_none() {
-                        self.diff_preview = Some(preview);
-                    }
-                    change.diff = patch;
-                    self.loaded_diff = Some(self.selection.active);
-                    self.diff_refresh_pending = false;
+            return Ok(());
+        }
+        match diff.result {
+            Ok((patch, preview)) => {
+                if self.changes[active].diff != patch {
+                    self.diff_line_selection.clear();
                 }
-                Err(error) => return Err(error),
+                if self.changes[active].diff != patch || self.diff_preview.is_none() {
+                    self.diff_preview = Some(preview);
+                }
+                self.changes[active].diff = patch;
+                self.loaded_diff = Some(active);
+                self.diff_refresh_pending = false;
             }
+            Err(error) => return Err(error),
         }
         Ok(())
+    }
+
+    pub fn set_show_ignored_files(&mut self, show: bool) {
+        if self.preferences.show_ignored_files == show {
+            return;
+        }
+        self.preferences.show_ignored_files = show;
+        if show {
+            self.working_tree.read_soon();
+            return;
+        }
+        let selected = self
+            .changes
+            .get(self.selection.active)
+            .map(|change| change.path.clone());
+        self.changes
+            .retain(|change| change.kind != crate::models::ChangeKind::Ignored);
+        self.selection.active = selected
+            .as_ref()
+            .and_then(|path| self.changes.iter().position(|change| &change.path == path))
+            .or_else(|| (!self.changes.is_empty()).then_some(0))
+            .unwrap_or(usize::MAX);
+        self.retain_change_selection();
+        if self
+            .changes
+            .get(self.selection.active)
+            .map(|change| &change.path)
+            != selected.as_ref()
+        {
+            self.loaded_diff = None;
+            self.diff_preview = None;
+            self.diff_line_selection.clear();
+        }
+    }
+}
+
+fn attach_ignored(
+    snapshot: &mut git::Snapshot,
+    ignored: Vec<crate::models::ChangeFile>,
+    show: bool,
+) {
+    if !show {
+        return;
+    }
+    let known: std::collections::BTreeSet<_> = snapshot
+        .changes
+        .iter()
+        .map(|change| change.path.clone())
+        .collect();
+    for change in ignored {
+        if !known.contains(&change.path) {
+            snapshot.changes.push(change);
+        }
     }
 }
 
@@ -460,6 +581,7 @@ mod tests {
                 path: path.clone(),
                 snapshot: Err("Status failed".into()),
                 diff: None,
+                ignored: Vec::new(),
             },
             true,
             Err("Index locked".into()),
@@ -477,6 +599,7 @@ mod tests {
                     path: "file".into(),
                     result: Err("Diff failed".into()),
                 }),
+                ignored: Vec::new(),
             },
             true,
             Ok(()),
@@ -495,7 +618,13 @@ mod tests {
         app.history.history_pending = false;
         repo.git(&["symbolic-ref", "HEAD", "refs/heads/other"]);
         app.apply_index_update(
-            Update::read(&SYSTEM_GIT, app.repositories[0].path.clone(), None),
+            Update::read(
+                &SYSTEM_GIT,
+                app.repositories[0].path.clone(),
+                None,
+                false,
+                false,
+            ),
             true,
             Ok(()),
         );
@@ -631,6 +760,7 @@ mod tests {
                 path: path.clone(),
                 snapshot: Err("Cannot read repository".into()),
                 diff: None,
+                ignored: Vec::new(),
             },
         );
         assert_eq!(app.changes.len(), 1);
@@ -648,6 +778,7 @@ mod tests {
                 path,
                 snapshot: Err("Read failed".into()),
                 diff: None,
+                ignored: Vec::new(),
             },
         );
         refresh(&mut app);
@@ -664,7 +795,7 @@ mod tests {
         app.working_tree.receiver = Some(receiver);
         app.open_repository(path.clone());
         assert!(sender
-            .send(Update::read(&SYSTEM_GIT, path.clone(), None))
+            .send(Update::read(&SYSTEM_GIT, path.clone(), None, false, false))
             .is_err());
         let deadline = Instant::now() + Duration::from_secs(10);
         while app.busy() {
@@ -673,7 +804,10 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         app.selected_repository = usize::MAX;
-        deliver(&mut app, Update::read(&SYSTEM_GIT, path, None));
+        deliver(
+            &mut app,
+            Update::read(&SYSTEM_GIT, path, None, false, false),
+        );
         assert_eq!(app.selected_repository, usize::MAX);
         assert_eq!(app.changes.len(), 1);
     }

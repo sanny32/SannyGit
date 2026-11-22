@@ -39,6 +39,18 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             if !managing {
                 ui.label("Message:");
                 message_editor(ui, &mut dialog.message, !busy);
+                if !dialog.paths.is_empty() {
+                    ui.label("Selected files:");
+                    ScrollArea::vertical()
+                        .id_salt("stash.paths")
+                        .max_height(66.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for path in &dialog.paths {
+                                ui.label(RichText::new(path).monospace());
+                            }
+                        });
+                }
                 if ui.add_enabled(!busy, egui::Checkbox::new(&mut dialog.include_untracked, "Include untracked files")).changed() {
                     dialog.invalidate_preview();
                     dialog.error = None;
@@ -49,7 +61,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     ui.strong("Saved stashes");
                     if ui.add_enabled(!busy, Button::new("Reload list")).clicked() { reload = true; }
                 });
-                ScrollArea::vertical().id_salt("stash.entries").min_scrolled_height(96.0).max_height(96.0).auto_shrink([false, false]).show(ui, |ui| {
+                ScrollArea::vertical().id_salt("stash.entries").min_scrolled_height(88.0).max_height(88.0).auto_shrink([false, false]).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     if dialog.entries.is_empty() {
                         ui.label(if dialog.entries_current { "No saved stashes" } else { "Loading stashes…" });
@@ -62,6 +74,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     }
                     if let Some(selected) = selected {
                         dialog.selected = Some(selected);
+                        dialog.rename_message = dialog.entries[selected].message.clone();
                         dialog.invalidate_preview();
                         dialog.error = None;
                         dialog.status = "Preview the selected stash before applying or deleting it.".into();
@@ -84,6 +97,26 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 ui.scope(|ui| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                     ui.add_enabled(entry_ready, egui::Checkbox::new(&mut dialog.confirm_drop, &confirmation)).help_text(confirmation);
+                });
+                let rename_ready = entry_ready
+                    && !dialog.rename_message.trim().is_empty()
+                    && dialog
+                        .selected_entry()
+                        .is_some_and(|entry| entry.message != dialog.rename_message);
+                ui.horizontal(|ui| {
+                    ui.label("Rename:");
+                    let width = (ui.available_width() - 88.0).max(80.0);
+                    ui.add_enabled(
+                        selected_ready,
+                        crate::ui::controls::singleline(&mut dialog.rename_message).desired_width(width),
+                    );
+                    if ui
+                        .add_enabled(rename_ready, Button::new("Rename"))
+                        .help_text("Store this message on the selected stash")
+                        .clicked()
+                    {
+                        action = Some(Action::Rename);
+                    }
                 });
             }
             if dialog.preview_expanded {

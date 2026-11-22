@@ -12,6 +12,7 @@ pub mod ref_management;
 mod remotes;
 pub mod stash;
 pub use remotes::RemoteDialog;
+pub mod diff_actions;
 mod history;
 mod llm_models;
 mod repositories;
@@ -21,7 +22,7 @@ pub use llm_models::ModelCatalog;
 pub use repositories::{Dialog as RepositoryDialog, Job as RepositoryJob, RepositoryManager};
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -291,6 +292,9 @@ pub struct SannyGitApp {
     working_tree: working_tree::Monitor,
     loaded_diff: Option<usize>,
     pub diff_preview: Option<crate::models::DiffPreview>,
+    pub diff_line_selection: BTreeSet<usize>,
+    pub diff_discard: Option<crate::hunk::Request>,
+    pub rename_dialog: Option<diff_actions::RenamePathDialog>,
     pub state_current: bool,
     pub merging: bool,
 }
@@ -497,6 +501,9 @@ impl SannyGitApp {
             working_tree: working_tree::Monitor::default(),
             loaded_diff: None,
             diff_preview: None,
+            diff_line_selection: BTreeSet::new(),
+            diff_discard: None,
+            rename_dialog: None,
             state_current: false,
             merging: false,
         }
@@ -536,6 +543,8 @@ impl SannyGitApp {
             || (self.network_dialog.is_some() && !self.remote_confirmation_hidden())
             || self.stash_dialog.is_some()
             || self.discard_dialog.is_some()
+            || self.diff_discard.is_some()
+            || self.rename_dialog.is_some()
             || self.ignore_dialog.is_some()
             || self.branches.ref_dialog.is_some()
             || self.merge_dialog.is_some()
@@ -1020,6 +1029,7 @@ impl SannyGitApp {
             self.loaded_diff = None;
             self.diff_preview = None;
             self.diff_refresh_pending = false;
+            self.diff_line_selection.clear();
         }
         self.open_dialog = false;
         if !same_repository {
@@ -1051,6 +1061,8 @@ impl SannyGitApp {
             self.network_dialog = None;
             self.stash_dialog = None;
             self.discard_dialog = None;
+            self.diff_discard = None;
+            self.rename_dialog = None;
             self.ignore_dialog = None;
             self.branches.ref_dialog = None;
             self.merge_dialog = None;
@@ -1073,6 +1085,9 @@ impl SannyGitApp {
             self.with_history_window(|app| app.queue_history_reload());
         }
         self.update_merge_message(snapshot.merging, snapshot.merge_message, same_repository);
+        if self.preferences.show_ignored_files {
+            self.working_tree.read_soon();
+        }
         self.status = if self.changes.is_empty() {
             "Working tree clean"
         } else {
@@ -1620,6 +1635,8 @@ impl SannyGitApp {
             .changes
             .get(self.selection.active)
             .map(|c| c.path.clone());
+        let ignore_whitespace = self.preferences.diff_ignore_whitespace;
+        let show_ignored = self.preferences.show_ignored_files;
         self.start_index_worker(move |git| {
             let outcome = git::set_staged(git, &root, &path, staged);
             WorkerResult::Index {
@@ -1629,6 +1646,8 @@ impl SannyGitApp {
                     git,
                     root.to_string_lossy().into_owned(),
                     selected,
+                    ignore_whitespace,
+                    show_ignored,
                 ),
             }
         });
@@ -2228,13 +2247,29 @@ impl SannyGitApp {
                     | "Branch renamed"
                     | "Branch created"
                     | "Branch created and switched"
+                    | "Hunk staged"
+                    | "Lines staged"
+                    | "Hunk unstaged"
+                    | "Lines unstaged"
+                    | "Hunk discarded"
+                    | "Lines discarded"
+                    | "File renamed"
             )
         {
             self.status = "Loading diff…".into();
         }
+        let ignore_whitespace = self.preferences.diff_ignore_whitespace;
         match self.spawn_reader(Some(context.clone()), move |git| WorkerResult::Diff {
             index,
-            result: git::diff(git, &root, &path, kind, original_path.as_deref()).map(|patch| {
+            result: git::file_diff(
+                git,
+                &root,
+                &path,
+                kind,
+                original_path.as_deref(),
+                ignore_whitespace,
+            )
+            .map(|patch| {
                 let preview = crate::models::DiffPreview::new(&patch);
                 (patch, preview)
             }),
@@ -2289,6 +2324,8 @@ impl eframe::App for SannyGitApp {
             && self.network_dialog.is_none()
             && self.stash_dialog.is_none()
             && self.discard_dialog.is_none()
+            && self.diff_discard.is_none()
+            && self.rename_dialog.is_none()
             && self.ignore_dialog.is_none()
             && self.branches.ref_dialog.is_none()
             && self.merge_dialog.is_none()

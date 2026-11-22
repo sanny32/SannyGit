@@ -717,25 +717,40 @@ pub fn set_staged_paths(
     // Staging needs fresh file states, not repository/branch discovery.
     let status = load_changes(git, root)?;
     let by_path: BTreeMap<_, _> = status.iter().map(|c| (c.path.as_str(), c)).collect();
-    let changes = paths
-        .iter()
-        .map(|path| {
-            by_path.get(path.as_str()).copied().ok_or(
-                "A selected file changed since the last refresh. Refresh and select it again.",
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut changes = Vec::new();
+    let mut ignored = Vec::new();
+    for path in paths {
+        if let Some(change) = by_path.get(path.as_str()).copied() {
+            changes.push(change);
+        } else {
+            ignored.push(path.as_str());
+        }
+    }
+    if !ignored.is_empty() {
+        let ignored_now = ignored_paths(git, root)?;
+        if !staged || ignored.iter().any(|path| !ignored_now.contains(*path)) {
+            return Err(
+                "A selected file changed since the last refresh. Refresh and select it again."
+                    .into(),
+            );
+        }
+    }
     if changes
         .iter()
         .any(|change| change.kind == ChangeKind::Conflicted && !merging)
     {
         return Err("Resolve conflicts outside SannyGit before staging this file.".into());
     }
-    if changes.iter().any(|change| {
-        (staged && !change.unstaged && change.kind != ChangeKind::Conflicted)
-            || (!staged && !change.staged)
-    }) {
+    if !changes.is_empty()
+        && changes.iter().any(|change| {
+            (staged && !change.unstaged && change.kind != ChangeKind::Conflicted)
+                || (!staged && !change.staged)
+        })
+    {
         return Err("The file's staging state has changed. Refresh before retrying.".into());
+    }
+    if changes.is_empty() {
+        return force_add_ignored(git, root, &ignored);
     }
     // --revs-only succeeds with empty output for an unborn HEAD; other command
     // failures must propagate rather than being mistaken for a new repository.
@@ -758,7 +773,112 @@ pub fn set_staged_paths(
             }
         }
     }
+    run(git, root, &args)?;
+    if !ignored.is_empty() {
+        force_add_ignored(git, root, &ignored)?;
+    }
+    Ok(())
+}
+
+fn ignored_paths(git: &GitContext, root: &Path) -> Result<BTreeSet<String>, String> {
+    let bytes = run(
+        git,
+        root,
+        &[
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+        ],
+    )?;
+    if bytes.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    let bytes = bytes
+        .strip_suffix(&[0])
+        .ok_or("Truncated ignored-file list")?;
+    bytes
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            std::str::from_utf8(path)
+                .map(str::to_owned)
+                .map_err(|_| "Non-UTF-8 file names are not supported yet".to_owned())
+        })
+        .collect()
+}
+
+pub fn ignored_changes(git: &GitContext, root: &Path) -> Result<Vec<ChangeFile>, String> {
+    let mut changes = Vec::new();
+    for path in ignored_paths(git, root)? {
+        changes.push(ChangeFile {
+            path,
+            original_path: None,
+            kind: ChangeKind::Ignored,
+            conflict_status: None,
+            staged: false,
+            unstaged: true,
+            diff: String::new(),
+        });
+        if changes.len() > FILE_LIMIT {
+            return Err("Repository exceeds the 5,000 changed-file display limit".into());
+        }
+    }
+    Ok(changes)
+}
+
+fn force_add_ignored(git: &GitContext, root: &Path, paths: &[&str]) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut args = vec!["add", "--force", "--"];
+    args.extend_from_slice(paths);
     run(git, root, &args).map(|_| ())
+}
+
+/// Move or rename one file inside the repository. Tracked files stay tracked.
+pub fn move_path(git: &GitContext, root: &Path, from: &str, to: &str) -> Result<(), String> {
+    if from == to {
+        return Err("Choose a different path.".into());
+    }
+    require_no_operation(git, root)?;
+    let source = crate::discard::safe_path(root, from)?;
+    let destination = crate::discard::safe_path(root, to)?;
+    if destination.symlink_metadata().is_ok() {
+        return Err("The destination already exists.".into());
+    }
+    if let Some(parent) = destination.parent() {
+        match parent.symlink_metadata() {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => return Err("The destination directory is not a normal directory.".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err("Create the destination directory before moving the file.".into());
+            }
+            Err(error) => return Err(format!("Cannot inspect the destination directory: {error}")),
+        }
+    }
+    let status = load_changes(git, root)?;
+    let change = status.iter().find(|change| change.path == from);
+    let ignored = change.is_none() && ignored_paths(git, root)?.contains(from);
+    match change {
+        Some(change) if change.kind == ChangeKind::Conflicted => {
+            Err("Resolve the conflict before renaming this file.".into())
+        }
+        Some(change) if change.kind == ChangeKind::Deleted => {
+            Err("A deleted file has no working copy to rename.".into())
+        }
+        Some(change) if change.kind == ChangeKind::Untracked || ignored => {
+            std::fs::rename(&source, &destination)
+                .map_err(|error| format!("Could not rename {from}: {error}"))
+        }
+        Some(_) => run(git, root, &["mv", "--", from, to]).map(|_| ()),
+        None if ignored => std::fs::rename(&source, &destination)
+            .map_err(|error| format!("Could not rename {from}: {error}")),
+        None => Err(
+            "The selected file changed since the last refresh. Refresh and select it again.".into(),
+        ),
+    }
 }
 
 pub fn validate_message(message: &str) -> Result<(), String> {
@@ -1253,7 +1373,18 @@ pub fn diff(
     kind: ChangeKind,
     original_path: Option<&str>,
 ) -> Result<String, String> {
-    if kind == ChangeKind::Untracked {
+    file_diff(git, root, path, kind, original_path, false)
+}
+
+pub fn file_diff(
+    git: &GitContext,
+    root: &Path,
+    path: &str,
+    kind: ChangeKind,
+    original_path: Option<&str>,
+    ignore_whitespace: bool,
+) -> Result<String, String> {
+    if kind == ChangeKind::Untracked || kind == ChangeKind::Ignored {
         let file = root.join(path);
         if !std::fs::symlink_metadata(&file)
             .map_err(|e| e.to_string())?
@@ -1292,6 +1423,9 @@ pub fn diff(
         "--",
         path,
     ];
+    if ignore_whitespace {
+        index_args.insert(1, "--ignore-space-change");
+    }
     if let Some(source) = original_path {
         index_args.push(source);
     }
@@ -1308,6 +1442,9 @@ pub fn diff(
     } else {
         vec!["diff", "--no-ext-diff", "--no-textconv", "--", path]
     };
+    if ignore_whitespace {
+        worktree_args.insert(1, "--ignore-space-change");
+    }
     if let Some(source) = original_path {
         worktree_args.push(source);
     }

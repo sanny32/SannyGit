@@ -15,6 +15,10 @@ pub struct Entry {
 #[derive(Clone, PartialEq, Eq)]
 pub struct SavePreview {
     pub include_untracked: bool,
+    /// Empty saves the whole working tree. Otherwise only these repository-relative paths.
+    pub paths: Vec<String>,
+    /// Ignored paths need `git stash push --all`. Untracked paths use `--include-untracked`.
+    include_ignored: bool,
     pub patch: String,
     head: String,
     status: Vec<u8>,
@@ -80,6 +84,15 @@ pub fn preview_save(
     root: &Path,
     include_untracked: bool,
 ) -> Result<SavePreview, String> {
+    preview_save_paths(git, root, include_untracked, &[])
+}
+
+pub fn preview_save_paths(
+    git: &GitContext,
+    root: &Path,
+    include_untracked: bool,
+    paths: &[String],
+) -> Result<SavePreview, String> {
     git::require_no_operation(git, root)?;
     let snapshot = git::load(git, root)?;
     if snapshot
@@ -89,10 +102,37 @@ pub fn preview_save(
     {
         return Err("Resolve conflicts outside SannyGit before saving a stash.".into());
     }
-    if !snapshot
-        .changes
-        .iter()
-        .any(|change| include_untracked || change.kind != ChangeKind::Untracked)
+    for path in paths {
+        crate::discard::safe_path(root, path)?;
+    }
+    let selected = |change: &crate::models::ChangeFile| {
+        paths.is_empty() || paths.iter().any(|path| path == &change.path)
+    };
+    let mut include_ignored = false;
+    let mut new_files = Vec::new();
+    if include_untracked {
+        for change in snapshot
+            .changes
+            .iter()
+            .filter(|change| change.kind == ChangeKind::Untracked && selected(change))
+        {
+            new_files.push((change.path.clone(), change.kind));
+        }
+        let missing = paths
+            .iter()
+            .any(|path| !snapshot.changes.iter().any(|change| &change.path == path));
+        if !paths.is_empty() && missing {
+            for change in git::ignored_changes(git, root)? {
+                if selected(&change) {
+                    include_ignored = true;
+                    new_files.push((change.path, change.kind));
+                }
+            }
+        }
+    }
+    if !snapshot.changes.iter().any(|change| {
+        selected(change) && (include_untracked || change.kind != ChangeKind::Untracked)
+    }) && !include_ignored
     {
         return Err("There are no selected changes to stash.".into());
     }
@@ -105,61 +145,28 @@ pub fn preview_save(
         root,
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
     )?;
-    let index = diff(git, root, &["--cached", head.trim(), "--"])?.into_bytes();
+    let path_args: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let mut cached = vec!["--cached", head.trim(), "--"];
+    cached.extend(path_args.iter().copied());
+    let mut worktree = vec!["--"];
+    worktree.extend(path_args.iter().copied());
+    let index = diff(git, root, &cached)?.into_bytes();
     let mut patch = format!(
         "Staged changes\n{}\nUnstaged changes\n{}",
         String::from_utf8_lossy(&index),
-        diff(git, root, &["--"])?
+        diff(git, root, &worktree)?
     );
     let mut untracked = Vec::new();
-    if include_untracked {
-        for change in snapshot
-            .changes
-            .iter()
-            .filter(|change| change.kind == ChangeKind::Untracked)
-        {
-            let file = root.join(&change.path);
-            let metadata = file
-                .symlink_metadata()
-                .map_err(|error| format!("Cannot inspect {}: {error}", change.path))?;
-            let identity = if metadata.file_type().is_symlink() {
-                let target = std::fs::read_link(&file).map_err(|error| {
-                    format!("Cannot read symbolic link {}: {error}", change.path)
-                })?;
-                let target = target
-                    .to_str()
-                    .ok_or("Non-UTF-8 symbolic link targets are not supported")?;
-                [b"link\0".as_slice(), target.as_bytes()].concat()
-            } else if metadata.is_file() {
-                let oid = git::run(
-                    git,
-                    root,
-                    &["hash-object", "--no-filters", "--", &change.path],
-                )?;
-                [b"file\0".as_slice(), &oid].concat()
-            } else {
-                return Err(format!("Unsupported untracked file type: {}", change.path));
-            };
-            #[cfg(unix)]
-            let identity = {
-                use std::os::unix::fs::PermissionsExt;
-                let mut identity = identity;
-                identity.extend_from_slice(&(metadata.permissions().mode() & 0o111).to_le_bytes());
-                identity
-            };
-            patch.push_str(&format!("\nNew file: {}\n", change.path));
-            patch.push_str(&git::diff(git, root, &change.path, change.kind, None)?);
-            untracked.push((change.path.clone(), identity));
-            if patch.len() > PATCH_LIMIT {
-                return Err("Stash preview exceeds the 2 MiB limit".into());
-            }
-        }
+    for (path, kind) in &new_files {
+        append_new_file(git, root, path, *kind, &mut patch, &mut untracked)?;
     }
     if patch.len() > PATCH_LIMIT {
         return Err("Stash preview exceeds the 2 MiB limit".into());
     }
     Ok(SavePreview {
         include_untracked,
+        paths: paths.to_vec(),
+        include_ignored,
         patch,
         head,
         status,
@@ -177,7 +184,7 @@ pub fn save(
     if message.contains('\0') || message.len() > 4_096 {
         return Err("Use a stash message without NUL characters and no larger than 4 KiB.".into());
     }
-    if preview_save(git, root, expected.include_untracked)? != *expected {
+    if preview_save_paths(git, root, expected.include_untracked, &expected.paths)? != *expected {
         return Err("Changes have changed since the preview. Preview again before saving.".into());
     }
     let before = list(git, root)?;
@@ -187,22 +194,149 @@ pub fn save(
         message
     };
     let mut args = vec!["push", "--message", message];
-    if expected.include_untracked {
+    if expected.include_ignored {
+        args.push("--all");
+    } else if expected.include_untracked {
         args.push("--include-untracked");
     }
     args.push("--");
+    let specs: Vec<String> = expected
+        .paths
+        .iter()
+        .map(|path| format!(":(literal){path}"))
+        .collect();
+    for spec in &specs {
+        args.push(spec);
+    }
     git::run_stash(git, root, &args).map_err(|error| format!("Stash save did not complete: {error}. Inspect the stash list and working tree before retrying; some changes may already be stored."))?;
     let after = list(git, root).map_err(|error| format!("Stash save completed, but its entry could not be verified: {error}. Reload before retrying."))?;
     if after.len() != before.len() + 1 || after.get(1..) != Some(before.as_slice()) {
         return Err("Stash save completed, but the stash list changed unexpectedly. Inspect the list and working tree before retrying.".into());
     }
     let remaining = git::load(git, root).map_err(|error| format!("Stash saved, but the working tree could not be checked: {error}. Inspect it before retrying."))?;
-    if remaining
-        .changes
-        .iter()
-        .any(|change| expected.include_untracked || change.kind != ChangeKind::Untracked)
-    {
+    let selected =
+        |path: &str| expected.paths.is_empty() || expected.paths.iter().any(|item| item == path);
+    if remaining.changes.iter().any(|change| {
+        selected(&change.path)
+            && (expected.include_untracked || change.kind != ChangeKind::Untracked)
+    }) {
         return Err("Stash saved, but some selected changes remain in the working tree. Inspect the stash and local files before retrying.".into());
+    }
+    if expected.include_ignored {
+        let ignored = git::ignored_changes(git, root).map_err(|error| {
+            format!("Stash saved, but ignored files could not be checked: {error}. Inspect the working tree before retrying.")
+        })?;
+        if expected
+            .paths
+            .iter()
+            .any(|path| ignored.iter().any(|change| &change.path == path))
+        {
+            return Err("Stash saved, but some selected changes remain in the working tree. Inspect the stash and local files before retrying.".into());
+        }
+    }
+    Ok(())
+}
+
+fn append_new_file(
+    git: &GitContext,
+    root: &Path,
+    path: &str,
+    kind: ChangeKind,
+    patch: &mut String,
+    untracked: &mut Vec<(String, Vec<u8>)>,
+) -> Result<(), String> {
+    let file = root.join(path);
+    let metadata = file
+        .symlink_metadata()
+        .map_err(|error| format!("Cannot inspect {path}: {error}"))?;
+    let identity = if metadata.file_type().is_symlink() {
+        let target = std::fs::read_link(&file)
+            .map_err(|error| format!("Cannot read symbolic link {path}: {error}"))?;
+        let target = target
+            .to_str()
+            .ok_or("Non-UTF-8 symbolic link targets are not supported")?;
+        [b"link\0".as_slice(), target.as_bytes()].concat()
+    } else if metadata.is_file() {
+        let oid = git::run(git, root, &["hash-object", "--no-filters", "--", path])?;
+        [b"file\0".as_slice(), &oid].concat()
+    } else {
+        return Err(format!("Unsupported untracked file type: {path}"));
+    };
+    #[cfg(unix)]
+    let identity = {
+        use std::os::unix::fs::PermissionsExt;
+        let mut identity = identity;
+        identity.extend_from_slice(&(metadata.permissions().mode() & 0o111).to_le_bytes());
+        identity
+    };
+    patch.push_str(&format!("\nNew file: {path}\n"));
+    patch.push_str(&git::diff(git, root, path, kind, None)?);
+    untracked.push((path.to_owned(), identity));
+    if patch.len() > PATCH_LIMIT {
+        return Err("Stash preview exceeds the 2 MiB limit".into());
+    }
+    Ok(())
+}
+
+pub fn rename_entry(
+    git: &GitContext,
+    root: &Path,
+    expected: &[Entry],
+    index: usize,
+    message: &str,
+) -> Result<(), String> {
+    if message.contains('\0') || message.len() > 4_096 || message.trim().is_empty() {
+        return Err("Use a stash message without NUL characters and no larger than 4 KiB.".into());
+    }
+    git::require_no_operation(git, root)?;
+    let entry = check_list(git, root, expected, index)?.clone();
+    if entry.message == message {
+        return Ok(());
+    }
+    git::run(
+        git,
+        root,
+        &["stash", "store", "--message", message, &entry.oid],
+    )
+    .map_err(|error| format!("Could not rename the stash entry: {error}"))?;
+    let stored = list(git, root).map_err(|error| {
+        format!("The stash was copied, but the list could not be read: {error}. Inspect it before retrying.")
+    })?;
+    if stored.first().is_none_or(|item| item.oid != entry.oid) || stored.get(1..) != Some(expected)
+    {
+        return Err(
+            "The stash list changed while renaming. Inspect the list before retrying; a duplicate entry may exist.".into(),
+        );
+    }
+    git::run(
+        git,
+        root,
+        &["stash", "drop", &format!("stash@{{{}}}", index + 1)],
+    )
+    .map_err(|error| {
+        format!("The renamed stash was stored, but the previous entry could not be removed: {error}. Inspect the list before retrying.")
+    })?;
+    let after = list(git, root).map_err(|error| {
+        format!("The stash was renamed, but the list could not be verified: {error}")
+    })?;
+    let mut expected_after = expected.to_vec();
+    expected_after.remove(index);
+    expected_after.insert(
+        0,
+        Entry {
+            oid: entry.oid,
+            message: message.to_owned(),
+        },
+    );
+    if after.len() != expected_after.len()
+        || after.iter().zip(&expected_after).any(|(actual, expected)| {
+            actual.oid != expected.oid
+                || (expected.message == message && !actual.message.contains(message))
+        })
+    {
+        return Err(
+            "The stash was renamed, but the list does not match the review. Inspect it before retrying.".into(),
+        );
     }
     Ok(())
 }

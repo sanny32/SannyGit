@@ -8,6 +8,7 @@ pub enum Action {
     Apply,
     Pop,
     Drop,
+    Rename,
 }
 
 pub struct Dialog {
@@ -19,6 +20,8 @@ pub struct Dialog {
     pub entries_current: bool,
     pub reload_pending: bool,
     pub message: String,
+    pub rename_message: String,
+    pub paths: Vec<String>,
     pub include_untracked: bool,
     pub restore_index: bool,
     pub confirm_drop: bool,
@@ -66,6 +69,38 @@ impl SannyGitApp {
         self.open_stash_dialog(false);
     }
 
+    pub fn stash_selection_allowed(&self) -> bool {
+        let selected = self.selected_change_indices();
+        self.stash_allowed()
+            && !selected.is_empty()
+            && selected
+                .iter()
+                .all(|&index| self.changes[index].kind != crate::models::ChangeKind::Conflicted)
+    }
+
+    pub fn open_stash_selection(&mut self) {
+        if !self.stash_selection_allowed() {
+            return;
+        }
+        let selected = self.selected_change_indices();
+        let paths: Vec<_> = selected
+            .iter()
+            .map(|&index| self.changes[index].path.clone())
+            .collect();
+        let include_untracked = selected.iter().any(|&index| {
+            matches!(
+                self.changes[index].kind,
+                crate::models::ChangeKind::Untracked | crate::models::ChangeKind::Ignored
+            )
+        });
+        self.open_stash_dialog(false);
+        if let Some(dialog) = &mut self.stash_dialog {
+            dialog.paths = paths;
+            dialog.include_untracked = include_untracked;
+            dialog.status = "Preview the selected files before saving.".into();
+        }
+    }
+
     fn open_stash_dialog(&mut self, managing: bool) {
         if !self.stash_allowed() {
             return;
@@ -79,6 +114,8 @@ impl SannyGitApp {
             entries_current: false,
             reload_pending: managing,
             message: String::new(),
+            rename_message: String::new(),
+            paths: Vec::new(),
             include_untracked: false,
             restore_index: true,
             confirm_drop: false,
@@ -148,18 +185,19 @@ impl SannyGitApp {
         }
         let path = dialog.path.clone();
         let include = dialog.include_untracked;
+        let paths = dialog.paths.clone();
         dialog.invalidate_preview();
         dialog.error = None;
         dialog.status = "Loading contents preview…".into();
         self.start_worker(move |git| {
             let root = PathBuf::from(&path);
             let result = if saving {
-                ResultMessage::SavePreview(backend::preview_save(git, &root, include).map(
-                    |prepared| {
+                ResultMessage::SavePreview(
+                    backend::preview_save_paths(git, &root, include, &paths).map(|prepared| {
                         let diff = DiffPreview::new(&prepared.patch);
                         (prepared, diff)
-                    },
-                ))
+                    }),
+                )
             } else if let Some(entry) = entry {
                 let result = backend::preview_entry(git, &root, &entry)
                     .map(|patch| DiffPreview::new(&patch));
@@ -188,6 +226,15 @@ impl SannyGitApp {
             Action::Save if dialog.prepared_save.is_none() => return,
             Action::Apply | Action::Pop | Action::Drop if !entry_ready => return,
             Action::Drop if !dialog.confirm_drop => return,
+            Action::Rename
+                if !entry_ready
+                    || dialog.rename_message.trim().is_empty()
+                    || dialog
+                        .selected_entry()
+                        .is_some_and(|entry| entry.message == dialog.rename_message) =>
+            {
+                return;
+            }
             _ => {}
         }
         let root = PathBuf::from(&dialog.path);
@@ -195,6 +242,7 @@ impl SannyGitApp {
         let entries = dialog.entries.clone();
         let selected = dialog.selected.unwrap_or(usize::MAX);
         let message = dialog.message.clone();
+        let rename_message = dialog.rename_message.clone();
         let restore_index = dialog.restore_index;
         dialog.error = None;
         dialog.status = "Stash operation in progress…".into();
@@ -224,6 +272,10 @@ impl SannyGitApp {
                     backend::drop_entry(git, &root, &entries, selected),
                     "Stash dropped",
                 ),
+                Action::Rename => (
+                    backend::rename_entry(git, &root, &entries, selected, &rename_message),
+                    "Stash renamed",
+                ),
             };
             WorkerResult::Operation {
                 committed: false,
@@ -249,6 +301,10 @@ impl SannyGitApp {
                     dialog.entries = entries;
                     dialog.selected = selected
                         .and_then(|entry| dialog.entries.iter().position(|item| *item == entry));
+                    let message = dialog.selected_entry().map(|entry| entry.message.clone());
+                    if let Some(message) = message {
+                        dialog.rename_message = message;
+                    }
                     dialog.entries_current = true;
                     dialog.status = format!("{} stashes. Apply retains the entry; Pop removes it only after a successful apply.", dialog.entries.len());
                 }
@@ -258,7 +314,10 @@ impl SannyGitApp {
                 }
             },
             ResultMessage::SavePreview(result) => match result {
-                Ok((prepared, diff)) if prepared.include_untracked == dialog.include_untracked => {
+                Ok((prepared, diff))
+                    if prepared.include_untracked == dialog.include_untracked
+                        && prepared.paths == dialog.paths =>
+                {
                     dialog.prepared_save = Some(prepared);
                     dialog.preview = Some(diff);
                     dialog.status = "Preview: local changes to save. Save rechecks these contents before changing files.".into();

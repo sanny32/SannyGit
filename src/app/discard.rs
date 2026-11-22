@@ -36,7 +36,7 @@ impl SannyGitApp {
         } else {
             for index in self.selected_change_indices() {
                 let change = &self.changes[index];
-                if remove && change.kind == ChangeKind::Untracked {
+                if remove && matches!(change.kind, ChangeKind::Untracked | ChangeKind::Ignored) {
                     return Some("Select tracked files to remove");
                 }
                 if change.kind == ChangeKind::Conflicted && !self.merging {
@@ -50,7 +50,7 @@ impl SannyGitApp {
                 if !remove
                     && !self.merging
                     && !change.unstaged
-                    && change.kind != ChangeKind::Untracked
+                    && !matches!(change.kind, ChangeKind::Untracked | ChangeKind::Ignored)
                 {
                     return Some("Only staged changes remain in a selected file; use Unstage separately before discarding");
                 }
@@ -80,7 +80,7 @@ impl SannyGitApp {
                 backend::Action::Remove
             } else if self.merging && (change.staged || change.kind == ChangeKind::Conflicted) {
                 backend::Action::RestoreHead
-            } else if change.kind == ChangeKind::Untracked {
+            } else if matches!(change.kind, ChangeKind::Untracked | ChangeKind::Ignored) {
                 backend::Action::DeleteUntracked
             } else {
                 backend::Action::Restore

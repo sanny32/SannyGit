@@ -146,8 +146,12 @@ impl SannyGitApp {
     }
 
     pub fn select_change(&mut self, index: usize, toggle: bool, extend: bool, visible: &[usize]) {
+        let previous = self.selection.active;
         self.selection
             .select(&self.changes, index, toggle, extend, visible);
+        if self.selection.active != previous {
+            self.diff_line_selection.clear();
+        }
     }
 
     pub(super) fn retain_change_selection(&mut self) {
@@ -269,6 +273,8 @@ impl SannyGitApp {
             .changes
             .get(self.selection.active)
             .map(|c| c.path.clone());
+        let ignore_whitespace = self.preferences.diff_ignore_whitespace;
+        let show_ignored = self.preferences.show_ignored_files;
         self.start_index_worker(move |git| WorkerResult::Index {
             staged,
             outcome: git::set_staged_paths(git, &root, &paths, staged),
@@ -276,6 +282,8 @@ impl SannyGitApp {
                 git,
                 root.to_string_lossy().into_owned(),
                 selected,
+                ignore_whitespace,
+                show_ignored,
             ),
         });
     }

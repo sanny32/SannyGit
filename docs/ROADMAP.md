@@ -164,6 +164,8 @@ This is the largest daily gap with SmartGit's Working Tree.
 - Stash the selection, and rename a stash entry.
 - Move or rename a file inside the repository.
 
+Implemented: hunk and line stage, unstage, and discard; unified and side-by-side diffs with ignore-whitespace; directory grouping, staged or unstaged scope, and ignored files; stash of the selection and stash rename; move or rename inside the repository. Open in Terminal, Blame, Review, Format Patch, and Pull with rebase stay disabled.
+
 Index Editor can stay inside the existing diff panel. A separate three-pane HEAD / Index / working-tree window can wait until line staging is in place.
 
 ### 3. Operations on commits

@@ -5,6 +5,7 @@ pub enum ChangeKind {
     Deleted,
     Renamed,
     Untracked,
+    Ignored,
     Conflicted,
 }
 
@@ -16,6 +17,7 @@ impl ChangeKind {
             Self::Deleted => "D",
             Self::Renamed => "R",
             Self::Untracked => "U",
+            Self::Ignored => "I",
             Self::Conflicted => "C",
         }
     }
@@ -27,6 +29,7 @@ impl ChangeKind {
             Self::Deleted => "Deleted",
             Self::Renamed => "Renamed",
             Self::Untracked => "Untracked",
+            Self::Ignored => "Ignored",
             Self::Conflicted => "Conflicted",
         }
     }

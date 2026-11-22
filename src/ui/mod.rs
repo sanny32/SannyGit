@@ -9,6 +9,7 @@ mod clone_dialog;
 mod commit_panel;
 mod conflict;
 mod controls;
+mod diff_actions;
 mod diff_view;
 mod discard;
 mod ignore;
@@ -165,6 +166,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     repository_dialogs::show(ui, app);
     stash::show(ui.ctx(), app);
     discard::show(ui.ctx(), app);
+    diff_actions::show(ui.ctx(), app);
     ignore::show(ui.ctx(), app);
     ref_management::show(ui.ctx(), app);
     merge::show(ui.ctx(), app);

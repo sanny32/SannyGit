@@ -8,8 +8,10 @@ use egui_extras::syntax_highlighting::{self, CodeTheme};
 use crate::{
     app::SannyGitApp,
     conflict::Action,
+    diff_edit::DiffEdit,
     models::{ChangeKind, DiffLine, DiffLineKind},
 };
+use std::collections::BTreeSet;
 
 use super::controls::icons::{self, Icon};
 
@@ -30,35 +32,46 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if change.kind == ChangeKind::Conflicted {
         conflict_bar(ui, app, index);
     }
-    let change = &app.changes[index];
-    let Some(preview) = app.selected_diff() else {
+    if app.selected_diff().is_none() {
         if app.busy() {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("Loading diff…").color(palette.muted));
             });
         }
         return;
-    };
-    let added = preview.added;
-    let removed = preview.removed;
+    }
+    let path = app.changes[index].path.clone();
+    let conflicted = app.changes[index].kind == ChangeKind::Conflicted;
+    let added = app
+        .selected_diff()
+        .map(|preview| preview.added)
+        .unwrap_or(0);
+    let removed = app
+        .selected_diff()
+        .map(|preview| preview.removed)
+        .unwrap_or(0);
+    let hunk = app.diff_selection_is_hunk();
+    let stage_reason = (!conflicted).then(|| app.diff_edit_blocker(DiffEdit::Stage));
+    let unstage_reason = (!conflicted).then(|| app.diff_edit_blocker(DiffEdit::Unstage));
+    let discard_reason = (!conflicted).then(|| app.diff_edit_blocker(DiffEdit::Discard));
 
-    super::header(ui, 26.0, palette, |ui| {
+    super::header(ui, 52.0, palette, |ui| {
         ui.spacing_mut().interact_size.y = 20.0;
+        ui.spacing_mut().item_spacing.y = 2.0;
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
-                let path_width = (ui.available_width() - 118.0).max(100.0);
+                let wide = ui.available_width() >= 760.0;
+                let path_width = (ui.available_width() - if wide { 460.0 } else { 390.0 }).max(64.0);
                 ui.allocate_ui_with_layout(
                     Vec2::new(path_width, 22.0),
                     Layout::left_to_right(Align::Center),
                     |ui| {
                         ui.set_min_width(path_width);
                         ui.add(
-                            eframe::egui::Label::new(
-                                RichText::new(&change.path).color(palette.muted),
-                            )
-                            .show_tooltip_when_elided(false),
+                            eframe::egui::Label::new(RichText::new(&path).color(palette.muted))
+                                .show_tooltip_when_elided(false),
                         )
-                        .help_text(&change.path);
+                        .help_text(&path);
                     },
                 );
                 ui.label(
@@ -71,15 +84,61 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         .family(crate::theme::semibold_family())
                         .color(palette.removed_text),
                 );
-                icons::unavailable(
-                    ui,
-                    Icon::More,
-                    "Additional diff actions are not implemented yet",
-                );
+                let mut side = app.preferences.diff_side_by_side;
+                let before = side;
+                ui.selectable_value(&mut side, false, "Unified")
+                    .help_text("Show the diff as one column");
+                ui.selectable_value(&mut side, true, "Side by Side")
+                    .help_text("Show old and new lines in two columns");
+                if side != before {
+                    app.preferences.diff_side_by_side = side;
+                }
+                let mut ignore = app.preferences.diff_ignore_whitespace;
+                let whitespace = if wide { "Ignore whitespace" } else { "Whitespace" };
+                if ui
+                    .checkbox(&mut ignore, whitespace)
+                    .help_text("Hide changes that only add or remove whitespace. Line edits stay disabled while this is on.")
+                    .changed()
+                {
+                    app.preferences.diff_ignore_whitespace = ignore;
+                    app.reload_selected_diff();
+                }
             });
+            if !conflicted {
+                ui.horizontal(|ui| {
+                    let noun = if hunk { "Hunk" } else { "Lines" };
+                    for (label, reason, edit) in [
+                        (format!("Stage {noun}"), stage_reason.clone(), DiffEdit::Stage),
+                        (format!("Unstage {noun}"), unstage_reason.clone(), DiffEdit::Unstage),
+                        (format!("Discard {noun}"), discard_reason.clone(), DiffEdit::Discard),
+                    ] {
+                        let enabled = reason.as_ref().is_some_and(Option::is_none);
+                        let help = reason.as_ref().and_then(|reason| reason.as_deref());
+                        let response = ui.add_enabled(enabled, Button::new(label));
+                        let response = if let Some(help) = help {
+                            response.disabled_help_text(help)
+                        } else {
+                            response
+                        };
+                        if response.clicked() {
+                            app.open_diff_edit(edit);
+                        }
+                    }
+                });
+            }
         });
     });
-    render_preview(ui, preview, palette, &change.path);
+    let side_by_side = app.preferences.diff_side_by_side;
+    let selection = app.diff_line_selection.clone();
+    let clicks = {
+        let preview = app.selected_diff().unwrap();
+        if side_by_side {
+            render_side_by_side_with(ui, preview, palette, &path, Some(&selection))
+        } else {
+            render_preview_with(ui, preview, palette, &path, Some(&selection))
+        }
+    };
+    apply_diff_clicks(&mut app.diff_line_selection, clicks);
 }
 
 fn conflict_bar(ui: &mut Ui, app: &mut SannyGitApp, index: usize) {
@@ -219,12 +278,51 @@ fn file_header(ui: &mut Ui, path: &str, palette: crate::theme::Palette) -> bool 
     close
 }
 
+#[derive(Default)]
+struct DiffClicks {
+    lines: Vec<usize>,
+    hunks: Vec<BTreeSet<usize>>,
+}
+
+struct LineClick<'a> {
+    index: usize,
+    selected: bool,
+    clicks: &'a mut DiffClicks,
+    lines: &'a [DiffLine],
+}
+
+fn apply_diff_clicks(selection: &mut BTreeSet<usize>, clicks: DiffClicks) {
+    for index in clicks.lines {
+        if !selection.remove(&index) {
+            selection.insert(index);
+        }
+    }
+    for hunk in clicks.hunks {
+        if *selection == hunk {
+            selection.clear();
+        } else {
+            *selection = hunk;
+        }
+    }
+}
+
 pub fn render_preview(
     ui: &mut Ui,
     preview: &crate::models::DiffPreview,
     palette: crate::theme::Palette,
     id: &str,
 ) {
+    let _ = render_preview_with(ui, preview, palette, id, None);
+}
+
+fn render_preview_with(
+    ui: &mut Ui,
+    preview: &crate::models::DiffPreview,
+    palette: crate::theme::Palette,
+    id: &str,
+    selection: Option<&BTreeSet<usize>>,
+) -> DiffClicks {
+    let mut clicks = DiffClicks::default();
     let code_theme = CodeTheme::from_style(ui.style());
     ui.spacing_mut().item_spacing.y = 0.0;
     ui.spacing_mut().interact_size.y = 18.0;
@@ -239,10 +337,18 @@ pub fn render_preview(
         .show_rows(ui, 18.0, preview.lines.len(), |ui, rows| {
             ui.style_mut().wrap_mode = Some(TextWrapMode::Extend);
             ui.set_min_width(width);
-            for line in &preview.lines[rows] {
-                show_line(ui, line, palette, &code_theme, width, false);
+            for (offset, line) in preview.lines[rows.clone()].iter().enumerate() {
+                let index = rows.start + offset;
+                let click = selection.map(|selected| LineClick {
+                    index,
+                    selected: selected.contains(&index),
+                    clicks: &mut clicks,
+                    lines: &preview.lines,
+                });
+                show_line(ui, line, palette, &code_theme, width, false, click);
             }
         });
+    clicks
 }
 
 pub fn render_side_by_side(
@@ -251,6 +357,17 @@ pub fn render_side_by_side(
     palette: crate::theme::Palette,
     id: &str,
 ) {
+    let _ = render_side_by_side_with(ui, preview, palette, id, None);
+}
+
+fn render_side_by_side_with(
+    ui: &mut Ui,
+    preview: &crate::models::DiffPreview,
+    palette: crate::theme::Palette,
+    id: &str,
+    selection: Option<&BTreeSet<usize>>,
+) -> DiffClicks {
+    let mut clicks = DiffClicks::default();
     ui.spacing_mut().interact_size.y = 18.0;
     ui.spacing_mut().item_spacing = Vec2::ZERO;
     let code_theme = CodeTheme::from_style(ui.style());
@@ -357,6 +474,12 @@ pub fn render_side_by_side(
                                     .layout(Layout::top_down(Align::Min)),
                             );
                             child.set_clip_rect(rect.intersect(ui.clip_rect()));
+                            let click = selection.map(|selected| LineClick {
+                                index,
+                                selected: selected.contains(&index),
+                                clicks: &mut clicks,
+                                lines: &preview.lines,
+                            });
                             show_line(
                                 &mut child,
                                 &preview.lines[index],
@@ -364,6 +487,7 @@ pub fn render_side_by_side(
                                 &code_theme,
                                 code_widths[side],
                                 side == 0,
+                                click,
                             );
                         } else {
                             ui.painter().rect_filled(rect, 0, palette.panel_alt);
@@ -372,6 +496,7 @@ pub fn render_side_by_side(
                 });
             }
         });
+    clicks
 }
 fn show_line(
     ui: &mut Ui,
@@ -380,6 +505,7 @@ fn show_line(
     code_theme: &CodeTheme,
     width: f32,
     old_side: bool,
+    click: Option<LineClick<'_>>,
 ) {
     let fill = match line.kind {
         DiffLineKind::Added => palette.added_background,
@@ -399,9 +525,24 @@ fn show_line(
         _ => " ",
     };
 
-    Frame::new()
-        .fill(fill)
-        .inner_margin(Margin::symmetric(4, 0))
+    let selectable = click.is_some()
+        && matches!(
+            line.kind,
+            DiffLineKind::Added | DiffLineKind::Removed | DiffLineKind::Hunk
+        );
+    let selected = selectable && click.as_ref().is_some_and(|click| click.selected);
+    let line_index = click.as_ref().map(|click| click.index);
+    let mut frame = Frame::new()
+        .fill(if selected {
+            palette.accent.gamma_multiply(0.16)
+        } else {
+            fill
+        })
+        .inner_margin(Margin::symmetric(4, 0));
+    if selected {
+        frame = frame.stroke(eframe::egui::Stroke::new(1.0, palette.accent));
+    }
+    let response = frame
         .show(ui, |ui| {
             ui.set_min_width(width - 8.0);
             ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -462,7 +603,29 @@ fn show_line(
                     );
                 }
             });
-        });
+        })
+        .response;
+    let response = if selectable {
+        ui.interact(
+            response.rect,
+            ui.scope_id().with(("diff.line", line_index, old_side)),
+            eframe::egui::Sense::click(),
+        )
+    } else {
+        response
+    };
+    if let Some(click) = click {
+        if selectable && response.clicked() {
+            if line.kind == DiffLineKind::Hunk {
+                click
+                    .clicks
+                    .hunks
+                    .push(crate::diff_edit::hunk_changes(click.lines, click.index));
+            } else {
+                click.clicks.lines.push(click.index);
+            }
+        }
+    }
 }
 
 fn file_name(path: &str) -> &str {

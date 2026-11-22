@@ -214,7 +214,14 @@ pub(crate) fn prepare_action(
         .iter()
         .filter(|change| change.path == path)
         .collect();
-    if changes.is_empty() {
+    let ignored = if changes.is_empty() {
+        crate::git::ignored_changes(git, root)?
+            .into_iter()
+            .any(|change| change.path == path)
+    } else {
+        false
+    };
+    if changes.is_empty() && !ignored {
         return Err("This file no longer has changes. Refresh before retrying.".into());
     }
     if !merging
@@ -248,10 +255,11 @@ pub(crate) fn prepare_action(
             );
         }
         Action::RestoreHead
-    } else if index.is_empty()
-        && changes
-            .iter()
-            .any(|change| change.kind == ChangeKind::Untracked)
+    } else if ignored
+        || (index.is_empty()
+            && changes
+                .iter()
+                .any(|change| change.kind == ChangeKind::Untracked))
     {
         Action::DeleteUntracked
     } else if !index.is_empty() && changes.iter().any(|change| change.unstaged) {

@@ -74,6 +74,14 @@ impl TimeFormat {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChangesScope {
+    #[default]
+    All,
+    Staged,
+    Unstaged,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
@@ -88,6 +96,11 @@ pub struct Preferences {
     pub verbose_dates: bool,
     pub skip_sync_confirmation: bool,
     pub log_level: crate::logging::Level,
+    pub changes_group_directories: bool,
+    pub changes_scope: ChangesScope,
+    pub show_ignored_files: bool,
+    pub diff_side_by_side: bool,
+    pub diff_ignore_whitespace: bool,
 }
 
 impl Default for Preferences {
@@ -104,6 +117,11 @@ impl Default for Preferences {
             verbose_dates: false,
             skip_sync_confirmation: false,
             log_level: crate::logging::Level::default(),
+            changes_group_directories: false,
+            changes_scope: ChangesScope::All,
+            show_ignored_files: false,
+            diff_side_by_side: false,
+            diff_ignore_whitespace: false,
         }
     }
 }

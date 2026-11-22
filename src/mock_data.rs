@@ -349,6 +349,8 @@ pub fn stash_dialog() -> crate::app::stash::Dialog {
         entries_current: true,
         reload_pending: false,
         message: String::new(),
+        rename_message: String::new(),
+        paths: Vec::new(),
         include_untracked: false,
         restore_index: true,
         confirm_drop: false,

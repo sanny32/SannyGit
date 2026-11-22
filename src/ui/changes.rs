@@ -18,21 +18,23 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     ui.spacing_mut().item_spacing.y = 0.0;
     let tight = ui.available_width() < FILTER_WIDTH + 150.0;
     let filter_height = if tight { 50.0 } else { 30.0 };
+    let mut view_action = None;
     super::header(ui, filter_height, palette, |ui| {
         if tight {
             ui.vertical(|ui| {
                 ui.add_space(3.0);
-                changes_title(ui, app.changes.len());
+                ui.horizontal(|ui| {
+                    changes_title(ui, app.changes.len());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        view_action = changes_view_button(ui, app);
+                    });
+                });
                 ui.horizontal(|ui| filters(ui, app, palette));
             });
         } else {
             changes_title(ui, app.changes.len());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                icons::unavailable(
-                    ui,
-                    Icon::List,
-                    "Additional view options are not implemented yet",
-                );
+                view_action = changes_view_button(ui, app);
                 ui.add_space(4.0);
                 ui.allocate_ui_with_layout(
                     Vec2::new(FILTER_WIDTH, 22.0),
@@ -42,6 +44,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             });
         }
     });
+    if let Some(action) = view_action {
+        apply_view_action(app, action);
+    }
     if app.merging {
         let banner_palette = Palette {
             header: palette.warning_background,
@@ -80,7 +85,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .changes
         .iter()
         .enumerate()
-        .filter(|(_, change)| filter_matches(app.change_filter, change.kind))
+        .filter(|(_, change)| row_visible(app, change))
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     if let Some(ascending) = status_sort {
@@ -112,6 +117,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .data(|data| data.get_temp::<bool>(focus_id))
         .unwrap_or(false);
     let reveal = keyboard_selection(ui, app, &visible, focused && !ui.ctx().text_edit_focused());
+    let table_rows = change_rows(app, &visible);
     if (focused || ui.rect_contains_pointer(ui.max_rect()))
         && !ui.ctx().text_edit_focused()
         && ui.input_mut(|input| {
@@ -149,7 +155,14 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .column(Column::exact(status_width))
         .min_scrolled_height(0.0);
     if let Some(position) = reveal {
-        table = table.scroll_to_row(position, None);
+        if let Some(file) = visible.get(position) {
+            if let Some(row) = table_rows
+                .iter()
+                .position(|row| matches!(row, ChangeRow::File(index) if index == file))
+            {
+                table = table.scroll_to_row(row, None);
+            }
+        }
     }
     table
         .header(24.0, |mut header| {
@@ -179,8 +192,53 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         })
         .body(|mut body| {
             body.ui_mut().style_mut().interaction.selectable_labels = false;
-            body.rows(row_height, visible.len(), |mut row| {
-                let index = visible[row.index()];
+            body.rows(row_height, table_rows.len(), |mut row| {
+                if let ChangeRow::Directory { label, files } = &table_rows[row.index()] {
+                    let files = files.clone();
+                    let label = label.clone();
+                    row.set_selected(false);
+                    let mut row_rect = Rect::NOTHING;
+                    row.col(|ui| {
+                        row_rect = ui.max_rect();
+                        ui.add_space(6.0);
+                    });
+                    row.col(|ui| {
+                        icons::paint(ui, Icon::Folder, palette.muted, 16.0);
+                        ui.add_space(4.0);
+                        ui.add(
+                            eframe::egui::Label::new(
+                                RichText::new(label).family(semibold_family()).color(palette.text),
+                            )
+                            .truncate(),
+                        );
+                    });
+                    row.col(|ui| {
+                        row_rect = row_rect.union(ui.max_rect());
+                    });
+                    let response = row.response();
+                    ui_line(&response, row_rect, table_clip, palette);
+                    if response.clicked() && !click_handled {
+                        app.selection.paths = files
+                            .iter()
+                            .map(|&index| app.changes[index].path.clone())
+                            .collect();
+                        app.selection.active = files.first().copied().unwrap_or(usize::MAX);
+                        app.selection.anchor = app
+                            .changes
+                            .get(app.selection.active)
+                            .map(|change| change.path.clone());
+                        app.diff_line_selection.clear();
+                        response.ctx.data_mut(|data| data.insert_temp(focus_id, true));
+                        response
+                            .ctx
+                            .data_mut(|data| data.insert_temp(click_id, frame));
+                        click_handled = true;
+                    }
+                    return;
+                }
+                let ChangeRow::File(index) = table_rows[row.index()] else {
+                    return;
+                };
                 let change = &app.changes[index];
                 let conflicted = change.kind == ChangeKind::Conflicted;
                 let toggle_staged = !change.staged;
@@ -228,6 +286,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     let fill = match change.kind {
                         ChangeKind::Modified | ChangeKind::Renamed => palette.modified_background,
                         ChangeKind::Added | ChangeKind::Untracked => palette.status_added,
+                        ChangeKind::Ignored => palette.border,
                         ChangeKind::Deleted | ChangeKind::Conflicted => palette.status_removed,
                     };
                     let (rect, response) =
@@ -308,6 +367,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             FileAction::Unstage => app.set_selected_staged(false),
             FileAction::Discard => app.open_discard(),
             FileAction::Remove => app.open_remove(),
+            FileAction::StashSelection => app.open_stash_selection(),
+            FileAction::Rename => app.open_rename_dialog(),
             FileAction::Conflict(action) => app.open_conflict(index, action),
         }
     }
@@ -384,6 +445,8 @@ enum FileAction {
     Unstage,
     Discard,
     Remove,
+    StashSelection,
+    Rename,
     Conflict(crate::conflict::Action),
 }
 
@@ -496,6 +559,15 @@ fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<F
         .help(
             app.remove_blocker()
                 .unwrap_or("Delete the selected tracked files and stage their removal"),
+        ),
+        E::item(
+            "Stash Selection…",
+            app.stash_selection_allowed(),
+            FileAction::StashSelection,
+        )
+        .help("Select files that are not conflicted, then wait until the working tree is current"),
+        E::item("Rename…", app.rename_path_allowed(), FileAction::Rename).help(
+            "Select one file that is not deleted or conflicted, and wait until the working tree is current",
         ),
         E::Separator,
     ]);
@@ -698,29 +770,162 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         }
         if response.clicked() {
             app.change_filter = filter;
-            app.selection.paths.retain(|path| {
-                app.changes
-                    .iter()
-                    .any(|change| &change.path == path && filter_matches(filter, change.kind))
-            });
-            if !app
-                .changes
-                .get(app.selection.active)
-                .is_some_and(|change| filter_matches(filter, change.kind))
-            {
-                app.selection.active = app
-                    .changes
-                    .iter()
-                    .position(|change| {
-                        filter_matches(filter, change.kind)
-                            && (app.selection.paths.is_empty()
-                                || app.selection.paths.contains(&change.path))
-                    })
-                    .unwrap_or(usize::MAX);
-            }
-            app.selection.anchor = None;
+            sync_visible_selection(app);
         }
     }
+}
+
+#[derive(Clone)]
+enum ViewAction {
+    Group,
+    Scope(crate::preferences::ChangesScope),
+    Ignored,
+}
+
+#[derive(Clone)]
+enum ChangeRow {
+    Directory { label: String, files: Vec<usize> },
+    File(usize),
+}
+
+fn changes_view_button(ui: &mut Ui, app: &SannyGitApp) -> Option<ViewAction> {
+    popup_menu::button(ui, Icon::List, "Changes view", || view_menu(app))
+}
+
+fn view_menu(app: &SannyGitApp) -> Vec<popup_menu::Entry<ViewAction>> {
+    use crate::preferences::ChangesScope;
+    use popup_menu::Entry as E;
+    let mark = |on| if on { "✓ " } else { "" };
+    let scope = app.preferences.changes_scope;
+    vec![
+        E::item(
+            format!(
+                "{}Group by Directory",
+                mark(app.preferences.changes_group_directories)
+            ),
+            true,
+            ViewAction::Group,
+        ),
+        E::Separator,
+        E::item(
+            format!("{}Show All", mark(scope == ChangesScope::All)),
+            true,
+            ViewAction::Scope(ChangesScope::All),
+        ),
+        E::item(
+            format!("{}Only Staged", mark(scope == ChangesScope::Staged)),
+            true,
+            ViewAction::Scope(ChangesScope::Staged),
+        ),
+        E::item(
+            format!("{}Only Unstaged", mark(scope == ChangesScope::Unstaged)),
+            true,
+            ViewAction::Scope(ChangesScope::Unstaged),
+        ),
+        E::Separator,
+        E::item(
+            format!(
+                "{}Show Ignored Files",
+                mark(app.preferences.show_ignored_files)
+            ),
+            true,
+            ViewAction::Ignored,
+        ),
+    ]
+}
+
+fn apply_view_action(app: &mut SannyGitApp, action: ViewAction) {
+    match action {
+        ViewAction::Group => {
+            app.preferences.changes_group_directories = !app.preferences.changes_group_directories;
+        }
+        ViewAction::Scope(scope) => {
+            app.preferences.changes_scope = scope;
+            sync_visible_selection(app);
+        }
+        ViewAction::Ignored => app.set_show_ignored_files(!app.preferences.show_ignored_files),
+    }
+}
+
+fn row_visible(app: &SannyGitApp, change: &crate::models::ChangeFile) -> bool {
+    filter_matches(app.change_filter, change.kind)
+        && scope_matches(app.preferences.changes_scope, change)
+}
+
+fn scope_matches(
+    scope: crate::preferences::ChangesScope,
+    change: &crate::models::ChangeFile,
+) -> bool {
+    match scope {
+        crate::preferences::ChangesScope::All => true,
+        crate::preferences::ChangesScope::Staged => change.staged,
+        crate::preferences::ChangesScope::Unstaged => change.unstaged,
+    }
+}
+
+fn sync_visible_selection(app: &mut SannyGitApp) {
+    let previous = app.selection.active;
+    let visible: Vec<String> = app
+        .changes
+        .iter()
+        .filter(|change| row_visible(app, change))
+        .map(|change| change.path.clone())
+        .collect();
+    let active_ok = app
+        .changes
+        .get(app.selection.active)
+        .is_some_and(|change| visible.iter().any(|path| path == &change.path));
+    app.selection
+        .paths
+        .retain(|path| visible.iter().any(|item| item == path));
+    if !active_ok {
+        app.selection.active = app
+            .changes
+            .iter()
+            .position(|change| {
+                visible.iter().any(|path| path == &change.path)
+                    && (app.selection.paths.is_empty()
+                        || app.selection.paths.contains(&change.path))
+            })
+            .unwrap_or(usize::MAX);
+    }
+    app.selection.anchor = None;
+    if app.selection.active != previous {
+        app.diff_line_selection.clear();
+    }
+}
+
+fn directory_key(path: &str) -> String {
+    match path.rfind('/') {
+        Some(index) => path[..index].to_owned(),
+        None => String::new(),
+    }
+}
+
+fn change_rows(app: &SannyGitApp, visible: &[usize]) -> Vec<ChangeRow> {
+    if !app.preferences.changes_group_directories {
+        return visible.iter().copied().map(ChangeRow::File).collect();
+    }
+    let mut groups: std::collections::BTreeMap<String, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for &index in visible {
+        let key = directory_key(&app.changes[index].path);
+        groups.entry(key).or_default().push(index);
+    }
+    let mut rows = Vec::new();
+    for (key, files) in groups {
+        let label = if key.is_empty() {
+            "Repository root".to_owned()
+        } else {
+            key
+        };
+        rows.push(ChangeRow::Directory {
+            label,
+            files: files.clone(),
+        });
+        rows.extend(files.into_iter().map(ChangeRow::File));
+    }
+    rows
 }
 
 fn filter_matches(filter: ChangeFilter, kind: ChangeKind) -> bool {
@@ -735,6 +940,7 @@ fn filter_matches(filter: ChangeFilter, kind: ChangeKind) -> bool {
 fn status_color(kind: ChangeKind, palette: Palette) -> Color32 {
     match kind {
         ChangeKind::Added | ChangeKind::Untracked => palette.added_text,
+        ChangeKind::Ignored => palette.muted,
         ChangeKind::Deleted | ChangeKind::Conflicted => palette.removed_text,
         ChangeKind::Modified | ChangeKind::Renamed => palette.modified,
     }
@@ -1142,9 +1348,12 @@ mod tests {
                     ] {
                         position(&output, label);
                     }
+                    for label in ["Rename…", "Stash Selection…"] {
+                        position(&output, label);
+                    }
                     assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
                         eframe::egui::Shape::Text(text) if matches!(text.galley.job.text.as_str(),
-                            "Rename…" | "Delete…" | "Blame" | "Stash Selection…"))));
+                            "Delete…" | "Blame"))));
                     let pointer = position(&output, action);
                     render(&mut app, vec![Event::PointerMoved(pointer)]);
                     let mut copied = None;
