@@ -92,6 +92,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     );
     let mut requested = branch_requests(app);
     let mut add_tag_requested = false;
+    let repository = app
+        .repositories
+        .get(app.selected_repository)
+        .map(|repository| repository.path.clone())
+        .unwrap_or_default();
     let height = ui.available_height();
     ScrollArea::vertical()
         .id_salt("branches")
@@ -100,17 +105,22 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            for kind in [RefKind::Local, RefKind::Remote, RefKind::Tag] {
-                add_tag_requested |= branch_group(
-                    ui,
-                    &app.branches.entries,
-                    &mut app.branches.selected_branch,
-                    &mut app.branches.selected_ref_group,
-                    kind,
-                    palette,
-                    &mut requested,
-                );
-            }
+            // The open state is stored on the header id. This scope makes that
+            // id include the repository path, so each repository keeps its own
+            // expanded and collapsed groups across switches and restarts.
+            ui.push_id(&repository, |ui| {
+                for kind in [RefKind::Local, RefKind::Remote, RefKind::Tag] {
+                    add_tag_requested |= branch_group(
+                        ui,
+                        &app.branches.entries,
+                        &mut app.branches.selected_branch,
+                        &mut app.branches.selected_ref_group,
+                        kind,
+                        palette,
+                        &mut requested,
+                    );
+                }
+            });
         });
     if let Some(request) = requested.action {
         dispatch_branch_request(ui.ctx(), app, request);
@@ -1729,6 +1739,185 @@ mod tests {
                 )
             };
             assert_eq!(geometry(&render(false)), geometry(&render(true)));
+        }
+    }
+
+    fn branch_ref(name: &str, kind: RefKind) -> BranchRef {
+        let full_name = match kind {
+            RefKind::Local => format!("refs/heads/{name}"),
+            RefKind::Remote => format!("refs/remotes/{name}"),
+            RefKind::Tag => format!("refs/tags/{name}"),
+        };
+        BranchRef {
+            name: name.into(),
+            full_name,
+            hash: "a".repeat(40),
+            tag_subject: None,
+            upstream: None,
+            current: false,
+            kind,
+        }
+    }
+
+    fn painted(output: &eframe::egui::FullOutput, label: &str) -> bool {
+        output.shapes.iter().any(|shape| {
+            let eframe::egui::Shape::Text(text) = &shape.shape else {
+                return false;
+            };
+            let painted = text.galley.text();
+            painted == label
+                || painted
+                    .strip_prefix(label)
+                    .is_some_and(|rest| rest.starts_with(" ("))
+        })
+    }
+
+    fn label_center(output: &eframe::egui::FullOutput, label: &str) -> Pos2 {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                let eframe::egui::Shape::Text(text) = &shape.shape else {
+                    return None;
+                };
+                let painted = text.galley.text();
+                let matches = painted == label
+                    || painted
+                        .strip_prefix(label)
+                        .is_some_and(|rest| rest.starts_with(" ("));
+                matches.then(|| text.galley.rect.translate(text.pos.to_vec2()).center())
+            })
+            .unwrap_or_else(|| panic!("missing {label}"))
+    }
+
+    struct BranchPanel {
+        ctx: Context,
+        app: SannyGitApp,
+        time: f64,
+    }
+
+    impl BranchPanel {
+        fn new(theme: crate::theme::ThemeChoice) -> Self {
+            let ctx = Context::default();
+            crate::theme::install_fonts(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            theme.apply(&ctx);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.repositories = vec![
+                crate::models::Repository {
+                    name: "alpha".into(),
+                    path: "/repos/alpha".into(),
+                },
+                crate::models::Repository {
+                    name: "beta".into(),
+                    path: "/repos/beta".into(),
+                },
+            ];
+            app.selected_repository = 0;
+            app.branches.entries = vec![
+                branch_ref("main", RefKind::Local),
+                branch_ref("origin/main", RefKind::Remote),
+                branch_ref("v1", RefKind::Tag),
+            ];
+            Self {
+                ctx,
+                app,
+                time: 0.0,
+            }
+        }
+
+        fn from_memory(theme: crate::theme::ThemeChoice, memory: eframe::egui::Memory) -> Self {
+            let panel = Self::new(theme);
+            panel.ctx.memory_mut(|stored| *stored = memory);
+            crate::theme::install_fonts(&panel.ctx);
+            egui_extras::install_image_loaders(&panel.ctx);
+            theme.apply(&panel.ctx);
+            panel
+        }
+
+        fn render(&mut self, events: Vec<Event>) -> eframe::egui::FullOutput {
+            self.time += 0.05;
+            let time = self.time;
+            let mut output = self.ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 600.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(260.0);
+                    show(ui, &mut self.app);
+                },
+            );
+            output.textures_delta.clear();
+            output
+        }
+
+        fn settle(&mut self) -> eframe::egui::FullOutput {
+            self.time += 1.0;
+            self.render(Vec::new());
+            self.time += 1.0;
+            self.render(Vec::new())
+        }
+
+        fn click(&mut self, label: &str) {
+            let output = self.render(Vec::new());
+            let pos = label_center(&output, label);
+            self.render(vec![Event::PointerMoved(pos)]);
+            self.render(vec![Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            }]);
+            self.render(vec![Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            }]);
+            self.settle();
+        }
+    }
+
+    fn assert_groups(output: &eframe::egui::FullOutput, local: bool, remote: bool, tags: bool) {
+        assert_eq!(painted(output, "main"), local, "local group: {local}");
+        assert_eq!(
+            painted(output, "origin/main"),
+            remote,
+            "remote group: {remote}"
+        );
+        assert_eq!(painted(output, "v1"), tags, "tag group: {tags}");
+    }
+
+    #[test]
+    fn branch_group_expansion_is_remembered_per_repository() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            let mut panel = BranchPanel::new(theme);
+            assert_groups(&panel.settle(), true, false, false);
+
+            panel.click("Local Branches");
+            panel.click("Remote Branches");
+            panel.click("Tags");
+            assert_groups(&panel.settle(), false, true, true);
+
+            panel.app.selected_repository = 1;
+            assert_groups(&panel.settle(), true, false, false);
+            panel.click("Local Branches");
+            assert_groups(&panel.settle(), false, false, false);
+
+            panel.app.selected_repository = 0;
+            assert_groups(&panel.settle(), false, true, true);
+
+            let memory = crate::test_support::restart_memory(&panel.ctx);
+            let mut restored = BranchPanel::from_memory(theme, memory);
+            assert_groups(&restored.settle(), false, true, true);
+            restored.app.selected_repository = 1;
+            assert_groups(&restored.settle(), false, false, false);
         }
     }
 }
