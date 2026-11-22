@@ -19,6 +19,8 @@ pub(super) struct Update {
     snapshot: Result<git::Snapshot, String>,
     diff: Option<FileDiff>,
     ignored: Vec<crate::models::ChangeFile>,
+    /// Full ref identity when this read sampled refs. `None` skips that comparison.
+    refs: Option<Vec<u8>>,
 }
 
 struct FileDiff {
@@ -33,6 +35,7 @@ impl Update {
         selected: Option<String>,
         ignore_whitespace: bool,
         show_ignored: bool,
+        sample_refs: bool,
     ) -> Self {
         let snapshot = git::load(git, Path::new(&path));
         let ignored = if show_ignored && snapshot.is_ok() {
@@ -70,11 +73,16 @@ impl Update {
                 }),
             })
         });
+        let refs = match &snapshot {
+            Ok(_) if sample_refs => crate::history::ref_identity(git, Path::new(&path)).ok(),
+            _ => None,
+        };
         Self {
             path,
             snapshot,
             diff,
             ignored,
+            refs,
         }
     }
 }
@@ -83,6 +91,8 @@ pub(super) struct Monitor {
     receiver: Option<Receiver<Update>>,
     next_read: Instant,
     refresh_requested: bool,
+    /// Last full ref identity. Not cleared when a read is cancelled.
+    pub(super) refs_token: Option<Vec<u8>>,
     pub(super) error: Option<String>,
 }
 
@@ -92,6 +102,7 @@ impl Default for Monitor {
             receiver: None,
             next_read: Instant::now() + CHECK_INTERVAL,
             refresh_requested: false,
+            refs_token: None,
             error: None,
         }
     }
@@ -184,6 +195,7 @@ impl SannyGitApp {
                     selected,
                     ignore_whitespace,
                     show_ignored,
+                    true,
                 ));
                 context.request_repaint();
             }) {
@@ -240,6 +252,7 @@ impl SannyGitApp {
             snapshot,
             diff,
             ignored,
+            refs,
             ..
         } = update;
         let snapshot = match snapshot {
@@ -256,7 +269,7 @@ impl SannyGitApp {
             self.error = None;
         }
         self.working_tree.error = None;
-        self.apply_working_tree_snapshot(snapshot);
+        let head_moved = self.apply_working_tree_snapshot(snapshot);
         if let Some(diff) = diff {
             if let Err(error) = self.apply_working_tree_diff(diff) {
                 self.working_tree_error(error, refresh_requested);
@@ -270,12 +283,7 @@ impl SannyGitApp {
             }
             .into();
         }
-        if refresh_requested {
-            self.branches.pending = true;
-            self.branches.loading = true;
-            self.branches.error = None;
-            self.queue_history_reload();
-        }
+        self.sync_external_history(head_moved, refresh_requested, refs);
     }
 
     pub(super) fn apply_index_update(
@@ -290,6 +298,7 @@ impl SannyGitApp {
             snapshot,
             diff,
             ignored,
+            refs,
         } = update;
         if !self
             .repositories
@@ -313,7 +322,8 @@ impl SannyGitApp {
         }
         let refresh_error = match snapshot {
             Ok(snapshot) => {
-                self.apply_working_tree_snapshot(snapshot);
+                let head_moved = self.apply_working_tree_snapshot(snapshot);
+                self.sync_external_history(head_moved, false, refs);
                 None
             }
             Err(error) => {
@@ -348,7 +358,9 @@ impl SannyGitApp {
         }
     }
 
-    fn apply_working_tree_snapshot(&mut self, snapshot: git::Snapshot) {
+    /// Returns whether HEAD moved while the branch name stayed the same.
+    /// A branch or repository change already reloads history.
+    fn apply_working_tree_snapshot(&mut self, snapshot: git::Snapshot) -> bool {
         if snapshot.branch != self.branches.current_branch
             || !self
                 .repositories
@@ -356,8 +368,10 @@ impl SannyGitApp {
                 .is_some_and(|r| crate::repository::same_path(&r.path, &snapshot.repository.path))
         {
             self.apply_snapshot(snapshot);
-            return;
+            return false;
         }
+        let head_moved = snapshot.head != self.branches.head_commit;
+        self.branches.head_commit.clone_from(&snapshot.head);
         self.state_current = true;
         let selected = self
             .changes
@@ -395,6 +409,47 @@ impl SannyGitApp {
             self.loaded_diff = None;
             self.diff_preview = None;
             self.diff_refresh_pending = false;
+        }
+        head_moved
+    }
+
+    /// Reload the journal when another program moves HEAD or any ref.
+    /// A matching branch name is not enough: `git commit` keeps `refs/heads/main`.
+    fn sync_external_history(&mut self, head_moved: bool, explicit: bool, refs: Option<Vec<u8>>) {
+        if head_moved {
+            self.tracking.invalidate();
+        }
+        let mut reload_history = explicit || head_moved;
+        let mut reload_branches = explicit || head_moved;
+        let refs = if self.history.history_loading || self.history.history_pending {
+            None
+        } else {
+            refs
+        };
+        if let Some(refs) = refs {
+            if self.working_tree.refs_token.as_deref() != Some(refs.as_slice()) {
+                // The first sample after opening a repository matches the history
+                // already loaded. Later changes are commits made outside this window.
+                let adopt = !explicit
+                    && !head_moved
+                    && self.working_tree.refs_token.is_none()
+                    && (!self.history.history_all_branches || self.history_refs_match(&refs));
+                self.working_tree.refs_token = Some(refs);
+                if !adopt {
+                    reload_branches = true;
+                    if head_moved || self.history.history_all_branches {
+                        reload_history = true;
+                    }
+                }
+            }
+        }
+        if reload_branches {
+            self.branches.pending = true;
+            self.branches.loading = true;
+            self.branches.error = None;
+        }
+        if reload_history {
+            self.queue_history_reload();
         }
     }
 
@@ -582,6 +637,7 @@ mod tests {
                 snapshot: Err("Status failed".into()),
                 diff: None,
                 ignored: Vec::new(),
+                refs: None,
             },
             true,
             Err("Index locked".into()),
@@ -600,6 +656,7 @@ mod tests {
                     result: Err("Diff failed".into()),
                 }),
                 ignored: Vec::new(),
+                refs: None,
             },
             true,
             Ok(()),
@@ -622,6 +679,7 @@ mod tests {
                 &SYSTEM_GIT,
                 app.repositories[0].path.clone(),
                 None,
+                false,
                 false,
                 false,
             ),
@@ -761,6 +819,7 @@ mod tests {
                 snapshot: Err("Cannot read repository".into()),
                 diff: None,
                 ignored: Vec::new(),
+                refs: None,
             },
         );
         assert_eq!(app.changes.len(), 1);
@@ -779,6 +838,7 @@ mod tests {
                 snapshot: Err("Read failed".into()),
                 diff: None,
                 ignored: Vec::new(),
+                refs: None,
             },
         );
         refresh(&mut app);
@@ -795,7 +855,14 @@ mod tests {
         app.working_tree.receiver = Some(receiver);
         app.open_repository(path.clone());
         assert!(sender
-            .send(Update::read(&SYSTEM_GIT, path.clone(), None, false, false))
+            .send(Update::read(
+                &SYSTEM_GIT,
+                path.clone(),
+                None,
+                false,
+                false,
+                false,
+            ))
             .is_err());
         let deadline = Instant::now() + Duration::from_secs(10);
         while app.busy() {
@@ -806,9 +873,99 @@ mod tests {
         app.selected_repository = usize::MAX;
         deliver(
             &mut app,
-            Update::read(&SYSTEM_GIT, path, None, false, false),
+            Update::read(&SYSTEM_GIT, path, None, false, false, false),
         );
         assert_eq!(app.selected_repository, usize::MAX);
         assert_eq!(app.changes.len(), 1);
+    }
+
+    fn idle_history_and_refs(app: &mut SannyGitApp) {
+        app.history.history_pending = false;
+        app.history.history_loading = false;
+        app.branches.pending = false;
+        app.branches.loading = false;
+    }
+
+    #[test]
+    fn external_commit_on_the_same_branch_reloads_history() {
+        let repo = TempRepo::new();
+        repo.write("file", "base\n");
+        repo.git(&["add", "file"]);
+        repo.git(&["commit", "-m", "base"]);
+        let mut app = opened(&repo);
+        app.commit.message = "Keep draft".into();
+        let head = app.branches.head_commit.clone();
+        assert!(!head.is_empty());
+        idle_history_and_refs(&mut app);
+        repo.git(&["commit", "--allow-empty", "-m", "external"]);
+        refresh(&mut app);
+        assert_ne!(app.branches.head_commit, head);
+        assert_eq!(app.branches.current_branch, "main");
+        assert!(app.changes.is_empty());
+        assert_eq!(app.commit.message, "Keep draft");
+        assert!(app.history.history_pending && app.history.history_loading);
+        assert!(app.branches.pending && app.branches.loading);
+    }
+
+    #[test]
+    fn external_file_edits_do_not_reload_history() {
+        let repo = TempRepo::new();
+        repo.write("file", "base\n");
+        repo.git(&["add", "file"]);
+        repo.git(&["commit", "-m", "base"]);
+        let mut app = opened(&repo);
+        idle_history_and_refs(&mut app);
+        let generation = app.history.history_session.generation;
+        repo.write("file", "edited\n");
+        refresh(&mut app);
+        assert_eq!(app.changes.len(), 1);
+        assert!(!app.history.history_pending && !app.history.history_loading);
+        assert!(!app.branches.pending && !app.branches.loading);
+        assert_eq!(app.history.history_session.generation, generation);
+    }
+
+    #[test]
+    fn external_commit_on_another_branch_reloads_all_branch_history() {
+        let repo = TempRepo::new();
+        repo.write("file", "base\n");
+        repo.git(&["add", "file"]);
+        repo.git(&["commit", "-m", "base"]);
+        let mut app = opened(&repo);
+        idle_history_and_refs(&mut app);
+        refresh(&mut app);
+        assert!(!app.history.history_pending && !app.branches.pending);
+        let head = app.branches.head_commit.clone();
+        let tree = repo.git(&["rev-parse", "HEAD^{tree}"]);
+        let parent = repo.git(&["rev-parse", "HEAD"]);
+        let side = repo.git(&[
+            "commit-tree",
+            tree.trim(),
+            "-p",
+            parent.trim(),
+            "-m",
+            "side",
+        ]);
+        repo.git(&["update-ref", "refs/heads/side", side.trim()]);
+        refresh(&mut app);
+        assert_eq!(app.branches.head_commit, head);
+        assert_eq!(app.branches.current_branch, "main");
+        assert!(!app.history.history_pending && !app.history.history_loading);
+        assert!(app.branches.pending && app.branches.loading);
+
+        idle_history_and_refs(&mut app);
+        app.history.history_all_branches = true;
+        let again = repo.git(&[
+            "commit-tree",
+            tree.trim(),
+            "-p",
+            side.trim(),
+            "-m",
+            "side again",
+        ]);
+        repo.git(&["update-ref", "refs/heads/side", again.trim()]);
+        refresh(&mut app);
+        assert_eq!(app.branches.head_commit, head);
+        assert!(app.history.history_pending && app.history.history_loading);
+        assert!(app.branches.pending && app.branches.loading);
     }
 }

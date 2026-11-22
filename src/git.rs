@@ -82,6 +82,8 @@ fn find_executable_in(search_path: &std::ffi::OsStr, current_dir: &Path) -> Opti
 pub struct Snapshot {
     pub repository: Repository,
     pub branch: String,
+    /// Full HEAD commit id. Empty when the branch has no commits yet.
+    pub head: String,
     pub changes: Vec<ChangeFile>,
     pub merging: bool,
     pub merge_message: Option<String>,
@@ -1230,6 +1232,10 @@ pub fn load(git: &GitContext, path: &Path) -> Result<Snapshot, String> {
         ),
         Err(error) => return Err(error.to_string()),
     };
+    // The branch name does not change when another program commits on this branch.
+    let head = text(run(git, &path, &["rev-parse", "--revs-only", "HEAD"])?)?
+        .trim()
+        .to_owned();
     let changes = load_changes(git, &path)?;
     let directory = operation_directory(git, &path)?;
     let merging = directory
@@ -1250,6 +1256,7 @@ pub fn load(git: &GitContext, path: &Path) -> Result<Snapshot, String> {
             path: root.into(),
         },
         branch,
+        head,
         changes,
         merging,
         merge_message,

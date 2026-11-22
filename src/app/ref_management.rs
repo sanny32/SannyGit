@@ -206,6 +206,8 @@ pub struct BranchState {
     pub selected_branch: String,
     pub selected_ref_group: Option<crate::models::RefKind>,
     pub current_branch: String,
+    /// Full HEAD commit id. Empty when the branch has no commits yet.
+    pub(super) head_commit: String,
 }
 
 impl Default for BranchState {
@@ -231,6 +233,7 @@ impl Default for BranchState {
             selected_branch: String::new(),
             selected_ref_group: None,
             current_branch: String::new(),
+            head_commit: String::new(),
         }
     }
 }

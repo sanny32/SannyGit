@@ -284,6 +284,7 @@ impl SannyGitApp {
                 selected,
                 ignore_whitespace,
                 show_ignored,
+                false,
             ),
         });
     }

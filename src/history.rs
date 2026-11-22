@@ -52,6 +52,9 @@ impl Cursor {
     pub fn at_limit(&self) -> bool {
         self.capped && !self.has_more()
     }
+    pub(crate) fn listed_refs(&self) -> &[u8] {
+        &self.basis.refs
+    }
 }
 
 pub struct Page {
@@ -117,6 +120,22 @@ fn basis(
     if !head.is_empty() && !valid_hash(&head) {
         return Err("Invalid history HEAD".into());
     }
+    let refs = list_refs(git, root, all, tag, cancel)?;
+    Ok(Basis {
+        head,
+        refs,
+        shallow: boundary(git, root, "shallow", cancel)?,
+        grafts: boundary(git, root, "info/grafts", cancel)?,
+    })
+}
+
+fn list_refs(
+    git: &GitContext,
+    root: &Path,
+    all: bool,
+    tag: Option<&str>,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, String> {
     let mut args = vec![
         "for-each-ref",
         "--sort=refname",
@@ -136,12 +155,12 @@ fn basis(
     {
         return Err("History exceeds the 5,000-ref snapshot limit".into());
     }
-    Ok(Basis {
-        head,
-        refs,
-        shallow: boundary(git, root, "shallow", cancel)?,
-        grafts: boundary(git, root, "info/grafts", cancel)?,
-    })
+    Ok(refs)
+}
+
+/// Identity of every ref. Automatic refresh compares it with the last history read.
+pub(crate) fn ref_identity(git: &GitContext, root: &Path) -> Result<Vec<u8>, String> {
+    list_refs(git, root, true, None, &AtomicBool::new(false))
 }
 
 fn verify(

@@ -408,6 +408,9 @@ impl SannyGitApp {
         self.history.history_session.cancel = None;
         match result {
             Ok(page) => {
+                if all && self.history.tag.is_none() {
+                    self.working_tree.refs_token = Some(page.cursor.listed_refs().to_vec());
+                }
                 if !append {
                     self.history.history_session.restore =
                         self.history.history_session.anchor.clone();
@@ -434,6 +437,14 @@ impl SannyGitApp {
             }
             Err(error) => self.history.history_error = Some(error),
         }
+    }
+
+    pub(super) fn history_refs_match(&self, refs: &[u8]) -> bool {
+        self.history
+            .history_session
+            .cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.all_branches() && cursor.listed_refs() == refs)
     }
 
     pub(crate) fn remember_history_scroll(&mut self, hash: String, offset: f32) {

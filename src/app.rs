@@ -994,6 +994,7 @@ impl SannyGitApp {
         let same_repository = self.selected_repository == index;
         if !same_repository {
             self.remember_commit_draft();
+            self.working_tree.refs_token = None;
         }
         self.selected_repository = index;
         if !same_repository {
@@ -1004,6 +1005,7 @@ impl SannyGitApp {
             self.assign_group(&path, self.manager.preferences.selected_group.clone());
         }
         self.branches.current_branch = snapshot.branch;
+        self.branches.head_commit = snapshot.head;
         let retained_diff = if same_repository && same_branch && self.selected_diff().is_some() {
             self.changes
                 .get_mut(self.selection.active)
@@ -1648,6 +1650,7 @@ impl SannyGitApp {
                     selected,
                     ignore_whitespace,
                     show_ignored,
+                    false,
                 ),
             }
         });

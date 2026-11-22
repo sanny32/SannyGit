@@ -121,9 +121,9 @@ fn staging_round_trip_command_budget() {
         start.elapsed(),
         counter.get()
     );
-    // Three commands to stage, four to unstage, and four for each UI refresh,
-    // including discovery of the worktree-specific merge marker.
-    assert_eq!(counter.get(), 75);
+    // Three commands to stage, four to unstage, and five for each UI refresh,
+    // including HEAD's commit id and the worktree-specific merge marker.
+    assert_eq!(counter.get(), 85);
     assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"edited\n");
 }
 
