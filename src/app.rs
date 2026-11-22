@@ -399,6 +399,7 @@ impl SannyGitApp {
             .and_then(|storage| eframe::get_value(storage, "sannygit.repository_preferences"))
         {
             app.manager.preferences = preferences;
+            app.apply_bookmark_names();
         }
         if let Some(path) = std::env::var_os("SANNYGIT_OPEN_REPOSITORY") {
             app.open_repository(PathBuf::from(path).to_string_lossy().into_owned());

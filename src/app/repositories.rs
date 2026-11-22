@@ -27,6 +27,9 @@ struct WorktreeAvailability {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dialog {
     Group,
+    RenameGroup,
+    DeleteGroup,
+    RenameRepository,
     Clone,
     Search,
     Worktrees,
@@ -54,6 +57,9 @@ pub struct RepositoryManager {
     pub clone_parent: String,
     pub clone_name: String,
     pub group_name: String,
+    pub group_rename_from: Option<String>,
+    pub bookmark_name: String,
+    pub repository_rename_path: Option<String>,
     pub clone_source: String,
     pub clone_form: crate::clone_source::Form,
     pub destination: String,
@@ -90,6 +96,9 @@ impl Default for RepositoryManager {
             clone_parent: "~".into(),
             clone_name: String::new(),
             group_name: String::new(),
+            group_rename_from: None,
+            bookmark_name: String::new(),
+            repository_rename_path: None,
             clone_source: String::new(),
             clone_form: crate::clone_source::Form::default(),
             destination: String::new(),
@@ -107,6 +116,15 @@ impl Default for RepositoryManager {
             settings: None,
             cancel: None,
         }
+    }
+}
+
+fn bookmark_label(name: &str) -> Result<&str, &'static str> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > 128 || name.chars().any(char::is_control) {
+        Err("Enter a name of 1–128 characters without line breaks.")
+    } else {
+        Ok(name)
     }
 }
 
@@ -581,6 +599,196 @@ impl SannyGitApp {
         self.status = "Group added".into();
     }
 
+    pub fn open_add_group(&mut self) {
+        if self.busy() {
+            return;
+        }
+        self.manager.group_name.clear();
+        self.manager.group_rename_from = None;
+        self.error = None;
+        self.manager.dialog = Some(Dialog::Group);
+    }
+
+    pub fn open_rename_group(&mut self, name: String) {
+        if self.busy()
+            || !self
+                .manager
+                .preferences
+                .groups
+                .iter()
+                .any(|group| group.name == name)
+        {
+            return;
+        }
+        self.manager.group_name = name.clone();
+        self.manager.group_rename_from = Some(name);
+        self.error = None;
+        self.manager.dialog = Some(Dialog::RenameGroup);
+    }
+
+    pub fn confirm_rename_group(&mut self) {
+        if self.busy() || self.manager.dialog != Some(Dialog::RenameGroup) {
+            return;
+        }
+        let Some(from) = self.manager.group_rename_from.clone() else {
+            return;
+        };
+        let name = match bookmark_label(&self.manager.group_name) {
+            Ok(name) => name.to_owned(),
+            Err(error) => {
+                self.error = Some(error.into());
+                return;
+            }
+        };
+        if name != from
+            && self
+                .manager
+                .preferences
+                .groups
+                .iter()
+                .any(|group| group.name == name)
+        {
+            self.error = Some("Enter a unique group name (1–128 bytes).".into());
+            return;
+        }
+        if let Some(group) = self
+            .manager
+            .preferences
+            .groups
+            .iter_mut()
+            .find(|group| group.name == from)
+        {
+            group.name = name.clone();
+        }
+        if self.manager.preferences.selected_group.as_deref() == Some(from.as_str()) {
+            self.manager.preferences.selected_group = Some(name);
+        }
+        self.manager.group_name.clear();
+        self.manager.group_rename_from = None;
+        self.manager.dialog = None;
+        self.error = None;
+        self.status = "Group renamed".into();
+    }
+
+    pub fn open_delete_group(&mut self, name: String) {
+        if self.busy()
+            || !self
+                .manager
+                .preferences
+                .groups
+                .iter()
+                .any(|group| group.name == name)
+        {
+            return;
+        }
+        self.manager.group_rename_from = Some(name);
+        self.error = None;
+        self.manager.dialog = Some(Dialog::DeleteGroup);
+    }
+
+    pub fn confirm_delete_group(&mut self) {
+        if self.busy() || self.manager.dialog != Some(Dialog::DeleteGroup) {
+            return;
+        }
+        let Some(name) = self.manager.group_rename_from.take() else {
+            return;
+        };
+        self.manager
+            .preferences
+            .groups
+            .retain(|group| group.name != name);
+        if self.manager.preferences.selected_group.as_deref() == Some(name.as_str()) {
+            self.manager.preferences.selected_group = None;
+        }
+        self.manager.dialog = None;
+        self.error = None;
+        self.status = "Group deleted".into();
+    }
+
+    pub fn toggle_favorite(&mut self, path: &str) {
+        if !self
+            .repositories
+            .iter()
+            .any(|repository| repository.path == path)
+        {
+            return;
+        }
+        if let Some(index) = self
+            .manager
+            .preferences
+            .favorites
+            .iter()
+            .position(|favorite| favorite == path)
+        {
+            self.manager.preferences.favorites.remove(index);
+            self.status = "Repository unmarked as a favorite".into();
+        } else {
+            self.manager.preferences.favorites.push(path.to_owned());
+            self.status = "Repository marked as a favorite".into();
+        }
+    }
+
+    pub fn open_rename_repository(&mut self, path: String) {
+        if self.busy() {
+            return;
+        }
+        let Some(repository) = self
+            .repositories
+            .iter()
+            .find(|repository| repository.path == path)
+        else {
+            return;
+        };
+        self.manager.bookmark_name = self
+            .manager
+            .preferences
+            .names
+            .get(&path)
+            .cloned()
+            .unwrap_or_else(|| repository.name.clone());
+        self.manager.repository_rename_path = Some(path);
+        self.error = None;
+        self.manager.dialog = Some(Dialog::RenameRepository);
+    }
+
+    pub fn confirm_rename_repository(&mut self) {
+        if self.busy() || self.manager.dialog != Some(Dialog::RenameRepository) {
+            return;
+        }
+        let Some(path) = self.manager.repository_rename_path.clone() else {
+            return;
+        };
+        let name = match bookmark_label(&self.manager.bookmark_name) {
+            Ok(name) => name.to_owned(),
+            Err(error) => {
+                self.error = Some(error.into());
+                return;
+            }
+        };
+        let Some(repository) = self
+            .repositories
+            .iter_mut()
+            .find(|repository| repository.path == path)
+        else {
+            return;
+        };
+        repository.name.clone_from(&name);
+        self.manager.preferences.names.insert(path, name);
+        self.manager.bookmark_name.clear();
+        self.manager.repository_rename_path = None;
+        self.manager.dialog = None;
+        self.error = None;
+        self.status = "Repository renamed".into();
+    }
+
+    pub(crate) fn apply_bookmark_names(&mut self) {
+        for repository in &mut self.repositories {
+            if let Some(name) = self.manager.preferences.names.get(&repository.path) {
+                repository.name.clone_from(name);
+            }
+        }
+    }
+
     pub fn assign_group(&mut self, path: &str, group: Option<String>) {
         for entry in &mut self.manager.preferences.groups {
             entry.paths.retain(|p| p != path);
@@ -646,6 +854,11 @@ impl SannyGitApp {
         }
         self.repositories.remove(index);
         self.assign_group(&path, None);
+        self.manager
+            .preferences
+            .favorites
+            .retain(|favorite| favorite != &path);
+        self.manager.preferences.names.remove(&path);
         self.commit.commit_drafts.remove(&path);
         self.manager.hosting.remove(&path);
         self.manager.hosting_checked.remove(&path);
@@ -1037,6 +1250,82 @@ mod tests {
         );
         app.restore_active_repository(&storage);
         assert!(!app.busy());
+    }
+
+    #[test]
+    fn bookmarks_remember_favorites_names_and_group_edits() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories.push(crate::models::Repository {
+            name: "folder".into(),
+            path: "/repo".into(),
+        });
+        app.toggle_favorite("/missing");
+        assert!(app.manager.preferences.favorites.is_empty());
+        app.toggle_favorite("/repo");
+        app.toggle_favorite("/repo");
+        assert!(app.manager.preferences.favorites.is_empty());
+        app.toggle_favorite("/repo");
+        assert_eq!(app.manager.preferences.favorites, ["/repo"]);
+
+        app.open_rename_repository("/repo".into());
+        app.manager.bookmark_name = " \n".into();
+        app.confirm_rename_repository();
+        assert!(app.error.is_some());
+        assert_eq!(app.repositories[0].name, "folder");
+        app.manager.bookmark_name = "  My Repo  ".into();
+        app.confirm_rename_repository();
+        assert_eq!(app.repositories[0].name, "My Repo");
+        assert_eq!(
+            app.manager
+                .preferences
+                .names
+                .get("/repo")
+                .map(String::as_str),
+            Some("My Repo")
+        );
+        assert!(app.manager.dialog.is_none());
+
+        app.manager.group_name = "Work".into();
+        app.add_group();
+        app.assign_group("/repo", Some("Work".into()));
+        app.open_rename_group("Work".into());
+        app.manager.group_name = "Office".into();
+        app.confirm_rename_group();
+        assert_eq!(app.manager.preferences.groups[0].name, "Office");
+        assert_eq!(app.manager.preferences.groups[0].paths, ["/repo"]);
+        assert_eq!(
+            app.manager.preferences.selected_group.as_deref(),
+            Some("Office")
+        );
+        app.manager.group_name = "Office".into();
+        app.open_rename_group("Office".into());
+        app.confirm_rename_group();
+        assert!(app.error.is_none());
+
+        app.open_delete_group("Office".into());
+        app.confirm_delete_group();
+        assert!(app.manager.preferences.groups.is_empty());
+        assert!(app.manager.preferences.selected_group.is_none());
+        assert_eq!(app.repositories[0].path, "/repo");
+
+        app.repositories[0].name = "folder".into();
+        app.apply_bookmark_names();
+        assert_eq!(app.repositories[0].name, "My Repo");
+
+        let mut storage = Storage::default();
+        eframe::App::save(&mut app, &mut storage);
+        let prefs: Preferences =
+            eframe::get_value(&storage, "sannygit.repository_preferences").unwrap();
+        assert_eq!(prefs.favorites, ["/repo"]);
+        assert_eq!(
+            prefs.names.get("/repo").map(String::as_str),
+            Some("My Repo")
+        );
+
+        app.request_remove_repository("/repo".into());
+        app.confirm_remove_repository();
+        assert!(app.manager.preferences.favorites.is_empty());
+        assert!(app.manager.preferences.names.is_empty());
     }
 
     #[test]

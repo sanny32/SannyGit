@@ -25,6 +25,7 @@ enum BranchRequest {
     ResetRef(String),
     ResetRefAdvanced(String),
     CopyRefName(String),
+    CopyMessage(String),
     MergeBranch(String),
     RebaseBranch(String),
     FastForward(String),
@@ -226,6 +227,7 @@ fn dispatch_branch_request(ctx: &egui::Context, app: &mut SannyGitApp, request: 
             app.open_rename_branch();
         }
         BranchRequest::CopyRefName(name) => ctx.copy_text(name),
+        BranchRequest::CopyMessage(message) => ctx.copy_text(message),
         BranchRequest::Unavailable => {}
     }
 }
@@ -693,10 +695,26 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
         .help("Refresh the repository and wait for the current operation"),
         E::Separator,
         E::item("Copy", true, BranchRequest::CopyRefName(tag.name.clone())),
-        unavailable("Copy Message"),
+        if let Some(message) = &tag.tag_subject {
+            E::item(
+                "Copy Message",
+                true,
+                BranchRequest::CopyMessage(message.clone()),
+            )
+        } else {
+            E::item("Copy Message", false, BranchRequest::Unavailable)
+                .help("This tag has no message")
+        },
         E::Separator,
         unavailable("Format Patch"),
-        unavailable("Fast-Forward Merge"),
+        E::item(
+            "Fast-Forward Merge",
+            requested.tag_merge_allowed,
+            BranchRequest::MergeTag(tag.full_name.clone()),
+        )
+        .help(
+            "Open the merge confirmation. Fast-forward is offered when the current branch can move to this tag.",
+        ),
     ]
 }
 

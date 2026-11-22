@@ -150,6 +150,32 @@ impl SannyGitApp {
         }
     }
 
+    pub fn open_head_log(&mut self) {
+        if self.busy()
+            || self.repositories.get(self.selected_repository).is_none()
+            || self.history.commits.is_empty()
+        {
+            return;
+        }
+        self.close_tag_log();
+        let hash = self
+            .branches
+            .entries
+            .iter()
+            .find(|entry| entry.current)
+            .map(|entry| entry.hash.clone())
+            .filter(|hash| {
+                self.history
+                    .commits
+                    .iter()
+                    .any(|commit| &commit.hash == hash)
+            })
+            .unwrap_or_else(|| self.history.commits[0].hash.clone());
+        self.history.journal_filter.clear();
+        self.select_commit(hash.clone());
+        self.history.reveal_commit = Some(hash);
+    }
+
     pub fn open_ref_log(&mut self, tag: String) {
         if self.busy()
             || self.repositories.get(self.selected_repository).is_none()
@@ -444,6 +470,59 @@ mod tests {
             app.poll_view_reads();
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn head_log_opens_the_current_commit_and_closes_a_ref_log() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        let head = "a".repeat(40);
+        let other = "b".repeat(40);
+        app.repositories.push(crate::models::Repository {
+            name: "Repo".into(),
+            path: "/repo".into(),
+        });
+        app.selected_repository = 0;
+        app.history.commits = vec![
+            crate::models::Commit {
+                message: "Head".into(),
+                author: String::new(),
+                email: String::new(),
+                date: String::new(),
+                hash: head.clone(),
+                parents: Vec::new(),
+                lane: 0,
+            },
+            crate::models::Commit {
+                message: "Older".into(),
+                author: String::new(),
+                email: String::new(),
+                date: String::new(),
+                hash: other,
+                parents: Vec::new(),
+                lane: 0,
+            },
+        ];
+        app.branches.entries.push(crate::models::BranchRef {
+            name: "main".into(),
+            full_name: "refs/heads/main".into(),
+            hash: head.clone(),
+            upstream: None,
+            tag_subject: None,
+            current: true,
+            kind: crate::models::RefKind::Local,
+        });
+        app.history.journal_filter = "noise".into();
+        app.tag_log = Some(View {
+            tag: Some("refs/tags/v1".into()),
+            commit_details_open: true,
+            ..View::default()
+        });
+        app.open_head_log();
+        assert!(app.tag_log.is_none());
+        assert!(app.history.commit_details_open);
+        assert_eq!(app.history.selected_commit.as_deref(), Some(head.as_str()));
+        assert!(app.history.journal_filter.is_empty());
+        assert_eq!(app.history.reveal_commit.as_deref(), Some(head.as_str()));
     }
 
     #[test]

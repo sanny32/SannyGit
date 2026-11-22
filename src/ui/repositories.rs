@@ -54,11 +54,54 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         |ui| {
             ui.heading("Repositories");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                icons::unavailable(
-                    ui,
-                    Icon::Chevron,
-                    "Repository management is not implemented yet",
-                );
+                if app.busy() {
+                    icons::unavailable(
+                        ui,
+                        Icon::Chevron,
+                        "Wait for the current operation to finish",
+                    );
+                } else {
+                    let groups: Vec<_> = app
+                        .manager
+                        .preferences
+                        .groups
+                        .iter()
+                        .map(|group| group.name.clone())
+                        .collect();
+                    if let Some(action) =
+                        popup_menu::button(ui, Icon::Chevron, "Manage repository groups", || {
+                            use popup_menu::Entry as E;
+                            let mut entries = vec![E::item("Add Group…", true, GroupAction::Add)];
+                            if !groups.is_empty() {
+                                entries.push(E::Separator);
+                            }
+                            for group in &groups {
+                                entries.push(E::submenu(
+                                    group.clone(),
+                                    vec![
+                                        E::item(
+                                            "Rename…",
+                                            true,
+                                            GroupAction::Rename(group.clone()),
+                                        ),
+                                        E::item(
+                                            "Delete…",
+                                            true,
+                                            GroupAction::Delete(group.clone()),
+                                        ),
+                                    ],
+                                ));
+                            }
+                            entries
+                        })
+                    {
+                        match action {
+                            GroupAction::Add => app.open_add_group(),
+                            GroupAction::Rename(name) => app.open_rename_group(name),
+                            GroupAction::Delete(name) => app.open_delete_group(name),
+                        }
+                    }
+                }
                 if icons::button(ui, Icon::Plus, "Open repository").clicked() {
                     app.open_dialog = true;
                 }
@@ -133,6 +176,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 &mut app.manager.highlighted_repository,
                                 palette,
                                 &group_names,
+                                &app.manager.preferences,
                                 &mut requested,
                                 &mut move_to,
                                 height,
@@ -169,6 +213,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     &mut app.manager.highlighted_repository,
                     palette,
                     &group_names,
+                    &app.manager.preferences,
                     &mut requested,
                     &mut move_to,
                     height,
@@ -200,6 +245,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     app.handle_menu_action(action, ui.ctx());
                 }
             }
+            RepositoryAction::Favorite => app.toggle_favorite(&path),
+            RepositoryAction::Rename => app.open_rename_repository(path),
         }
     }
     if let Some((path, group)) = move_to {
@@ -208,6 +255,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if let Some(path) = requested {
         app.open_repository(path);
     }
+}
+
+#[derive(Clone)]
+enum GroupAction {
+    Add,
+    Rename(String),
+    Delete(String),
 }
 
 #[derive(Clone)]
@@ -220,6 +274,8 @@ enum RepositoryAction {
     Commit,
     Menu(MenuAction),
     MoveTo(Option<String>),
+    Favorite,
+    Rename,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -235,12 +291,22 @@ fn repository_row(
     highlighted: &mut Option<String>,
     palette: crate::theme::Palette,
     groups: &[String],
+    preferences: &crate::repository::Preferences,
     requested: &mut Option<String>,
     move_to: &mut Option<(String, Option<String>)>,
     height: f32,
     enabled: &[MenuAction],
 ) -> Option<RepositoryAction> {
     let active = selected == index;
+    let favorite = preferences
+        .favorites
+        .iter()
+        .any(|path| path == &repository.path);
+    let label = preferences
+        .names
+        .get(&repository.path)
+        .map(String::as_str)
+        .unwrap_or(repository.name.as_str());
     let modern = palette.panel_radius > 0;
     let selected_row = highlighted
         .as_deref()
@@ -274,7 +340,7 @@ fn repository_row(
                 );
                 icon_response.help_text("Unresolved conflicts");
             }
-            let name = RichText::new(&repository.name).color(if active || modern {
+            let name = RichText::new(label).color(if active || modern {
                 palette.text
             } else {
                 palette.muted
@@ -315,9 +381,9 @@ fn repository_row(
                 |ui| {
                     ui.set_min_width(width);
                     let name = eframe::egui::Label::new(if active {
-                        name.family(semibold_family())
+                        name.clone().family(semibold_family())
                     } else {
-                        name
+                        name.clone()
                     })
                     .halign(Align::Min)
                     .truncate()
@@ -349,6 +415,11 @@ fn repository_row(
                                     .help_text("Merge in progress");
                             },
                         );
+                    } else if favorite {
+                        ui.horizontal(|ui| {
+                            ui.add(name);
+                            ui.label(RichText::new("★").color(palette.warning));
+                        });
                     } else {
                         ui.add(name);
                     }
@@ -456,8 +527,17 @@ fn repository_row(
                 }))
                 .collect(),
             ),
-            E::item("Mark as Favorite", false, None).help("Not implemented yet"),
-            E::item("Rename…", false, None).help("Not implemented yet"),
+            item(
+                if favorite {
+                    "Unmark as Favorite"
+                } else {
+                    "Mark as Favorite"
+                },
+                true,
+                RepositoryAction::Favorite,
+            ),
+            item("Rename…", idle, RepositoryAction::Rename)
+                .help("Wait for the current operation to finish"),
             item("Remove…", idle, RepositoryAction::Remove),
             E::Separator,
             item("Copy Path", true, RepositoryAction::CopyPath),
@@ -535,6 +615,7 @@ mod tests {
                                 &mut highlighted,
                                 theme.palette(),
                                 &[],
+                                &crate::repository::Preferences::default(),
                                 &mut requested,
                                 &mut move_to,
                                 24.0,
@@ -664,6 +745,7 @@ mod tests {
                                 &mut highlighted,
                                 palette,
                                 &[],
+                                &crate::repository::Preferences::default(),
                                 &mut requested,
                                 &mut move_to,
                                 if modern { 44.0 } else { 24.0 },
@@ -780,6 +862,7 @@ mod tests {
                             &mut highlighted,
                             theme.palette(),
                             &[],
+                            &crate::repository::Preferences::default(),
                             &mut requested,
                             &mut move_to,
                             24.0,

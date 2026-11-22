@@ -160,6 +160,139 @@ fn remove_repository_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
     }
 }
 
+fn rename_repository_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
+    use super::controls::dialog_style as style;
+    let palette = app.palette();
+    let busy = app.busy();
+    let mut rename = false;
+    let mut cancel = false;
+    style::modal(ctx, palette, "repository.rename").show(ctx, |ui| {
+        ui.set_width(480.0);
+        style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        style::header(
+            ui,
+            palette,
+            "Rename repository",
+            "Change the name shown in the repository list. The directory name stays the same.",
+        );
+        style::section(ui, palette.header, egui::Margin::same(18), |ui| {
+            ui.add_enabled_ui(!busy, |ui| {
+                ui.label("Name");
+                ui.add(
+                    crate::ui::controls::singleline(&mut app.manager.bookmark_name)
+                        .desired_width(f32::INFINITY),
+                );
+            });
+        });
+        style::section(ui, palette.header, egui::Margin::symmetric(18, 12), |ui| {
+            style::button_row(ui, |ui| {
+                rename = ui
+                    .add_enabled(
+                        !busy && !app.manager.bookmark_name.trim().is_empty(),
+                        style::primary("Rename", palette),
+                    )
+                    .dialog_accept();
+                cancel = ui
+                    .add_enabled(!busy, style::button("Cancel"))
+                    .dialog_cancel();
+            });
+        });
+    });
+    if cancel {
+        app.manager.dialog = None;
+        app.manager.repository_rename_path = None;
+    } else if rename {
+        app.confirm_rename_repository();
+    }
+}
+
+fn rename_group_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
+    use super::controls::dialog_style as style;
+    let palette = app.palette();
+    let busy = app.busy();
+    let mut rename = false;
+    let mut cancel = false;
+    style::modal(ctx, palette, "repository.group.rename").show(ctx, |ui| {
+        ui.set_width(480.0);
+        style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        style::header(
+            ui,
+            palette,
+            "Rename group",
+            "Change the group name. Repositories in the group stay where they are.",
+        );
+        style::section(ui, palette.header, egui::Margin::same(18), |ui| {
+            ui.add_enabled_ui(!busy, |ui| {
+                ui.label("Group name");
+                ui.add(
+                    crate::ui::controls::singleline(&mut app.manager.group_name)
+                        .desired_width(f32::INFINITY),
+                );
+            });
+        });
+        style::section(ui, palette.header, egui::Margin::symmetric(18, 12), |ui| {
+            style::button_row(ui, |ui| {
+                rename = ui
+                    .add_enabled(
+                        !busy && !app.manager.group_name.trim().is_empty(),
+                        style::primary("Rename", palette),
+                    )
+                    .dialog_accept();
+                cancel = ui
+                    .add_enabled(!busy, style::button("Cancel"))
+                    .dialog_cancel();
+            });
+        });
+    });
+    if cancel {
+        app.manager.dialog = None;
+        app.manager.group_rename_from = None;
+    } else if rename {
+        app.confirm_rename_group();
+    }
+}
+
+fn delete_group_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
+    use super::controls::dialog_style as style;
+    let palette = app.palette();
+    let busy = app.busy();
+    let name = app.manager.group_rename_from.clone().unwrap_or_default();
+    let mut delete = false;
+    let mut cancel = false;
+    style::modal(ctx, palette, "repository.group.delete").show(ctx, |ui| {
+        ui.set_width(480.0);
+        style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        style::header(
+            ui,
+            palette,
+            "Delete group",
+            "Remove the group. Its repositories stay in the list.",
+        );
+        style::section(ui, palette.header, egui::Margin::same(18), |ui| {
+            ui.label(format!("Delete group {name}?"));
+        });
+        style::section(ui, palette.header, egui::Margin::symmetric(18, 12), |ui| {
+            style::button_row(ui, |ui| {
+                delete = ui
+                    .add_enabled(!busy, style::primary("Delete", palette))
+                    .dialog_accept();
+                cancel = ui
+                    .add_enabled(!busy, style::button("Cancel"))
+                    .dialog_cancel();
+            });
+        });
+    });
+    if cancel {
+        app.manager.dialog = None;
+        app.manager.group_rename_from = None;
+    } else if delete {
+        app.confirm_delete_group();
+    }
+}
+
 pub(super) fn group_picker(ui: &mut Ui, app: &mut SannyGitApp) {
     if app.manager.preferences.groups.is_empty() {
         return;
@@ -209,6 +342,18 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         remove_repository_dialog(ui.ctx(), app);
         return;
     }
+    if app.manager.dialog == Some(Dialog::RenameRepository) {
+        rename_repository_dialog(ui.ctx(), app);
+        return;
+    }
+    if app.manager.dialog == Some(Dialog::RenameGroup) {
+        rename_group_dialog(ui.ctx(), app);
+        return;
+    }
+    if app.manager.dialog == Some(Dialog::DeleteGroup) {
+        delete_group_dialog(ui.ctx(), app);
+        return;
+    }
     if app.manager.dialog == Some(Dialog::Search) {
         search_dialog(ui.ctx(), app);
         return;
@@ -237,6 +382,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     };
     let title = match dialog {
         Dialog::Group => "Add Group",
+        Dialog::RenameGroup => "Rename Group",
+        Dialog::DeleteGroup => "Delete Group",
+        Dialog::RenameRepository => "Rename Repository",
         Dialog::Clone => "Clone Repository",
         Dialog::Search => "Search for Repositories",
         Dialog::Worktrees => "Worktrees",
@@ -256,6 +404,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.spacing_mut().item_spacing.y = 0.0;
             let description = match dialog {
                 Dialog::Group => "Organize repositories into a named group.",
+                Dialog::RenameGroup => "Change the group name. Repositories in the group stay where they are.",
+                Dialog::DeleteGroup => "Remove the group. Its repositories stay in the list.",
+                Dialog::RenameRepository => "Change the name shown in the repository list. The directory name stays the same.",
                 Dialog::Search => "Find Git repositories in a local directory.",
                 Dialog::Worktrees => "Manage working directories attached to this repository.",
                 Dialog::Prune => "Review obsolete worktree metadata before pruning.",
@@ -315,7 +466,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         if ui.add_enabled(!preview.is_empty(), Button::new("Prune Obsolete Metadata")).clicked() { job = Some(Job::Prune); }
                     }
                 }
-                Dialog::Settings | Dialog::RemoveRepository | Dialog::AddWorktree => {}
+                Dialog::Settings
+                | Dialog::RemoveRepository
+                | Dialog::AddWorktree
+                | Dialog::RenameGroup
+                | Dialog::DeleteGroup
+                | Dialog::RenameRepository => {}
                 Dialog::CloseRepository => {
                     ui.label("Close this repository and discard its commit message drafts?");
                     ui.horizontal(|ui| {

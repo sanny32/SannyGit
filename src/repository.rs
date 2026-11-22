@@ -22,6 +22,12 @@ pub struct Preferences {
     pub selected_group: Option<String>,
     #[serde(default)]
     pub pull_defaults: std::collections::BTreeMap<String, PullDefaults>,
+    /// Bookmark paths shown with a star. The directory itself is unchanged.
+    #[serde(default)]
+    pub favorites: Vec<String>,
+    /// Display names for bookmarks. Missing paths keep the directory name.
+    #[serde(default)]
+    pub names: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

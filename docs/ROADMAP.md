@@ -149,7 +149,7 @@ Wire or remove the disabled controls whose meaning is already clear.
 - Rename and delete of a repository group. The header button in Repositories is the place for this.
 - Enable Fast-Forward Merge on a tag by opening the merge confirmation that already has that action.
 - Copy Message for a tag.
-- Decide whether Open in Terminal stays hidden until phase 5 or calls the system terminal with the repository as the working directory.
+- Open in Terminal stays disabled until phase 5. Launching a system terminal is a separate command, not a control that already has a backend.
 
 Blame, Review, Format Patch, and Pull with rebase stay disabled. They need the later phases.
 

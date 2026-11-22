@@ -390,9 +390,18 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                     .clicked() {
                                     app.set_selected_staged(staged);
                                 }
-                            } else {
-                                action_button(ui, icon, label, false, palette, action_width)
-                                    .disabled_help_text("This operation is not implemented yet");
+                            } else if label == "Log" {
+                                let enabled = !app.busy()
+                                    && app.repositories.get(app.selected_repository).is_some()
+                                    && !app.history.commits.is_empty();
+                                if action_button(ui, icon, label, enabled, palette, action_width)
+                                    .help_text("Open the history of HEAD")
+                                    .disabled_help_text("Open a repository and wait until its history is loaded")
+                                    .clicked()
+                                {
+                                    app.open_head_log();
+                                    super::journal::focus_history(ui.ctx());
+                                }
                             }
                         },
                     );
