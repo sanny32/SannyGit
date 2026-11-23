@@ -136,14 +136,10 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
         .frame(Frame::new().fill(page_background).inner_margin(12))
         .show(ui, |ui| {
             let page_height = ui.available_height();
-            let chatgpt_banner = app.settings_window.page == SettingsPage::Llm
-                && app.settings_window.llm.config.chatgpt_subscription;
-            const CHATGPT_BANNER_RESERVE: f32 = 54.0;
-            let banner_reserve = f32::from(chatgpt_banner) * CHATGPT_BANNER_RESERVE;
             if app.settings_window.page == SettingsPage::Llm && page_height < 350.0 {
                 ui.spacing_mut().item_spacing.y = 3.0;
             }
-            let content_height = (page_height - banner_reserve).max(0.0);
+            let content_height = page_height;
             if app.settings_window.page == SettingsPage::CommitMessages {
                 ui.allocate_ui_with_layout(
                     Vec2::new(ui.available_width(), content_height),
@@ -160,10 +156,6 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
                     .auto_shrink([false, false])
                     .max_height(content_height)
                     .show(ui, |ui| page(ui, app, palette));
-            }
-            if chatgpt_banner {
-                ui.add_space(6.0);
-                chatgpt_sign_in_banner(ui, palette);
             }
         });
     super::show_errors(ui, app);
@@ -917,6 +909,8 @@ fn ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         ) {
             app.change_chatgpt_connection(ui.ctx(), !connected);
         }
+        ui.add_space(section_gap);
+        chatgpt_sign_in_banner(ui, palette);
         return;
     }
     llm_api_form(
