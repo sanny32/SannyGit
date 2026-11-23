@@ -596,7 +596,11 @@ pub struct Model {
     pub slug: String,
     pub display_name: String,
     pub reasoning_efforts: Vec<String>,
+    pub(crate) input_cost_rank: u32,
 }
+
+const EFFORT_COST_ORDER: &[&str] =
+    &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 pub fn list_models() -> Result<Vec<Model>, String> {
     let runtime = runtime()?;
@@ -641,6 +645,7 @@ fn parse_models(catalog: &Value) -> Result<Vec<Model>, String> {
                 slug: slug.into(),
                 display_name: display_name.into(),
                 reasoning_efforts,
+                input_cost_rank: parse_input_cost_rank(entry, slug),
             })
         })
         .collect();
@@ -648,6 +653,57 @@ fn parse_models(catalog: &Value) -> Result<Vec<Model>, String> {
         return Err("No eligible models were returned for this ChatGPT account".into());
     }
     Ok(models)
+}
+
+fn parse_input_cost_rank(entry: &Value, slug: &str) -> u32 {
+    for key in ["input_cost_per_million", "input_price_per_million"] {
+        if let Some(price) = entry.get(key).and_then(Value::as_f64) {
+            return price.clamp(0.0, f64::from(u32::MAX)) as u32;
+        }
+    }
+    if let Some(price) = entry
+        .get("pricing")
+        .and_then(|pricing| pricing.get("input_per_million"))
+        .and_then(Value::as_f64)
+    {
+        return price.clamp(0.0, f64::from(u32::MAX)) as u32;
+    }
+    documented_model_cost_rank(slug)
+}
+
+fn documented_model_cost_rank(slug: &str) -> u32 {
+    match slug {
+        "gpt-6-luna" => 10,
+        "gpt-6.1-terra" => 50,
+        "gpt-6.2-sol" | "gpt-6.1-sol" | "gpt-6-sol" => 200,
+        "gpt-6.2-astra" | "gpt-6-astra" => 800,
+        _ => u32::MAX,
+    }
+}
+
+impl Model {
+    fn cost_rank(&self) -> u32 {
+        self.input_cost_rank
+    }
+}
+
+pub fn cheapest_model<'a>(models: &'a [Model]) -> Option<&'a Model> {
+    models
+        .iter()
+        .min_by_key(|model| (model.cost_rank(), model.slug.as_str()))
+}
+
+pub fn cheapest_effort<'a>(model: &'a Model) -> Option<&'a str> {
+    model
+        .reasoning_efforts
+        .iter()
+        .min_by_key(|effort| {
+            EFFORT_COST_ORDER
+                .iter()
+                .position(|level| level == effort)
+                .unwrap_or(EFFORT_COST_ORDER.len())
+        })
+        .map(String::as_str)
 }
 
 fn documented_reasoning_efforts(slug: &str) -> &'static [&'static str] {
@@ -664,7 +720,7 @@ fn documented_reasoning_efforts(slug: &str) -> &'static [&'static str] {
 
 pub fn selected_model<'a>(models: &'a [Model], slug: &str) -> Option<&'a Model> {
     if slug.is_empty() {
-        models.first()
+        cheapest_model(models)
     } else {
         models.iter().find(|model| model.slug == slug)
     }
@@ -690,9 +746,13 @@ pub(super) async fn generate(config: &Config, patch: &str, token: &str) -> Resul
 fn request_body(config: &Config, patch: &str, models: &[Model]) -> Result<Value, String> {
     let settings = config.subscription_models.get(PROVIDER_ID);
     let slug = settings.map_or("", |settings| settings.model.as_str());
-    let effort = settings.map_or("", |settings| settings.reasoning_effort.as_str());
     let model = selected_model(models, slug)
         .ok_or("The selected ChatGPT model is unavailable. Choose another model in AI settings.")?;
+    let effort = if slug.is_empty() {
+        cheapest_effort(model).unwrap_or("")
+    } else {
+        settings.map_or("", |settings| settings.reasoning_effort.as_str())
+    };
     let mut body = json!({
         "model": model.slug,
         "instructions": config.instructions.trim(),
@@ -763,8 +823,10 @@ mod tests {
     fn request_uses_the_selected_providers_model_and_reasoning() {
         let models = parse_models(&json!({
             "models": [
-                {"slug": "first", "visibility": "list"},
+                {"slug": "gpt-6.2-astra", "visibility": "list"},
                 {"slug": "hidden", "visibility": "hide"},
+                {"slug": "gpt-6-luna", "display_name": "Luna", "visibility": "list",
+                 "supported_reasoning_levels": [{"effort": "none"}, {"effort": "low"}, {"effort": "high"}]},
                 {"slug": "second", "display_name": "Second", "visibility": "list",
                  "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}]}
             ]
@@ -779,10 +841,10 @@ mod tests {
             },
         );
         let default = request_body(&config, "patch", &models).unwrap();
-        assert_eq!(default["model"], "first");
-        assert!(default.get("reasoning").is_none());
-        assert_eq!(models.len(), 2);
-        assert_eq!(models[1].display_name, "Second");
+        assert_eq!(default["model"], "gpt-6-luna");
+        assert_eq!(default["reasoning"]["effort"], "none");
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[1].display_name, "Luna");
         let selection = config
             .subscription_models
             .entry(PROVIDER_ID.into())

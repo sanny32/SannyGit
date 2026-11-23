@@ -1176,16 +1176,20 @@ fn generation_settings_field(
         .max(crate::theme::CONTROL_HEIGHT);
     let popup_open = Popup::is_id_open(ui.ctx(), id.with("popup"));
     use crate::llm::chatgpt::selected_model;
+    let automatic = settings.model.is_empty();
     let selected = selected_model(models, &settings.model);
-    let model_name = if settings.model.is_empty() {
-        "Automatic".to_owned()
+    let model_name = if automatic {
+        selected.map_or_else(
+            || "Automatic".to_owned(),
+            |model| format!("Automatic ({})", model.display_name),
+        )
     } else {
         selected.map_or_else(
             || settings.model.clone(),
             |model| model.display_name.clone(),
         )
     };
-    let effort = effort_summary(settings, selected);
+    let effort = effort_summary(settings, selected, models);
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
     ui.painter().rect(
         rect,
@@ -1291,18 +1295,18 @@ fn generation_settings_field(
 fn effort_summary(
     settings: &crate::llm::SubscriptionModelSettings,
     model: Option<&crate::llm::chatgpt::Model>,
+    models: &[crate::llm::chatgpt::Model],
 ) -> Option<String> {
-    if settings.model.is_empty() {
-        return None;
-    }
-    let model = model?;
+    let model = model.or_else(|| crate::llm::chatgpt::selected_model(models, &settings.model))?;
     if model.reasoning_efforts.is_empty() {
         return None;
     }
-    Some(format!(
-        "effort: {}",
-        reasoning_label(&settings.reasoning_effort)
-    ))
+    let effort = if settings.model.is_empty() {
+        crate::llm::chatgpt::cheapest_effort(model)?
+    } else {
+        settings.reasoning_effort.as_str()
+    };
+    Some(format!("effort: {}", reasoning_label(effort)))
 }
 
 fn generation_settings_menu(

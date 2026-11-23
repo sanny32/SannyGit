@@ -1026,6 +1026,7 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
                     slug: "model-fixture".into(),
                     display_name: "Fixture Model".into(),
                     reasoning_efforts: vec!["low".into(), "high".into()],
+                    input_cost_rank: u32::MAX,
                 }];
                 app.settings_window.chatgpt_models_attempted = true;
                 for (status, action, hidden_action) in [
