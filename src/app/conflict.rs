@@ -470,9 +470,11 @@ fn git_sides(review: &Review) -> [Option<&str>; 2] {
 
 impl SannyGitApp {
     pub fn conflict_solver_open(&self) -> bool {
-        self.conflict_dialog
-            .as_ref()
-            .is_some_and(|dialog| dialog.action == Action::Edit)
+        !self.background_progress_only
+            && self
+                .conflict_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.action == Action::Edit)
     }
 
     pub fn can_open_conflict(&self, index: usize, action: Action) -> bool {
@@ -550,7 +552,8 @@ impl SannyGitApp {
         };
         let root = PathBuf::from(&repository.path);
         let path = dialog.path.clone();
-        self.start_worker(move |git| {
+        self.status = "Applying conflict resolution…".into();
+        self.start_background_operation(move |git| {
             let outcome = conflict::apply(git, &root, &path, action, &review, draft);
             WorkerResult::Operation {
                 committed: false,

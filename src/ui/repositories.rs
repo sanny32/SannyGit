@@ -11,7 +11,7 @@ use eframe::egui::{Align, CollapsingHeader, Layout, RichText, ScrollArea, TextSt
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
-    if app.open_dialog {
+    if app.open_dialog && !app.background_progress_only {
         let ctx = ui.ctx().clone();
         let busy = app.busy();
         super::controls::dialog_style::modal(&ctx, palette, "repository.add").show(&ctx, |ui| {

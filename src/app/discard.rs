@@ -183,7 +183,7 @@ impl SannyGitApp {
         self.state_current = false;
         self.error = None;
         self.status = "Discard operation in progress…".into();
-        if !self.start_worker(move |git| WorkerResult::Operation {
+        if !self.start_background_operation(move |git| WorkerResult::Operation {
             committed: false,
             success: if prepared.action == backend::Action::Remove {
                 "Files removed"

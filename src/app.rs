@@ -536,9 +536,15 @@ impl SannyGitApp {
     /// like commit details and Conflict Solver remain independent.
     pub fn modal_dialog_open(&self) -> bool {
         self.settings_window.open
-            || self.open_dialog
             || self.welcome_open
             || self.about_dialog
+            || (!self.background_progress_only && self.operation_dialog_open())
+            || self.error.is_some()
+            || !self.error_dialogs.pending.is_empty()
+    }
+
+    fn operation_dialog_open(&self) -> bool {
+        self.open_dialog
             || self.manager.dialog.is_some()
             || (self.network_dialog.is_some() && !self.remote_confirmation_hidden())
             || self.stash_dialog.is_some()
@@ -557,9 +563,17 @@ impl SannyGitApp {
             || self.branches.branch_dialog_open
             || self.branches.rename_branch_dialog.is_some()
             || self.branches.tag_dialog_open
-            || self.branches.exported_tag_patch.is_some()
-            || self.error.is_some()
-            || !self.error_dialogs.pending.is_empty()
+    }
+
+    fn start_background_operation(
+        &mut self,
+        job: impl FnOnce(&GitContext) -> WorkerResult + Send + 'static,
+    ) -> bool {
+        let started = self.start_worker(job);
+        if started {
+            self.background_progress_only = true;
+        }
+        started
     }
 
     fn start_worker(
@@ -1229,7 +1243,6 @@ impl SannyGitApp {
         }) {
             Ok(reader) => {
                 self.branches.tag_patch_reader = Some(reader);
-                self.status = "Exporting patch…".into();
             }
             Err(error) => self.error = Some(error),
         }
@@ -1238,8 +1251,7 @@ impl SannyGitApp {
     fn poll_tag_patch(&mut self) {
         match Self::poll_reader(&mut self.branches.tag_patch_reader) {
             Some(Ok(Ok(path))) => {
-                self.status = "Patch exported".into();
-                self.branches.exported_tag_patch = Some(path);
+                self.status = format!("Patch exported to {}", path.display());
             }
             Some(Ok(Err(error)) | Err(error)) => {
                 self.status = "Patch export failed".into();
@@ -1358,7 +1370,7 @@ impl SannyGitApp {
         self.branches.current = false;
         self.error = None;
         self.status = "Renaming branch…".into();
-        self.start_worker(move |git| {
+        self.start_background_operation(move |git| {
             let outcome = crate::branches::rename(git, &root, &source, &name);
             WorkerResult::Operation {
                 committed: false,
@@ -1410,7 +1422,7 @@ impl SannyGitApp {
         if push {
             self.manager.cancel = Some(cancel.clone());
         }
-        if self.start_worker(move |git| WorkerResult::Operation {
+        if self.start_background_operation(move |git| WorkerResult::Operation {
             committed: false,
             success: if push {
                 "Tag created and pushed"
@@ -1425,7 +1437,6 @@ impl SannyGitApp {
             snapshot: git::load(git, &root),
         }) {
             self.branches.tag_dialog_open = false;
-            self.background_progress_only = true;
         } else if push {
             self.manager.cancel = None;
         }
@@ -1520,7 +1531,7 @@ impl SannyGitApp {
         self.branches.current = false;
         self.error = None;
         self.status = "Checking out remote branch…".into();
-        self.start_worker(move |git| {
+        self.start_background_operation(move |git| {
             let outcome = crate::branches::checkout_remote(git, &root, &remote, &choice);
             WorkerResult::Operation {
                 committed: false,
@@ -1542,7 +1553,7 @@ impl SannyGitApp {
         self.branches.current = false;
         self.error = None;
         self.status = "Creating branch…".into();
-        self.start_worker(move |git| {
+        self.start_background_operation(move |git| {
             let outcome = crate::branches::create(git, &root, &name, switch_to);
             let snapshot = git::load(git, &root);
             WorkerResult::Operation {
@@ -2142,7 +2153,9 @@ impl SannyGitApp {
                 {
                     self.commit.contents = git::CommitContents::Staged;
                 }
-                if success.starts_with("Stash ") {
+                if operation_succeeded && success.starts_with("Stash ") {
+                    self.stash_dialog = None;
+                } else if success.starts_with("Stash ") {
                     if let Some(dialog) = &mut self.stash_dialog {
                         dialog.invalidate_preview();
                         dialog.entries_current = false;

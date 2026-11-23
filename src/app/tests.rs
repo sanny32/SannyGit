@@ -1601,6 +1601,58 @@ fn pull_shows_progress_in_the_status_bar_without_a_progress_window() {
 }
 
 #[test]
+fn tag_patch_export_reports_progress_and_path_in_the_status_bar() {
+    for (theme, size) in [
+        (ThemeChoice::Light, Vec2::new(1400.0, 900.0)),
+        (ThemeChoice::Dark, Vec2::new(1100.0, 700.0)),
+    ] {
+        let mut app = SannyGitApp::with_theme(theme);
+        let repository_path = PathBuf::from("workspace").join("repository");
+        let repository_path = repository_path.to_string_lossy();
+        app.repositories.push(crate::models::Repository {
+            name: "Test".into(),
+            path: repository_path.to_string(),
+        });
+        app.selected_repository = 0;
+        let ctx = egui::Context::default();
+        theme.apply(&ctx);
+        let (sender, reader) = mpsc::channel();
+        app.branches.tag_patch_reader = Some(reader);
+        let shows = |app: &mut SannyGitApp, expected: &str| {
+            let mut visible = false;
+            for _ in 0..4 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        ..Default::default()
+                    },
+                    |ui| ui::show(ui, app),
+                );
+                output.textures_delta.clear();
+                visible = visible_text(&output.shapes, expected);
+                assert!(visible_text(&output.shapes, &repository_path));
+            }
+            assert!(visible, "{expected}");
+        };
+
+        assert!(!app.busy() && !app.modal_dialog_open());
+        shows(&mut app, "Exporting patch…");
+        let path = PathBuf::from("output").join("0001-release.patch");
+        sender.send(Ok(path.clone())).unwrap();
+        app.poll_tag_patch();
+        assert!(!app.tag_patch_pending() && !app.modal_dialog_open());
+        shows(&mut app, &format!("Patch exported to {}", path.display()));
+
+        let (sender, reader) = mpsc::channel();
+        app.branches.tag_patch_reader = Some(reader);
+        sender.send(Err("Cannot save patch".into())).unwrap();
+        app.poll_tag_patch();
+        assert_eq!(app.error.as_deref(), Some("Cannot save patch"));
+        assert!(app.modal_dialog_open());
+    }
+}
+
+#[test]
 fn adding_tags_closes_the_form_and_shows_progress_in_the_status_bar() {
     let repo = crate::test_support::TempRepo::new();
     let remote = crate::test_support::TempRepo::new();

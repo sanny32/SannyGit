@@ -228,7 +228,7 @@ impl SannyGitApp {
         let pattern = dialog.use_pattern.then(|| dialog.pattern.clone());
         self.error = None;
         self.status = "Updating .gitignore…".into();
-        if self.start_worker(move |git| WorkerResult::Operation {
+        if self.start_background_operation(move |git| WorkerResult::Operation {
             committed: false,
             success: ".gitignore updated",
             outcome: git::ignore_paths(git, &root, &paths, &target_dir, pattern.as_deref()),

@@ -213,7 +213,7 @@ impl SannyGitApp {
         self.status = format!("{} in progress…", operation.label());
         self.state_current = false;
         self.branches.current = false;
-        if !self.start_worker(move |git| {
+        if !self.start_background_operation(move |git| {
             let outcome = remotes::run_with_tags(
                 git,
                 &root,
@@ -252,7 +252,6 @@ impl SannyGitApp {
                 self.finish_hidden_remote();
             }
         } else if operation == Operation::Pull {
-            self.background_progress_only = true;
             self.network_dialog = None;
         }
     }

@@ -371,7 +371,7 @@ impl SannyGitApp {
         let target = target.clone();
         let preferred_ref = self.branches.selected_branch.clone();
         let operation = dialog.operation;
-        if self.start_worker(move |git| {
+        if self.start_background_operation(move |git| {
             let root = Path::new(&root);
             let result = match mode {
                 Some(mode) => {

@@ -1,10 +1,16 @@
 use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
 use crate::app::SannyGitApp;
-use eframe::egui::{Align, Frame, Layout, Margin, Panel, RichText, Ui};
+use eframe::egui::{Align, Frame, Label, Layout, Margin, Panel, RichText, Ui};
 
-pub fn show(ui: &mut Ui, app: &SannyGitApp) {
+pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
+    let status = if app.tag_patch_pending() {
+        "Exporting patch…"
+    } else {
+        &app.status
+    };
+    let mut cancel = false;
     Panel::bottom("working_tree.v2.status")
         .exact_size(26.0)
         .frame(
@@ -33,18 +39,32 @@ pub fn show(ui: &mut Ui, app: &SannyGitApp) {
                 ui.separator();
                 ui.label(format!("{} changes", app.changes.len()));
                 ui.separator();
-                ui.add(
-                    eframe::egui::Label::new(RichText::new(&app.status).color(palette.muted))
-                        .truncate()
-                        .show_tooltip_when_elided(false),
-                )
-                .help_text(&app.status);
+                if app.background_progress_only && app.manager.cancel.is_some() {
+                    cancel = ui
+                        .small_button("Cancel")
+                        .help_text("Cancel the background operation")
+                        .clicked();
+                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some(repository) = app.repositories.get(app.selected_repository) {
-                        ui.label(&repository.path);
+                        ui.scope(|ui| {
+                            ui.set_max_width(ui.available_width() * 0.45);
+                            ui.add(Label::new(&repository.path).truncate());
+                        });
                         icons::paint(ui, Icon::Folder, palette.text, 14.0);
                     }
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        ui.add(
+                            Label::new(RichText::new(status).color(palette.muted))
+                                .truncate()
+                                .show_tooltip_when_elided(false),
+                        )
+                        .help_text(status);
+                    });
                 });
             });
         });
+    if cancel {
+        app.cancel_repository_job();
+    }
 }

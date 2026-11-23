@@ -358,6 +358,15 @@ impl SannyGitApp {
             Job::InspectClone(_) | Job::Clone { .. } | Job::Search { .. } | Job::AddWorktree { .. }
         )
         .then(|| cancel.clone());
+        let close_on_start = matches!(
+            &job,
+            Job::AddOrCreate(_)
+                | Job::Clone { .. }
+                | Job::AddWorktree { .. }
+                | Job::RemoveWorktree(_)
+                | Job::Prune
+                | Job::SaveSettings(_)
+        );
         if !self.start_worker(move |git| {
             let result = match job {
                 Job::NewWindow => ResultMessage::Window(repository::new_window()),
@@ -459,6 +468,8 @@ impl SannyGitApp {
             WorkerResult::RepositoryTask(Box::new(result))
         }) {
             self.manager.cancel = None;
+        } else if close_on_start {
+            self.background_progress_only = true;
         }
     }
 
@@ -513,6 +524,7 @@ impl SannyGitApp {
                 );
                 self.apply_snapshot(snapshot);
                 self.manager.dialog = None;
+                self.status = "Repository opened".into();
             }),
             ResultMessage::Search(result) => result.map(|result| {
                 self.manager.search_summary = format!(
@@ -532,6 +544,7 @@ impl SannyGitApp {
                     .collect();
             }),
             ResultMessage::Worktrees { result, snapshot } => {
+                let changed = snapshot.is_some();
                 if let Some(snapshot) = snapshot {
                     self.manager.worktree_availability = None;
                     match snapshot {
@@ -546,11 +559,9 @@ impl SannyGitApp {
                     self.manager.worktrees = trees;
                     self.manager.confirm_remove = false;
                     self.manager.prune_preview = None;
-                    if matches!(
-                        self.manager.dialog,
-                        Some(Dialog::Prune | Dialog::AddWorktree)
-                    ) {
+                    if changed {
                         self.manager.dialog = None;
+                        self.status = "Worktrees updated".into();
                     }
                 })
             }

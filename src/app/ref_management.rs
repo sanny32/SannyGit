@@ -206,7 +206,6 @@ pub struct BranchState {
     /// frame has been painted with the context menu closed, so the menu is
     /// gone on every platform before the native dialog takes focus.
     pub(crate) pending_tag_patch: Option<PendingTagPatch>,
-    pub exported_tag_patch: Option<std::path::PathBuf>,
     pub branch_head_exists: bool,
     pub branch_dialog_open: bool,
     pub rename_branch_dialog: Option<super::RenameBranchDialog>,
@@ -237,7 +236,6 @@ impl Default for BranchState {
             tag_message_reader: None,
             tag_patch_reader: None,
             pending_tag_patch: None,
-            exported_tag_patch: None,
             branch_head_exists: false,
             branch_dialog_open: false,
             rename_branch_dialog: None,
@@ -381,7 +379,7 @@ impl SannyGitApp {
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = cancel.clone();
         self.error = None;
-        if self.start_worker(move |git| {
+        if self.start_background_operation(move |git| {
             let path = PathBuf::from(&root);
             let outcome = match remotes::load(git, &path) {
                 Ok(state) => {
@@ -704,7 +702,7 @@ impl SannyGitApp {
         self.status = remote_branch_progress
             .unwrap_or("Ref operation in progress…")
             .into();
-        if !self.start_worker(move |git| {
+        if !self.start_background_operation(move |git| {
             let (outcome, success) = match action {
                 RefAction::Branch(
                     prepared,
@@ -824,7 +822,7 @@ impl SannyGitApp {
         self.state_current = false;
         self.error = None;
         self.status = "Resetting HEAD…".into();
-        if !self.start_worker(move |git| WorkerResult::Operation {
+        if !self.start_background_operation(move |git| WorkerResult::Operation {
             committed: false,
             success: "Reset complete",
             outcome: branches::reset_tag(git, &root, &prepared, mode, advanced),
@@ -885,7 +883,7 @@ impl SannyGitApp {
         self.state_current = false;
         self.error = None;
         self.status = "Updating remote configuration…".into();
-        if !self.start_worker(move |git| WorkerResult::Operation {
+        if !self.start_background_operation(move |git| WorkerResult::Operation {
             committed: false,
             success: "Remote configuration updated",
             outcome: remote_config::change(git, &root, &snapshot, &change),
@@ -1044,12 +1042,11 @@ impl SannyGitApp {
         if success == "Remote configuration updated" {
             self.tracking.branch_changed();
             self.invalidate_repository_hosting();
-            if let Some(dialog) = &mut self.branches.ref_dialog {
+            if succeeded {
+                self.branches.ref_dialog = None;
+            } else if let Some(dialog) = &mut self.branches.ref_dialog {
                 if let Kind::Remotes(editor) = &mut dialog.kind {
-                    editor.keep_draft = !succeeded;
-                    if succeeded && editor.selected.is_none() {
-                        editor.selected = Some(editor.name.clone());
-                    }
+                    editor.keep_draft = true;
                 }
                 dialog.running = false;
                 dialog.error = self.error.clone();
@@ -1333,10 +1330,14 @@ mod tests {
             editor.url = "https://example.test/repo.git".into();
         }
         app.change_remote(false);
+        assert!(app.busy() && !app.modal_dialog_open());
         wait(&mut app);
         assert!(app.error.is_none());
+        assert!(app.branches.ref_dialog.is_none());
+        app.open_remote_manager();
+        wait(&mut app);
         if let Kind::Remotes(editor) = &mut app.branches.ref_dialog.as_mut().unwrap().kind {
-            assert_eq!(editor.selected.as_deref(), Some("origin"));
+            editor.select(Some("origin".into()));
             editor.url = "https://dummy-token@example.test/repo".into();
         }
         app.change_remote(false);
@@ -1349,6 +1350,12 @@ mod tests {
         app.change_remote(false);
         wait(&mut app);
         assert!(app.error.is_none());
+        assert!(app.branches.ref_dialog.is_none());
+        app.open_remote_manager();
+        wait(&mut app);
+        if let Kind::Remotes(editor) = &mut app.branches.ref_dialog.as_mut().unwrap().kind {
+            editor.select(Some("origin".into()));
+        }
         app.change_remote(true);
         assert!(!app.busy());
         assert!(repo.git(&["remote"]).contains("origin"));
@@ -1356,8 +1363,10 @@ mod tests {
             editor.confirm_remove = true;
         }
         app.change_remote(true);
+        assert!(app.busy() && !app.modal_dialog_open());
         wait(&mut app);
         assert!(app.error.is_none());
+        assert!(app.branches.ref_dialog.is_none());
         assert!(repo.git(&["remote"]).is_empty());
         assert_eq!(app.commit.message, "Keep commit draft");
     }

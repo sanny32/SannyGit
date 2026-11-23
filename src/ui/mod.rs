@@ -167,16 +167,17 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     toolbar::show(ui, app);
     settings::show(ui, app);
-    repository_dialogs::show(ui, app);
-    stash::show(ui.ctx(), app);
-    discard::show(ui.ctx(), app);
-    diff_actions::show(ui.ctx(), app);
-    ignore::show(ui.ctx(), app);
-    ref_management::show(ui.ctx(), app);
-    branches::show_exported_patch(ui.ctx(), app);
-    merge::show(ui.ctx(), app);
-    merge::show_abort(ui.ctx(), app);
-    conflict::show(ui.ctx(), app);
+    if !app.background_progress_only {
+        repository_dialogs::show(ui, app);
+        stash::show(ui.ctx(), app);
+        discard::show(ui.ctx(), app);
+        diff_actions::show(ui.ctx(), app);
+        ignore::show(ui.ctx(), app);
+        ref_management::show(ui.ctx(), app);
+        merge::show(ui.ctx(), app);
+        merge::show_abort(ui.ctx(), app);
+        conflict::show(ui.ctx(), app);
+    }
     welcome(ui, app);
     about::show(ui.ctx(), app);
     status_bar::show(ui, app);

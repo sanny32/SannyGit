@@ -52,10 +52,12 @@ struct BranchRequests {
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
-    create_dialog(ui, app);
-    rename_dialog(ui, app);
-    tag_dialog(ui, app);
-    remote_dialog(ui, app);
+    if !app.background_progress_only {
+        create_dialog(ui, app);
+        rename_dialog(ui, app);
+        tag_dialog(ui, app);
+        remote_dialog(ui, app);
+    }
     let palette = app.palette();
     let header = ui.allocate_ui_with_layout(
         Vec2::new(ui.available_width(), super::WORKSPACE_HEADER_HEIGHT),
@@ -765,43 +767,6 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
         )
         .help("Move HEAD to the tagged commit when it is a descendant of HEAD"),
     ]
-}
-
-pub(super) fn show_exported_patch(ctx: &egui::Context, app: &mut SannyGitApp) {
-    use super::controls::dialog_style;
-
-    let Some(path) = &app.branches.exported_tag_patch else {
-        return;
-    };
-    let path = path.to_string_lossy();
-    let palette = app.palette();
-    let mut close = false;
-    dialog_style::modal(ctx, palette, "tag.format_patch").show(ctx, |ui| {
-        ui.set_width(470.0);
-        dialog_style::setup(ui);
-        ui.spacing_mut().item_spacing.y = 0.0;
-        dialog_style::header_with_icon(
-            ui,
-            palette,
-            "Format Patch",
-            "The patch was saved to the selected directory.",
-            Icon::Check,
-        );
-        dialog_style::section(ui, palette.panel, egui::Margin::same(18), |ui| {
-            ui.add(egui::Label::new(path.as_ref()).truncate().selectable(true))
-                .on_hover_text(path.as_ref());
-        });
-        dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 8), |ui| {
-            dialog_style::button_row(ui, |ui| {
-                close = ui
-                    .add(dialog_style::primary("Close", palette))
-                    .dialog_close();
-            });
-        });
-    });
-    if close {
-        app.branches.exported_tag_patch = None;
-    }
 }
 
 fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {

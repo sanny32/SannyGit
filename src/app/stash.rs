@@ -251,7 +251,7 @@ impl SannyGitApp {
         self.error = None;
         self.state_current = false;
         self.status = "Stash operation in progress…".into();
-        self.start_worker(move |git| {
+        self.start_background_operation(move |git| {
             let (outcome, success) = match action {
                 Action::Save => (
                     prepared
@@ -386,11 +386,15 @@ mod tests {
         wait(&mut app);
         assert!(app.stash_dialog.as_ref().unwrap().prepared_save.is_some());
         app.run_stash(Action::Save);
+        assert!(!app.modal_dialog_open());
         wait(&mut app);
         assert!(app.error.is_none());
         assert_eq!(app.status, "Stash saved");
         assert!(app.changes.is_empty());
         assert_eq!(app.commit.message, "Commit draft remains");
+        assert!(app.stash_dialog.is_none());
+        app.open_stashes();
+        wait(&mut app);
         assert_eq!(app.stash_dialog.as_ref().unwrap().entries.len(), 1);
         app.stash_dialog.as_mut().unwrap().selected = Some(0);
         app.run_stash(Action::Apply);
@@ -421,6 +425,10 @@ mod tests {
         assert_eq!(app.commit.message, "Commit draft remains");
         assert_eq!(std::fs::read(repo.0.join("file")).unwrap(), b"unstaged\n");
         assert_eq!(repo.git(&["show", ":file"]), "staged\n");
+        assert!(app.stash_dialog.is_none());
+        app.open_stashes();
+        wait(&mut app);
+        app.stash_dialog.as_mut().unwrap().selected = Some(0);
         app.preview_stash(false);
         wait(&mut app);
         app.run_stash(Action::Drop);
