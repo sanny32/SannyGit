@@ -8,6 +8,7 @@ pub enum Mode {
     Commit,
     WorkingTree,
     FastForward,
+    Squash,
 }
 
 pub fn head(git: &GitContext, root: &Path) -> Result<String, String> {
@@ -20,10 +21,34 @@ pub fn head(git: &GitContext, root: &Path) -> Result<String, String> {
 }
 
 pub fn abort(git: &GitContext, root: &Path) -> Result<(), String> {
-    if !git::check_operation(git, root, true)? {
-        return Err("There is no merge in progress. Refresh the working tree.".into());
+    let directory = git::operation_directory(git, root)?;
+    if directory
+        .join("rebase-merge")
+        .try_exists()
+        .map_err(|error| format!("Could not check rebase state: {error}"))?
+        || directory
+            .join("rebase-apply")
+            .try_exists()
+            .map_err(|error| format!("Could not check rebase state: {error}"))?
+    {
+        return crate::rebase::abort(git, root);
     }
-    git::run(git, root, &["merge", "--abort"]).map(|_| ())
+    let args = if directory.join("MERGE_HEAD").try_exists().map_err(|error| {
+        format!("Could not check merge state: {error}")
+    })? {
+        ["merge", "--abort"]
+    } else if directory.join("CHERRY_PICK_HEAD").try_exists().map_err(|error| {
+        format!("Could not check cherry-pick state: {error}")
+    })? {
+        ["cherry-pick", "--abort"]
+    } else if directory.join("REVERT_HEAD").try_exists().map_err(|error| {
+        format!("Could not check revert state: {error}")
+    })? {
+        ["revert", "--abort"]
+    } else {
+        return Err("There is no merge, cherry-pick, or revert in progress. Refresh the working tree.".into());
+    };
+    git::run(git, root, &args).map(|_| ())
 }
 
 pub fn execute(
@@ -55,7 +80,7 @@ pub fn execute(
             .collect::<Vec<_>>()
             .join("\0");
         git::require_no_path_collisions(git, root, target, &untracked, "Untracked files")?;
-        if mode != Mode::FastForward
+        if !matches!(mode, Mode::FastForward)
             || snapshot
                 .changes
                 .iter()
@@ -80,6 +105,35 @@ pub fn execute(
             ],
         )
         .map(|_| false);
+    }
+    if mode == Mode::Squash {
+        return match git::run(
+            git,
+            root,
+            &[
+                "merge",
+                "--squash",
+                "--no-commit",
+                "--no-autostash",
+                "--no-overwrite-ignore",
+                target,
+            ],
+        ) {
+            Ok(_) => Ok(false),
+            Err(error) => {
+                let snapshot = git::load(git, root)?;
+                if snapshot.sequencing == git::Sequencing::Merge
+                    && snapshot
+                        .changes
+                        .iter()
+                        .any(|change| change.kind == crate::models::ChangeKind::Conflicted)
+                {
+                    Ok(true)
+                } else {
+                    Err(error)
+                }
+            }
+        };
     }
     let mut args = vec![
         "merge",
@@ -118,7 +172,7 @@ pub fn execute(
         Ok(_) => Ok(false),
         Err(error) => {
             let snapshot = git::load(git, root)?;
-            if snapshot.merging
+            if snapshot.sequencing == git::Sequencing::Merge
                 && snapshot
                     .changes
                     .iter()

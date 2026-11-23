@@ -126,14 +126,22 @@ fn pull_confirmation(
                 .id_salt("pull.options")
                 .open(Some(dialog.pull.more_options))
                 .show(ui, |ui| {
-                    ui.radio(true, "Merge fetched remote changes").help_text(
+                    ui.radio_value(
+                        &mut dialog.pull.rebase,
+                        false,
+                        "Merge fetched remote changes",
+                    )
+                    .help_text(
                         "Fast-forward only. Diverged branches must be merged separately.",
                     );
-                    ui.add_enabled(
-                        false,
-                        egui::RadioButton::new(false, "Rebase local branch onto fetched changes"),
+                    ui.radio_value(
+                        &mut dialog.pull.rebase,
+                        true,
+                        "Rebase local branch onto fetched changes",
                     )
-                    .disabled_help_text("Pull with rebase is not implemented yet.");
+                    .help_text(
+                        "Replay local commits on top of the fetched branch. Requires a clean working tree.",
+                    );
                     ui.checkbox(
                         &mut dialog.pull.update_tags,
                         "Update existing and fetch new tags",

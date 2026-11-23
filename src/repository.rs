@@ -34,6 +34,8 @@ pub struct Preferences {
 pub struct PullDefaults {
     pub remote: String,
     pub update_tags: bool,
+    #[serde(default)]
+    pub rebase: bool,
 }
 
 #[derive(Clone, Debug)]

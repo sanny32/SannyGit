@@ -79,12 +79,49 @@ fn find_executable_in(search_path: &std::ffi::OsStr, current_dir: &Path) -> Opti
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Sequencing {
+    #[default]
+    None,
+    Merge,
+    CherryPick,
+    Revert,
+    Rebase,
+}
+
+impl Sequencing {
+    pub fn banner(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Merge => "Merge in progress",
+            Self::CherryPick => "Cherry-pick in progress",
+            Self::Revert => "Revert in progress",
+            Self::Rebase => "Rebase in progress",
+        }
+    }
+
+    pub fn abort_help(self) -> &'static str {
+        match self {
+            Self::None => "Abort the current operation",
+            Self::Merge => "Abort the current merge",
+            Self::CherryPick => "Abort the current cherry-pick",
+            Self::Revert => "Abort the current revert",
+            Self::Rebase => "Abort the current rebase",
+        }
+    }
+
+    pub fn supports_skip(self) -> bool {
+        matches!(self, Self::CherryPick | Self::Revert | Self::Rebase)
+    }
+}
+
 pub struct Snapshot {
     pub repository: Repository,
     pub branch: String,
     /// Full HEAD commit id. Empty when the branch has no commits yet.
     pub head: String,
     pub changes: Vec<ChangeFile>,
+    pub sequencing: Sequencing,
     pub merging: bool,
     pub merge_message: Option<String>,
 }
@@ -1029,7 +1066,7 @@ pub(crate) fn require_no_operation(git: &GitContext, root: &Path) -> Result<(), 
     check_operation(git, root, false).map(|_| ())
 }
 
-fn operation_directory(git: &GitContext, root: &Path) -> Result<PathBuf, String> {
+pub(crate) fn operation_directory(git: &GitContext, root: &Path) -> Result<PathBuf, String> {
     let directory = text(run(git, root, &["rev-parse", "--absolute-git-dir"])?)?;
     Ok(PathBuf::from(
         directory.strip_suffix('\n').unwrap_or(&directory),
@@ -1055,7 +1092,11 @@ pub(crate) fn check_operation(
     ] {
         match directory.join(marker).try_exists() {
             Ok(false) => {}
-            Ok(true) if allow_merge && marker == "MERGE_HEAD" => merging = true,
+            Ok(true)
+                if allow_merge && matches!(marker, "MERGE_HEAD" | "CHERRY_PICK_HEAD" | "REVERT_HEAD") =>
+            {
+                merging = true;
+            }
             Ok(true) => return Err("Finish the in-progress merge, rebase, cherry-pick or revert outside SannyGit before retrying this action.".into()),
             Err(error) => return Err(format!("Could not check unfinished Git operations: {error}")),
         }
@@ -1240,10 +1281,8 @@ pub fn load(git: &GitContext, path: &Path) -> Result<Snapshot, String> {
         .to_owned();
     let changes = load_changes(git, &path)?;
     let directory = operation_directory(git, &path)?;
-    let merging = directory
-        .join("MERGE_HEAD")
-        .try_exists()
-        .map_err(|error| format!("Could not check merge state: {error}"))?;
+    let sequencing = detect_sequencing(&directory)?;
+    let merging = sequencing != Sequencing::None;
     let merge_message = if merging {
         read_merge_message(&directory)?
     } else {
@@ -1260,9 +1299,85 @@ pub fn load(git: &GitContext, path: &Path) -> Result<Snapshot, String> {
         branch,
         head,
         changes,
+        sequencing,
         merging,
         merge_message,
     })
+}
+
+fn detect_sequencing(directory: &Path) -> Result<Sequencing, String> {
+    for marker in ["rebase-merge", "rebase-apply"] {
+        if directory
+            .join(marker)
+            .try_exists()
+            .map_err(|error| format!("Could not check rebase state: {error}"))?
+        {
+            return Ok(Sequencing::Rebase);
+        }
+    }
+    for (marker, sequencing) in [
+        ("MERGE_HEAD", Sequencing::Merge),
+        ("CHERRY_PICK_HEAD", Sequencing::CherryPick),
+        ("REVERT_HEAD", Sequencing::Revert),
+    ] {
+        if directory
+            .join(marker)
+            .try_exists()
+            .map_err(|error| format!("Could not check merge state: {error}"))?
+        {
+            return Ok(sequencing);
+        }
+    }
+    Ok(Sequencing::None)
+}
+
+/// Shared preflight for cherry-pick, revert, and similar apply-commit operations.
+pub(crate) fn preflight_apply_commit(
+    git: &GitContext,
+    root: &Path,
+    expected_head: &str,
+    expected_branch: &str,
+    target: &str,
+) -> Result<(), String> {
+    if !matches!(target.len(), 40 | 64) || !target.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Select a valid commit before continuing.".into());
+    }
+    require_no_operation(git, root)?;
+    let head = text(run(
+        git,
+        root,
+        &["rev-parse", "--verify", "HEAD^{commit}"],
+    )?)?;
+    if head.trim() != expected_head {
+        return Err("HEAD changed. Refresh the repository and retry.".into());
+    }
+    let snapshot = load(git, root)?;
+    if snapshot.branch != expected_branch {
+        return Err(
+            "The current branch changed. Refresh the repository and retry.".into(),
+        );
+    }
+    if !snapshot.changes.is_empty() {
+        let untracked = snapshot
+            .changes
+            .iter()
+            .filter(|change| change.kind == crate::models::ChangeKind::Untracked)
+            .map(|change| change.path.as_str())
+            .collect::<Vec<_>>()
+            .join("\0");
+        if !untracked.is_empty() {
+            require_no_path_collisions(git, root, target, &untracked, "Untracked files")?;
+        }
+        if snapshot
+            .changes
+            .iter()
+            .any(|change| change.kind != crate::models::ChangeKind::Untracked)
+        {
+            return Err("Commit or stash local changes before continuing.".into());
+        }
+    }
+    require_no_ignored_collisions(git, root, target)?;
+    Ok(())
 }
 
 fn read_merge_message(directory: &Path) -> Result<Option<String>, String> {

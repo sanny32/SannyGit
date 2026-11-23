@@ -227,10 +227,64 @@ pub fn reload_tag(
     )
 }
 
+pub fn reload_file(
+    git: &GitContext,
+    root: &Path,
+    file: &str,
+    requested: usize,
+    keep: &[String],
+    cancel: &AtomicBool,
+) -> Result<Page, String> {
+    if file.is_empty() {
+        return Err("Select a file path before opening its history.".into());
+    }
+    first_with_limits(
+        git,
+        root,
+        Scope::File(file),
+        requested,
+        keep,
+        PAGE_SIZE,
+        HISTORY_LIMIT,
+        cancel,
+    )
+}
+
+/// Unified diff between two commits (changes to move from `from` to `to`).
+pub fn compare_commits(
+    git: &GitContext,
+    root: &Path,
+    from: &str,
+    to: &str,
+) -> Result<String, String> {
+    if !valid_hash(from) || !valid_hash(to) {
+        return Err("Invalid commit ID".into());
+    }
+    let output = git::text(git::run(
+        git,
+        root,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-p",
+            "--find-renames",
+            from,
+            to,
+        ],
+    )?)?;
+    git::limit_diff(if output.is_empty() {
+        "No differences between the selected commits.".into()
+    } else {
+        output
+    })
+}
+
 #[derive(Clone, Copy)]
 enum Scope<'a> {
     Branches(bool),
     Tag(&'a str),
+    File(&'a str),
 }
 
 #[expect(
@@ -250,9 +304,10 @@ fn first_with_limits(
     if page_size == 0 || page_size > PAGE_SIZE || limit == 0 || limit > HISTORY_LIMIT {
         return Err("Invalid history page limits".into());
     }
-    let (all, tag) = match scope {
-        Scope::Branches(all) => (all, None),
-        Scope::Tag(tag) => (false, Some(tag)),
+    let (all, tag, file) = match scope {
+        Scope::Branches(all) => (all, None, None),
+        Scope::Tag(tag) => (false, Some(tag), None),
+        Scope::File(file) => (false, None, Some(file)),
     };
     let initial = basis(git, root, all, tag, cancel)?;
     let tag_commit = tag
@@ -278,19 +333,40 @@ fn first_with_limits(
         })
         .transpose()?;
     let count = format!("--max-count={}", limit + 1);
-    let mut args = vec!["rev-list", "--topo-order", &count];
-    if all {
-        args.push("--all");
-    }
-    if !initial.head.is_empty() {
-        args.push(&initial.head);
-    }
-    args.extend(tag_commit.as_deref());
-    args.push("--");
-    let output = if initial.head.is_empty() && !all && tag_commit.is_none() {
-        String::new()
+    let output = if let Some(file) = file {
+        if initial.head.is_empty() {
+            String::new()
+        } else {
+            git::text(run(
+                git,
+                root,
+                &[
+                    "rev-list",
+                    "--topo-order",
+                    "--follow",
+                    &count,
+                    "HEAD",
+                    "--",
+                    file,
+                ],
+                cancel,
+            )?)?
+        }
     } else {
-        git::text(run(git, root, &args, cancel)?)?
+        let mut args = vec!["rev-list", "--topo-order", &count];
+        if all {
+            args.push("--all");
+        }
+        if !initial.head.is_empty() {
+            args.push(&initial.head);
+        }
+        args.extend(tag_commit.as_deref());
+        args.push("--");
+        if initial.head.is_empty() && !all && tag_commit.is_none() {
+            String::new()
+        } else {
+            git::text(run(git, root, &args, cancel)?)?
+        }
     };
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
@@ -319,10 +395,11 @@ fn first_with_limits(
         .max()
         .unwrap_or(0);
     let end = requested.max(page_size).max(selected_end).min(ids.len());
+    let cursor_tag = file.map(|file| format!("file:{file}")).or_else(|| tag.map(str::to_owned));
     let cursor = Cursor {
         basis: initial,
         all_branches: all,
-        tag: tag.map(str::to_owned),
+        tag: cursor_tag,
         tag_commit,
         ids,
         next: 0,

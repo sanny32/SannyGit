@@ -1,5 +1,8 @@
 use crate::git::GitContext;
 mod commit;
+mod commit_ops;
+mod compare;
+mod sequencer;
 #[cfg(test)]
 use commit::CommitDraft;
 use commit::CommitState;
@@ -111,6 +114,14 @@ enum WorkerResult {
         success: &'static str,
         outcome: Result<(), String>,
         snapshot: Result<crate::git::Snapshot, String>,
+    },
+    RevertMergeParents(commit_ops::RevertMergeDialog),
+    CommitCompare {
+        path: String,
+        from: String,
+        to: String,
+        generation: u64,
+        result: Result<crate::models::DiffPreview, String>,
     },
     Diff {
         index: usize,
@@ -279,6 +290,7 @@ pub struct SannyGitApp {
     pub push_up_to: Option<push_up_to::Dialog>,
     pub conflict_dialog: Option<conflict::Dialog>,
     pub abort_merge_dialog: Option<String>,
+    pub revert_merge_dialog: Option<commit_ops::RevertMergeDialog>,
     pub skip_push_confirmation: bool,
     pub changes: Vec<ChangeFile>,
     pub history: history::View,
@@ -303,6 +315,7 @@ pub struct SannyGitApp {
     pub rename_dialog: Option<diff_actions::RenamePathDialog>,
     pub state_current: bool,
     pub merging: bool,
+    pub sequencing: crate::git::Sequencing,
 }
 
 pub(crate) fn clipboard_message(message: String) -> String {
@@ -507,6 +520,7 @@ impl SannyGitApp {
             push_up_to: None,
             conflict_dialog: None,
             abort_merge_dialog: None,
+            revert_merge_dialog: None,
             skip_push_confirmation: false,
             changes: Vec::new(),
             history: history::View::default(),
@@ -531,6 +545,7 @@ impl SannyGitApp {
             rename_dialog: None,
             state_current: false,
             merging: false,
+            sequencing: crate::git::Sequencing::None,
         }
     }
     pub fn selected_diff(&self) -> Option<&crate::models::DiffPreview> {
@@ -585,6 +600,7 @@ impl SannyGitApp {
                 .as_ref()
                 .is_some_and(|dialog| dialog.action != crate::conflict::Action::Edit)
             || self.abort_merge_dialog.is_some()
+            || self.revert_merge_dialog.is_some()
             || self.branches.remote_checkout.is_some()
             || self.branches.branch_dialog_open
             || self.branches.rename_branch_dialog.is_some()
@@ -1127,6 +1143,7 @@ impl SannyGitApp {
         } else if self.tag_log.is_some() {
             self.with_history_window(|app| app.queue_history_reload());
         }
+        self.sequencing = snapshot.sequencing;
         self.update_merge_message(snapshot.merging, snapshot.merge_message, same_repository);
         if self.preferences.show_ignored_files {
             self.working_tree.read_soon();
@@ -1615,8 +1632,10 @@ impl SannyGitApp {
         self.branches.current = false;
         self.error = None;
         self.status = "Creating branch…".into();
+        let start = self.branches.create_from_commit.take();
         self.start_background_operation(move |git| {
-            let outcome = crate::branches::create(git, &root, &name, switch_to);
+            let outcome =
+                crate::branches::create(git, &root, &name, switch_to, start.as_deref());
             let snapshot = git::load(git, &root);
             WorkerResult::Operation {
                 committed: false,
@@ -1639,8 +1658,20 @@ impl SannyGitApp {
         self.history.commit_files = None;
         self.history.selected_commit_file = None;
         self.history.loaded_commit_file = None;
+        self.history.comparing_with = None;
         self.history.commit_preview_generation =
             self.history.commit_preview_generation.wrapping_add(1);
+    }
+
+    pub(crate) fn load_commit_preview(&mut self) {
+        if self.busy()
+            || self.history.commit_preview_worker.is_some()
+            || !self.history.commit_details_open
+            || self.history.comparing_with.is_some()
+        {
+            return;
+        }
+        self.load_commit_preview_inner();
     }
 
     pub fn select_commit(&mut self, hash: String) {
@@ -1687,13 +1718,7 @@ impl SannyGitApp {
             self.history.commit_preview_generation.wrapping_add(1);
     }
 
-    fn load_commit_preview(&mut self) {
-        if self.busy()
-            || self.history.commit_preview_worker.is_some()
-            || !self.history.commit_details_open
-        {
-            return;
-        }
+    fn load_commit_preview_inner(&mut self) {
         let Some(hash) = self.history.selected_commit.clone() else {
             return;
         };
@@ -2075,6 +2100,14 @@ impl SannyGitApp {
                 result,
             } => self.apply_discard_batch(root, paths, result),
             WorkerResult::MergeDetails { root, result } => self.apply_merge_details(root, result),
+            WorkerResult::RevertMergeParents(dialog) => self.apply_revert_merge_parents(dialog),
+            WorkerResult::CommitCompare {
+                path,
+                from,
+                to,
+                generation,
+                result,
+            } => self.apply_commit_compare(path, from, to, generation, result),
             WorkerResult::PushUpToDetails { root, result } => self.apply_push_up_to(root, result),
             WorkerResult::RefDetails { root, result } => self.apply_ref_details(root, *result),
             WorkerResult::TagPushSelection {

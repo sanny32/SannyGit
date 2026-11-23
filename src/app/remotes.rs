@@ -20,6 +20,7 @@ pub struct PullDialog {
     pub more_options: bool,
     pub update_tags: bool,
     pub remember: bool,
+    pub rebase: bool,
 }
 
 impl RemoteDialog {
@@ -81,8 +82,10 @@ impl SannyGitApp {
             pull: PullDialog {
                 update_tags: operation == Operation::Pull
                     && defaults.is_none_or(|defaults| defaults.update_tags),
+                rebase: operation == Operation::Pull
+                    && defaults.is_some_and(|defaults| defaults.rebase),
                 remember: defaults.is_some(),
-                ..Default::default()
+                more_options: false,
             },
         });
         self.error = None;
@@ -125,6 +128,8 @@ impl SannyGitApp {
                             .filter(|defaults| state.remotes.contains(&defaults.remote))
                         {
                             dialog.remote = defaults.remote.clone();
+                            dialog.pull.update_tags = defaults.update_tags;
+                            dialog.pull.rebase = defaults.rebase;
                         }
                     }
                     dialog.branch = state
@@ -181,6 +186,11 @@ impl SannyGitApp {
         };
         let update_tags = dialog.operation == Operation::Pull && dialog.pull.update_tags;
         let tag_policy = (dialog.operation == Operation::Pull).then_some(dialog.pull.update_tags);
+        let pull_strategy = (dialog.operation == Operation::Pull).then_some(if dialog.pull.rebase {
+            remotes::PullStrategy::Rebase
+        } else {
+            remotes::PullStrategy::FastForward
+        });
         let remote = dialog.remote.clone();
         let target = dialog.branch.clone();
         let expected_branch = state.branch.clone();
@@ -194,6 +204,7 @@ impl SannyGitApp {
                     crate::repository::PullDefaults {
                         remote: remote.clone(),
                         update_tags,
+                        rebase: dialog.pull.rebase,
                     },
                 );
             } else {
@@ -223,6 +234,7 @@ impl SannyGitApp {
                 expected_branch.as_deref(),
                 &cancel,
                 tag_policy,
+                pull_strategy,
             )
             .and_then(|()| {
                 if set_upstream {
@@ -327,6 +339,7 @@ mod tests {
             crate::repository::PullDefaults {
                 remote: "team".into(),
                 update_tags: false,
+                rebase: false,
             },
         );
         let saved = serde_json::to_string(&app.manager.preferences).unwrap();

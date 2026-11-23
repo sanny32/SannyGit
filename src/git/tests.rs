@@ -1104,7 +1104,7 @@ fn unfinished_operations_preserve_index_worktree_and_head_in_linked_worktrees() 
                 std::fs::write(&marker_path, &head).unwrap();
             }
             for mode in [CommitContents::All, CommitContents::Staged] {
-                if marker != "MERGE_HEAD" {
+                if !matches!(marker, "MERGE_HEAD" | "CHERRY_PICK_HEAD" | "REVERT_HEAD") {
                     assert!(commit(&SYSTEM_GIT, root, "Blocked", mode)
                         .unwrap_err()
                         .contains("Finish"));
@@ -1118,7 +1118,7 @@ fn unfinished_operations_preserve_index_worktree_and_head_in_linked_worktrees() 
             assert!(amend_message(&SYSTEM_GIT, root)
                 .unwrap_err()
                 .contains("Finish"));
-            if marker != "MERGE_HEAD" {
+            if !matches!(marker, "MERGE_HEAD" | "CHERRY_PICK_HEAD" | "REVERT_HEAD") {
                 assert!(set_staged(&SYSTEM_GIT, root, "file", true)
                     .unwrap_err()
                     .contains("Finish"));

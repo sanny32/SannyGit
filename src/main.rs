@@ -13,7 +13,9 @@ mod hunk;
 mod llm;
 mod logging;
 mod menu;
+mod cherry_pick;
 mod merge;
+mod revert;
 #[cfg(test)]
 mod mock_data;
 mod models;

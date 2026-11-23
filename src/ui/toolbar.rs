@@ -396,11 +396,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                     && app.repositories.get(app.selected_repository).is_some()
                                     && !app.history.commits.is_empty();
                                 if action_button(ui, icon, label, enabled, palette, action_width)
-                                    .help_text("Open the history of HEAD")
+                                    .help_text("Open the history of the current branch")
                                     .disabled_help_text("Open a repository and wait until its history is loaded")
                                     .clicked()
                                 {
-                                    app.open_head_log();
+                                    app.open_current_branch_log();
                                     super::journal::focus_history(ui.ctx());
                                 }
                             }

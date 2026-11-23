@@ -954,6 +954,7 @@ impl SannyGitApp {
         self.commit.message.clear();
         self.commit.merge_default_message = None;
         self.merging = false;
+        self.sequencing = crate::git::Sequencing::None;
         self.history.journal_filter.clear();
         self.manager.dialog = None;
         self.manager.worktrees.clear();

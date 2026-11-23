@@ -699,6 +699,59 @@ fn pull_fast_forwards_and_refuses_dirty_or_diverged_worktrees() {
 }
 
 #[test]
+fn pull_rebase_replays_local_commits_when_branches_diverged() {
+    let (_temp, source, other) = fixture();
+    fs::write(other.join("local.txt"), "local\n").unwrap();
+    command(&other, &["add", "local.txt"]);
+    command(&other, &["commit", "-m", "local only"]);
+    commit(&source, "remote commit\n");
+    run(
+        &SYSTEM_GIT,
+        &source,
+        Operation::Push,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let remote = head(&SYSTEM_GIT, &source).unwrap();
+    assert!(run(
+        &SYSTEM_GIT,
+        &other,
+        Operation::Pull,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false)
+    )
+    .unwrap_err()
+    .contains("fast-forward"));
+    run_with_tags(
+        &SYSTEM_GIT,
+        &other,
+        Operation::Pull,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+        None,
+        Some(PullStrategy::Rebase),
+    )
+    .unwrap();
+    assert_ne!(head(&SYSTEM_GIT, &other).unwrap(), remote);
+    assert!(git::is_ancestor(&SYSTEM_GIT, &other, &remote, &head(&SYSTEM_GIT, &other).unwrap()).unwrap());
+    assert_eq!(
+        fs::read_to_string(other.join("file")).unwrap(),
+        "remote commit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(other.join("local.txt")).unwrap(),
+        "local\n"
+    );
+}
+
+#[test]
 fn pull_preserves_ignored_files_and_refuses_in_progress_operations() {
     let (_temp, source, other) = fixture();
     let original = head(&SYSTEM_GIT, &other).unwrap();
@@ -833,6 +886,7 @@ fn pull_tag_option_updates_only_when_requested_and_fetch_only_preserves_work() {
         Some("main"),
         &AtomicBool::new(false),
         Some(false),
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -858,6 +912,7 @@ fn pull_tag_option_updates_only_when_requested_and_fetch_only_preserves_work() {
         None,
         &AtomicBool::new(false),
         Some(true),
+        None,
     )
     .unwrap();
     assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), before);

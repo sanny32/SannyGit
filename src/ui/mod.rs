@@ -6,6 +6,7 @@ mod branches;
 pub(crate) use branches::handle_branch_shortcuts;
 mod changes;
 mod clone_dialog;
+mod commit_revert;
 mod commit_panel;
 mod conflict;
 mod controls;
@@ -177,6 +178,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         ref_management::show(ui.ctx(), app);
         merge::show(ui.ctx(), app);
         merge::show_abort(ui.ctx(), app);
+        commit_revert::show(ui.ctx(), app);
         push_up_to::show(ui.ctx(), app);
         conflict::show(ui.ctx(), app);
     }

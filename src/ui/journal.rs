@@ -347,6 +347,14 @@ enum CommitAction {
     Log(String),
     Merge(String),
     Rebase(String),
+    CherryPick(String),
+    Revert(String),
+    Checkout(String),
+    NewBranch(String),
+    CompareWithHead,
+    SetComparison(String),
+    CompareWithComparison,
+    ClearComparison,
     Reset(String),
     ResetAdvanced(String),
     Push(String),
@@ -407,6 +415,58 @@ fn commit_menu(app: &SannyGitApp, index: usize) -> Vec<Entry<CommitAction>> {
             CommitAction::Rebase(hash.clone()),
         )
         .help(operation_help),
+        Entry::item(
+            "Cherry-Pick",
+            operation_ready,
+            CommitAction::CherryPick(hash.clone()),
+        )
+        .help(operation_help),
+        Entry::item("Revert", operation_ready, CommitAction::Revert(hash.clone()))
+            .help(operation_help),
+        Entry::item(
+            "Check Out",
+            refs_ready && commit_id,
+            CommitAction::Checkout(hash.clone()),
+        )
+        .help(if refs_ready {
+            "Check out this commit as detached HEAD"
+        } else if !commit_id {
+            full_id
+        } else {
+            "Refresh the repository and wait for the current operation"
+        }),
+        Entry::item(
+            "New Branch…",
+            refs_ready && commit_id,
+            CommitAction::NewBranch(hash.clone()),
+        )
+        .help("Create a local branch starting at this commit"),
+        Entry::Separator,
+        Entry::item(
+            "Compare with HEAD",
+            refs_ready && commit_id && hash != app.branches.head_commit,
+            CommitAction::CompareWithHead,
+        )
+        .help("Show a diff against the current branch tip"),
+        Entry::item(
+            "Set as Comparison Commit",
+            refs_ready && commit_id,
+            CommitAction::SetComparison(hash.clone()),
+        )
+        .help("Remember this commit for a two-commit comparison"),
+        Entry::item(
+            "Compare with Comparison Commit",
+            refs_ready
+                && commit_id
+                && app.history.comparison_commit.as_deref().is_some_and(|base| base != hash),
+            CommitAction::CompareWithComparison,
+        )
+        .help("Compare the selected commit with the remembered comparison commit"),
+        Entry::item(
+            "Clear Comparison",
+            app.history.comparison_commit.is_some() || app.history.comparing_with.is_some(),
+            CommitAction::ClearComparison,
+        ),
         Entry::Separator,
         Entry::item("Reset…", reset_ready, CommitAction::Reset(hash.clone())).help(reset_help),
         Entry::item(
@@ -442,6 +502,14 @@ fn apply_commit_action(ctx: &egui::Context, app: &mut SannyGitApp, action: Commi
         }
         CommitAction::Merge(hash) => app.open_merge_commit(hash),
         CommitAction::Rebase(hash) => app.open_rebase_commit(hash),
+        CommitAction::CherryPick(hash) => app.cherry_pick_commit(hash),
+        CommitAction::Revert(hash) => app.revert_commit(hash),
+        CommitAction::Checkout(hash) => app.checkout_commit(hash),
+        CommitAction::NewBranch(hash) => app.open_branch_at_commit(hash),
+        CommitAction::CompareWithHead => app.compare_selected_with_head(),
+        CommitAction::SetComparison(hash) => app.set_comparison_commit(hash),
+        CommitAction::CompareWithComparison => app.compare_selected_with_marker(),
+        CommitAction::ClearComparison => app.clear_commit_comparison(),
         CommitAction::Reset(hash) => app.open_commit_reset(hash),
         CommitAction::ResetAdvanced(hash) => app.open_advanced_commit_reset(hash),
         CommitAction::Push(hash) => app.open_push_up_to(hash),
@@ -669,15 +737,36 @@ fn history_panels(ui: &mut Ui, app: &mut SannyGitApp) {
             super::header(ui, 28.0, palette, |ui| {
                 ui.spacing_mut().interact_size.y = 20.0;
                 ui.spacing_mut().button_padding = Vec2::new(6.0, 1.0);
-                ui.label("Changes");
-                ui.selectable_value(&mut side_by_side, false, "Unified");
-                ui.selectable_value(&mut side_by_side, true, "Side by Side");
-                let path = app
-                    .history
-                    .selected_commit_file
-                    .as_deref()
-                    .unwrap_or("Select a file");
-                ui.add(Label::new(path).truncate()).help_text(path);
+                if app.history.comparing_with.is_some() {
+                    ui.label("Comparison");
+                    if ui.small_button("Clear").clicked() {
+                        app.clear_commit_comparison();
+                    }
+                    let from = app
+                        .history
+                        .comparing_with
+                        .as_deref()
+                        .map(|hash| hash.get(..8).unwrap_or(hash))
+                        .unwrap_or("?");
+                    let to = app
+                        .history
+                        .selected_commit
+                        .as_deref()
+                        .map(|hash| hash.get(..8).unwrap_or(hash))
+                        .unwrap_or("?");
+                    ui.add(Label::new(format!("{from} → {to}")).truncate())
+                        .help_text("Unified diff from the first commit to the second");
+                } else {
+                    ui.label("Changes");
+                    ui.selectable_value(&mut side_by_side, false, "Unified");
+                    ui.selectable_value(&mut side_by_side, true, "Side by Side");
+                    let path = app
+                        .history
+                        .selected_commit_file
+                        .as_deref()
+                        .unwrap_or("Select a file");
+                    ui.add(Label::new(path).truncate()).help_text(path);
+                }
                 if let Some(preview) = &app.history.commit_preview {
                     ui.label(
                         RichText::new(format!("+{}", preview.added)).color(palette.added_text),
@@ -1833,6 +1922,8 @@ mod tests {
         let head_menu = commit_menu(&app, 0);
         assert!(!menu_item(&head_menu, "Merge…").0);
         assert!(!menu_item(&head_menu, "Rebase…").0);
+        assert!(!menu_item(&head_menu, "Cherry-Pick").0);
+        assert!(!menu_item(&head_menu, "Revert").0);
         assert!(menu_item(&head_menu, "Push").0);
         assert!(menu_item(&head_menu, "Reset…").0);
         assert!(menu_item(&head_menu, "Copy ID").0);
@@ -1902,6 +1993,8 @@ mod tests {
                 "Log",
                 "Merge…",
                 "Rebase…",
+                "Cherry-Pick",
+                "Revert",
                 "Reset…",
                 "Reset Advanced…",
                 "Push",

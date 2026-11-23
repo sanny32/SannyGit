@@ -314,6 +314,7 @@ fn repository_error_retains_view_and_refresh_preserves_selection() {
         branch: "real-branch".into(),
         head: String::new(),
         changes,
+        sequencing: Default::default(),
         merging: false,
         merge_message: None,
     };
@@ -606,6 +607,7 @@ fn skipped_push_and_sync_preserve_errors_for_modal_reporting() {
                                     branch: "main".into(),
                                     head: String::new(),
                                     changes: vec![],
+                                    sequencing: Default::default(),
                                     merging: false,
                                     merge_message: None,
                                 })
@@ -818,6 +820,7 @@ fn operation_outcomes_remain_distinct_from_refresh_and_cancellation() {
                             branch: "main".into(),
                             head: String::new(),
                             changes: crate::mock_data::changes(),
+                            sequencing: Default::default(),
                             merging: false,
                             merge_message: None,
                         })

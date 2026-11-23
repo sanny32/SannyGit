@@ -126,6 +126,8 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 } else {
                     if ui.add_enabled(enabled, dialog_style::primary("Merge to Working Tree", palette)).help_text("Start the merge and leave it open. Review changes and resolve conflicts before creating the merge commit.").clicked() { submit = Some(Mode::WorkingTree); }
                     if ui.add_enabled(enabled, dialog_style::button("Create Merge-Commit")).help_text("Merge the selected commit and create a merge commit, even when a fast-forward is possible. Uses your Git identity, hooks and signing configuration.").clicked() { submit = Some(Mode::Commit); }
+                    if ui.add_enabled(enabled, dialog_style::button("Fast-Forward")).help_text("Move the current branch to the selected commit when it is a descendant of HEAD.").clicked() { submit = Some(Mode::FastForward); }
+                    if ui.add_enabled(enabled, dialog_style::button("Squash Merge")).help_text("Squash the selected commit into staged changes. Review and commit when ready.").clicked() { submit = Some(Mode::Squash); }
                 }
             });
         });

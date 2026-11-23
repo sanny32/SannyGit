@@ -417,7 +417,32 @@ pub fn checkout_remote(
     }
 }
 
-pub fn create(git: &GitContext, root: &Path, name: &str, switch_to: bool) -> Result<(), String> {
+pub fn checkout_commit(git: &GitContext, root: &Path, commit: &str) -> Result<(), String> {
+    if !is_commit_id(commit) {
+        return Err("Select a valid commit before checking out.".into());
+    }
+    git::require_no_operation(git, root)?;
+    git::run(
+        git,
+        root,
+        &[
+            "switch",
+            "--detach",
+            "--no-recurse-submodules",
+            "--no-guess",
+            commit,
+        ],
+    )
+    .map(|_| ())
+}
+
+pub fn create(
+    git: &GitContext,
+    root: &Path,
+    name: &str,
+    switch_to: bool,
+    start: Option<&str>,
+) -> Result<(), String> {
     if let Some(reason) = name_hint(name) {
         return Err(reason.into());
     }
@@ -439,6 +464,7 @@ pub fn create(git: &GitContext, root: &Path, name: &str, switch_to: bool) -> Res
     {
         return Err("A local branch with this name already exists.".into());
     }
+    let start = start.unwrap_or("HEAD");
     if switch_to {
         git::require_no_operation(git, root)?;
         git::run(
@@ -452,13 +478,13 @@ pub fn create(git: &GitContext, root: &Path, name: &str, switch_to: bool) -> Res
                 "--no-overwrite-ignore",
                 "-c",
                 name,
-                "HEAD",
+                start,
                 "--",
             ],
         )
         .map(|_| ())
     } else {
-        git::run(git, root, &["branch", "--no-track", "--", name, "HEAD"]).map(|_| ())
+        git::run(git, root, &["branch", "--no-track", "--", name, start]).map(|_| ())
     }
 }
 

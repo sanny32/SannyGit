@@ -459,7 +459,7 @@ fn rename_preserves_dirty_files_index_head_and_tracking_configuration() {
         .refs
         .iter()
         .any(|r| r.full_name == "refs/heads/main"));
-    create(&SYSTEM_GIT, &repo.0, "other", false).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "other", false, None).unwrap();
     rename(&SYSTEM_GIT, &repo.0, "refs/heads/other", "renamed-other").unwrap();
     assert_eq!(
         git::load(&SYSTEM_GIT, &repo.0).unwrap().branch,
@@ -471,7 +471,7 @@ fn rename_preserves_dirty_files_index_head_and_tracking_configuration() {
 #[test]
 fn rename_rejects_invalid_missing_nonlocal_and_existing_targets_without_writes() {
     let repo = committed_repo();
-    create(&SYSTEM_GIT, &repo.0, "existing", false).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "existing", false, None).unwrap();
     repo.git(&["tag", "release"]);
     repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
     let before = repo.git(&["show-ref"]);
@@ -592,10 +592,10 @@ fn lists_current_local_remote_upstream_and_annotated_tags_without_writes() {
 fn creates_branches_with_and_without_switching_and_handles_detached_head() {
     let repo = committed_repo();
     let head = repo.git(&["rev-parse", "HEAD"]);
-    create(&SYSTEM_GIT, &repo.0, "feature/новая", false).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "feature/новая", false, None).unwrap();
     assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "main");
     assert_eq!(repo.git(&["rev-parse", "feature/новая"]), head);
-    create(&SYSTEM_GIT, &repo.0, "another", true).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "another", true, None).unwrap();
     repo.git(&["tag", "main"]);
     assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "another");
     switch(&SYSTEM_GIT, &repo.0, "refs/heads/main").unwrap();
@@ -607,7 +607,7 @@ fn creates_branches_with_and_without_switching_and_handles_detached_head() {
         .refs
         .iter()
         .all(|r| !r.current));
-    create(&SYSTEM_GIT, &repo.0, "from-detached", true).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "from-detached", true, None).unwrap();
     assert_eq!(
         git::load(&SYSTEM_GIT, &repo.0).unwrap().branch,
         "from-detached"
@@ -618,7 +618,7 @@ fn creates_branches_with_and_without_switching_and_handles_detached_head() {
 #[test]
 fn carries_staged_unstaged_and_untracked_changes_across_branch_switches() {
     let repo = committed_repo();
-    create(&SYSTEM_GIT, &repo.0, "other", true).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "other", true, None).unwrap();
     repo.write("target-only", "from other\n");
     repo.git(&["add", "target-only"]);
     repo.git(&["commit", "-m", "Add target file"]);
@@ -637,7 +637,7 @@ fn carries_staged_unstaged_and_untracked_changes_across_branch_switches() {
         std::fs::read_to_string(repo.0.join("target-only")).unwrap(),
         "from other\n"
     );
-    create(&SYSTEM_GIT, &repo.0, "new", true).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "new", true, None).unwrap();
     assert_eq!(git::load(&SYSTEM_GIT, &repo.0).unwrap().branch, "new");
     assert_eq!(repo.git(&["status", "--porcelain"]), status);
     assert_eq!(repo.git(&["show", ":file"]), staged);
@@ -652,7 +652,7 @@ fn carries_staged_unstaged_and_untracked_changes_across_branch_switches() {
 #[test]
 fn refuses_switch_that_would_overwrite_untracked_file() {
     let repo = committed_repo();
-    create(&SYSTEM_GIT, &repo.0, "other", true).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "other", true, None).unwrap();
     repo.write("collision", "tracked\n");
     repo.git(&["add", "collision"]);
     repo.git(&["commit", "-m", "Track collision"]);
@@ -673,7 +673,7 @@ fn never_overwrites_ignored_files_when_switching() {
     repo.write(".gitignore", "ignored.data\n");
     repo.git(&["add", ".gitignore"]);
     repo.git(&["commit", "-m", "ignore"]);
-    create(&SYSTEM_GIT, &repo.0, "target", true).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "target", true, None).unwrap();
     repo.write("ignored.data", "tracked target\n");
     repo.git(&["add", "-f", "ignored.data"]);
     repo.git(&["commit", "-m", "target file"]);
@@ -691,7 +691,7 @@ fn never_overwrites_ignored_files_when_switching() {
 #[test]
 fn refuses_branch_in_another_worktree_and_missing_local_targets() {
     let repo = committed_repo();
-    create(&SYSTEM_GIT, &repo.0, "occupied", false).unwrap();
+    create(&SYSTEM_GIT, &repo.0, "occupied", false, None).unwrap();
     repo.git(&[
         "worktree",
         "add",
@@ -856,7 +856,7 @@ fn validates_names_rejects_duplicates_and_handles_unborn_head() {
     let snapshot = load(&SYSTEM_GIT, &repo.0).unwrap();
     assert!(!snapshot.has_head);
     assert!(snapshot.refs.is_empty());
-    assert!(create(&SYSTEM_GIT, &repo.0, "new", false)
+    assert!(create(&SYSTEM_GIT, &repo.0, "new", false, None)
         .unwrap_err()
         .contains("first commit"));
     repo.write("file", "fixture\n");
@@ -875,11 +875,11 @@ fn validates_names_rejects_duplicates_and_handles_unborn_head() {
         "a\0b",
     ] {
         assert!(
-            create(&SYSTEM_GIT, &repo.0, name, false).is_err(),
+            create(&SYSTEM_GIT, &repo.0, name, false, None).is_err(),
             "accepted {name:?}"
         );
     }
-    assert!(create(&SYSTEM_GIT, &repo.0, "main", false)
+    assert!(create(&SYSTEM_GIT, &repo.0, "main", false, None)
         .unwrap_err()
         .contains("already exists"));
     assert_eq!(load(&SYSTEM_GIT, &repo.0).unwrap().refs.len(), 1);

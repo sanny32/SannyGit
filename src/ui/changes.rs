@@ -60,7 +60,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         app.abort_merge_allowed(),
                         eframe::egui::Button::new("Abort"),
                     )
-                    .help_text("Abort the current merge")
+                    .help_text(app.sequencing.abort_help())
                     .disabled_help_text(
                         "Wait for the current operation or refresh the working tree",
                     )
@@ -68,9 +68,42 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 {
                     app.open_abort_merge();
                 }
+                if app.sequencing.supports_skip() {
+                    if ui
+                        .add_enabled(
+                            app.sequencer_skip_allowed(),
+                            eframe::egui::Button::new("Skip"),
+                        )
+                        .help_text("Skip the current step after conflicts are resolved")
+                        .disabled_help_text("Resolve conflicts and refresh the working tree")
+                        .clicked()
+                    {
+                        app.skip_sequence();
+                    }
+                }
+                if matches!(
+                    app.sequencing,
+                    crate::git::Sequencing::CherryPick
+                        | crate::git::Sequencing::Revert
+                        | crate::git::Sequencing::Rebase
+                ) {
+                    if ui
+                        .add_enabled(
+                            app.sequencer_continue_allowed(),
+                            eframe::egui::Button::new("Continue"),
+                        )
+                        .help_text("Continue after all conflicts are resolved")
+                        .disabled_help_text("Resolve conflicts and refresh the working tree")
+                        .clicked()
+                    {
+                        app.continue_sequence();
+                    }
+                }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     icons::paint(ui, Icon::Warning, palette.warning, 16.0);
-                    ui.add(eframe::egui::Label::new("Merge in progress").truncate());
+                    ui.add(
+                        eframe::egui::Label::new(app.sequencing.banner()).truncate(),
+                    );
                 });
             });
         });
@@ -342,6 +375,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         app.selection.active = index;
         match action {
             FileAction::ShowChanges => app.select_change(index, false, false, &visible),
+            FileAction::LogFile(path) => {
+                app.open_file_log(path);
+                super::journal::focus_history(ui.ctx());
+            }
             FileAction::Commit => ui.ctx().memory_mut(|memory| {
                 memory.request_focus(eframe::egui::Id::unique("commit.message"));
             }),
@@ -440,6 +477,7 @@ enum FileAction {
     SelectRepository,
     Copy(String),
     ShowChanges,
+    LogFile(String),
     Commit,
     Stage,
     Unstage,
@@ -482,6 +520,12 @@ fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<F
     }
     entries.extend([
         E::item("Show Changes", true, FileAction::ShowChanges),
+        E::item(
+            "Log",
+            !app.busy() && repository.is_some(),
+            FileAction::LogFile(change.path.clone()),
+        )
+        .help("Open the history of this file"),
         E::Separator,
         E::item(
             "Commit…",
@@ -1027,6 +1071,7 @@ mod tests {
                 theme.apply(&ctx);
                 let mut app = SannyGitApp::with_theme(theme);
                 app.merging = true;
+                app.sequencing = crate::git::Sequencing::Merge;
                 app.interface_style = crate::theme::InterfaceStyle::Modern;
                 let mut output = ctx.run_ui(
                     RawInput {

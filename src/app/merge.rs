@@ -201,16 +201,24 @@ impl SannyGitApp {
         if !self.abort_merge_allowed() || self.repositories[self.selected_repository].path != root {
             return;
         }
+        let (status, success) = match self.sequencing {
+            crate::git::Sequencing::CherryPick => {
+                ("Aborting cherry-pick…", "Cherry-pick aborted")
+            }
+            crate::git::Sequencing::Revert => ("Aborting revert…", "Revert aborted"),
+            crate::git::Sequencing::Rebase => ("Aborting rebase…", "Rebase aborted"),
+            _ => ("Aborting merge…", "Merge aborted"),
+        };
         if self.start_worker(move |git| {
             let root = Path::new(&root);
             WorkerResult::Operation {
                 committed: false,
-                success: "Merge aborted",
+                success,
                 outcome: merge::abort(git, root),
                 snapshot: crate::git::load(git, root),
             }
         }) {
-            self.status = "Aborting merge…".into();
+            self.status = status.into();
         }
     }
 
@@ -368,8 +376,12 @@ impl SannyGitApp {
         // A chosen commit is already confirmed. Close that form when Git starts
         // and leave progress in the status bar. The branch picker stays open so
         // a refused rebase can keep its selection.
-        let close_when_started =
-            fast_forward_only || (dialog.operation == Operation::Rebase && dialog.tag.is_some());
+        let close_when_started = fast_forward_only
+            || matches!(
+                mode,
+                Some(merge::Mode::FastForward) | Some(merge::Mode::Squash)
+            )
+            || (dialog.operation == Operation::Rebase && dialog.tag.is_some());
         if fast_forward_only && mode != Some(merge::Mode::FastForward) {
             return;
         }
@@ -382,8 +394,7 @@ impl SannyGitApp {
             allowed.then_some(&tag.commit)
         } else {
             dialog.selected.as_ref().filter(|target| {
-                mode != Some(merge::Mode::FastForward)
-                    && *target != &snapshot.head
+                *target != &snapshot.head
                     && snapshot
                         .history
                         .commits
@@ -417,6 +428,10 @@ impl SannyGitApp {
                 {
                     "Merge ready to review and commit"
                 }
+                (Some(merge::Mode::Squash), Ok(_)) => {
+                    "Squash merge staged. Review and commit"
+                }
+                (Some(merge::Mode::FastForward), Ok(_)) => "Fast-forward merge complete",
                 _ => "Merge complete",
             };
             WorkerResult::Operation {
@@ -685,6 +700,13 @@ mod tests {
                         .any(|file| file.path == "feature" && file.staged));
                 }
                 merge::Mode::FastForward => unreachable!(),
+                merge::Mode::Squash => {
+                    assert_eq!(merge::head(&SYSTEM_GIT, &repo.0).unwrap(), before);
+                    assert!(app
+                        .changes
+                        .iter()
+                        .any(|file| file.path == "feature" && file.staged));
+                }
             }
         }
     }

@@ -32,7 +32,19 @@ pub fn execute(
         "--no-rebase-merges", "--no-update-refs", "--no-fork-point", target,
     ])
     .map(|_| ())
-    .map_err(|error| format!("{error}\nIf conflicts occurred, resolve them outside SannyGit, then use git rebase --continue or git rebase --abort before retrying."))
+    .map_err(|error| format!("{error}\nIf conflicts occurred, resolve them in the working tree, then use Continue or Abort."))
+}
+
+pub fn abort(git: &GitContext, root: &Path) -> Result<(), String> {
+    git::run(git, root, &["rebase", "--abort"]).map(|_| ())
+}
+
+pub fn continue_rebase(git: &GitContext, root: &Path) -> Result<(), String> {
+    git::run(git, root, &["rebase", "--continue"]).map(|_| ())
+}
+
+pub fn skip(git: &GitContext, root: &Path) -> Result<(), String> {
+    git::run(git, root, &["rebase", "--skip"]).map(|_| ())
 }
 
 #[cfg(test)]
@@ -107,7 +119,7 @@ mod tests {
         let conflicting = merge::head(&SYSTEM_GIT, &repo.0).unwrap();
         repo.git(&["checkout", "main"]);
         let error = execute(&SYSTEM_GIT, &repo.0, &before, "main", &conflicting).unwrap_err();
-        assert!(error.contains("git rebase --abort"));
+        assert!(error.contains("Continue or Abort"));
         assert!(git::load(&SYSTEM_GIT, &repo.0)
             .unwrap()
             .changes

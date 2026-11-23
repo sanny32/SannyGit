@@ -29,6 +29,8 @@ pub struct View {
     pub commit_files: Option<Vec<backend::CommitFile>>,
     pub selected_commit_file: Option<String>,
     pub tag: Option<String>,
+    pub comparison_commit: Option<String>,
+    pub comparing_with: Option<String>,
     pub reveal_commit: Option<String>,
     pub(super) history_worker: Option<Receiver<WorkerResult>>,
     pub(super) history_pending: bool,
@@ -71,6 +73,9 @@ impl View {
 
     pub fn ref_name(&self) -> Option<&str> {
         let reference = self.tag.as_deref()?;
+        if let Some(path) = reference.strip_prefix("file:") {
+            return Some(path);
+        }
         reference
             .strip_prefix("refs/tags/")
             .or_else(|| reference.strip_prefix("refs/remotes/"))
@@ -178,6 +183,24 @@ impl SannyGitApp {
                 Err(error) => self.history.commit_preview_error = Some(error),
             }
         }
+    }
+
+    /// Same entry point as branch Log: opens the history window on the current branch.
+    pub fn open_current_branch_log(&mut self) {
+        if self.busy() || self.repositories.get(self.selected_repository).is_none() {
+            return;
+        }
+        let Some(current) = self
+            .branches
+            .entries
+            .iter()
+            .find(|entry| entry.current && entry.kind == crate::models::RefKind::Local)
+        else {
+            self.open_head_log();
+            return;
+        };
+        self.branches.selected_branch = current.full_name.clone();
+        self.open_ref_log(current.full_name.clone());
     }
 
     pub fn open_head_log(&mut self) {
@@ -428,7 +451,11 @@ impl SannyGitApp {
                     .ok_or_else(|| "Reload history before loading more.".to_owned())
                     .and_then(|cursor| backend::more(git, &root, cursor, previous, &cancel))
             } else if let Some(tag) = tag.as_deref() {
-                backend::reload_tag(git, &root, tag, requested, &keep, &cancel)
+                if let Some(file) = tag.strip_prefix("file:") {
+                    backend::reload_file(git, &root, file, requested, &keep, &cancel)
+                } else {
+                    backend::reload_tag(git, &root, tag, requested, &keep, &cancel)
+                }
             } else {
                 backend::reload(git, &root, all, requested, &keep, &cancel)
             };

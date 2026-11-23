@@ -115,6 +115,13 @@ fn head(git: &GitContext, root: &Path) -> Result<String, String> {
     Ok(oid.trim().into())
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PullStrategy {
+    #[default]
+    FastForward,
+    Rebase,
+}
+
 fn require_pull_ready(git: &GitContext, root: &Path) -> Result<(), String> {
     if !git::load(git, root)?.changes.is_empty() {
         return Err("Commit or move aside local changes before pulling.".into());
@@ -141,6 +148,7 @@ pub fn run(
         expected_branch,
         cancel,
         None,
+        None,
     )
 }
 
@@ -158,6 +166,7 @@ pub fn run_with_tags(
     expected_branch: Option<&str>,
     cancel: &AtomicBool,
     update_tags: Option<bool>,
+    pull_strategy: Option<PullStrategy>,
 ) -> Result<(), String> {
     let state = load(git, root)?;
     if !state.remotes.iter().any(|name| name == remote) {
@@ -262,12 +271,66 @@ pub fn run_with_tags(
                     &["merge-base", "--is-ancestor", fetched.trim(), &original],
                 )
                 .is_ok();
-            if !remote_is_ahead && !local_is_ahead {
-                return Err(format!("{} requires a fast-forward. The branches diverged; merge or rebase them separately.", operation.label()));
+            let strategy = if operation == Operation::Pull {
+                pull_strategy.unwrap_or_default()
+            } else {
+                PullStrategy::FastForward
+            };
+            let diverged = !remote_is_ahead && !local_is_ahead;
+            if diverged && strategy == PullStrategy::FastForward {
+                return Err(format!(
+                    "{} requires a fast-forward. The branches diverged; merge or rebase them separately.",
+                    operation.label()
+                ));
             }
-            if remote_is_ahead {
-                git::run_controlled(git, root, &["-c", "submodule.recurse=false", "merge", "--ff-only", "--no-edit", "--no-autostash", "--no-overwrite-ignore", "--", fetched.trim()], timeout, Some(cancel))
-                    .map_err(|error| format!("Could not fast-forward: {error} Check ignored-file conflicts, Git hooks, repository locks and permissions; refresh before retrying."))?;
+            if remote_is_ahead || (diverged && strategy == PullStrategy::Rebase) {
+                let fetched = fetched.trim();
+                match strategy {
+                    PullStrategy::FastForward => {
+                        git::run_controlled(
+                            git,
+                            root,
+                            &[
+                                "-c",
+                                "submodule.recurse=false",
+                                "merge",
+                                "--ff-only",
+                                "--no-edit",
+                                "--no-autostash",
+                                "--no-overwrite-ignore",
+                                "--",
+                                fetched,
+                            ],
+                            timeout,
+                            Some(cancel),
+                        )
+                        .map_err(|error| format!(
+                            "Could not fast-forward: {error} Check ignored-file conflicts, Git hooks, repository locks and permissions; refresh before retrying."
+                        ))?;
+                    }
+                    PullStrategy::Rebase => {
+                        git::run_controlled(
+                            git,
+                            root,
+                            &[
+                                "-c",
+                                "submodule.recurse=false",
+                                "rebase",
+                                "--no-autostash",
+                                "--no-autosquash",
+                                "--no-rebase-merges",
+                                "--no-update-refs",
+                                "--no-fork-point",
+                                fetched,
+                            ],
+                            timeout,
+                            Some(cancel),
+                        )
+                        .map_err(|error| format!(
+                            "{error}\nIf conflicts occurred, resolve them in the working tree, then use Continue or Abort."
+                        ))?;
+                    }
+                }
             }
         }
     }
