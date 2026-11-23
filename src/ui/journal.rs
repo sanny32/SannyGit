@@ -522,15 +522,11 @@ fn graph(ui: &mut Ui, app: &SannyGitApp, index: usize, connected: bool, palette:
 }
 
 fn details(ui: &mut Ui, app: &mut SannyGitApp) {
-    let position_id = egui::Id::unique("history.initial_position");
     let shown_id = egui::Id::unique("history.viewport_shown");
     let geometry_id = egui::Id::unique("history.viewport_geometry");
     let view = app.history_window();
     if !view.commit_details_open || (view.selected_commit.is_none() && view.tag.is_none()) {
-        ui.data_mut(|data| {
-            data.remove::<Option<egui::Pos2>>(position_id);
-            data.remove::<bool>(shown_id);
-        });
+        ui.data_mut(|data| data.remove::<bool>(shown_id));
         return;
     }
     let name = app
@@ -563,37 +559,30 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
         }
         return;
     }
-    let saved_geometry =
-        ctx.data_mut(|data| data.get_persisted::<HistoryViewportGeometry>(geometry_id));
-    let position = if saved_geometry.is_some() {
-        None
-    } else {
-        let cached_position = ctx.data(|data| data.get_temp::<Option<egui::Pos2>>(position_id));
-        cached_position.unwrap_or_else(|| {
+    let mut builder = crate::theme::native_viewport()
+        .with_title(&title)
+        .with_min_inner_size([1100.0, 700.0])
+        .with_decorations(true);
+    // Changes to the builder's geometry become native move and resize commands.
+    if !ui.data(|data| data.get_temp::<bool>(shown_id).unwrap_or(false)) {
+        let saved_geometry =
+            ctx.data_mut(|data| data.get_persisted::<HistoryViewportGeometry>(geometry_id));
+        if let Some(geometry) = saved_geometry {
+            builder = builder
+                .with_inner_size(geometry.inner_size.max(Vec2::new(1100.0, 700.0)))
+                .with_position(geometry.outer_position);
+        } else {
+            builder = builder.with_inner_size([1200.0, 800.0]);
             let position = ctx.input(|input| {
                 let viewport = input.viewport();
                 viewport
                     .outer_rect
                     .map(|outer| history_position(outer, viewport.inner_rect))
             });
-            ctx.data_mut(|data| data.insert_temp(position_id, position));
-            position
-        })
-    };
-    let mut builder = crate::theme::native_viewport()
-        .with_title(&title)
-        .with_inner_size(
-            saved_geometry
-                .map(|geometry| geometry.inner_size)
-                .unwrap_or_else(|| Vec2::new(1200.0, 800.0))
-                .max(Vec2::new(1100.0, 700.0)),
-        )
-        .with_min_inner_size([1100.0, 700.0])
-        .with_decorations(true);
-    if let Some(geometry) = saved_geometry {
-        builder = builder.with_position(geometry.outer_position);
-    } else if let Some(position) = position {
-        builder = builder.with_position(position);
+            if let Some(position) = position {
+                builder = builder.with_position(position);
+            }
+        }
     }
     ctx.show_viewport_immediate(history_viewport(), builder, |ui, _class| {
         if ui.input(|input| input.viewport().close_requested()) {
