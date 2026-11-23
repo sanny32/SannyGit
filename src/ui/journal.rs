@@ -547,21 +547,18 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
     if !ui.data(|data| data.get_temp::<bool>(shown_id).unwrap_or(false)) {
         let saved_geometry =
             ctx.data_mut(|data| data.get_persisted::<HistoryViewportGeometry>(geometry_id));
-        if let Some(geometry) = saved_geometry {
-            builder = builder
-                .with_inner_size(geometry.inner_size.max(Vec2::new(1100.0, 700.0)))
-                .with_position(geometry.outer_position);
-        } else {
-            builder = builder.with_inner_size([1200.0, 800.0]);
-            let position = ctx.input(|input| {
-                let viewport = input.viewport();
-                viewport
-                    .outer_rect
-                    .map(|outer| history_position(outer, viewport.inner_rect))
-            });
-            if let Some(position) = position {
-                builder = builder.with_position(position);
-            }
+        let size = saved_geometry.map_or(Vec2::new(1200.0, 800.0), |geometry| {
+            geometry.inner_size.max(Vec2::new(1100.0, 700.0))
+        });
+        builder = builder.with_inner_size(size);
+        let position = ctx.input(|input| {
+            let viewport = input.viewport();
+            viewport
+                .outer_rect
+                .map(|outer| history_position(outer, viewport.inner_rect, size))
+        });
+        if let Some(position) = position {
+            builder = builder.with_position(position);
         }
     }
     ctx.show_viewport_immediate(history_viewport(), builder, |ui, _class| {
@@ -592,13 +589,10 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
     });
 }
 
-/// Geometry of the native history window, restored on reopen like the main
-/// window's. Persisted egui data survives through the memory that eframe
-/// stores in app.ron.
+/// Size of the native history window, restored from egui's persisted memory.
 #[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 struct HistoryViewportGeometry {
     inner_size: Vec2,
-    outer_position: egui::Pos2,
 }
 
 fn remember_viewport_geometry(ui: &mut Ui, geometry_id: egui::Id) {
@@ -609,7 +603,6 @@ fn remember_viewport_geometry(ui: &mut Ui, geometry_id: egui::Id) {
         }
         Some(HistoryViewportGeometry {
             inner_size: viewport.inner_rect?.size(),
-            outer_position: viewport.outer_rect?.min,
         })
     });
     let Some(geometry) = geometry else {
@@ -622,11 +615,11 @@ fn remember_viewport_geometry(ui: &mut Ui, geometry_id: egui::Id) {
     });
 }
 
-fn history_position(outer: egui::Rect, inner: Option<egui::Rect>) -> egui::Pos2 {
+fn history_position(outer: egui::Rect, inner: Option<egui::Rect>, size: Vec2) -> egui::Pos2 {
     let decorations = inner.map_or(Vec2::ZERO, |inner| {
         (outer.size() - inner.size()).max(Vec2::ZERO)
     });
-    outer.center() - (Vec2::new(1200.0, 800.0) + decorations) / 2.0
+    outer.center() - (size + decorations) / 2.0
 }
 
 fn history_contents(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -976,11 +969,14 @@ mod tests {
         let outer = Rect::from_min_size(egui::pos2(200.0, 100.0), Vec2::new(1536.0, 1024.0));
         let inner = Rect::from_min_size(egui::pos2(208.0, 130.0), Vec2::new(1520.0, 986.0));
         assert_eq!(
-            history_position(outer, Some(inner)),
+            history_position(outer, Some(inner), Vec2::new(1200.0, 800.0)),
             egui::pos2(360.0, 193.0)
         );
         let outer = Rect::from_min_size(egui::pos2(-1920.0, 0.0), Vec2::new(1600.0, 900.0));
-        assert_eq!(history_position(outer, None), egui::pos2(-1720.0, 50.0));
+        assert_eq!(
+            history_position(outer, None, Vec2::new(1400.0, 900.0)),
+            egui::pos2(-1820.0, 0.0)
+        );
     }
 
     #[test]
