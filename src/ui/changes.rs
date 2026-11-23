@@ -113,7 +113,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let mut staging_request = None;
     let mut file_request = None;
     let sort_id = eframe::egui::Id::unique("files.status_sort");
+    let index_sort_id = eframe::egui::Id::unique("files.index_sort");
     let status_sort = ui.data(|data| data.get_temp::<bool>(sort_id));
+    let index_sort = ui.data(|data| data.get_temp::<bool>(index_sort_id));
     let display_order = sync_display_order(ui, app);
     let path_rank = |index: usize| {
         display_order
@@ -128,7 +130,15 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .filter(|(_, change)| row_visible(app, change))
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
-    if let Some(ascending) = status_sort {
+    if let Some(ascending) = index_sort {
+        visible.sort_by(|&left, &right| {
+            let order = app.changes[left]
+                .staged
+                .cmp(&app.changes[right].staged);
+            let order = if ascending { order } else { order.reverse() };
+            order.then_with(|| path_rank(left).cmp(&path_rank(right)))
+        });
+    } else if let Some(ascending) = status_sort {
         visible.sort_by(|&left, &right| {
             let order = app.changes[left]
                 .kind
@@ -206,8 +216,22 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     table
         .header(24.0, |mut header| {
             header.col(|ui| {
-                ui.add_space(6.0);
-                ui.label("Index");
+                let label = match index_sort {
+                    None => "Index",
+                    Some(true) => "Index ↑",
+                    Some(false) => "Index ↓",
+                };
+                if ui
+                    .add(eframe::egui::Button::new(label).frame(false))
+                    .help_text("Sort by staged state")
+                    .clicked()
+                {
+                    ui.data_mut(|data| {
+                        data.remove::<bool>(sort_id);
+                        data.insert_temp(index_sort_id, index_sort != Some(true));
+                    });
+                    ui.ctx().request_repaint();
+                }
                 column_separator(ui, "index", &mut index_width, 1.0, 44.0..=80.0, palette);
             });
             header.col(|ui| {
@@ -224,7 +248,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     .help_text("Sort by file status")
                     .clicked()
                 {
-                    ui.data_mut(|data| data.insert_temp(sort_id, status_sort != Some(true)));
+                    ui.data_mut(|data| {
+                        data.remove::<bool>(index_sort_id);
+                        data.insert_temp(sort_id, status_sort != Some(true));
+                    });
                     ui.ctx().request_repaint();
                 }
             });
@@ -287,7 +314,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 row.col(|ui| {
                     row_rect = ui.max_rect();
                     ui.spacing_mut().interact_size.y = row_height;
-                    ui.add_space(6.0);
                     let mut checked = change.staged;
                     let tooltip = if conflicted {
                         "Double-click the file to open Conflict Solver"
@@ -299,11 +325,19 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         "Some changes are staged. Click to unstage; use Stage to include the remaining changes"
                     } else if change.staged { "Unstage this file (preserve working-tree contents)" }
                     else { "Stage all changes in this file" };
-                    if ui.add_enabled(can_toggle,
-                        eframe::egui::Checkbox::without_text(&mut checked))
-                        .help_text(tooltip).disabled_help_text(tooltip).changed() {
-                        staging_request = Some((index, !change.staged));
-                    }
+                    ui.horizontal_centered(|ui| {
+                        if ui
+                            .add_enabled(
+                                can_toggle,
+                                eframe::egui::Checkbox::without_text(&mut checked),
+                            )
+                            .help_text(tooltip)
+                            .disabled_help_text(tooltip)
+                            .changed()
+                        {
+                            staging_request = Some((index, !change.staged));
+                        }
+                    });
                 });
                 row.col(|ui| {
                     icons::paint(ui, Icon::for_file(&change.path), status_color(change.kind, palette), 16.0);
@@ -1372,10 +1406,15 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(checkboxes.len(), separators.len());
+                let index_center_x = 26.0;
                 for (checkbox, bottom) in checkboxes.iter().zip(&separators) {
                     assert!(
                         (checkbox.center().y - (bottom - 11.0)).abs() <= 0.5,
                         "Checkbox {checkbox:?} is not centered above separator {bottom}"
+                    );
+                    assert!(
+                        (checkbox.center().x - index_center_x).abs() <= 4.0,
+                        "Checkbox {checkbox:?} is not centered in the Index column"
                     );
                 }
                 assert!(!stripes.is_empty());
