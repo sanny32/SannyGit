@@ -6,12 +6,15 @@ use crate::{
     models::ChangeKind,
     theme::{semibold_family, Palette},
 };
-use eframe::egui::{Align, Align2, Color32, FontId, Layout, Rect, RichText, Sense, Ui, Vec2};
+use eframe::egui::{
+    Align, Align2, Color32, Direction, FontId, Layout, Rect, RichText, Sense, Ui, Vec2,
+};
 use egui_extras::{Column, TableBuilder};
 use std::path::{Path, PathBuf};
 
 const FILTER_WIDTH: f32 = 366.0;
 const MERGE_BANNER_HEIGHT: f32 = 36.0;
+const INDEX_COLUMN_GUTTER: f32 = 6.0;
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
@@ -216,6 +219,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     table
         .header(24.0, |mut header| {
             header.col(|ui| {
+                ui.add_space(INDEX_COLUMN_GUTTER);
                 let label = match index_sort {
                     None => "Index",
                     Some(true) => "Index ↑",
@@ -266,7 +270,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     let mut row_rect = Rect::NOTHING;
                     row.col(|ui| {
                         row_rect = ui.max_rect();
-                        ui.add_space(6.0);
+                        ui.add_space(INDEX_COLUMN_GUTTER);
                     });
                     row.col(|ui| {
                         icons::paint(ui, Icon::Folder, palette.muted, 16.0);
@@ -311,6 +315,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 let can_toggle = app.staging_allowed(index, toggle_staged) && !conflicted;
                 row.set_selected(app.change_is_selected(index));
                 let mut row_rect = Rect::NOTHING;
+                let mut index_toggle = None;
                 row.col(|ui| {
                     row_rect = ui.max_rect();
                     ui.spacing_mut().interact_size.y = row_height;
@@ -325,19 +330,24 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         "Some changes are staged. Click to unstage; use Stage to include the remaining changes"
                     } else if change.staged { "Unstage this file (preserve working-tree contents)" }
                     else { "Stage all changes in this file" };
-                    ui.horizontal_centered(|ui| {
-                        if ui
-                            .add_enabled(
-                                can_toggle,
-                                eframe::egui::Checkbox::without_text(&mut checked),
-                            )
-                            .help_text(tooltip)
-                            .disabled_help_text(tooltip)
-                            .changed()
-                        {
-                            staging_request = Some((index, !change.staged));
-                        }
-                    });
+                    let response = ui
+                        .allocate_ui_with_layout(
+                            Vec2::new(ui.available_width(), row_height),
+                            Layout::centered_and_justified(Direction::LeftToRight),
+                            |ui| {
+                                ui.add_enabled(
+                                    can_toggle,
+                                    eframe::egui::Checkbox::without_text(&mut checked),
+                                )
+                            },
+                        )
+                        .inner
+                        .help_text(tooltip)
+                        .disabled_help_text(tooltip);
+                    if response.changed() {
+                        staging_request = Some((index, !change.staged));
+                    }
+                    index_toggle = Some(response);
                 });
                 row.col(|ui| {
                     icons::paint(ui, Icon::for_file(&change.path), status_color(change.kind, palette), 16.0);
@@ -376,7 +386,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
                 let response = row.response();
                 ui_line(&response, row_rect, table_clip, palette);
-                if response.clicked() && !click_handled {
+                let index_clicked = index_toggle.as_ref().is_some_and(|toggle| {
+                    toggle.clicked() || toggle.changed()
+                });
+                if response.clicked() && !click_handled && !index_clicked {
                     let modifiers = response.ctx.input(|input| input.modifiers);
                     app.select_change(index, modifiers.command, modifiers.shift, &visible);
                     response.ctx.data_mut(|data| data.insert_temp(focus_id, true));
