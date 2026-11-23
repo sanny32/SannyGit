@@ -541,6 +541,161 @@ pub fn push_branch_to(
     .map(|_| ())
 }
 
+/// Reviewed fast-forward of the current branch's tracked remote ref up to one commit.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PushUpToPreview {
+    pub commit: String,
+    pub head: String,
+    pub branch: String,
+    pub branch_name: String,
+    pub remote: String,
+    pub destination: String,
+    pub upstream_ref: String,
+    pub upstream_oid: String,
+    pub on_branch: bool,
+    pub already_pushed: bool,
+    pub fast_forward: bool,
+    config: crate::remote_config::Snapshot,
+}
+
+pub fn preview_push_up_to(
+    git: &GitContext,
+    root: &Path,
+    commit: &str,
+) -> Result<PushUpToPreview, String> {
+    if !branches::is_commit_id(commit) {
+        return Err("The selected object is not a commit.".into());
+    }
+    let peeled = one_line(git::run(
+        git,
+        root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            &format!("{commit}^{{commit}}"),
+        ],
+    )?)?;
+    if !peeled.eq_ignore_ascii_case(commit) {
+        return Err("The selected object is not a commit.".into());
+    }
+    let commit = peeled.to_ascii_lowercase();
+    let branch_name = one_line(git::run(git, root, &["rev-parse", "--abbrev-ref", "HEAD"])?)?;
+    if branch_name.is_empty() || branch_name == "HEAD" {
+        return Err("Push requires the current branch.".into());
+    }
+    let branch = format!("refs/heads/{branch_name}");
+    let upstream = one_line(git::run(
+        git,
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream)",
+            "--",
+            &branch,
+        ],
+    )?)?;
+    if upstream.is_empty() {
+        return Err("The current branch no longer exists. Refresh and try again.".into());
+    }
+    let mut fields = upstream.split('\0');
+    let remote = fields.next().unwrap_or_default();
+    let destination = fields.next().unwrap_or_default();
+    let upstream_ref = fields.next().unwrap_or_default();
+    if remote.is_empty() || destination.is_empty() || upstream_ref.is_empty() {
+        return Err("The current branch does not track a remote branch.".into());
+    }
+    let upstream_oid = match git::run(
+        git,
+        root,
+        &["rev-parse", "--verify", "--end-of-options", upstream_ref],
+    ) {
+        Ok(bytes) => one_line(bytes)?.to_ascii_lowercase(),
+        Err(_) => {
+            return Err(
+                "The tracked remote branch is not available locally. Fetch and try again.".into(),
+            );
+        }
+    };
+    let head = one_line(git::run(
+        git,
+        root,
+        &["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"],
+    )?)?
+    .to_ascii_lowercase();
+    let on_branch = git::is_ancestor(git, root, &commit, &head)?;
+    let remote_contains = git::is_ancestor(git, root, &commit, &upstream_oid)?;
+    let remote_is_ancestor = git::is_ancestor(git, root, &upstream_oid, &commit)?;
+    let config = crate::remote_config::load(git, root)?;
+    if !config.entries.iter().any(|entry| entry.name == remote) {
+        return Err("The tracked remote is no longer configured.".into());
+    }
+    Ok(PushUpToPreview {
+        already_pushed: on_branch && remote_contains,
+        fast_forward: on_branch && remote_is_ancestor && commit != upstream_oid,
+        on_branch,
+        commit,
+        head,
+        branch,
+        branch_name,
+        remote: remote.to_owned(),
+        destination: destination.to_owned(),
+        upstream_ref: upstream_ref.to_owned(),
+        upstream_oid,
+        config,
+    })
+}
+
+pub fn push_up_to(
+    git: &GitContext,
+    root: &Path,
+    expected: &PushUpToPreview,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    if preview_push_up_to(git, root, &expected.commit)? != *expected {
+        return Err("The branch or selected commit changed. Close and reopen Push.".into());
+    }
+    if !expected.fast_forward {
+        return Err("This commit cannot be pushed without rewriting the remote branch.".into());
+    }
+    let (endpoint, config) = crate::remote_config::push_endpoint(git, root, &expected.remote)?;
+    if config != expected.config {
+        return Err("The remote configuration changed. Close and reopen Push.".into());
+    }
+    git::run(git, root, &["check-ref-format", &expected.destination])
+        .map_err(|_| "The tracked remote branch is not a valid Git ref.".to_owned())?;
+    // Push the reviewed commit, never the branch tip or a configured force refspec.
+    push_tip(
+        git,
+        root,
+        &endpoint,
+        &expected.destination,
+        &expected.commit,
+        cancel,
+    )?;
+    // An explicit commit refspec does not move the remote-tracking ref. Record
+    // the accepted commit so the next review sees the remote tip.
+    if let Some(tracking) = expected
+        .upstream_ref
+        .strip_prefix("refs/remotes/")
+        .filter(|name| !name.is_empty() && !name.starts_with('/') && !name.contains("@{"))
+    {
+        let tracking = format!("refs/remotes/{tracking}");
+        git::run(git, root, &["update-ref", "--", &tracking, &expected.commit]).map_err(
+            |error| {
+                format!(
+                    "The remote branch was updated, but its local remote-tracking ref could not be moved.\n{error}"
+                )
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn one_line(bytes: Vec<u8>) -> Result<String, String> {
+    Ok(git::text(bytes)?.trim_end_matches(['\r', '\n']).to_owned())
+}
+
 pub fn update_branch_tracking(
     git: &GitContext,
     root: &Path,

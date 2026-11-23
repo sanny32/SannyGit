@@ -15,6 +15,7 @@ pub use remotes::RemoteDialog;
 pub mod diff_actions;
 mod history;
 mod llm_models;
+mod push_up_to;
 mod repositories;
 mod tracking;
 mod working_tree;
@@ -46,6 +47,10 @@ enum WorkerResult {
     MergeDetails {
         root: String,
         result: Result<merge::Snapshot, String>,
+    },
+    PushUpToDetails {
+        root: String,
+        result: Result<crate::remotes::PushUpToPreview, String>,
     },
     RefDetails {
         root: String,
@@ -271,6 +276,7 @@ pub struct SannyGitApp {
     pub ignore_dialog: Option<file_selection::IgnoreDialog>,
     pub discard_dialog: Option<discard::Dialog>,
     pub merge_dialog: Option<merge::Dialog>,
+    pub push_up_to: Option<push_up_to::Dialog>,
     pub conflict_dialog: Option<conflict::Dialog>,
     pub abort_merge_dialog: Option<String>,
     pub skip_push_confirmation: bool,
@@ -498,6 +504,7 @@ impl SannyGitApp {
             ignore_dialog: None,
             discard_dialog: None,
             merge_dialog: None,
+            push_up_to: None,
             conflict_dialog: None,
             abort_merge_dialog: None,
             skip_push_confirmation: false,
@@ -572,6 +579,7 @@ impl SannyGitApp {
             || self.ignore_dialog.is_some()
             || self.branches.ref_dialog.is_some()
             || self.merge_dialog.is_some()
+            || self.push_up_to.is_some()
             || self
                 .conflict_dialog
                 .as_ref()
@@ -1099,6 +1107,7 @@ impl SannyGitApp {
             self.ignore_dialog = None;
             self.branches.ref_dialog = None;
             self.merge_dialog = None;
+            self.push_up_to = None;
             if !self.conflict_solver_open() {
                 self.conflict_dialog = None;
             }
@@ -2065,6 +2074,7 @@ impl SannyGitApp {
                 result,
             } => self.apply_discard_batch(root, paths, result),
             WorkerResult::MergeDetails { root, result } => self.apply_merge_details(root, result),
+            WorkerResult::PushUpToDetails { root, result } => self.apply_push_up_to(root, result),
             WorkerResult::RefDetails { root, result } => self.apply_ref_details(root, *result),
             WorkerResult::TagPushSelection {
                 root,
@@ -2172,6 +2182,7 @@ impl SannyGitApp {
                         | "Remote branch pushed"
                         | "Remote branch deleted"
                         | "Local branch pushed"
+                        | "Commits pushed"
                         | "Branch tracking updated"
                         | "Branch tracking stopped"
                         | "Reset complete"
@@ -2472,6 +2483,7 @@ impl eframe::App for SannyGitApp {
             && self.ignore_dialog.is_none()
             && self.branches.ref_dialog.is_none()
             && self.merge_dialog.is_none()
+            && self.push_up_to.is_none()
             && self.conflict_dialog.is_none()
             && self.abort_merge_dialog.is_none()
             && self.branches.remote_checkout.is_none();

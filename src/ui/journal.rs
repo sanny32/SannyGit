@@ -2,8 +2,8 @@ use super::controls::icons::{self, Icon};
 use super::controls::popup_menu::{self, Entry};
 use super::controls::tooltips::TooltipResponse;
 use crate::{
-    app::{ref_management::BranchAction, SannyGitApp},
-    models::{BranchRef, HistoryEdge, RefKind},
+    app::SannyGitApp,
+    models::{HistoryEdge, RefKind},
     theme::{ui_font_size, Palette, COMMIT_AVATAR_FONT_SIZE},
 };
 use eframe::egui::{
@@ -182,7 +182,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
     if offset.is_some() {
         ui.style_mut().scroll_animation = eframe::egui::style::ScrollAnimation::none();
     }
-    let reveal = if history_window {
+    let reveal = if history_window && !app.history_reload_pending() {
         app.history.reveal_commit.take().or_else(|| {
             ui.data_mut(|data| data.remove_temp::<String>(egui::Id::unique("history.reveal")))
         })
@@ -366,8 +366,12 @@ fn commit_menu(app: &SannyGitApp, index: usize) -> Vec<Entry<CommitAction>> {
     let refs_ready = !app.busy() && app.state_current && app.branches.current && repository_open;
     let operation_ready = app.merge_allowed() && commit_id && !head;
     let reset_ready = app.ref_reset_allowed() && commit_id;
-    let push =
-        push_branch_for_commit(&app.branches.entries, &hash).map(|branch| branch.full_name.clone());
+    let tracked_branch = app
+        .branches
+        .entries
+        .iter()
+        .any(|entry| entry.kind == RefKind::Local && entry.current && entry.upstream.is_some());
+    let push_ready = refs_ready && commit_id && tracked_branch;
     let needs_head = "An existing HEAD and fresh repository data are required";
     let other_commit = "Select a commit other than HEAD";
     let full_id = "Refresh history to load the full commit id";
@@ -412,35 +416,19 @@ fn commit_menu(app: &SannyGitApp, index: usize) -> Vec<Entry<CommitAction>> {
         )
         .help(reset_help),
         Entry::Separator,
-        Entry::item(
-            "Push",
-            push.is_some() && refs_ready,
-            CommitAction::Push(push.clone().unwrap_or_default()),
-        )
-        .help(if push.is_none() {
-            "Push is available when one local branch, or the current branch, points at this commit"
-        } else if refs_ready {
+        Entry::item("Push", push_ready, CommitAction::Push(hash.clone())).help(if push_ready {
             ""
-        } else {
+        } else if !commit_id {
+            full_id
+        } else if !refs_ready {
             "Refresh the repository and wait for the current operation"
+        } else {
+            "The current branch must track a remote branch"
         }),
         Entry::Separator,
         Entry::item("Copy Message", true, CommitAction::CopyMessage(message)),
         Entry::item("Copy ID", true, CommitAction::CopyId(hash)),
     ]
-}
-
-fn push_branch_for_commit<'a>(entries: &'a [BranchRef], hash: &str) -> Option<&'a BranchRef> {
-    let mut matches = entries
-        .iter()
-        .filter(|entry| entry.kind == RefKind::Local && entry.hash == hash);
-    let first = matches.next()?;
-    match matches.next() {
-        None => Some(first),
-        Some(_) => entries
-            .iter()
-            .find(|entry| entry.kind == RefKind::Local && entry.current && entry.hash == hash),
-    }
 }
 
 fn apply_commit_action(ctx: &egui::Context, app: &mut SannyGitApp, action: CommitAction) {
@@ -456,15 +444,7 @@ fn apply_commit_action(ctx: &egui::Context, app: &mut SannyGitApp, action: Commi
         CommitAction::Rebase(hash) => app.open_rebase_commit(hash),
         CommitAction::Reset(hash) => app.open_commit_reset(hash),
         CommitAction::ResetAdvanced(hash) => app.open_advanced_commit_reset(hash),
-        CommitAction::Push(branch) => app.open_branch_action(
-            branch,
-            BranchAction::PushLocal {
-                remote: String::new(),
-                custom: false,
-                destination: String::new(),
-                choose_destination: false,
-            },
-        ),
+        CommitAction::Push(hash) => app.open_push_up_to(hash),
         CommitAction::CopyMessage(message) => crate::app::copy_to_clipboard(ctx, message),
         CommitAction::CopyId(hash) => ctx.copy_text(hash),
     }
@@ -1810,7 +1790,7 @@ mod tests {
             sample_commit(&other, "Other\n\nbody"),
         ];
         app.branches.entries = vec![
-            BranchRef {
+            crate::models::BranchRef {
                 name: "topic".into(),
                 full_name: "refs/heads/topic".into(),
                 hash: other.clone(),
@@ -1819,7 +1799,7 @@ mod tests {
                 current: false,
                 kind: RefKind::Local,
             },
-            BranchRef {
+            crate::models::BranchRef {
                 name: "copy".into(),
                 full_name: "refs/heads/copy".into(),
                 hash: other.clone(),
@@ -1833,6 +1813,9 @@ mod tests {
         assert!(!menu_item(&ambiguous, "Push").0);
         assert!(menu_item(&ambiguous, "Merge…").0);
         app.branches.entries[0].current = true;
+        assert!(!menu_item(&commit_menu(&app, 1), "Push").0);
+        app.branches.entries[0].hash.clone_from(&head);
+        app.branches.entries[0].upstream = Some("origin/main".into());
         let menu = commit_menu(&app, 1);
         assert!(menu_item(&menu, "Log").0);
         assert!(menu_item(&menu, "Merge…").0);
@@ -1841,7 +1824,7 @@ mod tests {
         assert!(menu_item(&menu, "Reset Advanced…").0);
         assert!(matches!(
             menu_item(&menu, "Push").1,
-            CommitAction::Push(branch) if branch == "refs/heads/topic"
+            CommitAction::Push(hash) if hash == other
         ));
         assert!(matches!(
             menu_item(&menu, "Copy Message").1,
@@ -1854,6 +1837,7 @@ mod tests {
         let head_menu = commit_menu(&app, 0);
         assert!(!menu_item(&head_menu, "Merge…").0);
         assert!(!menu_item(&head_menu, "Rebase…").0);
+        assert!(menu_item(&head_menu, "Push").0);
         assert!(menu_item(&head_menu, "Reset…").0);
         assert!(menu_item(&head_menu, "Copy ID").0);
     }

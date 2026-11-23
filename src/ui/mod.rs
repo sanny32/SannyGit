@@ -15,6 +15,7 @@ mod discard;
 mod ignore;
 mod journal;
 mod merge;
+mod push_up_to;
 mod ref_management;
 mod remote_dialog;
 mod repositories;
@@ -176,6 +177,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         ref_management::show(ui.ctx(), app);
         merge::show(ui.ctx(), app);
         merge::show_abort(ui.ctx(), app);
+        push_up_to::show(ui.ctx(), app);
         conflict::show(ui.ctx(), app);
     }
     welcome(ui, app);

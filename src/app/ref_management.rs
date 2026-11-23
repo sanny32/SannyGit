@@ -1060,6 +1060,7 @@ impl SannyGitApp {
             "Remote branch pushed"
                 | "Remote branch deleted"
                 | "Local branch pushed"
+                | "Commits pushed"
                 | "Branch tracking updated"
                 | "Branch tracking stopped"
         ) {

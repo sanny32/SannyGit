@@ -102,7 +102,7 @@ Status means the SannyGit command, not a partial visual similarity.
 | Log, graph, current branch and all branches | Present, with the load limits above |
 | Journal: incoming, outgoing, and rewritten commits | Ahead/behind tracking exists. The journal does not color incoming, outgoing, or rewritten commits, and it has no second comparison branch |
 | Blame | Menu item is disabled |
-| Commit context menu: Log, Merge, Rebase, Reset, Reset Advanced, Push, Copy Message, Copy ID | Present on a journal commit and in the history window. Cherry-pick, revert, checkout, new branch, and compare are absent |
+| Commit context menu: Log, Merge, Rebase, Reset, Reset Advanced, Push, Copy Message, Copy ID | Present on a journal commit and in the history window. Push from a commit fast-forwards the current branch’s tracked remote branch up to that commit. Cherry-pick, revert, checkout, new branch, and compare are absent |
 | Compare two commits, compare with HEAD, reveal commit | Absent |
 | File log | Absent |
 | Format Patch | Disabled on a tag |
@@ -172,7 +172,7 @@ Index Editor can stay inside the existing diff panel. A separate three-pane HEAD
 
 SmartGit starts these from the graph, the journal, and the branch menu.
 
-- Context menu on a journal commit and on a local branch: Log, Merge, Rebase, Reset, Reset Advanced, Push, Copy message, Copy id. Implemented. The journal and history window open the existing merge, rebase, reset, and push flows for that commit. Copy Message and Copy ID are also on the local branch menu.
+- Context menu on a journal commit and on a local branch: Log, Merge, Rebase, Reset, Reset Advanced, Push, Copy message, Copy id. Implemented. Log from the journal opens the current branch history on that commit. Push from a commit fast-forwards the current branch’s tracked remote branch up to that commit; rewriting the remote branch stays in phase 4. The local branch menu still pushes that branch. Copy Message and Copy ID are also on the local branch menu.
 - Cherry-pick and revert of one selected commit, with the same preflight used by merge.
 - Rebase Continue, Skip, and Abort while a rebase is in progress. The conflict solver should open for rebase conflicts the way it opens for merge conflicts.
 - Squash merge and fast-forward in the main merge dialog.

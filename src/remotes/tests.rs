@@ -1013,3 +1013,102 @@ fn local_branch_push_and_tracking_target_the_selected_branch() {
     );
     assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "main");
 }
+
+fn remote_head(remote: &std::path::Path, reference: &str) -> String {
+    git::text(git::run(&SYSTEM_GIT, remote, &["rev-parse", reference]).unwrap())
+        .unwrap()
+        .trim_end_matches(['\r', '\n'])
+        .to_owned()
+}
+
+#[test]
+fn push_up_to_moves_the_tracked_remote_without_rewinding_it() {
+    let repo = TempRepo::new();
+    let origin = repo.0.join("origin.git");
+    repo.git(&[
+        "init",
+        "--bare",
+        "--initial-branch=main",
+        origin.to_str().unwrap(),
+    ]);
+    repo.git(&["remote", "add", "origin", origin.to_str().unwrap()]);
+    repo.git(&["commit", "--allow-empty", "-m", "base"]);
+    let base = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    repo.git(&["push", "-u", "origin", "main"]);
+    repo.git(&["commit", "--allow-empty", "-m", "middle"]);
+    let middle = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    repo.git(&["commit", "--allow-empty", "-m", "tip"]);
+    let tip = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    let cancel = AtomicBool::new(false);
+
+    let preview = preview_push_up_to(&SYSTEM_GIT, &repo.0, &middle).unwrap();
+    assert!(preview.fast_forward && preview.on_branch && !preview.already_pushed);
+    assert_eq!(preview.head, tip);
+    assert_eq!(preview.remote, "origin");
+    assert_eq!(preview.destination, "refs/heads/main");
+    push_up_to(&SYSTEM_GIT, &repo.0, &preview, &cancel).unwrap();
+    assert_eq!(remote_head(&origin, "refs/heads/main"), middle);
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), tip);
+
+    let tip_preview = preview_push_up_to(&SYSTEM_GIT, &repo.0, &tip.to_ascii_uppercase()).unwrap();
+    assert!(tip_preview.fast_forward);
+    assert_eq!(tip_preview.commit, tip);
+    push_up_to(&SYSTEM_GIT, &repo.0, &tip_preview, &cancel).unwrap();
+    assert_eq!(remote_head(&origin, "refs/heads/main"), tip);
+
+    let contained = preview_push_up_to(&SYSTEM_GIT, &repo.0, &middle).unwrap();
+    assert!(contained.already_pushed && !contained.fast_forward);
+    match push_up_to(&SYSTEM_GIT, &repo.0, &contained, &cancel) {
+        Err(error) => assert!(error.contains("rewriting"), "{error}"),
+        Ok(()) => panic!("already pushed commit was sent"),
+    }
+    assert_eq!(remote_head(&origin, "refs/heads/main"), tip);
+
+    repo.git(&["branch", "side"]);
+    repo.git(&["checkout", "side"]);
+    repo.git(&["commit", "--allow-empty", "-m", "side"]);
+    let side = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    repo.git(&["update-ref", "refs/remotes/origin/main", &side]);
+    repo.git(&["checkout", "main"]);
+    repo.git(&["commit", "--allow-empty", "-m", "diverged"]);
+    let diverged = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    let refused = preview_push_up_to(&SYSTEM_GIT, &repo.0, &diverged).unwrap();
+    assert!(refused.on_branch && !refused.fast_forward && !refused.already_pushed);
+    let unrelated = preview_push_up_to(&SYSTEM_GIT, &repo.0, &side).unwrap();
+    assert!(!unrelated.on_branch && !unrelated.fast_forward);
+    match push_up_to(&SYSTEM_GIT, &repo.0, &refused, &cancel) {
+        Err(error) => assert!(error.contains("rewriting"), "{error}"),
+        Ok(()) => panic!("divergent commit was sent"),
+    }
+    assert_eq!(remote_head(&origin, "refs/heads/main"), tip);
+
+    let stale = preview_push_up_to(&SYSTEM_GIT, &repo.0, &base).unwrap();
+    repo.git(&["commit", "--allow-empty", "-m", "after review"]);
+    match push_up_to(&SYSTEM_GIT, &repo.0, &stale, &cancel) {
+        Err(error) => assert!(error.contains("changed"), "{error}"),
+        Ok(()) => panic!("stale preview was pushed"),
+    }
+    assert_eq!(remote_head(&origin, "refs/heads/main"), tip);
+
+    repo.git(&["switch", "--detach", &middle]);
+    match preview_push_up_to(&SYSTEM_GIT, &repo.0, &middle) {
+        Err(error) => assert!(error.contains("current branch"), "{error}"),
+        Ok(_) => panic!("detached HEAD offered a push"),
+    }
+    repo.git(&["switch", "main"]);
+    repo.git(&["branch", "--unset-upstream"]);
+    match preview_push_up_to(&SYSTEM_GIT, &repo.0, &tip) {
+        Err(error) => assert!(error.contains("track a remote branch"), "{error}"),
+        Ok(_) => panic!("branch without upstream offered a push"),
+    }
+    repo.git(&["branch", "--set-upstream-to=origin/main"]);
+    repo.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
+    match preview_push_up_to(&SYSTEM_GIT, &repo.0, &tip) {
+        Err(error) => assert!(error.contains("not available locally"), "{error}"),
+        Ok(_) => panic!("missing remote-tracking ref offered a push"),
+    }
+    match preview_push_up_to(&SYSTEM_GIT, &repo.0, "not-a-commit") {
+        Err(error) => assert!(error.contains("not a commit"), "{error}"),
+        Ok(_) => panic!("non-commit text was accepted"),
+    }
+}

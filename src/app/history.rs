@@ -176,7 +176,7 @@ impl SannyGitApp {
         self.history.reveal_commit = Some(hash);
     }
 
-    /// Open repository history on a journal commit, replacing a ref-scoped log.
+    /// Open current-branch history on a journal commit, replacing a ref-scoped log.
     pub fn open_commit_history(&mut self, hash: &str) -> bool {
         if self.busy()
             || self.repositories.get(self.selected_repository).is_none()
@@ -193,6 +193,10 @@ impl SannyGitApp {
         self.select_commit(hash.clone());
         self.history.commit_details_open = true;
         self.history.reveal_commit = Some(hash);
+        if self.history.history_all_branches {
+            self.history.history_all_branches = false;
+            self.queue_history_reload();
+        }
         true
     }
 
@@ -272,6 +276,10 @@ impl SannyGitApp {
             return;
         }
         self.queue_history_reload();
+    }
+
+    pub(crate) fn history_reload_pending(&self) -> bool {
+        self.history.history_pending || self.history.history_loading
     }
 
     pub fn history_can_load_more(&self) -> bool {
@@ -985,7 +993,14 @@ mod tests {
         assert!(app.history.commit_details_open);
         assert_eq!(app.history.selected_commit.as_deref(), Some(hash.as_str()));
         assert_eq!(app.history.reveal_commit.as_deref(), Some(hash.as_str()));
+        assert!(!app.history.history_all_branches);
+        assert!(!app.history.history_pending);
         assert!(!app.open_commit_history("missing"));
         assert_eq!(app.history.selected_commit.as_deref(), Some(hash.as_str()));
+        app.history.history_all_branches = true;
+        assert!(app.open_commit_history(&hash));
+        assert!(!app.history.history_all_branches);
+        assert!(app.history.history_pending && app.history.history_loading);
+        assert_eq!(app.history.reveal_commit.as_deref(), Some(hash.as_str()));
     }
 }
