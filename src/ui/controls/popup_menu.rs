@@ -67,11 +67,24 @@ impl<T> Entry<T> {
     }
 }
 
+/// Close every context menu when its window no longer has focus.
+pub(crate) fn dismiss_on_focus_loss(ctx: &eframe::egui::Context) {
+    if !ctx.input(|input| input.focused) && eframe::egui::Popup::is_any_open(ctx) {
+        eframe::egui::Popup::close_all(ctx);
+    }
+}
+
 pub(crate) fn context<T: Clone>(
     response: &Response,
     palette: Palette,
     entries: impl FnOnce() -> Vec<Entry<T>>,
 ) -> Option<T> {
+    // An unfocused window must not keep or open a menu. This covers every
+    // caller: branches, changes, and repositories.
+    dismiss_on_focus_loss(&response.ctx);
+    if !response.ctx.input(|input| input.focused) {
+        return None;
+    }
     #[cfg(all(target_os = "macos", not(test)))]
     if response.secondary_clicked() {
         return crate::native_menu::popup(&entries());
@@ -261,6 +274,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn every_context_menu_closes_when_its_window_loses_focus() {
+        let ctx = Context::default();
+        let mut output = ctx.run_ui(RawInput::default(), |ui| {
+            let response = ui.button("row");
+            eframe::egui::Popup::open_id(
+                ui.ctx(),
+                eframe::egui::Popup::default_response_id(&response),
+            );
+            dismiss_on_focus_loss(ui.ctx());
+            assert!(eframe::egui::Popup::is_any_open(ui.ctx()));
+            let selected =
+                context::<()>(&response, crate::theme::ThemeChoice::Dark.palette(), || {
+                    vec![Entry::item("Format Patch", true, ())]
+                });
+            assert!(selected.is_none());
+            assert!(eframe::egui::Popup::is_any_open(ui.ctx()));
+        });
+        output.textures_delta.clear();
+
+        let mut output = ctx.run_ui(
+            RawInput {
+                focused: false,
+                ..Default::default()
+            },
+            |ui| {
+                let response = ui.button("row");
+                let selected =
+                    context::<()>(&response, crate::theme::ThemeChoice::Dark.palette(), || {
+                        panic!("A context menu must not stay open after its window loses focus");
+                    });
+                assert!(selected.is_none());
+                assert!(!eframe::egui::Popup::is_any_open(ui.ctx()));
+                dismiss_on_focus_loss(ui.ctx());
+                assert!(!eframe::egui::Popup::is_any_open(ui.ctx()));
+            },
+        );
+        output.textures_delta.clear();
     }
 
     #[test]

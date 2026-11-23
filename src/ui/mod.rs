@@ -154,6 +154,10 @@ fn sidebar_contents(ui: &mut Ui, app: &mut SannyGitApp) -> eframe::egui::Rect {
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
+    // Rows that are scrolled out of view do not rebuild their menu. Close any
+    // open context menu here before the panels paint.
+    controls::popup_menu::dismiss_on_focus_loss(ui.ctx());
+    branches::pick_pending_tag_patch(ui.ctx(), app);
     if app.modal_dialog_open() {
         ui.disable();
     }

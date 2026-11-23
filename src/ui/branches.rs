@@ -242,21 +242,43 @@ fn dispatch_branch_request(ctx: &egui::Context, app: &mut SannyGitApp, request: 
         BranchRequest::CopyRefName(name) => ctx.copy_text(name),
         BranchRequest::CopyTagMessage(oid) => app.copy_tag_message(ctx, oid),
         BranchRequest::FormatTagPatch(oid) => {
-            let mut picker = rfd::FileDialog::new()
-                .set_title("Select Directory")
-                .set_can_create_directories(true);
-            // Own the picker by the window that opened it. rfd then keeps it modal
-            // on Windows, macOS, and Linux (X11 and Wayland).
-            if let Some(parent) = eframe::viewport_winit_window(ctx, ctx.viewport_id())
-                .or_else(|| eframe::viewport_winit_window(ctx, egui::ViewportId::ROOT))
-            {
-                picker = picker.set_parent(&*parent);
-            }
-            if let Some(directory) = picker.pick_folder() {
-                app.format_tag_patch(ctx, oid, directory);
-            }
+            // The click frame still paints the menu. Wait until a later frame has
+            // presented it closed, then open the modal directory dialog.
+            app.branches.pending_tag_patch = Some(crate::app::ref_management::PendingTagPatch {
+                oid,
+                menu_painted_closed: false,
+            });
+            ctx.request_repaint();
         }
         BranchRequest::Unavailable => {}
+    }
+}
+
+pub(super) fn pick_pending_tag_patch(ctx: &egui::Context, app: &mut SannyGitApp) {
+    let Some(pending) = &mut app.branches.pending_tag_patch else {
+        return;
+    };
+    if !pending.menu_painted_closed {
+        pending.menu_painted_closed = true;
+        ctx.request_repaint();
+        return;
+    }
+    let Some(pending) = app.branches.pending_tag_patch.take() else {
+        return;
+    };
+    egui::Popup::close_all(ctx);
+    let mut picker = rfd::FileDialog::new()
+        .set_title("Select Directory")
+        .set_can_create_directories(true);
+    // Own the picker by the window that opened it. rfd then keeps it modal
+    // on Windows, macOS, and Linux (X11 and Wayland).
+    if let Some(parent) = eframe::viewport_winit_window(ctx, ctx.viewport_id())
+        .or_else(|| eframe::viewport_winit_window(ctx, egui::ViewportId::ROOT))
+    {
+        picker = picker.set_parent(&*parent);
+    }
+    if let Some(directory) = picker.pick_folder() {
+        app.format_tag_patch(ctx, pending.oid, directory);
     }
 }
 

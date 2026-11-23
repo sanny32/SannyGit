@@ -185,6 +185,13 @@ fn tag_details(
     }
 }
 
+pub(crate) struct PendingTagPatch {
+    pub(crate) oid: String,
+    /// Set on the frame that paints the menu closed. The dialog opens on the
+    /// next frame, after that paint has been presented.
+    pub(crate) menu_painted_closed: bool,
+}
+
 pub struct BranchState {
     pub entries: Vec<crate::models::BranchRef>,
     pub current: bool,
@@ -195,6 +202,10 @@ pub struct BranchState {
     pub(super) tag_message_reader: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     pub(super) tag_patch_reader:
         Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
+    /// Directory chooser for Format Patch. The flag becomes true after one
+    /// frame has been painted with the context menu closed, so the menu is
+    /// gone on every platform before the native dialog takes focus.
+    pub(crate) pending_tag_patch: Option<PendingTagPatch>,
     pub exported_tag_patch: Option<std::path::PathBuf>,
     pub branch_head_exists: bool,
     pub branch_dialog_open: bool,
@@ -225,6 +236,7 @@ impl Default for BranchState {
             worker: None,
             tag_message_reader: None,
             tag_patch_reader: None,
+            pending_tag_patch: None,
             exported_tag_patch: None,
             branch_head_exists: false,
             branch_dialog_open: false,
