@@ -248,6 +248,7 @@ pub fn merge_dialog() -> crate::app::merge::Dialog {
     crate::app::merge::Dialog {
         operation: crate::app::merge::Operation::Merge,
         tag: None,
+        fast_forward_only: false,
         root: "Fixture".into(),
         selected: Some(commits[2].hash.clone()),
         shown: ["refs/heads/main".into()].into_iter().collect(),

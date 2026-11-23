@@ -59,6 +59,7 @@ pub struct Dialog {
     pub root: String,
     pub snapshot: Option<Snapshot>,
     pub tag: Option<String>,
+    pub fast_forward_only: bool,
     pub selected: Option<String>,
     pub shown: HashSet<String>,
     pub filter: String,
@@ -210,22 +211,27 @@ impl SannyGitApp {
     }
 
     pub fn open_merge(&mut self) {
-        self.open_commit_picker(Operation::Merge, None);
+        self.open_commit_picker(Operation::Merge, None, false);
     }
 
     pub fn open_merge_tag(&mut self, tag: String) {
-        self.open_commit_picker(Operation::Merge, Some(tag));
+        self.open_commit_picker(Operation::Merge, Some(tag), false);
     }
 
-    pub fn open_fast_forward_branch(&mut self, reference: String) {
-        self.open_commit_picker(Operation::Merge, Some(reference));
+    pub fn open_fast_forward(&mut self, reference: String) {
+        self.open_commit_picker(Operation::Merge, Some(reference), true);
     }
 
     pub fn open_rebase(&mut self) {
-        self.open_commit_picker(Operation::Rebase, None);
+        self.open_commit_picker(Operation::Rebase, None, false);
     }
 
-    fn open_commit_picker(&mut self, operation: Operation, tag: Option<String>) {
+    fn open_commit_picker(
+        &mut self,
+        operation: Operation,
+        tag: Option<String>,
+        fast_forward_only: bool,
+    ) {
         if !self.merge_allowed() {
             return;
         }
@@ -235,6 +241,7 @@ impl SannyGitApp {
             root: root.clone(),
             snapshot: None,
             tag: tag.clone(),
+            fast_forward_only,
             selected: None,
             shown: HashSet::new(),
             filter: String::new(),
@@ -337,11 +344,8 @@ impl SannyGitApp {
         let Some(snapshot) = &dialog.snapshot else {
             return;
         };
-        let fast_forward_branch = dialog
-            .tag
-            .as_ref()
-            .is_some_and(|reference| reference.starts_with("refs/heads/"));
-        if fast_forward_branch && mode != Some(merge::Mode::FastForward) {
+        let fast_forward_only = dialog.fast_forward_only;
+        if fast_forward_only && mode != Some(merge::Mode::FastForward) {
             return;
         }
         let target = if let Some(tag) = &snapshot.tag {
@@ -393,7 +397,7 @@ impl SannyGitApp {
                 snapshot,
             }
         }) {
-            if fast_forward_branch {
+            if fast_forward_only {
                 self.merge_dialog = None;
             }
             self.status = if operation == Operation::Rebase {
@@ -539,6 +543,52 @@ mod tests {
             repo.git(&["show", "-s", "--format=%P", "HEAD"]).trim(),
             format!("{before} {target}")
         );
+    }
+
+    #[test]
+    fn tag_fast_forward_only_moves_head_to_the_reviewed_commit() {
+        let repo = crate::test_support::TempRepo::new();
+        repo.git(&["commit", "--allow-empty", "-m", "base"]);
+        let before = merge::head(&SYSTEM_GIT, &repo.0).unwrap();
+        repo.git(&["checkout", "-b", "feature"]);
+        repo.write("feature", "feature\n");
+        repo.git(&["add", "feature"]);
+        repo.git(&["commit", "-m", "feature"]);
+        repo.git(&["tag", "-a", "-m", "Release", "release"]);
+        let target = merge::head(&SYSTEM_GIT, &repo.0).unwrap();
+        repo.git(&["checkout", "main"]);
+        repo.write("untracked", "keep\n");
+
+        let mut app = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
+        app.apply_snapshot(crate::git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        app.branches.current = true;
+        app.branches.branch_head_exists = true;
+        app.open_fast_forward("refs/tags/release".into());
+        wait(&mut app);
+        let dialog = app.merge_dialog.as_ref().unwrap();
+        assert!(dialog.fast_forward_only);
+        assert!(
+            dialog
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .tag
+                .as_ref()
+                .unwrap()
+                .fast_forward
+        );
+        for mode in [merge::Mode::Commit, merge::Mode::WorkingTree] {
+            app.submit_merge(mode);
+            assert!(!app.busy());
+            assert_eq!(merge::head(&SYSTEM_GIT, &repo.0).unwrap(), before);
+        }
+        app.submit_merge(merge::Mode::FastForward);
+        assert!(app.merge_dialog.is_none());
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert_eq!(merge::head(&SYSTEM_GIT, &repo.0).unwrap(), target);
+        assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "main");
+        assert_eq!(std::fs::read(repo.0.join("untracked")).unwrap(), b"keep\n");
     }
 
     #[test]

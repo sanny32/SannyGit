@@ -206,7 +206,7 @@ fn dispatch_branch_request(ctx: &egui::Context, app: &mut SannyGitApp, request: 
             app.branches.selected_branch = target;
             app.open_rebase();
         }
-        BranchRequest::FastForward(target) => app.open_fast_forward_branch(target),
+        BranchRequest::FastForward(target) => app.open_fast_forward(target),
         BranchRequest::PushLocal(target, choose_destination) => app.open_branch_action(
             target,
             BranchAction::PushLocal {
@@ -242,11 +242,17 @@ fn dispatch_branch_request(ctx: &egui::Context, app: &mut SannyGitApp, request: 
         BranchRequest::CopyRefName(name) => ctx.copy_text(name),
         BranchRequest::CopyTagMessage(oid) => app.copy_tag_message(ctx, oid),
         BranchRequest::FormatTagPatch(oid) => {
-            if let Some(directory) = rfd::FileDialog::new()
+            let mut picker = rfd::FileDialog::new()
                 .set_title("Select Directory")
-                .set_can_create_directories(true)
-                .pick_folder()
+                .set_can_create_directories(true);
+            // Own the picker by the window that opened it. rfd then keeps it modal
+            // on Windows, macOS, and Linux (X11 and Wayland).
+            if let Some(parent) = eframe::viewport_winit_window(ctx, ctx.viewport_id())
+                .or_else(|| eframe::viewport_winit_window(ctx, egui::ViewportId::ROOT))
             {
+                picker = picker.set_parent(&*parent);
+            }
+            if let Some(directory) = picker.pick_folder() {
                 app.format_tag_patch(ctx, oid, directory);
             }
         }
@@ -733,11 +739,9 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
         E::item(
             "Fast-Forward Merge",
             requested.tag_merge_allowed,
-            BranchRequest::MergeTag(tag.full_name.clone()),
+            BranchRequest::FastForward(tag.full_name.clone()),
         )
-        .help(
-            "Open the merge confirmation. Fast-forward is offered when the current branch can move to this tag.",
-        ),
+        .help("Move HEAD to the tagged commit when it is a descendant of HEAD"),
     ]
 }
 

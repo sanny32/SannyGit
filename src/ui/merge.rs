@@ -144,6 +144,7 @@ fn tag_confirmation(
         .tag
         .as_ref()
         .is_some_and(|reference| reference.starts_with("refs/heads/"));
+    let fast_forward_only = dialog.fast_forward_only;
     let target = dialog
         .snapshot
         .as_ref()
@@ -159,9 +160,11 @@ fn tag_confirmation(
         dialog_style::header_with_icon(
             ui,
             palette,
-            if branch { "Fast-Forward Merge" } else { "Merge Tag" },
+            if fast_forward_only { "Fast-Forward Merge" } else { "Merge Tag" },
             if branch {
                 "Move the current branch to the selected branch’s commit without creating a merge commit."
+            } else if fast_forward_only {
+                "Move the current branch to the tagged commit without creating a merge commit."
             } else {
                 "Choose how to merge the selected tag into the current branch."
             },
@@ -182,19 +185,24 @@ fn tag_confirmation(
             dialog_style::text_line(ui, RichText::new(status).color(palette.muted), 20.0);
             dialog_style::button_row(ui, |ui| {
                 close = ui.add_enabled(!busy, dialog_style::button("Cancel")).dialog_cancel();
-                if !branch && ui.add_enabled(enabled, dialog_style::button("Merge to Working Tree"))
+                if !fast_forward_only && ui.add_enabled(enabled, dialog_style::button("Merge to Working Tree"))
                     .help_text("Start the merge and leave it open for review and conflict resolution.")
                     .clicked() {
                     mode = Some(Mode::WorkingTree);
                 }
-                if !branch && ui.add_enabled(enabled, dialog_style::button("Create Merge-Commit"))
+                if !fast_forward_only && ui.add_enabled(enabled, dialog_style::button("Create Merge-Commit"))
                     .help_text("Create a merge commit even when fast-forward is possible.")
                     .clicked() {
                     mode = Some(Mode::Commit);
                 }
-                if ui.add_enabled(fast_forward, dialog_style::primary("Fast-Forward", palette))
-                    .help_text("Move the current branch to the selected commit without creating a merge commit.")
-                    .clicked() {
+                let forward = ui.add_enabled(fast_forward, dialog_style::primary("Fast-Forward", palette))
+                    .help_text("Move the current branch to the selected commit without creating a merge commit.");
+                let confirmed = if fast_forward_only {
+                    forward.dialog_accept()
+                } else {
+                    forward.clicked()
+                };
+                if confirmed {
                     mode = Some(Mode::FastForward);
                 }
             });

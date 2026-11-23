@@ -55,7 +55,14 @@ pub fn execute(
             .collect::<Vec<_>>()
             .join("\0");
         git::require_no_path_collisions(git, root, target, &untracked, "Untracked files")?;
-        return Err("Commit or stash local changes before merging.".into());
+        if mode != Mode::FastForward
+            || snapshot
+                .changes
+                .iter()
+                .any(|change| change.kind != crate::models::ChangeKind::Untracked)
+        {
+            return Err("Commit or stash local changes before merging.".into());
+        }
     }
     // --no-overwrite-ignore alone does not protect every merge strategy.
     git::require_no_ignored_collisions(git, root, target)?;
