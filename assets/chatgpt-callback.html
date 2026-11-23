@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="dark light">
+<title>SannyGit — __HEADING__</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg0: #121722;
+    --bg1: #24344c;
+    --card: #1b2230;
+    --line: rgba(255, 255, 255, 0.08);
+    --text: #e8eaef;
+    --muted: #a3abba;
+    --faint: #8b93a3;
+    --ok: #97ea8b;
+    --ok-bg: #173722;
+    --bad: #f46a6f;
+    --bad-bg: #3e1e24;
+    --glow: rgba(244, 91, 53, 0.22);
+    --shadow: rgba(0, 0, 0, 0.38);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      color-scheme: light;
+      --bg0: #e8eef6;
+      --bg1: #f8fafc;
+      --card: #ffffff;
+      --line: rgba(17, 29, 50, 0.1);
+      --text: #17202e;
+      --muted: #5c677a;
+      --faint: #6d788b;
+      --ok: #0d7a32;
+      --ok-bg: #e5f8ea;
+      --bad: #c62832;
+      --bad-bg: #fdecee;
+      --glow: rgba(244, 91, 53, 0.16);
+      --shadow: rgba(23, 37, 61, 0.14);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background:
+      radial-gradient(880px 460px at 50% -120px, var(--glow), transparent 62%),
+      linear-gradient(180deg, var(--bg1), var(--bg0));
+  }
+  main {
+    width: min(420px, 100%);
+    padding: 40px 36px 28px;
+    text-align: center;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 28px 70px var(--shadow);
+  }
+  .logo-wrap {
+    position: relative;
+    width: 84px;
+    height: 84px;
+    margin: 0 auto 18px;
+  }
+  .logo {
+    display: block;
+    width: 84px;
+    height: 84px;
+    filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.28));
+  }
+  .badge {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    box-shadow: 0 0 0 4px var(--card);
+  }
+  .badge svg { width: 16px; height: 16px; }
+  body.ok .badge { background: var(--ok-bg); color: var(--ok); }
+  body.bad .badge { background: var(--bad-bg); color: var(--bad); }
+  body.ok .icon-bad, body.bad .icon-ok { display: none; }
+  .wordmark {
+    margin: 0 0 8px;
+    color: var(--text);
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: 0;
+    line-height: 1.1;
+  }
+  .wordmark .git { color: #f45b35; }
+  h1 {
+    margin: 0 0 10px;
+    font-size: 22px;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+  }
+  .message {
+    margin: 0;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .note {
+    margin: 22px 0 0;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    main { animation: rise 420ms cubic-bezier(.2, .8, .2, 1); }
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(8px) scale(.985); }
+    to { opacity: 1; transform: none; }
+  }
+</style>
+</head>
+<body class="__TONE__">
+<main>
+  <div class="logo-wrap">
+    <svg class="logo" viewBox="0 0 1024 1024" aria-hidden="true">
+      <defs>
+        <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+          <stop stop-color="#263c59"/><stop offset="1" stop-color="#111d32"/>
+        </linearGradient>
+      </defs>
+      <rect x="64" y="64" width="896" height="896" rx="196" fill="url(#mark)"/>
+      <g transform="translate(144 124) scale(11.5)" fill="#ff784f">
+        <path d="M15 29C5 28 2 20 6 13l6-5-1 10 7-5c4 8 4 13-3 16zm34 0c10-1 13-9 9-16l-6-5 1 10-7-5c-4 8-4 13 3 16z"/>
+        <g fill="none" stroke="#ff784f" stroke-width="3.5" stroke-linecap="round">
+          <path d="m17 37-9-2-5 5m15 4-9 2-4 6m17-2-8 4-2 6m35-23 9-2 5 5m-15 4 9 2 4 6m-17-2 8 4 2 6M24 28l-2-8m18 8 2-8"/>
+        </g>
+        <ellipse cx="32" cy="39" rx="19" ry="15"/>
+        <circle cx="22" cy="20" r="4" fill="#fff4e5"/><circle cx="42" cy="20" r="4" fill="#fff4e5"/>
+        <g fill="#17253d"><circle cx="23" cy="20" r="1.7"/><circle cx="41" cy="20" r="1.7"/></g>
+        <path d="M26 44q6 5 12 0" fill="none" stroke="#17253d" stroke-opacity=".7" stroke-width="2" stroke-linecap="round"/>
+      </g>
+    </svg>
+    <span class="badge">
+      <svg class="icon-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m5 12.5 4.2 4.2L19 7.5"/>
+      </svg>
+      <svg class="icon-bad" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+        <path d="M12 7.5v6M12 17h.01"/>
+      </svg>
+    </span>
+  </div>
+  <p class="wordmark"><span>Sanny</span><span class="git">Git</span></p>
+  <h1>__HEADING__</h1>
+  <p class="message">__MESSAGE__</p>
+  <p class="note">__NOTE__</p>
+</main>
+</body>
+</html>

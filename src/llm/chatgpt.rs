@@ -302,27 +302,50 @@ fn wait_for_callback(
             continue;
         }
         let result = parse_callback(&line, state, client);
-        let (status, message) = if result.is_some() {
-            (
-                "200 OK",
-                "Return to SannyGit to see the result of ChatGPT sign-in.",
-            )
-        } else {
-            (
-                "400 Bad Request",
-                "This request does not match the pending sign-in.",
-            )
-        };
+        let success = result.is_some();
+        let status = if success { "200 OK" } else { "400 Bad Request" };
+        let page = callback_page(success);
         let _ = write!(
             stream,
-            "HTTP/1.1 {status}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n{message}",
-            message.len()
+            "HTTP/1.1 {status}\r\n\
+             Connection: close\r\n\
+             Cache-Control: no-store\r\n\
+             Referrer-Policy: no-referrer\r\n\
+             X-Content-Type-Options: nosniff\r\n\
+             Content-Type: text/html; charset=utf-8\r\n\
+             Content-Length: {}\r\n\
+             \r\n\
+             {page}",
+            page.len()
         );
         if let Some(result) = result {
             return result;
         }
     }
     Err("ChatGPT sign-in timed out. Select Login to try again.".into())
+}
+
+fn callback_page(success: bool) -> String {
+    let (heading, message, note, tone) = if success {
+        (
+            "Sign-in received",
+            "Return to SannyGit to see the result of ChatGPT sign-in.",
+            "You can close this tab.",
+            "ok",
+        )
+    } else {
+        (
+            "Sign-in was not accepted",
+            "This request does not match the pending sign-in.",
+            "Return to SannyGit and try again.",
+            "bad",
+        )
+    };
+    include_str!("../../assets/chatgpt-callback.html")
+        .replace("__TONE__", tone)
+        .replace("__HEADING__", heading)
+        .replace("__MESSAGE__", message)
+        .replace("__NOTE__", note)
 }
 
 fn parse_callback(
@@ -859,6 +882,26 @@ mod tests {
             .unwrap()
             .reasoning_effort = "max".into();
         assert!(request_body(&config, "patch", &models).is_err());
+    }
+
+    #[test]
+    fn callback_page_keeps_the_sign_in_instruction_local() {
+        let success = callback_page(true);
+        let rejected = callback_page(false);
+        assert!(success.contains("<span>Sanny</span><span class=\"git\">Git</span>"));
+        assert!(success.contains("class=\"ok\""));
+        assert!(success.contains("Sign-in received"));
+        assert!(success.contains("Return to SannyGit to see the result of ChatGPT sign-in."));
+        assert!(success.contains("You can close this tab."));
+        assert!(rejected.contains("class=\"bad\""));
+        assert!(rejected.contains("Sign-in was not accepted"));
+        assert!(rejected.contains("This request does not match the pending sign-in."));
+        assert!(!success.contains("__"));
+        assert!(!rejected.contains("__"));
+        for page in [&success, &rejected] {
+            assert!(page.starts_with("<!DOCTYPE html>"));
+            assert!(!page.contains("https://") && !page.contains("http://"));
+        }
     }
 
     #[test]
