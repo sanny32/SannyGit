@@ -10,7 +10,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     } else {
         &app.status
     };
-    let mut cancel = false;
     Panel::bottom("working_tree.v2.status")
         .exact_size(26.0)
         .frame(
@@ -39,12 +38,6 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.separator();
                 ui.label(format!("{} changes", app.changes.len()));
                 ui.separator();
-                if app.background_progress_only && app.manager.cancel.is_some() {
-                    cancel = ui
-                        .small_button("Cancel")
-                        .help_text("Cancel the background operation")
-                        .clicked();
-                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some(repository) = app.repositories.get(app.selected_repository) {
                         ui.scope(|ui| {
@@ -64,7 +57,4 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
             });
         });
-    if cancel {
-        app.cancel_repository_job();
-    }
 }

@@ -1694,7 +1694,11 @@ fn adding_tags_closes_the_form_and_shows_progress_in_the_status_bar() {
                     if frame == 3 {
                         assert!(!visible_text(&output.shapes, "Repository operation"));
                         assert!(!visible_text(&output.shapes, "Cancel operation"));
-                        assert_eq!(visible_text_count(&output.shapes, progress), 1);
+                        assert_eq!(
+                            visible_text_count(&output.shapes, progress),
+                            if push { 2 } else { 1 },
+                            "Progress should stay in the status bar and sit ahead of toolbar Cancel"
+                        );
                     }
                 }
 

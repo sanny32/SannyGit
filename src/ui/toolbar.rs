@@ -7,7 +7,8 @@ use crate::{
     theme::{semibold_family, ui_font_size, Palette, TOOLBAR_BRAND_FONT_SIZE},
 };
 use eframe::egui::{
-    Align, Align2, Button, FontId, Frame, Layout, Margin, Panel, Rect, Response, Ui, Vec2,
+    Align, Align2, Button, FontId, Frame, Label, Layout, Margin, Panel, Rect, Response, RichText,
+    Ui, Vec2,
 };
 
 const TOOLBAR_BUTTON_HEIGHT: f32 = 48.0;
@@ -419,9 +420,53 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     if response.clicked() {
                         app.open_settings();
                     }
+                    show_operation_cancel(ui, app, palette);
                 });
             });
         });
+}
+
+fn operation_cancel_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("toolbar.operation.cancel")
+}
+
+fn show_operation_cancel(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
+    if !(app.background_progress_only && app.manager.cancel.is_some()) {
+        return;
+    }
+    let status = app.status.clone();
+    let font = eframe::egui::TextStyle::Body.resolve(ui.style());
+    let measured = ui
+        .painter()
+        .layout_no_wrap(status.clone(), font, palette.muted);
+    let button = icons::BUTTON_SIZE;
+    let spacing = ui.spacing().item_spacing.x;
+    let available = ui.available_width().max(button);
+    let width = (measured.size().x + spacing + button).min(available);
+    let mut requested = false;
+    ui.allocate_ui_with_layout(
+        Vec2::new(width, button),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            let text_width = (width - button - spacing).max(0.0);
+            ui.scope(|ui| {
+                ui.set_max_width(text_width);
+                ui.add(
+                    Label::new(RichText::new(&status).color(palette.muted))
+                        .truncate()
+                        .show_tooltip_when_elided(false),
+                )
+                .help_text(&status);
+            });
+            let response = icons::button(ui, Icon::Close, "Cancel the background operation");
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(operation_cancel_id(), response.rect));
+            requested = response.clicked();
+        },
+    );
+    if requested {
+        app.cancel_repository_job();
+    }
 }
 
 fn remote_help(operation: crate::remotes::Operation, remote: Option<&str>) -> String {
@@ -537,6 +582,148 @@ mod tests {
             perform_edit(&context, action);
             assert!(context.memory(|memory| memory.focused()).is_none());
             assert!(context.input(|input| input.events.is_empty()));
+        }
+    }
+}
+
+#[cfg(test)]
+mod operation_cancel {
+    use super::*;
+    use crate::theme::{InterfaceStyle, ThemeChoice};
+    use eframe::egui::{
+        self, epaint::ClippedShape, Context, Event, Modifiers, PointerButton, Pos2, RawInput, Vec2,
+    };
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    fn text_rects(shapes: &[ClippedShape], expected: &str) -> Vec<Rect> {
+        shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == expected => {
+                    Some(Rect::from_min_size(text.pos, text.galley.size()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn operation_cancel_follows_the_message_on_the_toolbar() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for style in [InterfaceStyle::Classic, InterfaceStyle::Modern] {
+                for size in [Vec2::new(1100.0, 700.0), Vec2::new(1400.0, 900.0)] {
+                    let ctx = Context::default();
+                    theme.apply(&ctx);
+                    theme.apply_style(&ctx, style);
+                    let mut app = SannyGitApp::with_theme(theme);
+                    app.interface_style = style;
+                    app.repositories.push(crate::models::Repository {
+                        name: "Test".into(),
+                        path: "D:/repositories/example".into(),
+                    });
+                    app.selected_repository = 0;
+                    app.branches.current_branch = "main".into();
+                    app.status = "Pushing…".into();
+                    app.background_progress_only = true;
+                    app.manager.cancel = Some(Arc::new(AtomicBool::new(false)));
+
+                    let render = |app: &mut SannyGitApp, events: Vec<Event>| {
+                        let mut output = ctx.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                                events,
+                                ..Default::default()
+                            },
+                            |ui| crate::ui::show(ui, app),
+                        );
+                        output.textures_delta.clear();
+                        output
+                    };
+
+                    let output = render(&mut app, vec![]);
+                    let messages = text_rects(&output.shapes, "Pushing…");
+                    assert!(
+                        messages.len() >= 2,
+                        "Missing toolbar or status message in {theme:?} {style:?} at {size:?}: {}",
+                        messages.len()
+                    );
+                    let toolbar_message = messages
+                        .iter()
+                        .min_by(|left, right| left.top().total_cmp(&right.top()))
+                        .copied()
+                        .expect("toolbar message");
+                    let status_message = messages
+                        .iter()
+                        .max_by(|left, right| left.top().total_cmp(&right.top()))
+                        .copied()
+                        .expect("status message");
+                    let cancel = ctx
+                        .data(|data| data.get_temp::<Rect>(operation_cancel_id()))
+                        .unwrap_or_else(|| {
+                            panic!("Cancel cross missing in {theme:?} {style:?} at {size:?}")
+                        });
+                    assert!(
+                        Rect::from_min_size(Pos2::ZERO, size).contains_rect(cancel),
+                        "Cancel cross {cancel:?} leaves the {size:?} window"
+                    );
+                    assert!(
+                        toolbar_message.right() <= cancel.left() + 1.0
+                            && cancel.left() - toolbar_message.right() < 16.0,
+                        "Cross is not immediately after the message in {theme:?} {style:?} at {size:?}: message {toolbar_message:?} cancel {cancel:?}"
+                    );
+                    assert!(
+                        (cancel.center().y - toolbar_message.center().y).abs() < 20.0,
+                        "Cross left the message row"
+                    );
+                    assert!(cancel.bottom() < 140.0, "Cross is outside the toolbar");
+                    assert!(status_message.top() > size.y - 40.0);
+                    assert!(
+                        text_rects(&output.shapes, "Cancel")
+                            .iter()
+                            .all(|rect| (rect.center().y - cancel.center().y).abs() >= 24.0),
+                        "Cancel is still a text button on the operation row"
+                    );
+                    let settings = text_rects(&output.shapes, "Settings")
+                        .into_iter()
+                        .find(|rect| (rect.center().y - cancel.center().y).abs() < 40.0)
+                        .unwrap_or_else(|| panic!("Settings missing beside the cross"));
+                    assert!(settings.center().x > cancel.right());
+
+                    let pointer = cancel.center();
+                    for pressed in [true, false] {
+                        render(
+                            &mut app,
+                            vec![
+                                Event::PointerMoved(pointer),
+                                Event::PointerButton {
+                                    pos: pointer,
+                                    button: PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Modifiers::NONE,
+                                },
+                            ],
+                        );
+                    }
+                    assert!(
+                        app.manager
+                            .cancel
+                            .as_ref()
+                            .is_some_and(|cancel| cancel.load(Ordering::Relaxed)),
+                        "Clicking the cross did not cancel"
+                    );
+                    assert_eq!(app.status, "Cancelling operation…");
+
+                    app.manager.cancel = None;
+                    app.background_progress_only = false;
+                    app.status = "Idle".into();
+                    let output = render(&mut app, vec![]);
+                    assert!(text_rects(&output.shapes, "Pushing…").is_empty());
+                    assert_eq!(text_rects(&output.shapes, "Idle").len(), 1);
+                }
+            }
         }
     }
 }
