@@ -1123,6 +1123,7 @@ impl SannyGitApp {
             self.history.commit_preview_error = None;
             self.load_commit_draft();
             self.history.journal_filter.clear();
+            self.history.reveal_head_on_reload();
         } else if self.tag_log.is_some() {
             self.with_history_window(|app| app.queue_history_reload());
         }
@@ -2163,6 +2164,7 @@ impl SannyGitApp {
             WorkerResult::Repository(Ok(snapshot)) => {
                 logging::record(logging::Level::Info, format_args!("Repository opened"));
                 self.apply_snapshot(snapshot);
+                self.history.reveal_head_on_reload();
             }
             WorkerResult::Repository(Err(error)) => {
                 self.error = Some(error);
@@ -2288,6 +2290,9 @@ impl SannyGitApp {
                 let refresh_error = match snapshot {
                     Ok(snapshot) => {
                         self.apply_snapshot(snapshot);
+                        if operation_succeeded {
+                            self.history.reveal_head_on_reload();
+                        }
                         None
                     }
                     Err(error) => {

@@ -37,6 +37,10 @@ pub struct Cursor {
 }
 
 impl Cursor {
+    pub(crate) fn head(&self) -> &str {
+        &self.basis.head
+    }
+
     pub fn has_more(&self) -> bool {
         self.next < self.ids.len()
     }
@@ -308,6 +312,7 @@ fn first_with_limits(
     }
     let selected_end = keep
         .iter()
+        .chain(std::iter::once(&initial.head))
         .chain(tag_commit.iter())
         .filter_map(|id| ids.iter().position(|hash| hash == id))
         .map(|index| index + 1)

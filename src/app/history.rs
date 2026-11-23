@@ -40,6 +40,35 @@ pub struct View {
 }
 
 impl View {
+    pub(super) fn reveal_head_on_reload(&mut self) {
+        self.history_session.reveal_head = true;
+    }
+
+    pub(super) fn reveal_head(&mut self) {
+        if self.history_loading {
+            self.reveal_head_on_reload();
+            return;
+        }
+        let Some(cursor) = &self.history_session.cursor else {
+            return;
+        };
+        let Some(head) = self
+            .commits
+            .iter()
+            .find(|commit| commit.hash == cursor.head())
+        else {
+            return;
+        };
+        if !head.matches(&self.journal_filter.trim().to_lowercase()) {
+            self.journal_filter.clear();
+        }
+        self.history_session.restore = Some(Anchor {
+            hash: head.hash.clone(),
+            offset: 0.0,
+            filter: self.journal_filter.clone(),
+        });
+    }
+
     pub fn ref_name(&self) -> Option<&str> {
         let reference = self.tag.as_deref()?;
         reference
@@ -86,6 +115,7 @@ pub(super) struct Session {
     notice: Option<String>,
     anchor: Option<Anchor>,
     restore: Option<Anchor>,
+    reveal_head: bool,
 }
 
 impl Session {
@@ -342,6 +372,7 @@ impl SannyGitApp {
             self.history.history_session.generation.wrapping_add(1);
         self.history.history_loading = false;
         self.history.history_pending = false;
+        self.history.history_session.reveal_head = false;
         self.history.history_session.notice = Some("History loading cancelled; previous rows and selection are retained. Use More or Reload to retry.".into());
     }
 
@@ -449,6 +480,9 @@ impl SannyGitApp {
                 self.history.history_truncated = page.history.truncated;
                 let tag_commit = page.cursor.tag_commit().map(str::to_owned);
                 self.history.history_session.cursor = Some(page.cursor);
+                if std::mem::take(&mut self.history.history_session.reveal_head) {
+                    self.history.reveal_head();
+                }
                 self.history.history_error = None;
                 self.history.history_session.notice = None;
                 if !self
@@ -508,6 +542,52 @@ mod tests {
             assert!(Instant::now() < deadline);
             app.poll_view_reads();
             std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn journal_reveals_head_after_open_and_successful_operations() {
+        let repo = crate::test_support::TempRepo::new();
+        repo.git(&["commit", "--allow-empty", "-m", "Current commit"]);
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        let snapshot = || crate::git::load(&SYSTEM_GIT, &repo.0);
+        app.apply_worker_result(WorkerResult::Repository(snapshot()));
+        wait(&mut app);
+        let head = app.history.commits[0].hash.clone();
+        assert_eq!(app.take_history_scroll(), Some((head.clone(), 0.0)));
+
+        for (success, committed, succeeded) in [
+            ("Commit created", true, true),
+            ("Pull complete", false, true),
+            ("Push complete", false, true),
+            ("Push complete", false, false),
+            ("Fetch complete", false, true),
+            ("Checkout complete", false, true),
+            ("Stash applied", false, true),
+        ] {
+            app.history.journal_filter = "hidden".into();
+            app.remember_history_scroll(head.clone(), 8.0);
+            app.apply_worker_result(WorkerResult::Operation {
+                committed,
+                success,
+                outcome: if succeeded {
+                    Ok(())
+                } else {
+                    Err("Failed".into())
+                },
+                snapshot: snapshot(),
+            });
+            assert_eq!(app.take_history_scroll(), None);
+            wait(&mut app);
+            let reveal = succeeded;
+            assert_eq!(
+                app.take_history_scroll(),
+                Some((head.clone(), if reveal { 0.0 } else { 8.0 }))
+            );
+            assert_eq!(
+                app.history.journal_filter,
+                if reveal { "" } else { "hidden" }
+            );
         }
     }
 
@@ -645,6 +725,7 @@ mod tests {
         wait(&mut app);
         assert_eq!(app.history.commits.len(), backend::PAGE_SIZE);
         assert!(app.history_can_load_more());
+        assert!(app.take_history_scroll().is_some());
         (repo, app)
     }
 
@@ -813,7 +894,7 @@ mod tests {
     }
 
     #[test]
-    fn reload_after_new_head_keeps_the_same_visible_rows_at_the_bottom() {
+    fn journal_keeps_its_scroll_on_reload_and_reveals_head_on_request() {
         use crate::theme::InterfaceStyle;
         use eframe::egui::{self, Context, Event, Modifiers, Pos2, RawInput, Rect};
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
@@ -849,7 +930,8 @@ mod tests {
                             .iter()
                             .filter_map(|shape| match &shape.shape {
                                 egui::Shape::Text(text)
-                                    if text.galley.job.text.starts_with("History commit ") =>
+                                    if text.galley.job.text.starts_with("History commit ")
+                                        || text.galley.job.text == "New HEAD" =>
                                 {
                                     Some((text.galley.job.text.clone(), text.pos))
                                 }
@@ -895,6 +977,15 @@ mod tests {
                         "Reload moved old rows: {theme:?} {style:?} {size:?}"
                     );
                     assert_eq!(app.history.selected_commit, selected);
+                    app.history.reveal_head();
+                    for _ in 0..3 {
+                        render(&mut app, vec![]);
+                    }
+                    assert_eq!(
+                        rows(&render(&mut app, vec![]))[0].0,
+                        "New HEAD",
+                        "HEAD was not visible: {theme:?} {style:?} {size:?}"
+                    );
                 }
             }
         }

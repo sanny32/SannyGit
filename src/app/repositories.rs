@@ -523,6 +523,7 @@ impl SannyGitApp {
                     format_args!("Repository opened"),
                 );
                 self.apply_snapshot(snapshot);
+                self.history.reveal_head_on_reload();
                 self.manager.dialog = None;
                 self.status = "Repository opened".into();
             }),
@@ -548,7 +549,12 @@ impl SannyGitApp {
                 if let Some(snapshot) = snapshot {
                     self.manager.worktree_availability = None;
                     match snapshot {
-                        Ok(snapshot) => self.apply_snapshot(snapshot),
+                        Ok(snapshot) => {
+                            self.apply_snapshot(snapshot);
+                            if result.is_ok() {
+                                self.history.reveal_head_on_reload();
+                            }
+                        }
                         Err(error) => {
                             self.state_current = false;
                             self.error = Some(format!("Refresh required: {error}"));
@@ -571,6 +577,7 @@ impl SannyGitApp {
             ResultMessage::Settings { result, saved } => result.map(|settings| {
                 self.manager.settings = Some(settings);
                 if saved {
+                    self.history.reveal_head();
                     self.manager.dialog = None;
                     self.status = "Repository settings saved".into();
                 }

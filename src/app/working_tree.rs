@@ -324,6 +324,9 @@ impl SannyGitApp {
             Ok(snapshot) => {
                 let head_moved = self.apply_working_tree_snapshot(snapshot);
                 self.sync_external_history(head_moved, false, refs);
+                if outcome.is_ok() {
+                    self.history.reveal_head();
+                }
                 None
             }
             Err(error) => {
