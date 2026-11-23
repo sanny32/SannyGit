@@ -1047,7 +1047,7 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
                     provider.textures_delta.clear();
                     assert!(visible_text(&provider.shapes, action));
                     assert!(visible_text(&provider.shapes, "Model:"));
-                    assert!(visible_text(&provider.shapes, "effort:"));
+                    assert!(visible_text(&provider.shapes, "effort: Low"));
                     for label in [
                         hidden_action,
                         "Status:",

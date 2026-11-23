@@ -599,8 +599,7 @@ pub struct Model {
     pub(crate) input_cost_rank: u32,
 }
 
-const EFFORT_COST_ORDER: &[&str] =
-    &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+const EFFORT_COST_ORDER: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 pub fn list_models() -> Result<Vec<Model>, String> {
     let runtime = runtime()?;
@@ -687,13 +686,13 @@ impl Model {
     }
 }
 
-pub fn cheapest_model<'a>(models: &'a [Model]) -> Option<&'a Model> {
+pub fn cheapest_model(models: &[Model]) -> Option<&Model> {
     models
         .iter()
         .min_by_key(|model| (model.cost_rank(), model.slug.as_str()))
 }
 
-pub fn cheapest_effort<'a>(model: &'a Model) -> Option<&'a str> {
+pub fn cheapest_effort(model: &Model) -> Option<&str> {
     model
         .reasoning_efforts
         .iter()

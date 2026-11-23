@@ -1217,7 +1217,7 @@ fn generation_settings_field(
         );
         child.style_mut().interaction.selectable_labels = false;
         child.horizontal(|ui| {
-            ui.set_width(label_rect.width());
+            ui.set_width(label_rect.width().max(0.0));
             ui.label(
                 RichText::new(model_name)
                     .family(semibold_family())
