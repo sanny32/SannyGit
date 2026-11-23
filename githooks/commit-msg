@@ -1,0 +1,5 @@
+#!/bin/sh
+# Drop Co-authored-by / Made-with trailers (agents, IDE injection, humans).
+tmp="${1}.strip-trailers"
+grep -viE '^(co-authored-by:|made-with:)' "$1" >"$tmp" || exit 1
+mv "$tmp" "$1"
