@@ -111,6 +111,8 @@ fn models_are_loaded_with_optional_auth_and_bounded_responses() {
             instructions: String::new(),
             api_key: key.into(),
             store_api_key: false,
+            chatgpt_subscription: false,
+            subscription_models: Default::default(),
         };
         let result = list_models(&config);
         let headers = server.join().unwrap();

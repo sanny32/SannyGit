@@ -107,6 +107,10 @@ enum WorkerResult {
         config: crate::llm::Config,
         repository: Option<String>,
     },
+    AiConnection {
+        sign_in: bool,
+        result: Result<String, String>,
+    },
     AmendMessage(Result<(String, String), String>),
     Repository(Result<crate::git::Snapshot, String>),
     Operation {
@@ -196,8 +200,19 @@ impl LlmSettings {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ChatGptStatus {
+    Unknown,
+    Checking,
+    SignedOut,
+    ChangingSession,
+    Connected,
+    Failed,
+}
+
 pub struct SettingsWindow {
     pub open: bool,
+    resume_after_ai_action: bool,
     pub initial_position_set: bool,
     pub initial_position: Option<eframe::egui::Pos2>,
     pub needs_reveal: bool,
@@ -212,12 +227,18 @@ pub struct SettingsWindow {
     pub llm_instructions: BTreeMap<String, String>,
     pub llm_repository: Option<String>,
     pub llm_repository_tab: RepositoryLlmTab,
+    pub chatgpt_status: ChatGptStatus,
+    chatgpt_status_reader: Option<Receiver<Result<bool, String>>>,
+    pub chatgpt_models: Vec<crate::llm::chatgpt::Model>,
+    chatgpt_models_reader: Option<Receiver<Result<Vec<crate::llm::chatgpt::Model>, String>>>,
+    pub chatgpt_models_attempted: bool,
 }
 
 impl SettingsWindow {
     fn new(theme: ThemeChoice) -> Self {
         Self {
             open: false,
+            resume_after_ai_action: false,
             initial_position_set: false,
             initial_position: None,
             needs_reveal: false,
@@ -235,6 +256,11 @@ impl SettingsWindow {
             llm_instructions: BTreeMap::new(),
             llm_repository: None,
             llm_repository_tab: RepositoryLlmTab::Model,
+            chatgpt_status: ChatGptStatus::Unknown,
+            chatgpt_status_reader: None,
+            chatgpt_models: Vec::new(),
+            chatgpt_models_reader: None,
+            chatgpt_models_attempted: false,
         }
     }
 }
@@ -557,12 +583,16 @@ impl SannyGitApp {
     fn refresh_llm_models(&mut self, context: &eframe::egui::Context) {
         // Cloud endpoints usually require authentication. Keep their cached
         // models until a key is available, without reading the OS key store.
-        if self.llm_config.is_local() || !self.llm_config.api_key.trim().is_empty() {
+        if !self.llm_config.chatgpt_subscription
+            && (self.llm_config.is_local() || !self.llm_config.api_key.trim().is_empty())
+        {
             self.llm_models
                 .load_at_startup(&self.llm_config, None, context);
         }
         for (path, config) in &self.repository_llm_configs {
-            if config.is_local() || !config.api_key.trim().is_empty() {
+            if !config.chatgpt_subscription
+                && (config.is_local() || !config.api_key.trim().is_empty())
+            {
                 self.llm_models.load_at_startup(config, Some(path), context);
             }
         }
@@ -958,6 +988,20 @@ impl SannyGitApp {
     }
 
     pub fn open_settings(&mut self) {
+        if self.settings_window.chatgpt_models_reader.is_none() {
+            self.settings_window.chatgpt_models_attempted = false;
+        }
+        if !std::mem::take(&mut self.settings_window.resume_after_ai_action) {
+            self.load_settings_draft();
+        }
+        self.settings_window.llm_repository = None;
+        self.settings_window.initial_position_set = false;
+        self.settings_window.initial_position = None;
+        self.settings_window.needs_reveal = true;
+        self.settings_window.open = true;
+    }
+
+    fn load_settings_draft(&mut self) {
         self.settings_window.preferences = self.preferences.clone();
         if self.settings_window.preferences.git_executable.is_empty() {
             if let Some(path) = git::find_executable() {
@@ -997,11 +1041,6 @@ impl SannyGitApp {
                     .or_insert_with(|| config.instructions.clone());
             }
         }
-        self.settings_window.llm_repository = None;
-        self.settings_window.initial_position_set = false;
-        self.settings_window.initial_position = None;
-        self.settings_window.needs_reveal = true;
-        self.settings_window.open = true;
     }
 
     pub fn open_repository_llm_settings(&mut self) {
@@ -1012,6 +1051,7 @@ impl SannyGitApp {
         else {
             return;
         };
+        self.settings_window.resume_after_ai_action = false;
         self.open_settings();
         self.settings_window.page = SettingsPage::Llm;
         self.settings_window.llm_repository = Some(path);
@@ -1961,6 +2001,16 @@ impl SannyGitApp {
         if let Some(instructions) = self.repository_llm_instructions.get(path) {
             config.instructions.clone_from(instructions);
         }
+        config.chatgpt_subscription = self.llm_config.chatgpt_subscription;
+        if config.chatgpt_subscription {
+            if config.subscription_models.is_empty() {
+                config
+                    .subscription_models
+                    .clone_from(&self.llm_config.subscription_models);
+            }
+        } else {
+            config.subscription_models.clear();
+        }
         config
     }
 
@@ -1975,7 +2025,10 @@ impl SannyGitApp {
             .contains_key(&path)
             .then_some(path.clone());
         let mut config = self.effective_generation_config(&path);
-        if let Err(error) = crate::llm::request_endpoint(&config) {
+        let endpoint = (!config.chatgpt_subscription)
+            .then(|| crate::llm::request_endpoint(&config))
+            .transpose();
+        if let Err(error) = endpoint {
             self.error = Some(error);
             return;
         }
@@ -2011,6 +2064,99 @@ impl SannyGitApp {
         }
     }
 
+    pub fn change_chatgpt_connection(&mut self, ctx: &eframe::egui::Context, sign_in: bool) {
+        let (status, job): (_, fn() -> Result<String, String>) = if sign_in {
+            (
+                "Complete ChatGPT sign-in in your browser",
+                crate::llm::chatgpt::sign_in,
+            )
+        } else {
+            ("Disconnecting ChatGPT…", crate::llm::chatgpt::sign_out)
+        };
+        if self.busy() {
+            return;
+        }
+        let ctx = ctx.clone();
+        if self.start_worker(move |_| {
+            let result = job();
+            ctx.request_repaint();
+            WorkerResult::AiConnection { sign_in, result }
+        }) {
+            self.settings_window.chatgpt_status_reader = None;
+            self.settings_window.chatgpt_models.clear();
+            self.settings_window.chatgpt_models_reader = None;
+            self.settings_window.chatgpt_models_attempted = false;
+            self.settings_window.chatgpt_status = ChatGptStatus::ChangingSession;
+            self.settings_window.open = false;
+            self.settings_window.resume_after_ai_action = true;
+            self.status = status.into();
+        }
+    }
+
+    fn update_chatgpt_status(&mut self, ctx: &eframe::egui::Context) {
+        let result = match self.settings_window.chatgpt_status {
+            ChatGptStatus::Unknown => {
+                match self.spawn_reader(Some(ctx.clone()), |_| {
+                    crate::llm::chatgpt::has_saved_session()
+                }) {
+                    Ok(reader) => {
+                        self.settings_window.chatgpt_status_reader = Some(reader);
+                        self.settings_window.chatgpt_status = ChatGptStatus::Checking;
+                        return;
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            ChatGptStatus::Checking => {
+                let Some(reader) = &self.settings_window.chatgpt_status_reader else {
+                    return;
+                };
+                match reader.try_recv() {
+                    Ok(result) => result,
+                    Err(mpsc::TryRecvError::Empty) => return,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        Err("Could not check the saved ChatGPT session".into())
+                    }
+                }
+            }
+            _ => return,
+        };
+        self.settings_window.chatgpt_status_reader = None;
+        self.settings_window.chatgpt_status = match result {
+            Ok(true) => ChatGptStatus::Connected,
+            Ok(false) => ChatGptStatus::SignedOut,
+            Err(error) => {
+                self.error = Some(error);
+                ChatGptStatus::Failed
+            }
+        };
+    }
+
+    pub fn update_chatgpt_models(&mut self, ctx: &eframe::egui::Context) {
+        self.update_chatgpt_status(ctx);
+        if self.settings_window.chatgpt_status != ChatGptStatus::Connected {
+            return;
+        }
+        if let Some(reader) = &self.settings_window.chatgpt_models_reader {
+            let result = match reader.try_recv() {
+                Ok(result) => result,
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => Err("Could not load ChatGPT models".into()),
+            };
+            self.settings_window.chatgpt_models_reader = None;
+            match result {
+                Ok(models) => self.settings_window.chatgpt_models = models,
+                Err(error) => self.error = Some(error),
+            }
+        } else if !self.settings_window.chatgpt_models_attempted {
+            self.settings_window.chatgpt_models_attempted = true;
+            match self.spawn_reader(Some(ctx.clone()), |_| crate::llm::chatgpt::list_models()) {
+                Ok(reader) => self.settings_window.chatgpt_models_reader = Some(reader),
+                Err(error) => self.error = Some(error),
+            }
+        }
+    }
+
     pub fn cancel_commit_message_generation(&mut self) {
         if !self.commit.generating_message {
             return;
@@ -2034,6 +2180,9 @@ impl SannyGitApp {
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.worker = None;
+                if self.settings_window.chatgpt_status == ChatGptStatus::ChangingSession {
+                    self.settings_window.chatgpt_status = ChatGptStatus::Unknown;
+                }
                 self.background_progress_only = false;
                 self.commit.generating_message = false;
                 self.commit.generation_cancel = None;
@@ -2194,6 +2343,21 @@ impl SannyGitApp {
                     }
                 }
             }
+            WorkerResult::AiConnection { sign_in, result } => match result {
+                Ok(status) => {
+                    self.settings_window.chatgpt_status = if sign_in {
+                        ChatGptStatus::Connected
+                    } else {
+                        ChatGptStatus::SignedOut
+                    };
+                    self.status = status;
+                }
+                Err(error) => {
+                    self.settings_window.chatgpt_status = ChatGptStatus::Unknown;
+                    self.error = Some(error);
+                    self.status = "AI connection failed".into();
+                }
+            },
             WorkerResult::Repository(Ok(snapshot)) => {
                 logging::record(logging::Level::Info, format_args!("Repository opened"));
                 self.apply_snapshot(snapshot);

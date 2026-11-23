@@ -1,16 +1,20 @@
 use super::controls::dialog_style::DialogResponse;
+use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
 use crate::{
-    app::{RepositoryLlmTab, SannyGitApp, SettingsPage},
+    app::{ChatGptStatus, RepositoryLlmTab, SannyGitApp, SettingsPage},
     logging::{self, Level},
     theme::{semibold_family, InterfaceStyle, Palette, ThemeChoice},
 };
 use eframe::egui::{
-    self, Align, CentralPanel, Frame, Key, Layout, Margin, Panel, RichText, ScrollArea, Ui, Vec2,
+    self, Align, CentralPanel, Frame, Key, Layout, Margin, Panel, Popup, Rect,
+    RectAlign, RichText, ScrollArea, Sense, StrokeKind, TextWrapMode, Ui, UiBuilder, Vec2,
     ViewportCommand, ViewportId,
 };
 
-const PREFERENCES_SIZE: Vec2 = egui::vec2(740.0, 420.0);
+const PREFERENCES_SIZE: Vec2 = egui::vec2(790.0, 456.0);
+/// Matches `chatgpt_provider` Login / Logout min width so grid column 3 sizes both rows.
+const CHATGPT_ACTION_BUTTON_MIN_WIDTH: f32 = 86.0;
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if !app.settings_window.open {
@@ -124,19 +128,44 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
     footer(ui, app, palette);
     navigation(ui, app, palette);
+    let page_background = if app.settings_window.page == SettingsPage::Llm {
+        palette.panel_alt
+    } else {
+        palette.header
+    };
     CentralPanel::default()
-        .frame(Frame::new().fill(palette.header).inner_margin(12))
+        .frame(Frame::new().fill(page_background).inner_margin(12))
         .show(ui, |ui| {
             let page_height = ui.available_height();
-            ScrollArea::vertical()
-                .id_salt("preferences.page")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if app.settings_window.page == SettingsPage::CommitMessages {
-                        ui.set_max_height(page_height);
-                    }
-                    page(ui, app, palette);
-                });
+            let chatgpt_banner = app.settings_window.page == SettingsPage::Llm
+                && app.settings_window.llm.config.chatgpt_subscription;
+            const CHATGPT_BANNER_RESERVE: f32 = 54.0;
+            let banner_reserve = f32::from(chatgpt_banner) * CHATGPT_BANNER_RESERVE;
+            if app.settings_window.page == SettingsPage::Llm && page_height < 350.0 {
+                ui.spacing_mut().item_spacing.y = 3.0;
+            }
+            let content_height = (page_height - banner_reserve).max(0.0);
+            if app.settings_window.page == SettingsPage::CommitMessages {
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), content_height),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        ui.set_min_height(content_height);
+                        ui.set_max_height(content_height);
+                        page(ui, app, palette);
+                    },
+                );
+            } else {
+                ScrollArea::vertical()
+                    .id_salt("preferences.page")
+                    .auto_shrink([false, false])
+                    .max_height(content_height)
+                    .show(ui, |ui| page(ui, app, palette));
+            }
+            if chatgpt_banner {
+                ui.add_space(6.0);
+                chatgpt_sign_in_banner(ui, palette);
+            }
         });
     super::show_errors(ui, app);
 }
@@ -176,20 +205,27 @@ fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     Panel::left("preferences.navigation")
         .resizable(false)
         .exact_size(206.0)
+        .show_separator_line(false)
         .frame(Frame::new().fill(palette.header).inner_margin(Margin {
             left: 12,
             right: 0,
             top: 12,
-            bottom: 0,
+            bottom: 12,
         }))
         .show(ui, |ui| {
+            ui.take_available_space();
+            let panel_size = ui.available_size();
             Frame::new()
                 .fill(palette.panel)
                 .stroke((1.0, palette.border))
                 .show(ui, |ui| {
-                    ui.set_min_size(ui.available_size() - Vec2::splat(2.0));
+                    ui.set_min_size(panel_size - Vec2::splat(2.0));
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    ScrollArea::vertical().show(ui, |ui| {
+                    let scroll_height = ui.available_height();
+                    ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .max_height(scroll_height)
+                        .show(ui, |ui| {
                         section(
                             ui,
                             app,
@@ -516,18 +552,11 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             });
         }
         SettingsPage::Llm => {
-            heading(ui, "AI");
-            llm_form(
-                ui,
-                &mut app.settings_window.llm,
-                palette,
-                None,
-                &mut app.llm_models,
-            );
+            ai_page(ui, app, palette);
         }
         SettingsPage::CommitMessages => {
             heading(ui, "Commit messages");
-            instructions_form(ui, &mut app.settings_window.llm);
+            instructions_form(ui, &mut app.settings_window.llm, true);
         }
     }
 }
@@ -536,6 +565,13 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
 enum SettingsError {
     Credential(String),
     Logging(String),
+}
+
+fn strip_repository_connection_mode(config: &mut crate::llm::Config, global: &crate::llm::Config) {
+    config.chatgpt_subscription = false;
+    if !global.chatgpt_subscription {
+        config.subscription_models.clear();
+    }
 }
 
 fn apply_settings(app: &mut SannyGitApp) -> Result<(), SettingsError> {
@@ -548,8 +584,9 @@ fn apply_settings(app: &mut SannyGitApp) -> Result<(), SettingsError> {
             draft
                 .save_secret(previous, Some(path))
                 .map_err(SettingsError::Credential)?;
-            app.repository_llm_configs
-                .insert(path.clone(), draft.config.clone());
+            let mut config = draft.config.clone();
+            strip_repository_connection_mode(&mut config, &app.settings_window.llm.config);
+            app.repository_llm_configs.insert(path.clone(), config);
         } else {
             app.repository_llm_configs.remove(path);
         }
@@ -578,6 +615,9 @@ fn apply_settings(app: &mut SannyGitApp) -> Result<(), SettingsError> {
         app.skip_push_confirmation = app.settings_window.skip_push_confirmation;
         app.tracking.set_auto_fetch(app.settings_window.auto_fetch);
         app.llm_config = app.settings_window.llm.config.clone();
+        for config in app.repository_llm_configs.values_mut() {
+            strip_repository_connection_mode(config, &app.llm_config);
+        }
     }
     Ok(())
 }
@@ -707,6 +747,10 @@ fn repository_llm_model_tab(
     palette: Palette,
     path: Option<&str>,
 ) {
+    let subscription_mode = app.settings_window.llm.config.chatgpt_subscription;
+    if subscription_mode {
+        app.update_chatgpt_models(ui.ctx());
+    }
     let window = &mut app.settings_window;
     let mut inherit = path.is_none_or(|path| !window.llm_repositories.contains_key(path));
     let response = ui.add_enabled(
@@ -738,14 +782,38 @@ fn repository_llm_model_tab(
     }
     if let Some(path) = path {
         if let Some(draft) = window.llm_repositories.get_mut(path) {
-            llm_form(ui, draft, palette, Some(path), &mut app.llm_models);
+            llm_form(
+                ui,
+                draft,
+                palette,
+                Some(path),
+                &mut app.llm_models,
+                &window.chatgpt_models,
+                subscription_mode,
+            );
         } else {
             ui.add_enabled_ui(false, |ui| {
-                llm_form(ui, &mut window.llm, palette, None, &mut app.llm_models);
+                llm_form(
+                    ui,
+                    &mut window.llm,
+                    palette,
+                    None,
+                    &mut app.llm_models,
+                    &window.chatgpt_models,
+                    subscription_mode,
+                );
             });
         }
     } else {
-        llm_form(ui, &mut window.llm, palette, None, &mut app.llm_models);
+        llm_form(
+            ui,
+            &mut window.llm,
+            palette,
+            None,
+            &mut app.llm_models,
+            &window.chatgpt_models,
+            subscription_mode,
+        );
     }
 }
 
@@ -754,7 +822,7 @@ fn repository_llm_prompt_tab(ui: &mut Ui, app: &mut SannyGitApp, path: Option<&s
     let global = window.llm.config.instructions.clone();
     let Some(path) = path else {
         let mut instructions = global;
-        instructions_editor(ui, &mut instructions);
+        instructions_editor(ui, &mut instructions, false);
         return;
     };
     // An entry in the instructions map marks the override, so the checkbox
@@ -791,15 +859,262 @@ fn repository_llm_prompt_tab(ui: &mut Ui, app: &mut SannyGitApp, path: Option<&s
         .cloned()
         .unwrap_or_else(|| global.clone());
     if inherit {
-        ui.add_enabled_ui(false, |ui| instructions_editor(ui, &mut instructions));
+        ui.add_enabled_ui(false, |ui| instructions_editor(ui, &mut instructions, false));
         return;
     }
-    instructions_editor(ui, &mut instructions);
+    instructions_editor(ui, &mut instructions, false);
     window
         .llm_instructions
         .insert(path.to_owned(), instructions.clone());
     if let Some(draft) = window.llm_repositories.get_mut(path) {
         draft.config.instructions = instructions;
+    }
+}
+
+fn ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
+    ui.label(RichText::new("AI").size(18.0).family(semibold_family()));
+    ui.label(RichText::new("Connect a service to generate commit messages.").color(palette.muted));
+    let section_gap = ui.spacing().item_spacing.y;
+    ui.add_space(section_gap);
+
+    let subscription = &mut app.settings_window.llm.config.chatgpt_subscription;
+    ui.columns(2, |columns| {
+        connection_choice(
+            &mut columns[0],
+            subscription,
+            true,
+            Icon::Sparkles,
+            ("AI Provider", "Sign in with your AI Provider account"),
+            palette,
+        );
+        connection_choice(
+            &mut columns[1],
+            subscription,
+            false,
+            Icon::Code,
+            ("OpenAI API", "OpenAI-compatible API or local server"),
+            palette,
+        );
+    });
+    let subscription = *subscription;
+    ui.separator();
+    ui.add_space(section_gap);
+    let idle = !app.busy();
+    if subscription {
+        app.update_chatgpt_models(ui.ctx());
+        let status = app.settings_window.chatgpt_status;
+        let connected = status == ChatGptStatus::Connected;
+        let can_change_session =
+            idle && !matches!(status, ChatGptStatus::Unknown | ChatGptStatus::Checking);
+        if chatgpt_provider(
+            ui,
+            palette,
+            can_change_session,
+            connected,
+            &mut app.settings_window.llm.config,
+            &app.settings_window.chatgpt_models,
+        ) {
+            app.change_chatgpt_connection(ui.ctx(), !connected);
+        }
+        return;
+    }
+    llm_api_form(
+        ui,
+        &mut app.settings_window.llm,
+        palette,
+        None,
+        &mut app.llm_models,
+        false,
+    );
+}
+
+fn chatgpt_provider(
+    ui: &mut Ui,
+    palette: Palette,
+    enabled: bool,
+    connected: bool,
+    config: &mut crate::llm::Config,
+    models: &[crate::llm::chatgpt::Model],
+) -> bool {
+    let mut clicked = false;
+    Frame::new()
+        .inner_margin(Margin::ZERO)
+        .show(ui, |ui| {
+        use crate::llm::chatgpt::PROVIDER_ID;
+        let settings = config
+            .subscription_models
+            .entry(PROVIDER_ID.into())
+            .or_default();
+        egui::Grid::new("preferences.chatgpt.provider")
+            .num_columns(2)
+            .spacing([8.0, 6.0])
+            .show(ui, |ui| {
+                form_label(ui, "Provider:");
+                chatgpt_provider_field_row(
+                    ui,
+                    palette,
+                    Some((enabled, connected)),
+                    &mut clicked,
+                    |ui| {
+                    let provider = (
+                        icons::image(Icon::OpenAi, palette.text, 20.0),
+                        "OpenAI (ChatGPT)",
+                    );
+                    egui::ComboBox::from_id_salt("preferences.ai.provider")
+                        .width(ui.available_width())
+                        .selected_text(provider.clone())
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(true, provider).clicked() {
+                                ui.close();
+                            }
+                        });
+                    },
+                );
+                ui.end_row();
+
+                form_label(ui, "Model:");
+                chatgpt_provider_field_row(ui, palette, None, &mut clicked, |ui| {
+                    ui.add_enabled_ui(!models.is_empty(), |ui| {
+                        generation_settings_field(ui, palette, settings, models);
+                    });
+                });
+                ui.end_row();
+            });
+        });
+    clicked
+}
+
+fn chatgpt_provider_field_row(
+    ui: &mut Ui,
+    palette: Palette,
+    action: Option<(bool, bool)>,
+    clicked: &mut bool,
+    field: impl FnOnce(&mut Ui),
+) {
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        if let Some((enabled, connected)) = action {
+            let button = if connected {
+                egui::Button::new("Logout")
+            } else {
+                egui::Button::image_and_text(
+                    icons::image(Icon::ExternalLink, palette.text, 18.0),
+                    "Login",
+                )
+                .gap(6.0)
+            };
+            *clicked |= ui
+                .add_enabled(
+                    enabled,
+                    button.corner_radius(6).min_size(Vec2::new(
+                        CHATGPT_ACTION_BUTTON_MIN_WIDTH,
+                        crate::theme::CONTROL_HEIGHT,
+                    )),
+                )
+                .clicked();
+        } else {
+            ui.allocate_exact_size(
+                Vec2::new(CHATGPT_ACTION_BUTTON_MIN_WIDTH, crate::theme::CONTROL_HEIGHT),
+                Sense::hover(),
+            );
+        }
+        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            ui.set_min_width(ui.available_width());
+            field(ui);
+        });
+    });
+}
+
+fn chatgpt_sign_in_banner(ui: &mut Ui, palette: Palette) {
+    Frame::new()
+        .fill(palette.selection.gamma_multiply(0.4))
+        .corner_radius(6)
+        .inner_margin(Margin::symmetric(6, 6))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal_top(|ui| {
+                icons::paint(ui, Icon::Info, palette.accent, 17.0);
+                ui.label(
+                    RichText::new(
+                        "Sign in to ChatGPT in your browser. SannyGit uses your account and sends the selected diff when you generate a message.",
+                    )
+                    .color(palette.muted),
+                );
+            });
+        });
+}
+
+fn connection_choice(
+    ui: &mut Ui,
+    subscription: &mut bool,
+    value: bool,
+    icon: Icon,
+    (title, description): (&str, &str),
+    palette: Palette,
+) {
+    let selected = *subscription == value;
+    let icon_color = if selected {
+        palette.accent
+    } else {
+        palette.text
+    };
+    let mut label = egui::text::LayoutJob::default();
+    label.append(
+        title,
+        0.0,
+        egui::TextFormat::simple(egui::FontId::new(14.0, semibold_family()), palette.text),
+    );
+    label.append(
+        &format!("\n{description}"),
+        0.0,
+        egui::TextFormat::simple(egui::TextStyle::Body.resolve(ui.style()), palette.muted),
+    );
+    let compact = ui.spacing().item_spacing.y < 6.0;
+    let heading_offset = egui::vec2(0.0, if compact { 6.0 } else { 10.0 });
+    let indicator = egui::Atom::paint(Vec2::new(36.0, 18.0), move |ui, geometry| {
+        let center = geometry.rect.center() - heading_offset;
+        let outline = if selected {
+            palette.accent
+        } else {
+            palette.border
+        };
+        ui.painter().circle_stroke(center, 6.5, (1.5, outline));
+        if selected {
+            ui.painter().circle_filled(center, 4.0, palette.accent);
+        }
+    });
+    let image = icons::image(
+        icon,
+        icon_color,
+        if icon == Icon::Sparkles { 26.0 } else { 22.0 },
+    );
+    let symbol = egui::Atom::paint(Vec2::splat(24.0), move |ui, geometry| {
+        image.paint_at(ui, geometry.rect.translate(-heading_offset));
+    });
+    let background = ui.painter().add(egui::Shape::Noop);
+    let height = if compact { 48.0 } else { 58.0 };
+    let response = ui.add_sized(
+        [ui.available_width(), height],
+        egui::Button::new((indicator, symbol, label, egui::Atom::grow()))
+            .gap(8.0)
+            .selected(selected)
+            .frame(false),
+    );
+    let (fill, border) = if selected {
+        (
+            palette.panel_alt.lerp_to_gamma(palette.selection, 0.7),
+            palette.accent,
+        )
+    } else if response.has_focus() || response.hovered() {
+        (palette.hover, palette.accent)
+    } else {
+        (palette.panel_alt, palette.border)
+    };
+    ui.painter()
+        .set(background, egui::Shape::rect_filled(response.rect, 7, fill));
+    ui.painter()
+        .rect_stroke(response.rect, 7, (1.0, border), egui::StrokeKind::Inside);
+    if response.clicked() {
+        *subscription = value;
     }
 }
 
@@ -809,11 +1124,335 @@ fn llm_form(
     palette: Palette,
     repository: Option<&str>,
     catalog: &mut crate::app::ModelCatalog,
+    chatgpt_models: &[crate::llm::chatgpt::Model],
+    subscription_mode: bool,
+) {
+    if subscription_mode {
+        chatgpt_model_row(ui, &mut draft.config, chatgpt_models, palette);
+    } else {
+        llm_api_form(ui, draft, palette, repository, catalog, true);
+    }
+}
+
+fn chatgpt_model_row(
+    ui: &mut Ui,
+    config: &mut crate::llm::Config,
+    models: &[crate::llm::chatgpt::Model],
+    palette: Palette,
+) {
+    use crate::llm::chatgpt::PROVIDER_ID;
+
+    let settings = config
+        .subscription_models
+        .entry(PROVIDER_ID.into())
+        .or_default();
+    ui.horizontal(|ui| {
+        form_label(ui, "Model:");
+        ui.add_enabled_ui(!models.is_empty(), |ui| {
+            generation_settings_field(ui, palette, settings, models);
+        });
+    });
+}
+
+fn generation_menu_max_height(ui: &Ui, field_bottom: f32) -> f32 {
+    const FOOTER_HEIGHT: f32 = 46.0;
+    const MARGIN: f32 = 8.0;
+    let limit = ui.ctx().content_rect().bottom() - field_bottom - FOOTER_HEIGHT - MARGIN;
+    limit.clamp(100.0, ui.spacing().combo_height)
+}
+
+fn generation_menu_width(ui: &Ui, field_width: f32) -> f32 {
+    field_width.min(ui.ctx().content_rect().width() - 12.0)
+}
+
+fn generation_settings_field(
+    ui: &mut Ui,
+    palette: Palette,
+    settings: &mut crate::llm::SubscriptionModelSettings,
+    models: &[crate::llm::chatgpt::Model],
+) {
+    let id = ui.make_persistent_id("chatgpt.generation");
+    let width = ui.available_width();
+    let height = ui.spacing().interact_size.y.max(crate::theme::CONTROL_HEIGHT);
+    let popup_open = Popup::is_id_open(ui.ctx(), id.with("popup"));
+    use crate::llm::chatgpt::selected_model;
+    let selected = selected_model(models, &settings.model);
+    let model_name = if settings.model.is_empty() {
+        "Automatic".to_owned()
+    } else {
+        selected.map_or_else(
+            || settings.model.clone(),
+            |model| model.display_name.clone(),
+        )
+    };
+    let effort = effort_summary(settings, selected);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    ui.painter()
+        .rect(rect, 4, palette.editor, egui::Stroke::NONE, StrokeKind::Inside);
+
+    let icon_width = ui.spacing().icon_width;
+    let right_padding = ui.spacing().button_padding.x;
+    let button_rect = Rect::from_min_max(
+        egui::pos2(rect.right() - icon_width - 2.0 * right_padding, rect.top()),
+        rect.max,
+    );
+    let label_rect = Rect::from_min_max(
+        rect.min + Vec2::new(8.0, 0.0),
+        egui::pos2(button_rect.left() - 4.0, rect.bottom()),
+    );
+    {
+        let mut child = ui.new_child(
+            UiBuilder::new()
+                .max_rect(label_rect)
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        child.style_mut().interaction.selectable_labels = false;
+        child.horizontal(|ui| {
+            ui.set_width(label_rect.width());
+            ui.label(
+                RichText::new(model_name)
+                    .family(semibold_family())
+                    .color(palette.text),
+            );
+            if let Some(effort) = effort {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(effort).size(12.0).color(palette.muted));
+                });
+            }
+        });
+    }
+    let button = ui.interact(button_rect, id.with("arrow"), Sense::click());
+    let visuals = ui.style().interact(&button);
+    let triangle_rect = Rect::from_center_size(
+        egui::pos2(
+            rect.right() - right_padding - icon_width / 2.0,
+            rect.center().y,
+        ),
+        Vec2::new(icon_width * 0.7, icon_width * 0.45),
+    )
+    .expand(visuals.expansion);
+    ui.painter().add(egui::Shape::rotated_triangle(
+        triangle_rect,
+        0.0,
+        visuals.fg_stroke.color,
+    ));
+
+    let response = response.union(button);
+    let border = if popup_open || response.hovered() {
+        palette.accent
+    } else {
+        palette.border
+    };
+    ui.painter()
+        .rect_stroke(rect, 4, (1.0, border), StrokeKind::Inside);
+
+    let mut anchor = response.rect;
+    if let Some(to_global) = ui
+        .ctx()
+        .layer_transform_to_global(response.layer_id)
+    {
+        anchor = to_global * anchor;
+    }
+    let menu_height = generation_menu_max_height(ui, anchor.bottom());
+    let menu_width = generation_menu_width(ui, width);
+
+    Popup::menu(&response)
+        .id(id.with("popup"))
+        .width(menu_width)
+        .anchor(anchor.left_bottom())
+        .align(RectAlign::BOTTOM_START)
+        .align_alternatives(&[])
+        .gap(2.0)
+        .show(|ui| {
+            ui.set_width(menu_width);
+            let scroll = ui.style().spacing.scroll;
+            let scrollbar_pad = scroll.bar_width + scroll.bar_inner_margin;
+            ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .max_height(menu_height)
+                .show(ui, |ui| {
+                    Frame::new()
+                        .inner_margin(Margin {
+                            right: scrollbar_pad as i8,
+                            ..Margin::ZERO
+                        })
+                        .show(ui, |ui| {
+                            ui.style_mut().wrap_mode = Some(TextWrapMode::Extend);
+                            generation_settings_menu(ui, palette, settings, models);
+                            ui.add_space(4.0);
+                        });
+                });
+        });
+    ui.advance_cursor_after_rect(rect);
+}
+
+fn effort_summary(
+    settings: &crate::llm::SubscriptionModelSettings,
+    model: Option<&crate::llm::chatgpt::Model>,
+) -> Option<String> {
+    if settings.model.is_empty() {
+        return None;
+    }
+    let model = model?;
+    if model.reasoning_efforts.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "effort: {}",
+        reasoning_label(&settings.reasoning_effort)
+    ))
+}
+
+fn generation_settings_menu(
+    ui: &mut Ui,
+    palette: Palette,
+    settings: &mut crate::llm::SubscriptionModelSettings,
+    models: &[crate::llm::chatgpt::Model],
+) {
+    let row_height = crate::theme::CONTROL_HEIGHT;
+    let row_width = ui.available_width();
+
+    ui.spacing_mut().item_spacing.y = 2.0;
+    if ui
+        .selectable_label(settings.model.is_empty(), "Automatic")
+        .clicked()
+    {
+        settings.model.clear();
+        settings.reasoning_effort.clear();
+        ui.close();
+    }
+
+    for model in models {
+        let selected = settings.model == model.slug;
+        ui.allocate_ui_with_layout(
+            Vec2::new(row_width, row_height),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                if ui
+                    .selectable_label(selected, &model.display_name)
+                    .clicked()
+                {
+                    settings.model.clone_from(&model.slug);
+                    sync_effort_with_model(settings, model);
+                }
+                if !model.reasoning_efforts.is_empty() {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let effort_width = ui.available_width().max(0.0);
+                        ui.set_width(effort_width);
+                        ui.set_min_width(effort_width);
+                        generation_menu_effort_pills(ui, palette, settings, model, selected);
+                    });
+                }
+            },
+        );
+    }
+}
+
+fn generation_menu_effort_pills(
+    ui: &mut Ui,
+    palette: Palette,
+    settings: &mut crate::llm::SubscriptionModelSettings,
+    model: &crate::llm::chatgpt::Model,
+    selected: bool,
+) {
+    if model.reasoning_efforts.is_empty() {
+        return;
+    }
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for effort in &model.reasoning_efforts {
+            let active = selected && settings.reasoning_effort == *effort;
+            if effort_pill(
+                ui,
+                effort,
+                active,
+                palette,
+                &format!("{}.{}", model.slug, effort),
+            )
+            .clicked()
+            {
+                settings.model.clone_from(&model.slug);
+                settings.reasoning_effort.clone_from(effort);
+                ui.close();
+            }
+        }
+    });
+}
+
+fn sync_effort_with_model(
+    settings: &mut crate::llm::SubscriptionModelSettings,
+    model: &crate::llm::chatgpt::Model,
+) {
+    if !model
+        .reasoning_efforts
+        .iter()
+        .any(|effort| effort == &settings.reasoning_effort)
+    {
+        settings.reasoning_effort = model
+            .reasoning_efforts
+            .first()
+            .cloned()
+            .unwrap_or_default();
+    }
+}
+
+fn effort_pill(
+    ui: &mut Ui,
+    effort: &str,
+    active: bool,
+    palette: Palette,
+    id_salt: &str,
+) -> egui::Response {
+    let label = reasoning_label(effort);
+    ui.push_id(id_salt, |ui| {
+        let fill = if active {
+            palette.selection.gamma_multiply(0.55)
+        } else {
+            palette.panel_alt
+        };
+        let stroke = if active {
+            (1.0, palette.accent)
+        } else {
+            (1.0, palette.border)
+        };
+        ui.add(
+            egui::Button::new(RichText::new(label).size(12.0).color(palette.text))
+                .fill(fill)
+                .stroke(stroke)
+                .corner_radius(6)
+                .min_size(Vec2::new(0.0, crate::theme::CONTROL_HEIGHT - 4.0)),
+        )
+    })
+    .inner
+}
+
+fn reasoning_label(effort: &str) -> &str {
+    match effort {
+        "" => "Default",
+        "none" => "None",
+        "minimal" => "Minimal",
+        "low" => "Low",
+        "medium" => "Medium",
+        "high" => "High",
+        "xhigh" => "Extra high",
+        "max" => "Maximum",
+        _ => effort,
+    }
+}
+
+fn llm_api_form(
+    ui: &mut Ui,
+    draft: &mut crate::app::LlmSettings,
+    palette: Palette,
+    repository: Option<&str>,
+    catalog: &mut crate::app::ModelCatalog,
+    show_heading: bool,
 ) {
     catalog.update();
     ui.push_id(("llm.form", repository), |ui| {
-        group(ui, palette, "OpenAI-compatible API", |ui| {
-            egui::Grid::new("preferences.llm.connection")
+        let title = if show_heading { "OpenAI-compatible API" } else { "" };
+        group(ui, palette, title, |ui| {
+            let key_left = egui::Grid::new("preferences.llm.connection")
                 .num_columns(2)
                 .spacing([8.0, 6.0])
                 .show(ui, |ui| {
@@ -917,16 +1556,16 @@ fn llm_form(
                         catalog.load(&draft.config, repository, ui.ctx());
                     }
                     ui.end_row();
-                });
-            ui.checkbox(
-                &mut draft.config.store_api_key,
-                "Store API key and model securely",
-            )
-            .help_text(if cfg!(target_os = "macos") {
-                "Builds with Keychain entitlements use Touch ID. Other builds use the login Keychain and may ask for your macOS password."
+                    api_key_response.rect.left()
+                }).inner;
+            if show_heading {
+                store_api_key(ui, &mut draft.config.store_api_key);
             } else {
-                "Save the API key and model in the OS credential manager"
-            });
+                ui.horizontal(|ui| {
+                    ui.add_space((key_left - ui.cursor().min.x).max(0.0));
+                    store_api_key(ui, &mut draft.config.store_api_key);
+                });
+            }
             let models = catalog.entry(&draft.config, repository);
             if models.loading() {
                 ui.ctx()
@@ -936,13 +1575,26 @@ fn llm_form(
     });
 }
 
-fn instructions_form(ui: &mut Ui, draft: &mut crate::app::LlmSettings) {
-    ui.label("Generation instructions:");
-    instructions_editor(ui, &mut draft.config.instructions);
+fn store_api_key(ui: &mut Ui, enabled: &mut bool) {
+    ui.checkbox(enabled, "Store API key and model securely")
+        .help_text(if cfg!(target_os = "macos") {
+            "Builds with Keychain entitlements use Touch ID. Other builds use the login Keychain and may ask for your macOS password."
+        } else {
+            "Save the API key and model in the OS credential manager"
+        });
 }
 
-fn instructions_editor(ui: &mut Ui, instructions: &mut String) {
-    let editor_height = (ui.available_height() - ui.spacing().item_spacing.y).max(24.0);
+fn instructions_form(ui: &mut Ui, draft: &mut crate::app::LlmSettings, fill_to_bottom: bool) {
+    ui.label("Generation instructions:");
+    instructions_editor(ui, &mut draft.config.instructions, fill_to_bottom);
+}
+
+fn instructions_editor(ui: &mut Ui, instructions: &mut String, fill_to_bottom: bool) {
+    let editor_height = if fill_to_bottom {
+        (ui.max_rect().max.y - ui.cursor().top()).max(24.0)
+    } else {
+        (ui.available_height() - ui.spacing().item_spacing.y).max(24.0)
+    };
     let instructions = ui.add_sized(
         [ui.available_width(), editor_height],
         egui::TextEdit::multiline(instructions)
@@ -972,6 +1624,10 @@ fn heading(ui: &mut Ui, title: &str) {
 }
 
 fn group(ui: &mut Ui, palette: Palette, title: &str, contents: impl FnOnce(&mut Ui)) {
+    if title.is_empty() {
+        contents(ui);
+        return;
+    }
     ui.horizontal(|ui| {
         ui.label(RichText::new(title).family(semibold_family()));
         let (rect, _) =

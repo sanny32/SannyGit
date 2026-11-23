@@ -7,6 +7,9 @@ license = "MIT"
 description = "A simple, fast, modern, open-source Git GUI client"
 
 [dependencies]
+base64 = "0.22"
+ring = "0.17"
+webbrowser = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 rfd = "0.17.2"
 eframe = { version = "0.37", default-features = false, features = [

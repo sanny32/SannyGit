@@ -63,6 +63,13 @@ Default install locations are `~/Applications` on macOS, `~/.local` on Linux and
 
 You need add `~/.local/bin` to `PATH` on Linux.
 
+## Commit message generation
+
+In **Settings → AI**, select **AI Provider**, then **Login** to
+connect an eligible plan in your browser. Reopen Settings and select **OK** to
+save your choice. Generating a message sends the selected commit diff to OpenAI.
+Choose **OpenAI API** to use an API key or a local model.
+
 ## MIT License
 
 Copyright 2026 Alexandr Ananev [mail@ananev.org]

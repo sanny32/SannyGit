@@ -6,6 +6,8 @@ use std::{
     time::Duration,
 };
 
+pub mod chatgpt;
+
 pub const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
 pub const DEFAULT_MODEL: &str = "gpt-4.1-mini";
 pub const MAX_DIFF_BYTES: usize = 256 * 1024;
@@ -77,6 +79,8 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Config {
+    pub chatgpt_subscription: bool,
+    pub subscription_models: std::collections::BTreeMap<String, SubscriptionModelSettings>,
     pub endpoint: String,
     pub model: String,
     pub instructions: String,
@@ -88,6 +92,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            chatgpt_subscription: false,
+            subscription_models: Default::default(),
             endpoint: DEFAULT_ENDPOINT.into(),
             model: DEFAULT_MODEL.into(),
             instructions: "Write a concise Git commit message in English. Use an imperative subject of at most 72 characters. Add a short body only when it helps explain why. Return only the commit message.".into(),
@@ -95,6 +101,13 @@ impl Default for Config {
             api_key: String::new(),
         }
     }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SubscriptionModelSettings {
+    pub model: String,
+    pub reasoning_effort: String,
 }
 
 // Keep the saved model as a fallback for credentials from older versions.
@@ -425,7 +438,7 @@ fn load_api_key(config: &Config, repository: Option<&str>) -> Result<Option<Stri
 }
 
 pub fn load_api_key_if_needed(config: &mut Config, repository: Option<&str>) -> Result<(), String> {
-    if config.api_key.is_empty() {
+    if !config.chatgpt_subscription && config.api_key.is_empty() {
         if let Some(api_key) = load_api_key(config, repository)? {
             restore_credential(config, api_key)?;
         }
@@ -498,9 +511,11 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        validated_endpoint(&self.endpoint)?;
-        if self.model.trim().is_empty() {
-            return Err("Enter an LLM model name".into());
+        if !self.chatgpt_subscription {
+            validated_endpoint(&self.endpoint)?;
+            if self.model.trim().is_empty() {
+                return Err("Enter an LLM model name".into());
+            }
         }
         if self.instructions.trim().is_empty() {
             return Err("Enter instructions for commit message generation".into());
@@ -528,8 +543,19 @@ pub fn generate(config: &Config, patch: &str, cancel: &AtomicBool) -> Result<Str
         .enable_all()
         .build()
         .map_err(|error| format!("Cannot initialize the LLM runtime: {error}"))?;
+    let token = if config.chatgpt_subscription {
+        Some(chatgpt::access_token(&runtime)?)
+    } else {
+        None
+    };
     runtime.block_on(async {
-        let request = generate_response(config, patch);
+        let request = async {
+            if let Some(token) = token {
+                chatgpt::generate(config, patch, &token).await
+            } else {
+                generate_response(config, patch).await
+            }
+        };
         let mut request = std::pin::pin!(request);
         loop {
             if cancel.load(Ordering::Relaxed) {
@@ -633,6 +659,12 @@ async fn read_api_response(mut response: reqwest::Response) -> Result<Value, Str
     if !status.is_success() {
         return Err(api_error(status.as_u16()));
     }
+    let bytes = read_response_body(&mut response).await?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("LLM API returned invalid JSON: {error}"))
+}
+
+async fn read_response_body(response: &mut reqwest::Response) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     while let Some(chunk) = response
         .chunk()
@@ -644,8 +676,7 @@ async fn read_api_response(mut response: reqwest::Response) -> Result<Value, Str
         }
         bytes.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&bytes)
-        .map_err(|error| format!("LLM API returned invalid JSON: {error}"))
+    Ok(bytes)
 }
 
 fn chat_completions_endpoint(endpoint: &str) -> String {

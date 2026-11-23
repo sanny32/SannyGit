@@ -1,6 +1,14 @@
 use crate::theme::{Palette, CONTROL_HEIGHT};
 use eframe::egui::{self, Align2, Frame, Id, Popup, Rect, Response, Sense, StrokeKind, Ui};
 
+fn field_border(palette: Palette, focused: bool, hovered: bool) -> egui::Color32 {
+    if focused || hovered {
+        palette.accent
+    } else {
+        palette.border
+    }
+}
+
 /// Editable text with a full-width dropdown. Use a distinct id for each control.
 pub fn show(
     ui: &mut Ui,
@@ -15,20 +23,8 @@ pub fn show(
     let focused = ui.memory(|memory| memory.has_focus(edit_id));
     let height = ui.spacing().interact_size.y.max(CONTROL_HEIGHT);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
-    ui.painter().rect(
-        rect,
-        4,
-        palette.editor,
-        (
-            1.0,
-            if focused {
-                palette.accent
-            } else {
-                palette.border
-            },
-        ),
-        StrokeKind::Inside,
-    );
+    ui.painter()
+        .rect(rect, 4, palette.editor, egui::Stroke::NONE, StrokeKind::Inside);
     let icon_width = ui.spacing().icon_width;
     let right_padding = ui.spacing().button_padding.x;
     let button_rect = Rect::from_min_max(
@@ -71,8 +67,12 @@ pub fn show(
         0.0,
         visuals.fg_stroke.color,
     ));
-    let mut response = response.union(button);
-    if editor.changed() {
+    let editor_changed = editor.changed();
+    let mut response = response.union(button).union(editor);
+    let border = field_border(palette, focused, response.hovered());
+    ui.painter()
+        .rect_stroke(rect, 4, (1.0, border), StrokeKind::Inside);
+    if editor_changed {
         response.mark_changed();
     }
     Popup::menu(&response)
@@ -100,7 +100,7 @@ pub fn show(
     // `put` advances to the inset editor; keep following controls outside the
     // entire field, including its dropdown arrow.
     ui.advance_cursor_after_rect(rect);
-    response.union(editor)
+    response
 }
 
 #[cfg(test)]

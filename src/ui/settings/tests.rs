@@ -382,6 +382,56 @@ fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes(
 }
 
 #[test]
+fn global_ai_connection_mode_persists_and_applies_to_repositories() {
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.repository_llm_configs.insert(
+        "/project".into(),
+        crate::llm::Config {
+            endpoint: "http://localhost:11434/v1/chat/completions".into(),
+            model: "local-model".into(),
+            chatgpt_subscription: false,
+            ..Default::default()
+        },
+    );
+    app.open_settings();
+    app.settings_window.llm.config.chatgpt_subscription = true;
+    use crate::llm::chatgpt::PROVIDER_ID;
+    app.settings_window
+        .llm
+        .config
+        .subscription_models
+        .insert(
+            PROVIDER_ID.into(),
+            crate::llm::SubscriptionModelSettings {
+                model: "gpt-test".into(),
+                reasoning_effort: "low".into(),
+            },
+        );
+    apply_settings(&mut app).unwrap();
+    assert!(app.llm_config.chatgpt_subscription);
+    assert_eq!(
+        app.llm_config.subscription_models[&PROVIDER_ID.to_owned()].model,
+        "gpt-test"
+    );
+
+    let restored: crate::llm::Config =
+        serde_json::from_str(&serde_json::to_string(&app.llm_config).unwrap()).unwrap();
+    assert!(restored.chatgpt_subscription);
+    assert_eq!(
+        restored.subscription_models[&PROVIDER_ID.to_owned()].model,
+        "gpt-test"
+    );
+
+    let generation = app.effective_generation_config("/project");
+    assert!(generation.chatgpt_subscription);
+    assert_eq!(
+        generation.subscription_models[&PROVIDER_ID.to_owned()].model,
+        "gpt-test"
+    );
+    assert_eq!(generation.model, "local-model");
+}
+
+#[test]
 fn global_preferences_leave_repository_overrides_unchanged() {
     let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
     app.llm_config.store_api_key = false;
@@ -963,6 +1013,9 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
             }
             if page == SettingsPage::Llm {
                 assert!(!visible_text(&output.shapes, "Generation instructions:"));
+                assert!(!visible_text(&output.shapes, "Login"));
+                assert!(!visible_text(&output.shapes, "Test connection"));
+                assert!(!visible_text(&output.shapes, "Manage usage"));
                 assert!(visible_text(&output.shapes, crate::llm::DEFAULT_ENDPOINT));
                 assert!(filled_rect_count(&output.shapes, app.palette().editor) >= 3);
                 for label in ["Endpoint:", "Model:", "API key:"] {
@@ -971,6 +1024,45 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
                 let left = text_left(&output.shapes, "Endpoint:").unwrap();
                 for label in ["Model:", "API key:"] {
                     assert!((text_left(&output.shapes, label).unwrap() - left).abs() < 0.5);
+                }
+                app.settings_window.llm.config.chatgpt_subscription = true;
+                app.settings_window.chatgpt_models = vec![crate::llm::chatgpt::Model {
+                    slug: "model-fixture".into(),
+                    display_name: "Fixture Model".into(),
+                    reasoning_efforts: vec!["low".into(), "high".into()],
+                }];
+                app.settings_window.chatgpt_models_attempted = true;
+                for (status, action, hidden_action) in [
+                    (ChatGptStatus::SignedOut, "Login", "Logout"),
+                    (ChatGptStatus::Connected, "Logout", "Login"),
+                ] {
+                    app.settings_window.chatgpt_status = status;
+                    let mut provider = context.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(
+                                pos2(0.0, 0.0),
+                                Vec2::new(680.0, 380.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| window_contents(ui, &mut app),
+                    );
+                    provider.textures_delta.clear();
+                    assert!(visible_text(&provider.shapes, action));
+                    assert!(visible_text(&provider.shapes, "Model:"));
+                    assert!(visible_text(&provider.shapes, "effort:"));
+                    for label in [
+                        hidden_action,
+                        "Status:",
+                        "Endpoint:",
+                        "Test connection",
+                        "Manage usage",
+                    ] {
+                        assert!(
+                            !visible_text(&provider.shapes, label),
+                            "Unexpected {label} in {theme:?}"
+                        );
+                    }
                 }
             }
             if page == SettingsPage::CommitMessages {
