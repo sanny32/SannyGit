@@ -193,6 +193,9 @@ pub struct BranchState {
     pub(super) pending: bool,
     pub(super) worker: Option<std::sync::mpsc::Receiver<WorkerResult>>,
     pub(super) tag_message_reader: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    pub(super) tag_patch_reader:
+        Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
+    pub exported_tag_patch: Option<std::path::PathBuf>,
     pub branch_head_exists: bool,
     pub branch_dialog_open: bool,
     pub rename_branch_dialog: Option<super::RenameBranchDialog>,
@@ -221,6 +224,8 @@ impl Default for BranchState {
             pending: false,
             worker: None,
             tag_message_reader: None,
+            tag_patch_reader: None,
+            exported_tag_patch: None,
             branch_head_exists: false,
             branch_dialog_open: false,
             rename_branch_dialog: None,

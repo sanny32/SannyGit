@@ -545,6 +545,8 @@ fn command_error(operation: &str) -> String {
         "Check network access, Git credential helpers, SSH configuration and remote permissions. Push may also be rejected because the remote branch advanced, a hook refused it, or the remote is configured as a mirror. Refresh before retrying."
     } else if operation == "worktree" {
         "Check branch availability, worktree locks, local files and destination permissions. Refresh before retrying."
+    } else if operation == "format-patch" {
+        "Check that the tag points to a commit and that the selected directory is writable."
     } else if operation == "stash" {
         "Check for conflicts, index/ref locks, file permissions and Git identity. Inspect the working tree and stash list before retrying."
     } else if operation == "config" {

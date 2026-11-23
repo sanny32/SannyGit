@@ -53,6 +53,7 @@ impl CommandError {
                 | "diff"
                 | "diff-tree"
                 | "for-each-ref"
+                | "format-patch"
                 | "log"
                 | "ls-files"
                 | "rev-list"
@@ -125,6 +126,7 @@ pub(super) fn operation(mut args: &[&str]) -> &'static str {
         Some("diff-tree") => "diff-tree",
         Some("fetch") => "fetch",
         Some("for-each-ref") => "for-each-ref",
+        Some("format-patch") => "format-patch",
         Some("init") => "init",
         Some("log") => "log",
         Some("ls-files") => "ls-files",

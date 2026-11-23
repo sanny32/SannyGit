@@ -26,6 +26,7 @@ enum BranchRequest {
     ResetRefAdvanced(String),
     CopyRefName(String),
     CopyTagMessage(String),
+    FormatTagPatch(String),
     MergeBranch(String),
     RebaseBranch(String),
     FastForward(String),
@@ -45,6 +46,7 @@ struct BranchRequests {
     tag_actions_allowed: bool,
     tag_merge_allowed: bool,
     tag_log_allowed: bool,
+    tag_patch_allowed: bool,
     ref_reset_allowed: bool,
     has_remote_refs: bool,
 }
@@ -141,6 +143,7 @@ fn branch_requests(app: &SannyGitApp) -> BranchRequests {
         tag_actions_allowed,
         tag_merge_allowed: app.merge_allowed(),
         tag_log_allowed: !app.busy() && app.repositories.get(app.selected_repository).is_some(),
+        tag_patch_allowed: tag_actions_allowed && !app.tag_patch_pending(),
         ref_reset_allowed: app.ref_reset_allowed(),
         has_remote_refs: app
             .branches
@@ -238,6 +241,15 @@ fn dispatch_branch_request(ctx: &egui::Context, app: &mut SannyGitApp, request: 
         }
         BranchRequest::CopyRefName(name) => ctx.copy_text(name),
         BranchRequest::CopyTagMessage(oid) => app.copy_tag_message(ctx, oid),
+        BranchRequest::FormatTagPatch(oid) => {
+            if let Some(directory) = rfd::FileDialog::new()
+                .set_title("Select Directory")
+                .set_can_create_directories(true)
+                .pick_folder()
+            {
+                app.format_tag_patch(ctx, oid, directory);
+            }
+        }
         BranchRequest::Unavailable => {}
     }
 }
@@ -640,10 +652,6 @@ fn branch_menu(
 fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entry<BranchRequest>> {
     use popup_menu::Entry as E;
 
-    let unavailable = |label| {
-        E::item(label, false, BranchRequest::Unavailable)
-            .help("This tag action is not available yet")
-    };
     vec![
         E::item(
             "Check Out…",
@@ -716,7 +724,12 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
                 .help("This tag has no message")
         },
         E::Separator,
-        unavailable("Format Patch"),
+        E::item(
+            "Format Patch",
+            requested.tag_patch_allowed,
+            BranchRequest::FormatTagPatch(tag.hash.clone()),
+        )
+        .help("Refresh the repository and wait for the current operation"),
         E::item(
             "Fast-Forward Merge",
             requested.tag_merge_allowed,
@@ -726,6 +739,43 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
             "Open the merge confirmation. Fast-forward is offered when the current branch can move to this tag.",
         ),
     ]
+}
+
+pub(super) fn show_exported_patch(ctx: &egui::Context, app: &mut SannyGitApp) {
+    use super::controls::dialog_style;
+
+    let Some(path) = &app.branches.exported_tag_patch else {
+        return;
+    };
+    let path = path.to_string_lossy();
+    let palette = app.palette();
+    let mut close = false;
+    dialog_style::modal(ctx, palette, "tag.format_patch").show(ctx, |ui| {
+        ui.set_width(470.0);
+        dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        dialog_style::header_with_icon(
+            ui,
+            palette,
+            "Format Patch",
+            "The patch was saved to the selected directory.",
+            Icon::Check,
+        );
+        dialog_style::section(ui, palette.panel, egui::Margin::same(18), |ui| {
+            ui.add(egui::Label::new(path.as_ref()).truncate().selectable(true))
+                .on_hover_text(path.as_ref());
+        });
+        dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 8), |ui| {
+            dialog_style::button_row(ui, |ui| {
+                close = ui
+                    .add(dialog_style::primary("Close", palette))
+                    .dialog_close();
+            });
+        });
+    });
+    if close {
+        app.branches.exported_tag_patch = None;
+    }
 }
 
 fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {

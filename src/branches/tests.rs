@@ -11,6 +11,49 @@ fn committed_repo() -> TempRepo {
 }
 
 #[test]
+fn format_patch_exports_only_the_tagged_commit_and_replaces_the_previous_export() {
+    let repo = committed_repo();
+    let tagged = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["tag", "lightweight"]);
+    repo.git(&["tag", "-a", "annotated", "-m", "Tag annotation"]);
+    repo.write("file", "new commit\n");
+    repo.git(&["add", "file"]);
+    repo.git(&["commit", "-m", "Newer commit"]);
+    repo.write("file", "local changes\n");
+    let head = repo.git(&["rev-parse", "HEAD"]);
+    let index = std::fs::read(repo.0.join(".git/index")).unwrap();
+    let directory = repo.0.join("patch output");
+    std::fs::create_dir(&directory).unwrap();
+    let destination = directory.join("0001-fixture.patch");
+    std::fs::write(&destination, "previous export").unwrap();
+    let refs = load(&SYSTEM_GIT, &repo.0).unwrap().refs;
+
+    for name in ["lightweight", "annotated"] {
+        let tag = refs.iter().find(|r| r.name == name).unwrap();
+        let path = format_tag_patch(&SYSTEM_GIT, &repo.0, &tag.hash, &directory).unwrap();
+        assert_eq!(path, destination);
+        let patch = std::fs::read_to_string(path).unwrap();
+        assert!(patch.starts_with(&format!("From {} ", tagged.trim())));
+        assert!(patch.contains("Subject: [PATCH] fixture"));
+        assert!(patch.contains("+base"));
+        assert!(!patch.contains("Newer commit") && !patch.contains("Tag annotation"));
+    }
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+    std::fs::remove_file(&destination).unwrap();
+    std::fs::create_dir(&destination).unwrap();
+    let tag = refs.iter().find(|r| r.name == "annotated").unwrap();
+    assert!(format_tag_patch(&SYSTEM_GIT, &repo.0, &tag.hash, &directory).is_err());
+    assert!(destination.is_dir());
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
+    assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
+    assert_eq!(
+        std::fs::read_to_string(repo.0.join("file")).unwrap(),
+        "local changes\n"
+    );
+}
+
+#[test]
 fn advanced_soft_and_mixed_keep_working_files_and_handle_the_index_differently() {
     for (strategy, expected_index) in [
         (ResetStrategy::Soft, "staged"),

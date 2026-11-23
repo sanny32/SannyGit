@@ -557,6 +557,7 @@ impl SannyGitApp {
             || self.branches.branch_dialog_open
             || self.branches.rename_branch_dialog.is_some()
             || self.branches.tag_dialog_open
+            || self.branches.exported_tag_patch.is_some()
             || self.error.is_some()
             || !self.error_dialogs.pending.is_empty()
     }
@@ -1200,6 +1201,48 @@ impl SannyGitApp {
                 }
             }
             Some(Ok(Err(error)) | Err(error)) => {
+                self.error = Some(error);
+            }
+            None => {}
+        }
+    }
+
+    pub fn tag_patch_pending(&self) -> bool {
+        self.branches.tag_patch_reader.is_some()
+    }
+
+    pub fn format_tag_patch(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        oid: String,
+        directory: PathBuf,
+    ) {
+        if self.tag_patch_pending() {
+            return;
+        }
+        let Some(repository) = self.repositories.get(self.selected_repository) else {
+            return;
+        };
+        let root = PathBuf::from(&repository.path);
+        match self.spawn_reader(Some(ctx.clone()), move |git| {
+            crate::branches::format_tag_patch(git, &root, &oid, &directory)
+        }) {
+            Ok(reader) => {
+                self.branches.tag_patch_reader = Some(reader);
+                self.status = "Exporting patch…".into();
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    fn poll_tag_patch(&mut self) {
+        match Self::poll_reader(&mut self.branches.tag_patch_reader) {
+            Some(Ok(Ok(path))) => {
+                self.status = "Patch exported".into();
+                self.branches.exported_tag_patch = Some(path);
+            }
+            Some(Ok(Err(error)) | Err(error)) => {
+                self.status = "Patch export failed".into();
                 self.error = Some(error);
             }
             None => {}
@@ -2337,6 +2380,7 @@ impl eframe::App for SannyGitApp {
         self.poll_worker();
         self.poll_refs();
         self.poll_tag_message(ui.ctx());
+        self.poll_tag_patch();
         self.poll_view_reads();
         self.finish_startup();
         self.poll_working_tree();

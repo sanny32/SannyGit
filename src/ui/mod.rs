@@ -169,6 +169,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     diff_actions::show(ui.ctx(), app);
     ignore::show(ui.ctx(), app);
     ref_management::show(ui.ctx(), app);
+    branches::show_exported_patch(ui.ctx(), app);
     merge::show(ui.ctx(), app);
     merge::show_abort(ui.ctx(), app);
     conflict::show(ui.ctx(), app);

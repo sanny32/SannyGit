@@ -4,7 +4,12 @@ use crate::{
     git,
     models::{BranchRef, RefKind, RefSnapshot},
 };
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 const REF_LIMIT: usize = 5_000;
 
@@ -34,6 +39,53 @@ pub fn read_tag_message(git: &GitContext, root: &Path, oid: &str) -> Result<Stri
         .ok_or("Malformed Git tag object")?
         + 2;
     Ok(String::from_utf8_lossy(&object[body..]).into_owned())
+}
+
+pub fn format_tag_patch(
+    git: &GitContext,
+    root: &Path,
+    oid: &str,
+    directory: &Path,
+) -> Result<PathBuf, String> {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Cannot prepare the patch export: {error}"))?
+        .as_nanos();
+    // Generate beside the destination so publishing the complete file can use a single rename.
+    let staging = directory.join(format!(".sannygit-patch-{}-{nonce}", std::process::id()));
+    let output_directory = staging
+        .to_str()
+        .ok_or("The selected directory path is not valid UTF-8")?;
+    fs::create_dir(&staging).map_err(|error| {
+        format!("Cannot create a temporary folder in the selected directory: {error}")
+    })?;
+    let result = (|| {
+        let revision = format!("{oid}^{{commit}}");
+        let output = git::text(git::run(
+            git,
+            root,
+            &[
+                "format-patch",
+                "-1",
+                "--no-cover-letter",
+                "--no-ext-diff",
+                "--output-directory",
+                output_directory,
+                &revision,
+                "--",
+            ],
+        )?)?;
+        let path = output.strip_suffix('\n').unwrap_or(&output);
+        let name = Path::new(path).file_name().ok_or(
+            "Git did not produce a patch. The tagged commit may be a merge or contain no changes.",
+        )?;
+        let destination = directory.join(name);
+        fs::rename(staging.join(name), &destination)
+            .map_err(|error| format!("Cannot save the patch in the selected directory: {error}"))?;
+        Ok(destination)
+    })();
+    let _ = fs::remove_dir_all(&staging);
+    result
 }
 
 fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
