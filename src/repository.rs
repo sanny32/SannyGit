@@ -720,33 +720,10 @@ pub fn edit_config(path: &Path) -> Result<(), String> {
         cmd
     };
     #[cfg(target_os = "windows")]
-    let mut command = Command::new("notepad.exe");
+    let command = Command::new("notepad.exe");
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let mut command = Command::new("xdg-open");
-    let mut child = command
-        .arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Cannot open text editor: {e}"))?;
-    let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(3) {
-        match child.try_wait().map_err(|e| e.to_string())? {
-            Some(status) => {
-                return if status.success() {
-                    Ok(())
-                } else {
-                    Err("The system could not open a text editor for this config file.".into())
-                }
-            }
-            None => std::thread::sleep(Duration::from_millis(20)),
-        }
-    }
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+    let command = Command::new("xdg-open");
+    run_desktop_command(command, &path, "open the config file in a text editor")
 }
 pub fn open_file(path: &Path) -> Result<(), String> {
     let path = path
@@ -804,18 +781,17 @@ pub fn reveal(path: &Path) -> Result<(), String> {
 }
 
 fn run_desktop_command(mut command: Command, path: &Path, action: &str) -> Result<(), String> {
-    let status = command
+    let mut child = command
         .arg(path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
+        .spawn()
         .map_err(|error| format!("Cannot {action}: {error}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("The system could not {action}"))
-    }
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 pub fn new_repository_window(path: &Path) -> Result<(), String> {
