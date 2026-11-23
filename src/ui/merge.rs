@@ -100,10 +100,14 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(12, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             ui.horizontal(|ui| {
-                ui.add_sized([ui.available_width() - 94.0, 24.0], super::controls::singleline(&mut dialog.filter).hint_text("Filter loaded commits…"));
+                ui.add_sized(
+                    [ui.available_width() - 94.0, crate::theme::CONTROL_HEIGHT],
+                    super::controls::singleline(&mut dialog.filter)
+                        .hint_text("Filter loaded commits…"),
+                );
                 let branches_button = Button::new("Branches…")
                     .wrap_mode(egui::TextWrapMode::Extend)
-                    .min_size(egui::vec2(86.0, 24.0));
+                    .min_size(egui::vec2(86.0, crate::theme::CONTROL_HEIGHT));
                 if ui.add_enabled(dialog.snapshot.is_some() && !busy, branches_button).clicked() {
                     dialog.branches_open = true;
                 }

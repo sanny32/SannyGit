@@ -114,6 +114,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let mut file_request = None;
     let sort_id = eframe::egui::Id::unique("files.status_sort");
     let status_sort = ui.data(|data| data.get_temp::<bool>(sort_id));
+    let display_order = sync_display_order(ui, app);
+    let path_rank = |index: usize| {
+        display_order
+            .iter()
+            .position(|path| path == &app.changes[index].path)
+            .unwrap_or(usize::MAX)
+    };
     let mut visible = app
         .changes
         .iter()
@@ -127,12 +134,11 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 .kind
                 .code()
                 .cmp(app.changes[right].kind.code());
-            if ascending {
-                order
-            } else {
-                order.reverse()
-            }
+            let order = if ascending { order } else { order.reverse() };
+            order.then_with(|| path_rank(left).cmp(&path_rank(right)))
         });
+    } else {
+        visible.sort_by_key(|&index| path_rank(index));
     }
     let focus_id = eframe::egui::Id::unique("files.selection.focus");
     // Keep list keyboard ownership separate from the transient row widget IDs.
@@ -365,7 +371,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         });
     ui.data_mut(|data| data.insert_persisted(widths_id, [index_width, status_width]));
     if let Some((index, staged)) = staging_request {
-        if app.change_is_selected(index) {
+        if !app.change_is_selected(index) {
+            app.select_change(index, false, false, &visible);
+        }
+        if app.selected_change_indices().len() > 1 {
             app.set_selected_staged(staged);
         } else {
             app.set_staged(index, staged);
@@ -946,6 +955,30 @@ fn directory_key(path: &str) -> String {
     }
 }
 
+/// Preserve row order while the working tree refreshes after staging or unstaging.
+fn sync_display_order(ui: &mut Ui, app: &SannyGitApp) -> Vec<String> {
+    let order_id = ui.make_persistent_id((app.selected_repository, "files.display_order"));
+    let visible_paths: Vec<String> = app
+        .changes
+        .iter()
+        .filter(|change| row_visible(app, change))
+        .map(|change| change.path.clone())
+        .collect();
+    let mut order: Vec<String> = ui.data_mut(|data| data.get_persisted(order_id).unwrap_or_default());
+    if order.is_empty() {
+        order = visible_paths.clone();
+    } else {
+        for path in &visible_paths {
+            if !order.contains(path) {
+                order.push(path.clone());
+            }
+        }
+    }
+    order.retain(|path| visible_paths.iter().any(|visible| visible == path));
+    ui.data_mut(|data| data.insert_persisted(order_id, order.clone()));
+    order
+}
+
 fn change_rows(app: &SannyGitApp, visible: &[usize]) -> Vec<ChangeRow> {
     if !app.preferences.changes_group_directories {
         return visible.iter().copied().map(ChangeRow::File).collect();
@@ -995,6 +1028,67 @@ mod tests {
     use super::*;
     use crate::theme::{install_fonts, ThemeChoice};
     use eframe::egui::{Context, Pos2, RawInput};
+
+    #[test]
+    fn index_refresh_keeps_visible_row_positions() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let ctx = Context::default();
+            install_fonts(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            theme.apply(&ctx);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.changes = crate::mock_data::changes();
+            let target = app.changes[2].path.clone();
+            let label = |output: &eframe::egui::FullOutput, path: &str| -> f32 {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        eframe::egui::Shape::Text(text) if text.galley.job.text == path => {
+                            Some(text.pos.y)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("Missing path label: {path}"))
+            };
+            for _ in 0..2 {
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 500.0))),
+                        ..Default::default()
+                    },
+                    |ui| show(ui, &mut app),
+                );
+                output.textures_delta.clear();
+            }
+            let mut before = ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 500.0))),
+                    ..Default::default()
+                },
+                |ui| show(ui, &mut app),
+            );
+            before.textures_delta.clear();
+            let y_before = label(&before, &target);
+            app.changes.swap(0, 2);
+            let staged = app.changes.iter_mut().find(|change| change.path == target).unwrap();
+            staged.staged = true;
+            staged.kind = ChangeKind::Added;
+            let mut after = ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 500.0))),
+                    ..Default::default()
+                },
+                |ui| show(ui, &mut app),
+            );
+            after.textures_delta.clear();
+            let y_after = label(&after, &target);
+            assert!(
+                (y_before - y_after).abs() < 0.5,
+                "Row moved after index refresh: before={y_before}, after={y_after}"
+            );
+        }
+    }
 
     #[test]
     fn filters_conflicts_and_reverses_status_order_without_losing_selection() {

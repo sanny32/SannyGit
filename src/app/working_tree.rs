@@ -2,11 +2,30 @@
 use super::SannyGitApp;
 use crate::git::GitContext;
 use crate::{git, models::DiffPreview};
+use crate::models::ChangeFile;
 use std::{
+    collections::HashMap,
     path::Path,
     sync::mpsc::{self, Receiver},
     time::{Duration, Instant},
 };
+
+fn stabilize_change_order(previous_paths: &[String], changes: Vec<ChangeFile>) -> Vec<ChangeFile> {
+    let mut by_path: HashMap<String, ChangeFile> = changes
+        .into_iter()
+        .map(|change| (change.path.clone(), change))
+        .collect();
+    let mut ordered = Vec::with_capacity(by_path.len());
+    for path in previous_paths {
+        if let Some(change) = by_path.remove(path) {
+            ordered.push(change);
+        }
+    }
+    let mut rest: Vec<_> = by_path.into_values().collect();
+    rest.sort_by(|left, right| left.path.cmp(&right.path));
+    ordered.extend(rest);
+    ordered
+}
 
 const CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
@@ -387,11 +406,16 @@ impl SannyGitApp {
             .get_mut(self.selection.active)
             .map(|change| std::mem::take(&mut change.diff))
             .unwrap_or_default();
+        self.update_merge_message(snapshot.merging, snapshot.merge_message, true);
+        let previous_paths: Vec<_> = self.changes.iter().map(|change| change.path.clone()).collect();
+        self.changes = if previous_paths.is_empty() {
+            snapshot.changes
+        } else {
+            stabilize_change_order(&previous_paths, snapshot.changes)
+        };
         let index = selected
             .as_ref()
-            .and_then(|path| snapshot.changes.iter().position(|c| &c.path == path));
-        self.update_merge_message(snapshot.merging, snapshot.merge_message, true);
-        self.changes = snapshot.changes;
+            .and_then(|path| self.changes.iter().position(|change| &change.path == path));
         self.update_commit_contents_after_refresh(false);
         // Row indices and file contents may have changed during the read.
         self.diff_refresh_pending |= self.diff_worker.take().is_some() && previous_diff;
@@ -541,12 +565,59 @@ fn attach_ignored(
 mod tests {
     use super::*;
     use crate::test_support::SYSTEM_GIT;
-    use crate::{models::ChangeKind, test_support::TempRepo, theme::ThemeChoice};
+    use crate::{models::{ChangeFile, ChangeKind}, test_support::TempRepo, theme::ThemeChoice};
 
     fn opened(repo: &TempRepo) -> SannyGitApp {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
         app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
         app
+    }
+
+    fn sample_change(path: &str) -> ChangeFile {
+        ChangeFile {
+            path: path.into(),
+            original_path: None,
+            kind: ChangeKind::Modified,
+            conflict_status: None,
+            staged: false,
+            unstaged: true,
+            diff: String::new(),
+        }
+    }
+
+    #[test]
+    fn stabilized_order_keeps_selection_on_the_same_path() {
+        let previous = vec!["README.md".into(), "src/main.rs".into()];
+        let mut snapshot = vec![
+            sample_change("src/main.rs"),
+            sample_change("README.md"),
+        ];
+        snapshot[0].staged = true;
+        let stabilized = stabilize_change_order(&previous, snapshot);
+        let index = stabilized
+            .iter()
+            .position(|change| change.path == "src/main.rs")
+            .unwrap();
+        let snapshot_index = 0_usize;
+        assert_ne!(index, snapshot_index);
+        assert_eq!(stabilized[index].path, "src/main.rs");
+    }
+
+    #[test]
+    fn working_tree_refresh_preserves_change_order() {
+        let previous = vec!["README.md".into(), "githooks/a".into(), "src/a.rs".into()];
+        let mut reordered = vec![
+            sample_change("src/a.rs"),
+            sample_change("README.md"),
+            sample_change("githooks/a"),
+        ];
+        reordered[0].staged = true;
+        reordered[0].kind = ChangeKind::Added;
+        let ordered = stabilize_change_order(&previous, reordered);
+        assert_eq!(
+            ordered.iter().map(|change| change.path.as_str()).collect::<Vec<_>>(),
+            &["README.md", "githooks/a", "src/a.rs"] as &[&str]
+        );
     }
 
     #[test]

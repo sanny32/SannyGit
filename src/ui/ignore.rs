@@ -38,7 +38,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     .disabled_help_text("Select files from one folder to use a pattern");
                     ui.add_enabled(
                         dialog.use_pattern,
-                        egui::TextEdit::singleline(&mut dialog.pattern)
+                        super::controls::singleline(&mut dialog.pattern)
                             .hint_text("*.log")
                             .desired_width(220.0),
                     );

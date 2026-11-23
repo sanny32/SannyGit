@@ -89,6 +89,9 @@ impl FileSelection {
         };
     }
     fn retain(&mut self, changes: &[crate::models::ChangeFile]) {
+        let active_path = changes
+            .get(self.active)
+            .map(|change| change.path.clone());
         self.paths
             .retain(|path| changes.iter().any(|change| &change.path == path));
         if self
@@ -103,9 +106,15 @@ impl FileSelection {
                 .get(self.active)
                 .is_some_and(|change| self.paths.contains(&change.path))
         {
-            self.active = changes
-                .iter()
-                .position(|change| self.paths.contains(&change.path))
+            self.active = active_path
+                .as_ref()
+                .filter(|path| self.paths.contains(*path))
+                .and_then(|path| changes.iter().position(|change| &change.path == path))
+                .or_else(|| {
+                    changes
+                        .iter()
+                        .position(|change| self.paths.contains(&change.path))
+                })
                 .unwrap_or(usize::MAX);
         }
     }

@@ -70,3 +70,66 @@ pub fn selectable_row_with_outset(
     contents(&mut child);
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{install_fonts, ThemeChoice, CONTROL_HEIGHT};
+    use eframe::egui::{self, Context, Pos2, RawInput, Rect, Shape, Vec2};
+
+    fn field_text_center(output: &egui::FullOutput, value: &str) -> (Rect, Pos2) {
+        let field = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                Shape::Rect(rect) if (rect.rect.height() - CONTROL_HEIGHT).abs() < 0.6 => {
+                    Some(rect.rect)
+                }
+                _ => None,
+            })
+            .expect("singleline field missing");
+        let text = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                Shape::Text(text) if text.galley.job.text == value => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                }
+                _ => None,
+            })
+            .expect("field text missing");
+        (field, text)
+    }
+
+    #[test]
+    fn singleline_text_is_vertically_centered() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for scale in [1.0, 2.0] {
+                let ctx = Context::default();
+                ctx.set_pixels_per_point(scale);
+                install_fonts(&ctx);
+                theme.apply(&ctx);
+                let mut pattern = "*.mdc".to_owned();
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(640.0, 200.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        super::dialog_style::setup(ui);
+                        ui.add(singleline(&mut pattern).desired_width(220.0));
+                    },
+                );
+                output.textures_delta.set.clear();
+                output.textures_delta.free.clear();
+                let (field, text) = field_text_center(&output, &pattern);
+                assert!(
+                    (text.y - field.center().y).abs() <= 0.5,
+                    "Text is off-center at {scale}x {theme:?}: field={field:?}, text_y={}",
+                    text.y
+                );
+            }
+        }
+    }
+
+}

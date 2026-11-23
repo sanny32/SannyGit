@@ -441,7 +441,7 @@ fn push_target(
                 });
                 ui.add_enabled(
                     !busy && *custom,
-                    egui::TextEdit::singleline(destination)
+                    crate::ui::controls::singleline(destination)
                         .hint_text("refs/heads/branch")
                         .desired_width(240.0),
                 );
