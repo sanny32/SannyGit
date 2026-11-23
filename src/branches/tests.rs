@@ -901,3 +901,40 @@ fn rejects_malformed_ref_records_and_bounds_ref_count() {
         .collect();
     assert!(parse(many.as_bytes()).is_err_and(|error| error.contains("5,000")));
 }
+
+#[test]
+fn reset_to_a_commit_id_moves_head_and_rejects_other_text() {
+    let repo = committed_repo();
+    let first = repo
+        .git(&["rev-parse", "--verify", "HEAD"])
+        .trim()
+        .to_owned();
+    repo.write("file", "next\n");
+    repo.git(&["add", "file"]);
+    repo.git(&["commit", "-m", "next"]);
+    let preview = preview_reset(&SYSTEM_GIT, &repo.0, &first).unwrap();
+    assert_eq!(preview.target, first);
+    assert_eq!(preview.tag, first);
+    reset_tag(&SYSTEM_GIT, &repo.0, &preview, ResetMode::Clean, None).unwrap();
+    assert_eq!(repo.git(&["rev-parse", "--verify", "HEAD"]).trim(), first);
+    assert_eq!(
+        std::fs::read_to_string(repo.0.join("file")).unwrap(),
+        "base\n"
+    );
+    assert!(preview_reset(&SYSTEM_GIT, &repo.0, "abcdef").is_err());
+    assert!(preview_reset(&SYSTEM_GIT, &repo.0, &"0".repeat(40)).is_err());
+}
+
+#[test]
+fn reads_the_commit_message_without_git_log_newline() {
+    let repo = committed_repo();
+    repo.write("file", "next\n");
+    repo.git(&["add", "file"]);
+    repo.git(&["commit", "-m", "subject\n\nbody line"]);
+    let oid = repo.git(&["rev-parse", "--verify", "HEAD"]);
+    assert_eq!(
+        read_commit_message(&SYSTEM_GIT, &repo.0, oid.trim()).unwrap(),
+        "subject\n\nbody line"
+    );
+    assert!(read_commit_message(&SYSTEM_GIT, &repo.0, "abc").is_err());
+}

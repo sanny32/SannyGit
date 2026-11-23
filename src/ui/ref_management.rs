@@ -546,18 +546,7 @@ fn show_tag_reset(ctx: &egui::Context, app: &mut SannyGitApp, dialog: Dialog) {
     let palette = app.palette();
     let busy = app.busy();
     let enabled = !busy && app.state_current && prepared.is_some();
-    let name = source
-        .strip_prefix("refs/tags/")
-        .or_else(|| source.strip_prefix("refs/remotes/"))
-        .or_else(|| source.strip_prefix("refs/heads/"))
-        .unwrap_or(source);
-    let target = match prepared {
-        Some(prepared) => format!(
-            "{name} · {}",
-            prepared.target.get(..8).unwrap_or(&prepared.target)
-        ),
-        None => name.to_owned(),
-    };
+    let target = reset_target_text(source, prepared.as_ref());
     let mut close = false;
     let mut reload = false;
     let mut mode = None;
@@ -568,11 +557,7 @@ fn show_tag_reset(ctx: &egui::Context, app: &mut SannyGitApp, dialog: Dialog) {
         dialog_style::header_with_icon(
             ui,
             palette,
-            if source.starts_with("refs/tags/") {
-                "Reset to Tag"
-            } else {
-                "Reset to Branch"
-            },
+            reset_heading(source),
             "Move HEAD, the index and the working tree to the selected commit.",
             Icon::Warning,
         );
@@ -667,20 +652,7 @@ fn show_advanced_reset(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: D
     let palette = app.palette();
     let busy = app.busy();
     let enabled = !busy && app.state_current && prepared.is_some();
-    let name = source
-        .strip_prefix("refs/tags/")
-        .or_else(|| source.strip_prefix("refs/remotes/"))
-        .or_else(|| source.strip_prefix("refs/heads/"))
-        .unwrap_or(source);
-    let target = prepared.as_ref().map_or_else(
-        || name.to_owned(),
-        |preview| {
-            format!(
-                "{name} · {}",
-                preview.target.get(..8).unwrap_or(&preview.target)
-            )
-        },
-    );
+    let target = reset_target_text(source, prepared.as_ref());
     let mut close = false;
     let mut reload = false;
     let mut submit = false;
@@ -792,6 +764,41 @@ fn show_advanced_reset(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: D
     }
     if submit {
         app.confirm_tag_reset(ResetMode::Clean);
+    }
+}
+
+fn reset_target_label(source: &str) -> String {
+    if crate::branches::is_commit_id(source) {
+        source.get(..12).unwrap_or(source).to_owned()
+    } else {
+        source
+            .strip_prefix("refs/tags/")
+            .or_else(|| source.strip_prefix("refs/remotes/"))
+            .or_else(|| source.strip_prefix("refs/heads/"))
+            .unwrap_or(source)
+            .to_owned()
+    }
+}
+
+fn reset_heading(source: &str) -> &'static str {
+    if source.starts_with("refs/tags/") {
+        "Reset to Tag"
+    } else if crate::branches::is_commit_id(source) {
+        "Reset to Commit"
+    } else {
+        "Reset to Branch"
+    }
+}
+
+fn reset_target_text(source: &str, prepared: Option<&crate::branches::ResetPreview>) -> String {
+    let name = reset_target_label(source);
+    match prepared {
+        Some(preview) if crate::branches::is_commit_id(source) => preview.target.clone(),
+        Some(preview) => format!(
+            "{name} · {}",
+            preview.target.get(..8).unwrap_or(&preview.target)
+        ),
+        None => name,
     }
 }
 

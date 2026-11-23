@@ -200,6 +200,7 @@ pub struct BranchState {
     pub(super) pending: bool,
     pub(super) worker: Option<std::sync::mpsc::Receiver<WorkerResult>>,
     pub(super) tag_message_reader: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    pub(super) commit_message_reader: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     pub(super) tag_patch_reader:
         Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     /// Directory chooser for Format Patch. The flag becomes true after one
@@ -221,7 +222,7 @@ pub struct BranchState {
     pub selected_ref_group: Option<crate::models::RefKind>,
     pub current_branch: String,
     /// Full HEAD commit id. Empty when the branch has no commits yet.
-    pub(super) head_commit: String,
+    pub(crate) head_commit: String,
 }
 
 impl Default for BranchState {
@@ -234,6 +235,7 @@ impl Default for BranchState {
             pending: false,
             worker: None,
             tag_message_reader: None,
+            commit_message_reader: None,
             tag_patch_reader: None,
             pending_tag_patch: None,
             branch_head_exists: false,
@@ -487,6 +489,30 @@ impl SannyGitApp {
         );
     }
 
+    pub fn open_commit_reset(&mut self, source: String) {
+        self.open_commit_reset_dialog(source, None);
+    }
+
+    pub fn open_advanced_commit_reset(&mut self, source: String) {
+        self.open_commit_reset_dialog(
+            source,
+            Some(branches::AdvancedReset {
+                strategy: self.branches.last_reset_strategy,
+                fix_line_endings: false,
+            }),
+        );
+    }
+
+    fn open_commit_reset_dialog(
+        &mut self,
+        source: String,
+        advanced: Option<branches::AdvancedReset>,
+    ) {
+        if self.ref_reset_allowed() && branches::is_commit_id(&source) {
+            self.open_reset_dialog(source, advanced);
+        }
+    }
+
     fn open_ref_reset_dialog(&mut self, source: String, advanced: Option<branches::AdvancedReset>) {
         if !self.ref_reset_allowed()
             || !self
@@ -497,6 +523,10 @@ impl SannyGitApp {
         {
             return;
         }
+        self.open_reset_dialog(source, advanced);
+    }
+
+    fn open_reset_dialog(&mut self, source: String, advanced: Option<branches::AdvancedReset>) {
         self.open_ref_dialog(Kind::Reset {
             source,
             prepared: None,
@@ -1574,5 +1604,40 @@ mod tests {
         app.branches.ref_dialog = None;
         app.apply_ref_details(root, ResultMessage::Remotes(Err("Late error".into())));
         assert!(app.branches.ref_dialog.is_none());
+    }
+
+    #[test]
+    fn reset_opens_for_a_commit_id_and_ignores_other_text() {
+        let (repo, mut app) = opened();
+        let first = repo
+            .git(&["rev-parse", "--verify", "HEAD"])
+            .trim()
+            .to_owned();
+        repo.write("file", "next\n");
+        git::commit(&SYSTEM_GIT, &repo.0, "Next", git::CommitContents::All).unwrap();
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        app.branches.current = true;
+        app.branches.branch_head_exists = true;
+        app.open_commit_reset("HEAD".into());
+        assert!(app.branches.ref_dialog.is_none() && !app.busy());
+        app.open_commit_reset(first.clone());
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        let Kind::Reset {
+            source,
+            prepared,
+            advanced,
+            ..
+        } = &app.branches.ref_dialog.as_ref().unwrap().kind
+        else {
+            panic!("Expected Reset");
+        };
+        assert_eq!(source, &first);
+        assert!(advanced.is_none());
+        assert_eq!(prepared.as_ref().unwrap().target, first);
+        assert_eq!(
+            repo.git(&["rev-parse", "--verify", "HEAD"]).trim(),
+            app.branches.head_commit
+        );
     }
 }

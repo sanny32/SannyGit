@@ -1,8 +1,9 @@
 use super::controls::icons::{self, Icon};
+use super::controls::popup_menu::{self, Entry};
 use super::controls::tooltips::TooltipResponse;
 use crate::{
-    app::SannyGitApp,
-    models::HistoryEdge,
+    app::{ref_management::BranchAction, SannyGitApp},
+    models::{BranchRef, HistoryEdge, RefKind},
     theme::{ui_font_size, Palette, COMMIT_AVATAR_FONT_SIZE},
 };
 use eframe::egui::{
@@ -155,6 +156,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
     }
     let mut selected = None;
     let mut open_details = false;
+    let mut menu_action = None;
     let date_width = ui
         .painter()
         .layout_no_wrap(
@@ -180,10 +182,10 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
     if offset.is_some() {
         ui.style_mut().scroll_animation = eframe::egui::style::ScrollAnimation::none();
     }
-    let reveal = if history_window && app.history.tag.is_some() {
-        app.history.reveal_commit.take()
-    } else if history_window {
-        ui.data_mut(|data| data.remove_temp::<String>(egui::Id::unique("history.reveal")))
+    let reveal = if history_window {
+        app.history.reveal_commit.take().or_else(|| {
+            ui.data_mut(|data| data.remove_temp::<String>(egui::Id::unique("history.reveal")))
+        })
     } else {
         None
     };
@@ -285,11 +287,17 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
                         .help_text(&commit.hash);
                     });
                 }
-                if row.response().double_clicked() {
+                let response = row.response();
+                if response.double_clicked() {
                     selected = Some(commit.hash.clone());
                     open_details = true;
-                } else if row.response().clicked() {
+                } else if response.clicked() || response.secondary_clicked() {
                     selected = Some(commit.hash.clone());
+                }
+                if let Some(action) =
+                    popup_menu::context(&response, palette, || commit_menu(app, original))
+                {
+                    menu_action = Some(action);
                 }
             });
         });
@@ -318,6 +326,147 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
         }
         app.select_commit(hash);
         app.history.commit_details_open = details_open || open_details;
+    }
+    if let Some(action) = menu_action {
+        match action {
+            CommitAction::Log(hash) if !history_window => {
+                if app.open_commit_history(&hash) {
+                    ui.data_mut(|data| {
+                        data.insert_temp(egui::Id::unique("history.reveal"), hash);
+                    });
+                    focus_history(ui.ctx());
+                }
+            }
+            action => apply_commit_action(ui.ctx(), app, action),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum CommitAction {
+    Log(String),
+    Merge(String),
+    Rebase(String),
+    Reset(String),
+    ResetAdvanced(String),
+    Push(String),
+    CopyMessage(String),
+    CopyId(String),
+}
+
+fn commit_menu(app: &SannyGitApp, index: usize) -> Vec<Entry<CommitAction>> {
+    let Some(commit) = app.history.commits.get(index) else {
+        return Vec::new();
+    };
+    let hash = commit.hash.clone();
+    let message = commit.message.clone();
+    let commit_id = crate::branches::is_commit_id(&hash);
+    let head = !hash.is_empty() && app.branches.head_commit == hash;
+    let repository_open = app.repositories.get(app.selected_repository).is_some();
+    let refs_ready = !app.busy() && app.state_current && app.branches.current && repository_open;
+    let operation_ready = app.merge_allowed() && commit_id && !head;
+    let reset_ready = app.ref_reset_allowed() && commit_id;
+    let push =
+        push_branch_for_commit(&app.branches.entries, &hash).map(|branch| branch.full_name.clone());
+    let needs_head = "An existing HEAD and fresh repository data are required";
+    let other_commit = "Select a commit other than HEAD";
+    let full_id = "Refresh history to load the full commit id";
+    let operation_help = if operation_ready {
+        ""
+    } else if !commit_id {
+        full_id
+    } else if head {
+        other_commit
+    } else {
+        needs_head
+    };
+    let reset_help = if reset_ready {
+        ""
+    } else if commit_id {
+        needs_head
+    } else {
+        full_id
+    };
+    vec![
+        Entry::item(
+            "Log",
+            !app.busy() && repository_open,
+            CommitAction::Log(hash.clone()),
+        )
+        .help("Open a repository and wait for the current operation"),
+        Entry::Separator,
+        Entry::item("Merge…", operation_ready, CommitAction::Merge(hash.clone()))
+            .help(operation_help),
+        Entry::item(
+            "Rebase…",
+            operation_ready,
+            CommitAction::Rebase(hash.clone()),
+        )
+        .help(operation_help),
+        Entry::Separator,
+        Entry::item("Reset…", reset_ready, CommitAction::Reset(hash.clone())).help(reset_help),
+        Entry::item(
+            "Reset Advanced…",
+            reset_ready,
+            CommitAction::ResetAdvanced(hash.clone()),
+        )
+        .help(reset_help),
+        Entry::Separator,
+        Entry::item(
+            "Push",
+            push.is_some() && refs_ready,
+            CommitAction::Push(push.clone().unwrap_or_default()),
+        )
+        .help(if push.is_none() {
+            "Push is available when one local branch, or the current branch, points at this commit"
+        } else if refs_ready {
+            ""
+        } else {
+            "Refresh the repository and wait for the current operation"
+        }),
+        Entry::Separator,
+        Entry::item("Copy Message", true, CommitAction::CopyMessage(message)),
+        Entry::item("Copy ID", true, CommitAction::CopyId(hash)),
+    ]
+}
+
+fn push_branch_for_commit<'a>(entries: &'a [BranchRef], hash: &str) -> Option<&'a BranchRef> {
+    let mut matches = entries
+        .iter()
+        .filter(|entry| entry.kind == RefKind::Local && entry.hash == hash);
+    let first = matches.next()?;
+    match matches.next() {
+        None => Some(first),
+        Some(_) => entries
+            .iter()
+            .find(|entry| entry.kind == RefKind::Local && entry.current && entry.hash == hash),
+    }
+}
+
+fn apply_commit_action(ctx: &egui::Context, app: &mut SannyGitApp, action: CommitAction) {
+    match action {
+        CommitAction::Log(hash) => {
+            if app.history.commits.iter().any(|commit| commit.hash == hash) {
+                app.select_commit(hash.clone());
+                app.history.commit_details_open = true;
+                app.history.reveal_commit = Some(hash);
+            }
+        }
+        CommitAction::Merge(hash) => app.open_merge_commit(hash),
+        CommitAction::Rebase(hash) => app.open_rebase_commit(hash),
+        CommitAction::Reset(hash) => app.open_commit_reset(hash),
+        CommitAction::ResetAdvanced(hash) => app.open_advanced_commit_reset(hash),
+        CommitAction::Push(branch) => app.open_branch_action(
+            branch,
+            BranchAction::PushLocal {
+                remote: String::new(),
+                custom: false,
+                destination: String::new(),
+                choose_destination: false,
+            },
+        ),
+        CommitAction::CopyMessage(message) => crate::app::copy_to_clipboard(ctx, message),
+        CommitAction::CopyId(hash) => ctx.copy_text(hash),
     }
 }
 
@@ -1623,6 +1772,194 @@ mod tests {
                 }),
                 "Restored session did not keep Unified mode in {theme:?}"
             );
+        }
+    }
+
+    fn menu_item(entries: &[Entry<CommitAction>], label: &str) -> (bool, CommitAction) {
+        entries
+            .iter()
+            .find_map(|entry| match entry {
+                Entry::Item {
+                    label: item,
+                    enabled,
+                    action,
+                    ..
+                } if item == label => Some((*enabled, action.clone())),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("Missing menu item {label}"))
+    }
+
+    fn sample_commit(hash: &str, message: &str) -> crate::models::Commit {
+        crate::models::Commit {
+            message: message.into(),
+            author: "Sam".into(),
+            email: "sam@example.invalid".into(),
+            date: "2026-01-01T00:00:00Z".into(),
+            hash: hash.into(),
+            parents: Vec::new(),
+            lane: 0,
+        }
+    }
+
+    #[test]
+    fn commit_menu_limits_head_operations_and_pushes_the_current_branch() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        let head = "aa".repeat(20);
+        let other = "bb".repeat(20);
+        app.repositories.push(crate::models::Repository {
+            name: "Repo".into(),
+            path: "/repo".into(),
+        });
+        app.selected_repository = 0;
+        app.state_current = true;
+        app.branches.current = true;
+        app.branches.branch_head_exists = true;
+        app.branches.head_commit.clone_from(&head);
+        app.history.commits = vec![
+            sample_commit(&head, "Head"),
+            sample_commit(&other, "Other\n\nbody"),
+        ];
+        app.branches.entries = vec![
+            BranchRef {
+                name: "topic".into(),
+                full_name: "refs/heads/topic".into(),
+                hash: other.clone(),
+                upstream: None,
+                tag_subject: None,
+                current: false,
+                kind: RefKind::Local,
+            },
+            BranchRef {
+                name: "copy".into(),
+                full_name: "refs/heads/copy".into(),
+                hash: other.clone(),
+                upstream: None,
+                tag_subject: None,
+                current: false,
+                kind: RefKind::Local,
+            },
+        ];
+        let ambiguous = commit_menu(&app, 1);
+        assert!(!menu_item(&ambiguous, "Push").0);
+        assert!(menu_item(&ambiguous, "Merge…").0);
+        app.branches.entries[0].current = true;
+        let menu = commit_menu(&app, 1);
+        assert!(menu_item(&menu, "Log").0);
+        assert!(menu_item(&menu, "Merge…").0);
+        assert!(menu_item(&menu, "Rebase…").0);
+        assert!(menu_item(&menu, "Reset…").0);
+        assert!(menu_item(&menu, "Reset Advanced…").0);
+        assert!(matches!(
+            menu_item(&menu, "Push").1,
+            CommitAction::Push(branch) if branch == "refs/heads/topic"
+        ));
+        assert!(matches!(
+            menu_item(&menu, "Copy Message").1,
+            CommitAction::CopyMessage(message) if message == "Other\n\nbody"
+        ));
+        assert!(matches!(
+            menu_item(&menu, "Copy ID").1,
+            CommitAction::CopyId(hash) if hash == other
+        ));
+        let head_menu = commit_menu(&app, 0);
+        assert!(!menu_item(&head_menu, "Merge…").0);
+        assert!(!menu_item(&head_menu, "Rebase…").0);
+        assert!(menu_item(&head_menu, "Reset…").0);
+        assert!(menu_item(&head_menu, "Copy ID").0);
+    }
+
+    #[test]
+    fn journal_context_menu_lists_commit_commands_and_copies_the_id() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let ctx = Context::default();
+            install_fonts(&ctx);
+            theme.apply(&ctx);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.history.commits = crate::mock_data::commits();
+            let hash = app.history.commits[0].hash.clone();
+            let subject = app.history.commits[0].subject().to_owned();
+            let render = |app: &mut SannyGitApp, events| {
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            Pos2::ZERO,
+                            Vec2::new(1100.0, 700.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| rows(ui, app, false),
+                );
+                output.textures_delta.clear();
+                output
+            };
+            let position = |output: &egui::FullOutput, label: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.job.text == label => {
+                            Some(text.pos + text.galley.size() / 2.0)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("Missing {label} in {theme:?}"))
+            };
+            for _ in 0..3 {
+                render(&mut app, vec![]);
+            }
+            let output = render(&mut app, vec![]);
+            let pointer = position(&output, &subject);
+            for pressed in [true, false] {
+                render(
+                    &mut app,
+                    vec![
+                        Event::PointerMoved(pointer),
+                        Event::PointerButton {
+                            pos: pointer,
+                            button: PointerButton::Secondary,
+                            pressed,
+                            modifiers: Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            for _ in 0..3 {
+                render(&mut app, vec![]);
+            }
+            let output = render(&mut app, vec![]);
+            for item in [
+                "Log",
+                "Merge…",
+                "Rebase…",
+                "Reset…",
+                "Reset Advanced…",
+                "Push",
+                "Copy Message",
+                "Copy ID",
+            ] {
+                position(&output, item);
+            }
+            let copy_at = position(&output, "Copy ID");
+            render(&mut app, vec![Event::PointerMoved(copy_at)]);
+            let mut copied = false;
+            for pressed in [true, false] {
+                let output = render(
+                    &mut app,
+                    vec![Event::PointerButton {
+                        pos: copy_at,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    }],
+                );
+                copied |= output.platform_output.commands.iter().any(|command| {
+                    matches!(command, egui::OutputCommand::CopyText(text) if text == &hash)
+                });
+            }
+            assert!(copied, "Copy ID did not copy {hash} in {theme:?}");
+            assert_eq!(app.history.selected_commit.as_deref(), Some(hash.as_str()));
         }
     }
 }

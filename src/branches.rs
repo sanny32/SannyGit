@@ -31,6 +31,25 @@ pub fn load(git: &GitContext, root: &Path) -> Result<RefSnapshot, String> {
     Ok(RefSnapshot { refs, has_head })
 }
 
+pub(crate) fn is_commit_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+pub fn read_commit_message(git: &GitContext, root: &Path, oid: &str) -> Result<String, String> {
+    if !is_commit_id(oid) {
+        return Err("Select a commit before copying its message.".into());
+    }
+    let output = git::text(
+        git::run(
+            git,
+            root,
+            &["log", "-1", "--format=%B", "--end-of-options", oid],
+        )
+        .map_err(|error| format!("Could not read the commit message.\n{error}"))?,
+    )?;
+    Ok(output.trim_end_matches(['\r', '\n']).to_owned())
+}
+
 pub fn read_tag_message(git: &GitContext, root: &Path, oid: &str) -> Result<String, String> {
     let object = git::run(git, root, &["cat-file", "tag", "--", oid])?;
     let body = object
@@ -598,32 +617,44 @@ fn reset_head(git: &GitContext, root: &Path) -> Result<(String, String), String>
 pub fn preview_reset(git: &GitContext, root: &Path, tag: &str) -> Result<ResetPreview, String> {
     git::require_no_operation(git, root)?;
     let refs = load(git, root)?;
-    let source = refs
-        .refs
-        .iter()
-        .find(|entry| entry.full_name == tag)
-        .ok_or("The selected reference no longer exists. Refresh branches and tags.")?;
-    let revision = format!("{}^{{commit}}", source.hash);
+    let (label, object) = if let Some(source) =
+        refs.refs.iter().find(|entry| entry.full_name == tag)
+    {
+        (source.name.clone(), source.hash.clone())
+    } else if is_commit_id(tag) {
+        (tag.to_owned(), tag.to_owned())
+    } else {
+        return Err("The selected reference no longer exists. Refresh branches and tags.".into());
+    };
+    let revision = format!("{object}^{{commit}}");
     let target = git::text(
         git::run(
             git,
             root,
             &["rev-parse", "--verify", "--end-of-options", &revision],
         )
-        .map_err(|error| format!("Could not resolve '{}' to a commit.\n{error}", source.name))?,
+        .map_err(|error| format!("Could not resolve '{label}' to a commit.\n{error}"))?,
     )?;
     let (head, branch) = reset_head(git, root)?;
     let target = target.trim();
-    if [head.as_str(), target].iter().any(|oid| {
-        !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit())
-    }) {
+    if is_commit_id(tag) && !target.eq_ignore_ascii_case(tag) {
+        return Err("The selected object is not a commit.".into());
+    }
+    if [head.as_str(), target].iter().any(|oid| !is_commit_id(oid)) {
         return Err("Git returned an invalid commit object ID.".into());
     }
+    let target = target.to_owned();
+    // A commit is pinned by its own id. A ref keeps the reviewed object id, so moving an annotated tag is detected.
+    let (stored_tag, tag_oid) = if is_commit_id(tag) {
+        (target.clone(), target.clone())
+    } else {
+        (tag.to_owned(), object)
+    };
     let snapshot = git::load(git, root)?;
     Ok(ResetPreview {
-        tag: tag.to_owned(),
-        target: target.to_owned(),
-        tag_oid: source.hash.clone(),
+        tag: stored_tag,
+        target,
+        tag_oid,
         branch,
         head,
         has_tracked_changes: reset_has_tracked_changes(&snapshot),
@@ -641,10 +672,14 @@ fn check_reset(
         || current.branch != expected.branch
         || current.head != expected.head
     {
-        return Err(
-            "The selected reference, HEAD or current branch changed. Reload details and confirm Reset again."
-                .into(),
-        );
+        let selected = if is_commit_id(&expected.tag) {
+            "commit"
+        } else {
+            "reference"
+        };
+        return Err(format!(
+            "The selected {selected}, HEAD or current branch changed. Reload details and confirm Reset again."
+        ));
     }
     Ok(current)
 }

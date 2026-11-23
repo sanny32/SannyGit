@@ -176,6 +176,26 @@ impl SannyGitApp {
         self.history.reveal_commit = Some(hash);
     }
 
+    /// Open repository history on a journal commit, replacing a ref-scoped log.
+    pub fn open_commit_history(&mut self, hash: &str) -> bool {
+        if self.busy()
+            || self.repositories.get(self.selected_repository).is_none()
+            || !self
+                .history
+                .commits
+                .iter()
+                .any(|commit| commit.hash == hash)
+        {
+            return false;
+        }
+        self.close_tag_log();
+        let hash = hash.to_owned();
+        self.select_commit(hash.clone());
+        self.history.commit_details_open = true;
+        self.history.reveal_commit = Some(hash);
+        true
+    }
+
     pub fn open_ref_log(&mut self, tag: String) {
         if self.busy()
             || self.repositories.get(self.selected_repository).is_none()
@@ -935,5 +955,37 @@ mod tests {
         assert!(app.history.history_pending && app.history.history_loading);
         assert!(app.history_notice().is_none());
         assert_eq!(app.history.commits.len(), 500);
+    }
+
+    #[test]
+    fn journal_commit_log_replaces_a_ref_log_and_reveals_that_commit() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        let hash = "c".repeat(40);
+        app.repositories.push(crate::models::Repository {
+            name: "Repo".into(),
+            path: "/repo".into(),
+        });
+        app.selected_repository = 0;
+        app.history.commits = vec![crate::models::Commit {
+            message: "Chosen".into(),
+            author: String::new(),
+            email: String::new(),
+            date: String::new(),
+            hash: hash.clone(),
+            parents: Vec::new(),
+            lane: 0,
+        }];
+        app.tag_log = Some(View {
+            tag: Some("refs/tags/v1".into()),
+            commit_details_open: true,
+            ..View::default()
+        });
+        assert!(app.open_commit_history(&hash));
+        assert!(app.tag_log.is_none());
+        assert!(app.history.commit_details_open);
+        assert_eq!(app.history.selected_commit.as_deref(), Some(hash.as_str()));
+        assert_eq!(app.history.reveal_commit.as_deref(), Some(hash.as_str()));
+        assert!(!app.open_commit_history("missing"));
+        assert_eq!(app.history.selected_commit.as_deref(), Some(hash.as_str()));
     }
 }

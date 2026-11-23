@@ -25,6 +25,8 @@ enum BranchRequest {
     ResetRef(String),
     ResetRefAdvanced(String),
     CopyRefName(String),
+    CopyCommitMessage(String),
+    CopyCommitId(String),
     CopyTagMessage(String),
     FormatTagPatch(String),
     MergeBranch(String),
@@ -242,6 +244,8 @@ fn dispatch_branch_request(ctx: &egui::Context, app: &mut SannyGitApp, request: 
             app.open_rename_branch();
         }
         BranchRequest::CopyRefName(name) => ctx.copy_text(name),
+        BranchRequest::CopyCommitMessage(hash) => app.copy_commit_message(ctx, hash),
+        BranchRequest::CopyCommitId(hash) => ctx.copy_text(hash),
         BranchRequest::CopyTagMessage(oid) => app.copy_tag_message(ctx, oid),
         BranchRequest::FormatTagPatch(oid) => {
             // The click frame still paints the menu. Wait until a later frame has
@@ -676,6 +680,23 @@ fn branch_menu(
         )
         .shortcut(cmd(Key::C)),
     ]);
+    if local {
+        let id_ready = crate::branches::is_commit_id(&branch.hash);
+        entries.extend([
+            E::item(
+                "Copy Message",
+                id_ready,
+                BranchRequest::CopyCommitMessage(branch.hash.clone()),
+            )
+            .help("Refresh branches to load the full commit id"),
+            E::item(
+                "Copy ID",
+                id_ready,
+                BranchRequest::CopyCommitId(branch.hash.clone()),
+            )
+            .help("Refresh branches to load the full commit id"),
+        ]);
+    }
     entries
 }
 
@@ -1592,6 +1613,8 @@ mod tests {
                                 "Set Tracked Branch…",
                                 "Stop Tracking…",
                                 "Copy",
+                                "Copy Message",
+                                "Copy ID",
                             ]
                         } else {
                             &[
@@ -1615,6 +1638,17 @@ mod tests {
                                 )),
                                 "Missing context menu item {item}"
                             );
+                        }
+                        if kind == RefKind::Remote {
+                            for item in ["Copy Message", "Copy ID"] {
+                                assert!(
+                                    !output.shapes.iter().any(|shape| matches!(
+                                        &shape.shape,
+                                        eframe::egui::Shape::Text(text) if text.galley.text() == item
+                                    )),
+                                    "Remote branches do not copy a commit {item}"
+                                );
+                            }
                         }
                     }
                 }

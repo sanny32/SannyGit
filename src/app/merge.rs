@@ -121,20 +121,28 @@ fn load(
     let branch = crate::git::load(git, root)?.branch;
     let refs = branches::load(git, root)?.refs;
     let (tag, history) = if let Some(full_name) = tag {
-        let tag = refs
-            .iter()
-            .find(|entry| {
-                entry.full_name == full_name && matches!(entry.kind, RefKind::Tag | RefKind::Local)
-            })
-            .ok_or("The selected reference no longer exists. Refresh branches and tags.")?;
-        let revision = format!("{}^{{commit}}", tag.hash);
+        let (label, object) = if let Some(reference) = refs.iter().find(|entry| {
+            entry.full_name == full_name && matches!(entry.kind, RefKind::Tag | RefKind::Local)
+        }) {
+            (reference.name.clone(), reference.hash.clone())
+        } else if branches::is_commit_id(full_name) {
+            (full_name.to_owned(), full_name.to_owned())
+        } else {
+            return Err(
+                "The selected reference no longer exists. Refresh branches and tags.".into(),
+            );
+        };
+        let revision = format!("{object}^{{commit}}");
         let output = crate::git::run(
             git,
             root,
             &["rev-parse", "--verify", "--end-of-options", &revision],
         )
-        .map_err(|error| format!("Could not resolve '{}' to a commit.\n{error}", tag.name))?;
+        .map_err(|error| format!("Could not resolve '{label}' to a commit.\n{error}"))?;
         let commit = crate::git::text(output)?.trim().to_owned();
+        if branches::is_commit_id(full_name) && !commit.eq_ignore_ascii_case(full_name) {
+            return Err("The selected object is not a commit.".into());
+        }
         let already_merged = crate::git::is_ancestor(git, root, &commit, &head)?;
         let fast_forward = !already_merged && crate::git::is_ancestor(git, root, &head, &commit)?;
         (
@@ -224,6 +232,18 @@ impl SannyGitApp {
 
     pub fn open_rebase(&mut self) {
         self.open_commit_picker(Operation::Rebase, None, false);
+    }
+
+    pub fn open_merge_commit(&mut self, commit: String) {
+        if branches::is_commit_id(&commit) {
+            self.open_commit_picker(Operation::Merge, Some(commit), false);
+        }
+    }
+
+    pub fn open_rebase_commit(&mut self, commit: String) {
+        if branches::is_commit_id(&commit) {
+            self.open_commit_picker(Operation::Rebase, Some(commit), false);
+        }
     }
 
     fn open_commit_picker(
@@ -345,12 +365,21 @@ impl SannyGitApp {
             return;
         };
         let fast_forward_only = dialog.fast_forward_only;
+        // A chosen commit is already confirmed. Close that form when Git starts
+        // and leave progress in the status bar. The branch picker stays open so
+        // a refused rebase can keep its selection.
+        let close_when_started =
+            fast_forward_only || (dialog.operation == Operation::Rebase && dialog.tag.is_some());
         if fast_forward_only && mode != Some(merge::Mode::FastForward) {
             return;
         }
         let target = if let Some(tag) = &snapshot.tag {
-            (!tag.already_merged && (mode != Some(merge::Mode::FastForward) || tag.fast_forward))
-                .then_some(&tag.commit)
+            let allowed = match mode {
+                Some(merge::Mode::FastForward) => !tag.already_merged && tag.fast_forward,
+                Some(_) => !tag.already_merged,
+                None => dialog.operation == Operation::Rebase && tag.commit != snapshot.head,
+            };
+            allowed.then_some(&tag.commit)
         } else {
             dialog.selected.as_ref().filter(|target| {
                 mode != Some(merge::Mode::FastForward)
@@ -397,7 +426,7 @@ impl SannyGitApp {
                 snapshot,
             }
         }) {
-            if fast_forward_only {
+            if close_when_started {
                 self.merge_dialog = None;
             }
             self.status = if operation == Operation::Rebase {
@@ -800,5 +829,152 @@ mod tests {
         assert!(dialog.visible().is_empty());
         dialog.shown.insert("refs/heads/feature".into());
         assert_eq!(dialog.visible().len(), 2);
+    }
+
+    #[test]
+    fn merging_a_commit_uses_the_reviewed_id_and_refuses_a_missing_one() {
+        let repo = crate::test_support::TempRepo::new();
+        repo.write("base", "base\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "base"]);
+        repo.git(&["checkout", "-b", "feature"]);
+        repo.write("feature", "feature\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "feature"]);
+        let feature = merge::head(&SYSTEM_GIT, &repo.0).unwrap();
+        repo.git(&["checkout", "main"]);
+        repo.write("local", "local\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "local"]);
+        let before = merge::head(&SYSTEM_GIT, &repo.0).unwrap();
+
+        let mut app = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
+        app.apply_snapshot(crate::git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        app.branches.current = true;
+        app.branches.branch_head_exists = true;
+        app.open_merge_commit("abc".into());
+        assert!(app.merge_dialog.is_none() && !app.busy());
+        app.open_merge_commit("a".repeat(40));
+        wait(&mut app);
+        assert!(app.error.as_deref().unwrap().contains("Could not resolve"));
+        app.error = None;
+        app.merge_dialog = None;
+
+        app.open_merge_commit(before.clone());
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(
+            app.merge_dialog
+                .as_ref()
+                .unwrap()
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .tag
+                .as_ref()
+                .unwrap()
+                .already_merged
+        );
+        app.submit_merge(merge::Mode::Commit);
+        assert!(!app.busy());
+        assert_eq!(merge::head(&SYSTEM_GIT, &repo.0).unwrap(), before);
+        app.merge_dialog = None;
+
+        app.open_merge_commit(feature.clone());
+        wait(&mut app);
+        let tag = app
+            .merge_dialog
+            .as_ref()
+            .unwrap()
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .tag
+            .as_ref()
+            .unwrap();
+        assert_eq!(tag.commit, feature);
+        assert!(!tag.fast_forward && !tag.already_merged);
+        app.submit_merge(merge::Mode::Commit);
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(app.merge_dialog.is_none());
+        assert_eq!(
+            repo.git(&["show", "-s", "--format=%P", "HEAD"]).trim(),
+            format!("{before} {feature}")
+        );
+        assert!(repo
+            .git(&["show", "-s", "--format=%B", "HEAD"])
+            .contains("Merge branch 'feature'"));
+    }
+
+    #[test]
+    fn rebasing_onto_a_commit_closes_the_confirmation_and_replays() {
+        let repo = crate::test_support::TempRepo::new();
+        repo.write("base", "base\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "base"]);
+        repo.git(&["checkout", "-b", "upstream"]);
+        repo.write("upstream", "upstream\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "upstream"]);
+        let target = merge::head(&SYSTEM_GIT, &repo.0).unwrap();
+        repo.git(&["checkout", "main"]);
+        repo.write("local", "local\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-m", "local"]);
+        let before = merge::head(&SYSTEM_GIT, &repo.0).unwrap();
+        let mut app = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
+        app.apply_snapshot(crate::git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        app.branches.current = true;
+        app.branches.branch_head_exists = true;
+
+        app.open_rebase_commit(before.clone());
+        wait(&mut app);
+        app.submit_rebase();
+        assert!(!app.busy());
+        assert!(app.merge_dialog.is_some());
+        assert_eq!(merge::head(&SYSTEM_GIT, &repo.0).unwrap(), before);
+        app.merge_dialog = None;
+
+        app.open_rebase_commit(target.clone());
+        wait(&mut app);
+        assert_eq!(
+            app.merge_dialog
+                .as_ref()
+                .unwrap()
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .tag
+                .as_ref()
+                .unwrap()
+                .commit,
+            target
+        );
+        repo.write("dirty", "keep\n");
+        app.submit_rebase();
+        assert!(app.merge_dialog.is_none() && app.busy());
+        wait(&mut app);
+        assert!(app.error.as_deref().unwrap().contains("local changes"));
+        assert_eq!(merge::head(&SYSTEM_GIT, &repo.0).unwrap(), before);
+        std::fs::remove_file(repo.0.join("dirty")).unwrap();
+        app.error = None;
+        // The refused rebase refreshed the working tree and marked refs stale.
+        app.branches.current = true;
+
+        app.open_rebase_commit(target.clone());
+        wait(&mut app);
+        app.submit_rebase();
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(app.merge_dialog.is_none());
+        assert_eq!(
+            repo.git(&["show", "-s", "--format=%P", "HEAD"]).trim(),
+            target
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("local")).unwrap(),
+            "local\n"
+        );
     }
 }

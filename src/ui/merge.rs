@@ -63,8 +63,19 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         let name = tag
             .strip_prefix("refs/tags/")
             .or_else(|| tag.strip_prefix("refs/heads/"))
-            .unwrap_or(tag);
-        let (close, mode) = tag_confirmation(ctx, &dialog, name, busy, palette);
+            .unwrap_or(tag)
+            .to_owned();
+        if dialog.operation == Operation::Rebase {
+            let (close, rebase) = rebase_confirmation(ctx, &dialog, &name, busy, palette);
+            if !close {
+                app.merge_dialog = Some(dialog);
+            }
+            if rebase {
+                app.submit_rebase();
+            }
+            return;
+        }
+        let (close, mode) = tag_confirmation(ctx, &dialog, &name, busy, palette);
         if !close {
             app.merge_dialog = Some(dialog);
         }
@@ -140,10 +151,15 @@ fn tag_confirmation(
     busy: bool,
     palette: Palette,
 ) -> (bool, Option<Mode>) {
-    let branch = dialog
+    let commit = dialog
         .tag
-        .as_ref()
-        .is_some_and(|reference| reference.starts_with("refs/heads/"));
+        .as_deref()
+        .is_some_and(crate::branches::is_commit_id);
+    let branch = !commit
+        && dialog
+            .tag
+            .as_ref()
+            .is_some_and(|reference| reference.starts_with("refs/heads/"));
     let fast_forward_only = dialog.fast_forward_only;
     let target = dialog
         .snapshot
@@ -160,11 +176,19 @@ fn tag_confirmation(
         dialog_style::header_with_icon(
             ui,
             palette,
-            if fast_forward_only { "Fast-Forward Merge" } else { "Merge Tag" },
+            if fast_forward_only {
+                "Fast-Forward Merge"
+            } else if commit {
+                "Merge Commit"
+            } else {
+                "Merge Tag"
+            },
             if branch {
                 "Move the current branch to the selected branch’s commit without creating a merge commit."
             } else if fast_forward_only {
                 "Move the current branch to the tagged commit without creating a merge commit."
+            } else if commit {
+                "Choose how to merge the selected commit into the current branch."
             } else {
                 "Choose how to merge the selected tag into the current branch."
             },
@@ -172,7 +196,13 @@ fn tag_confirmation(
         );
         dialog_style::section(ui, palette.panel, egui::Margin::symmetric(12, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            let tag_name = if branch { format!("Branch: {name}") } else { format!("Tag: {name}") };
+            let tag_name = if commit {
+                format!("Commit: {name}")
+            } else if branch {
+                format!("Branch: {name}")
+            } else {
+                format!("Tag: {name}")
+            };
             dialog_style::text_line(ui, &tag_name, 20.0).help_text(tag_name);
             let status = match target {
                 Some(_) if busy => "Merging…",
@@ -209,6 +239,66 @@ fn tag_confirmation(
         });
     });
     (close, mode)
+}
+
+fn rebase_confirmation(
+    ctx: &egui::Context,
+    dialog: &Dialog,
+    name: &str,
+    busy: bool,
+    palette: Palette,
+) -> (bool, bool) {
+    let target = dialog.snapshot.as_ref().and_then(|snapshot| {
+        snapshot
+            .tag
+            .as_ref()
+            .map(|tag| (tag, snapshot.head.as_str()))
+    });
+    let same_commit = target.is_some_and(|(tag, head)| tag.commit == head);
+    let enabled = !busy && target.is_some() && !same_commit;
+    let mut close = false;
+    let mut rebase = false;
+    dialog_style::modal(ctx, palette, "rebase.commit").show(ctx, |ui| {
+        ui.set_width(575.0);
+        dialog_style::setup(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        dialog_style::header_with_icon(
+            ui,
+            palette,
+            "Rebase HEAD to",
+            "Replay commits that are on the current branch and not in the selected commit. This rewrites those commits.",
+            Icon::Rebase,
+        );
+        dialog_style::section(ui, palette.panel, egui::Margin::symmetric(12, 10), |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            let commit_name = format!("Commit: {name}");
+            dialog_style::text_line(ui, &commit_name, 20.0).help_text(commit_name);
+            let status = match target {
+                Some(_) if busy => "Rebasing…",
+                Some(_) if same_commit => "HEAD is already at the selected commit.",
+                Some((tag, _)) if tag.already_merged => {
+                    "Rebase will replay the current branch onto an earlier commit."
+                }
+                Some(_) => "Rebase will replay the current branch onto the selected commit.",
+                None if busy => "Checking the selected commit…",
+                None => "Close and reopen Rebase to retry.",
+            };
+            dialog_style::text_line(ui, RichText::new(status).color(palette.muted), 20.0);
+            dialog_style::button_row(ui, |ui| {
+                close = ui
+                    .add_enabled(!busy, dialog_style::button("Cancel"))
+                    .dialog_cancel();
+                if ui
+                    .add_enabled(enabled, dialog_style::primary("Rebase HEAD to", palette))
+                    .help_text("Commit or stash local changes first. The branch picker stays available from the toolbar.")
+                    .dialog_accept()
+                {
+                    rebase = true;
+                }
+            });
+        });
+    });
+    (close, rebase)
 }
 
 #[cfg(test)]
@@ -254,6 +344,66 @@ fn tag_confirmation_keeps_its_size_as_merge_options_load() {
                 }
                 let rect = ctx
                     .memory(|memory| memory.area_rect(egui::Id::unique("merge.tag")))
+                    .unwrap();
+                assert!(screen.contains_rect(rect));
+                if let Some(previous) = previous {
+                    assert_eq!(rect, previous);
+                }
+                previous = Some(rect);
+                if stage == 0 {
+                    dialog.snapshot = snapshot.take();
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn rebase_confirmation_keeps_its_size_as_the_commit_check_loads() {
+    for theme in [
+        crate::theme::ThemeChoice::Light,
+        crate::theme::ThemeChoice::Dark,
+    ] {
+        for size in [egui::vec2(1100.0, 700.0), egui::vec2(1400.0, 900.0)] {
+            let ctx = egui::Context::default();
+            crate::theme::install_fonts(&ctx);
+            theme.apply(&ctx);
+            let hash = "ab".repeat(20);
+            let mut dialog = crate::mock_data::merge_dialog();
+            dialog.operation = crate::app::merge::Operation::Rebase;
+            dialog.tag = Some(hash.clone());
+            let mut snapshot = dialog.snapshot.take().unwrap();
+            snapshot.tag = Some(crate::app::merge::TagTarget {
+                commit: hash.clone(),
+                fast_forward: false,
+                already_merged: true,
+            });
+            let mut snapshot = Some(snapshot);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let mut previous = None;
+            for stage in 0..3 {
+                for _ in 0..3 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            let (close, rebase) = rebase_confirmation(
+                                ui.ctx(),
+                                &dialog,
+                                &hash,
+                                stage != 1,
+                                theme.palette(),
+                            );
+                            assert!(!close && !rebase);
+                        },
+                    );
+                    output.textures_delta.clear();
+                }
+                let rect = ctx
+                    .memory(|memory| memory.area_rect(egui::Id::unique("rebase.commit")))
                     .unwrap();
                 assert!(screen.contains_rect(rect));
                 if let Some(previous) = previous {

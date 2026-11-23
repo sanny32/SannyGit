@@ -299,6 +299,24 @@ pub struct SannyGitApp {
     pub merging: bool,
 }
 
+pub(crate) fn clipboard_message(message: String) -> String {
+    #[cfg(windows)]
+    {
+        message.replace("\r\n", "\n").replace('\n', "\r\n")
+    }
+    #[cfg(not(windows))]
+    {
+        message
+    }
+}
+
+pub(crate) fn copy_to_clipboard(ctx: &eframe::egui::Context, message: String) {
+    let message = clipboard_message(message);
+    if !message.is_empty() {
+        ctx.copy_text(message);
+    }
+}
+
 impl SannyGitApp {
     pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
         crate::theme::install_fonts(&creation_context.egui_ctx);
@@ -1189,6 +1207,36 @@ impl SannyGitApp {
         self.branches.error = Some(error);
     }
 
+    pub fn copy_commit_message(&mut self, ctx: &eframe::egui::Context, hash: String) {
+        if let Some(message) = self
+            .history
+            .commits
+            .iter()
+            .chain(self.tag_log.iter().flat_map(|view| view.commits.iter()))
+            .find(|commit| commit.hash == hash)
+            .map(|commit| commit.message.clone())
+        {
+            copy_to_clipboard(ctx, message);
+            return;
+        }
+        if !crate::branches::is_commit_id(&hash) {
+            return;
+        }
+        let Some(repository) = self.repositories.get(self.selected_repository) else {
+            return;
+        };
+        let root = PathBuf::from(&repository.path);
+        match self.spawn_reader(Some(ctx.clone()), move |git| {
+            crate::branches::read_commit_message(git, &root, &hash)
+        }) {
+            Ok(reader) => self.branches.commit_message_reader = Some(reader),
+            Err(error) => {
+                self.branches.commit_message_reader = None;
+                self.error = Some(error);
+            }
+        }
+    }
+
     pub fn copy_tag_message(&mut self, ctx: &eframe::egui::Context, oid: String) {
         let Some(repository) = self.repositories.get(self.selected_repository) else {
             return;
@@ -1206,18 +1254,22 @@ impl SannyGitApp {
     }
 
     fn poll_tag_message(&mut self, ctx: &eframe::egui::Context) {
-        match Self::poll_reader(&mut self.branches.tag_message_reader) {
-            Some(Ok(Ok(message))) => {
-                #[cfg(windows)]
-                let message = message.replace("\r\n", "\n").replace('\n', "\r\n");
-                if !message.is_empty() {
-                    ctx.copy_text(message);
-                }
-            }
-            Some(Ok(Err(error)) | Err(error)) => {
-                self.error = Some(error);
-            }
-            None => {}
+        if let Some(result) = Self::poll_reader(&mut self.branches.tag_message_reader) {
+            self.finish_copied_text(ctx, result);
+        }
+        if let Some(result) = Self::poll_reader(&mut self.branches.commit_message_reader) {
+            self.finish_copied_text(ctx, result);
+        }
+    }
+
+    fn finish_copied_text(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        result: Result<Result<String, String>, String>,
+    ) {
+        match result {
+            Ok(Ok(message)) => copy_to_clipboard(ctx, message),
+            Ok(Err(error)) | Err(error) => self.error = Some(error),
         }
     }
 
