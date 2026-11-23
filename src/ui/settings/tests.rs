@@ -396,17 +396,13 @@ fn global_ai_connection_mode_persists_and_applies_to_repositories() {
     app.open_settings();
     app.settings_window.llm.config.chatgpt_subscription = true;
     use crate::llm::chatgpt::PROVIDER_ID;
-    app.settings_window
-        .llm
-        .config
-        .subscription_models
-        .insert(
-            PROVIDER_ID.into(),
-            crate::llm::SubscriptionModelSettings {
-                model: "gpt-test".into(),
-                reasoning_effort: "low".into(),
-            },
-        );
+    app.settings_window.llm.config.subscription_models.insert(
+        PROVIDER_ID.into(),
+        crate::llm::SubscriptionModelSettings {
+            model: "gpt-test".into(),
+            reasoning_effort: "low".into(),
+        },
+    );
     apply_settings(&mut app).unwrap();
     assert!(app.llm_config.chatgpt_subscription);
     assert_eq!(

@@ -714,7 +714,7 @@ pub fn edit_config(path: &Path) -> Result<(), String> {
     }
     let path = path.canonicalize().map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
-    let mut command = {
+    let command = {
         let mut cmd = Command::new("open");
         cmd.arg("-t");
         cmd

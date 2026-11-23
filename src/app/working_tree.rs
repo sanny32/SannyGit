@@ -1,8 +1,8 @@
 //! Periodic, read-only working-tree checks, independent of interactive operations.
 use super::SannyGitApp;
 use crate::git::GitContext;
-use crate::{git, models::DiffPreview};
 use crate::models::ChangeFile;
+use crate::{git, models::DiffPreview};
 use std::{
     collections::HashMap,
     path::Path,
@@ -407,7 +407,11 @@ impl SannyGitApp {
             .map(|change| std::mem::take(&mut change.diff))
             .unwrap_or_default();
         self.update_merge_message(snapshot.merging, snapshot.merge_message, true);
-        let previous_paths: Vec<_> = self.changes.iter().map(|change| change.path.clone()).collect();
+        let previous_paths: Vec<_> = self
+            .changes
+            .iter()
+            .map(|change| change.path.clone())
+            .collect();
         self.changes = if previous_paths.is_empty() {
             snapshot.changes
         } else {
@@ -565,7 +569,11 @@ fn attach_ignored(
 mod tests {
     use super::*;
     use crate::test_support::SYSTEM_GIT;
-    use crate::{models::{ChangeFile, ChangeKind}, test_support::TempRepo, theme::ThemeChoice};
+    use crate::{
+        models::{ChangeFile, ChangeKind},
+        test_support::TempRepo,
+        theme::ThemeChoice,
+    };
 
     fn opened(repo: &TempRepo) -> SannyGitApp {
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
@@ -588,10 +596,7 @@ mod tests {
     #[test]
     fn stabilized_order_keeps_selection_on_the_same_path() {
         let previous = vec!["README.md".into(), "src/main.rs".into()];
-        let mut snapshot = vec![
-            sample_change("src/main.rs"),
-            sample_change("README.md"),
-        ];
+        let mut snapshot = vec![sample_change("src/main.rs"), sample_change("README.md")];
         snapshot[0].staged = true;
         let stabilized = stabilize_change_order(&previous, snapshot);
         let index = stabilized
@@ -615,7 +620,10 @@ mod tests {
         reordered[0].kind = ChangeKind::Added;
         let ordered = stabilize_change_order(&previous, reordered);
         assert_eq!(
-            ordered.iter().map(|change| change.path.as_str()).collect::<Vec<_>>(),
+            ordered
+                .iter()
+                .map(|change| change.path.as_str())
+                .collect::<Vec<_>>(),
             &["README.md", "githooks/a", "src/a.rs"] as &[&str]
         );
     }

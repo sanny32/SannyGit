@@ -23,8 +23,13 @@ pub fn show(
     let focused = ui.memory(|memory| memory.has_focus(edit_id));
     let height = ui.spacing().interact_size.y.max(CONTROL_HEIGHT);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
-    ui.painter()
-        .rect(rect, 4, palette.editor, egui::Stroke::NONE, StrokeKind::Inside);
+    ui.painter().rect(
+        rect,
+        4,
+        palette.editor,
+        egui::Stroke::NONE,
+        StrokeKind::Inside,
+    );
     let icon_width = ui.spacing().icon_width;
     let right_padding = ui.spacing().button_padding.x;
     let button_rect = Rect::from_min_max(

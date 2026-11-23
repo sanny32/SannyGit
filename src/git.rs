@@ -1343,19 +1343,13 @@ pub(crate) fn preflight_apply_commit(
         return Err("Select a valid commit before continuing.".into());
     }
     require_no_operation(git, root)?;
-    let head = text(run(
-        git,
-        root,
-        &["rev-parse", "--verify", "HEAD^{commit}"],
-    )?)?;
+    let head = text(run(git, root, &["rev-parse", "--verify", "HEAD^{commit}"])?)?;
     if head.trim() != expected_head {
         return Err("HEAD changed. Refresh the repository and retry.".into());
     }
     let snapshot = load(git, root)?;
     if snapshot.branch != expected_branch {
-        return Err(
-            "The current branch changed. Refresh the repository and retry.".into(),
-        );
+        return Err("The current branch changed. Refresh the repository and retry.".into());
     }
     if !snapshot.changes.is_empty() {
         let untracked = snapshot

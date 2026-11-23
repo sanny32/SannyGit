@@ -202,9 +202,7 @@ impl SannyGitApp {
             return;
         }
         let (status, success) = match self.sequencing {
-            crate::git::Sequencing::CherryPick => {
-                ("Aborting cherry-pick…", "Cherry-pick aborted")
-            }
+            crate::git::Sequencing::CherryPick => ("Aborting cherry-pick…", "Cherry-pick aborted"),
             crate::git::Sequencing::Revert => ("Aborting revert…", "Revert aborted"),
             crate::git::Sequencing::Rebase => ("Aborting rebase…", "Rebase aborted"),
             _ => ("Aborting merge…", "Merge aborted"),
@@ -428,9 +426,7 @@ impl SannyGitApp {
                 {
                     "Merge ready to review and commit"
                 }
-                (Some(merge::Mode::Squash), Ok(_)) => {
-                    "Squash merge staged. Review and commit"
-                }
+                (Some(merge::Mode::Squash), Ok(_)) => "Squash merge staged. Review and commit",
                 (Some(merge::Mode::FastForward), Ok(_)) => "Fast-forward merge complete",
                 _ => "Merge complete",
             };

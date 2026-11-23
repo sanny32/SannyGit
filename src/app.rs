@@ -1674,8 +1674,7 @@ impl SannyGitApp {
         self.status = "Creating branch…".into();
         let start = self.branches.create_from_commit.take();
         self.start_background_operation(move |git| {
-            let outcome =
-                crate::branches::create(git, &root, &name, switch_to, start.as_deref());
+            let outcome = crate::branches::create(git, &root, &name, switch_to, start.as_deref());
             let snapshot = git::load(git, &root);
             WorkerResult::Operation {
                 committed: false,
@@ -2141,7 +2140,9 @@ impl SannyGitApp {
             let result = match reader.try_recv() {
                 Ok(result) => result,
                 Err(mpsc::TryRecvError::Empty) => return,
-                Err(mpsc::TryRecvError::Disconnected) => Err("Could not load ChatGPT models".into()),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Err("Could not load ChatGPT models".into())
+                }
             };
             self.settings_window.chatgpt_models_reader = None;
             match result {

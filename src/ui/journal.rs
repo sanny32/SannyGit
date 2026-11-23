@@ -421,8 +421,12 @@ fn commit_menu(app: &SannyGitApp, index: usize) -> Vec<Entry<CommitAction>> {
             CommitAction::CherryPick(hash.clone()),
         )
         .help(operation_help),
-        Entry::item("Revert", operation_ready, CommitAction::Revert(hash.clone()))
-            .help(operation_help),
+        Entry::item(
+            "Revert",
+            operation_ready,
+            CommitAction::Revert(hash.clone()),
+        )
+        .help(operation_help),
         Entry::item(
             "Check Out",
             refs_ready && commit_id,
@@ -458,7 +462,11 @@ fn commit_menu(app: &SannyGitApp, index: usize) -> Vec<Entry<CommitAction>> {
             "Compare with Comparison Commit",
             refs_ready
                 && commit_id
-                && app.history.comparison_commit.as_deref().is_some_and(|base| base != hash),
+                && app
+                    .history
+                    .comparison_commit
+                    .as_deref()
+                    .is_some_and(|base| base != hash),
             CommitAction::CompareWithComparison,
         )
         .help("Compare the selected commit with the remembered comparison commit"),

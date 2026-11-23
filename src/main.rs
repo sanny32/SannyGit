@@ -2,6 +2,7 @@
 
 mod app;
 mod branches;
+mod cherry_pick;
 mod clone_source;
 mod conflict;
 mod diff;
@@ -13,9 +14,7 @@ mod hunk;
 mod llm;
 mod logging;
 mod menu;
-mod cherry_pick;
 mod merge;
-mod revert;
 #[cfg(test)]
 mod mock_data;
 mod models;
@@ -34,6 +33,7 @@ mod rebase;
 mod remote_config;
 mod remotes;
 mod repository;
+mod revert;
 mod stash;
 #[cfg(test)]
 mod test_support;

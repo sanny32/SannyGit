@@ -89,9 +89,7 @@ impl FileSelection {
         };
     }
     fn retain(&mut self, changes: &[crate::models::ChangeFile]) {
-        let active_path = changes
-            .get(self.active)
-            .map(|change| change.path.clone());
+        let active_path = changes.get(self.active).map(|change| change.path.clone());
         self.paths
             .retain(|path| changes.iter().any(|change| &change.path == path));
         if self

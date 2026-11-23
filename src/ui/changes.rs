@@ -71,8 +71,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 {
                     app.open_abort_merge();
                 }
-                if app.sequencing.supports_skip() {
-                    if ui
+                if app.sequencing.supports_skip()
+                    && ui
                         .add_enabled(
                             app.sequencer_skip_allowed(),
                             eframe::egui::Button::new("Skip"),
@@ -80,33 +80,28 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         .help_text("Skip the current step after conflicts are resolved")
                         .disabled_help_text("Resolve conflicts and refresh the working tree")
                         .clicked()
-                    {
-                        app.skip_sequence();
-                    }
+                {
+                    app.skip_sequence();
                 }
                 if matches!(
                     app.sequencing,
                     crate::git::Sequencing::CherryPick
                         | crate::git::Sequencing::Revert
                         | crate::git::Sequencing::Rebase
-                ) {
-                    if ui
-                        .add_enabled(
-                            app.sequencer_continue_allowed(),
-                            eframe::egui::Button::new("Continue"),
-                        )
-                        .help_text("Continue after all conflicts are resolved")
-                        .disabled_help_text("Resolve conflicts and refresh the working tree")
-                        .clicked()
-                    {
-                        app.continue_sequence();
-                    }
+                ) && ui
+                    .add_enabled(
+                        app.sequencer_continue_allowed(),
+                        eframe::egui::Button::new("Continue"),
+                    )
+                    .help_text("Continue after all conflicts are resolved")
+                    .disabled_help_text("Resolve conflicts and refresh the working tree")
+                    .clicked()
+                {
+                    app.continue_sequence();
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     icons::paint(ui, Icon::Warning, palette.warning, 16.0);
-                    ui.add(
-                        eframe::egui::Label::new(app.sequencing.banner()).truncate(),
-                    );
+                    ui.add(eframe::egui::Label::new(app.sequencing.banner()).truncate());
                 });
             });
         });
@@ -135,9 +130,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .collect::<Vec<_>>();
     if let Some(ascending) = index_sort {
         visible.sort_by(|&left, &right| {
-            let order = app.changes[left]
-                .staged
-                .cmp(&app.changes[right].staged);
+            let order = app.changes[left].staged.cmp(&app.changes[right].staged);
             let order = if ascending { order } else { order.reverse() };
             order.then_with(|| path_rank(left).cmp(&path_rank(right)))
         });
@@ -1011,7 +1004,8 @@ fn sync_display_order(ui: &mut Ui, app: &SannyGitApp) -> Vec<String> {
         .filter(|change| row_visible(app, change))
         .map(|change| change.path.clone())
         .collect();
-    let mut order: Vec<String> = ui.data_mut(|data| data.get_persisted(order_id).unwrap_or_default());
+    let mut order: Vec<String> =
+        ui.data_mut(|data| data.get_persisted(order_id).unwrap_or_default());
     if order.is_empty() {
         order = visible_paths.clone();
     } else {
@@ -1118,7 +1112,11 @@ mod tests {
             before.textures_delta.clear();
             let y_before = label(&before, &target);
             app.changes.swap(0, 2);
-            let staged = app.changes.iter_mut().find(|change| change.path == target).unwrap();
+            let staged = app
+                .changes
+                .iter_mut()
+                .find(|change| change.path == target)
+                .unwrap();
             staged.staged = true;
             staged.kind = ChangeKind::Added;
             let mut after = ctx.run_ui(

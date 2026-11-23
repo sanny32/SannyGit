@@ -395,7 +395,9 @@ fn first_with_limits(
         .max()
         .unwrap_or(0);
     let end = requested.max(page_size).max(selected_end).min(ids.len());
-    let cursor_tag = file.map(|file| format!("file:{file}")).or_else(|| tag.map(str::to_owned));
+    let cursor_tag = file
+        .map(|file| format!("file:{file}"))
+        .or_else(|| tag.map(str::to_owned));
     let cursor = Cursor {
         basis: initial,
         all_branches: all,

@@ -740,7 +740,13 @@ fn pull_rebase_replays_local_commits_when_branches_diverged() {
     )
     .unwrap();
     assert_ne!(head(&SYSTEM_GIT, &other).unwrap(), remote);
-    assert!(git::is_ancestor(&SYSTEM_GIT, &other, &remote, &head(&SYSTEM_GIT, &other).unwrap()).unwrap());
+    assert!(git::is_ancestor(
+        &SYSTEM_GIT,
+        &other,
+        &remote,
+        &head(&SYSTEM_GIT, &other).unwrap()
+    )
+    .unwrap());
     assert_eq!(
         fs::read_to_string(other.join("file")).unwrap(),
         "remote commit\n"

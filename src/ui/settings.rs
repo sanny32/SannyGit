@@ -7,9 +7,8 @@ use crate::{
     theme::{semibold_family, InterfaceStyle, Palette, ThemeChoice},
 };
 use eframe::egui::{
-    self, Align, CentralPanel, Frame, Key, Layout, Margin, Panel, Popup, Rect,
-    RectAlign, RichText, ScrollArea, Sense, StrokeKind, TextWrapMode, Ui, UiBuilder, Vec2,
-    ViewportCommand, ViewportId,
+    self, Align, CentralPanel, Frame, Key, Layout, Margin, Panel, Popup, Rect, RectAlign, RichText,
+    ScrollArea, Sense, StrokeKind, TextWrapMode, Ui, UiBuilder, Vec2, ViewportCommand, ViewportId,
 };
 
 const PREFERENCES_SIZE: Vec2 = egui::vec2(790.0, 456.0);
@@ -226,24 +225,24 @@ fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         .auto_shrink([false; 2])
                         .max_height(scroll_height)
                         .show(ui, |ui| {
-                        section(
-                            ui,
-                            app,
-                            SettingsPage::General,
-                            "User Interface",
-                            |ui, app| {
-                                entry(ui, app, SettingsPage::Appearance, "Appearance");
-                                entry(ui, app, SettingsPage::DateTime, "Date & Time");
-                                entry(ui, app, SettingsPage::Logging, "Logging");
-                            },
-                        );
-                        section(ui, app, SettingsPage::Git, "Git", |ui, app| {
-                            entry(ui, app, SettingsPage::Remote, "Remote");
+                            section(
+                                ui,
+                                app,
+                                SettingsPage::General,
+                                "User Interface",
+                                |ui, app| {
+                                    entry(ui, app, SettingsPage::Appearance, "Appearance");
+                                    entry(ui, app, SettingsPage::DateTime, "Date & Time");
+                                    entry(ui, app, SettingsPage::Logging, "Logging");
+                                },
+                            );
+                            section(ui, app, SettingsPage::Git, "Git", |ui, app| {
+                                entry(ui, app, SettingsPage::Remote, "Remote");
+                            });
+                            section(ui, app, SettingsPage::Llm, "AI", |ui, app| {
+                                entry(ui, app, SettingsPage::CommitMessages, "Commit messages")
+                            });
                         });
-                        section(ui, app, SettingsPage::Llm, "AI", |ui, app| {
-                            entry(ui, app, SettingsPage::CommitMessages, "Commit messages")
-                        });
-                    });
                 });
         });
 }
@@ -859,7 +858,9 @@ fn repository_llm_prompt_tab(ui: &mut Ui, app: &mut SannyGitApp, path: Option<&s
         .cloned()
         .unwrap_or_else(|| global.clone());
     if inherit {
-        ui.add_enabled_ui(false, |ui| instructions_editor(ui, &mut instructions, false));
+        ui.add_enabled_ui(false, |ui| {
+            instructions_editor(ui, &mut instructions, false)
+        });
         return;
     }
     instructions_editor(ui, &mut instructions, false);
@@ -937,9 +938,7 @@ fn chatgpt_provider(
     models: &[crate::llm::chatgpt::Model],
 ) -> bool {
     let mut clicked = false;
-    Frame::new()
-        .inner_margin(Margin::ZERO)
-        .show(ui, |ui| {
+    Frame::new().inner_margin(Margin::ZERO).show(ui, |ui| {
         use crate::llm::chatgpt::PROVIDER_ID;
         let settings = config
             .subscription_models
@@ -956,18 +955,18 @@ fn chatgpt_provider(
                     Some((enabled, connected)),
                     &mut clicked,
                     |ui| {
-                    let provider = (
-                        icons::image(Icon::OpenAi, palette.text, 20.0),
-                        "OpenAI (ChatGPT)",
-                    );
-                    egui::ComboBox::from_id_salt("preferences.ai.provider")
-                        .width(ui.available_width())
-                        .selected_text(provider.clone())
-                        .show_ui(ui, |ui| {
-                            if ui.selectable_label(true, provider).clicked() {
-                                ui.close();
-                            }
-                        });
+                        let provider = (
+                            icons::image(Icon::OpenAi, palette.text, 20.0),
+                            "OpenAI (ChatGPT)",
+                        );
+                        egui::ComboBox::from_id_salt("preferences.ai.provider")
+                            .width(ui.available_width())
+                            .selected_text(provider.clone())
+                            .show_ui(ui, |ui| {
+                                if ui.selectable_label(true, provider).clicked() {
+                                    ui.close();
+                                }
+                            });
                     },
                 );
                 ui.end_row();
@@ -980,7 +979,7 @@ fn chatgpt_provider(
                 });
                 ui.end_row();
             });
-        });
+    });
     clicked
 }
 
@@ -1013,7 +1012,10 @@ fn chatgpt_provider_field_row(
                 .clicked();
         } else {
             ui.allocate_exact_size(
-                Vec2::new(CHATGPT_ACTION_BUTTON_MIN_WIDTH, crate::theme::CONTROL_HEIGHT),
+                Vec2::new(
+                    CHATGPT_ACTION_BUTTON_MIN_WIDTH,
+                    crate::theme::CONTROL_HEIGHT,
+                ),
                 Sense::hover(),
             );
         }
@@ -1173,7 +1175,11 @@ fn generation_settings_field(
 ) {
     let id = ui.make_persistent_id("chatgpt.generation");
     let width = ui.available_width();
-    let height = ui.spacing().interact_size.y.max(crate::theme::CONTROL_HEIGHT);
+    let height = ui
+        .spacing()
+        .interact_size
+        .y
+        .max(crate::theme::CONTROL_HEIGHT);
     let popup_open = Popup::is_id_open(ui.ctx(), id.with("popup"));
     use crate::llm::chatgpt::selected_model;
     let selected = selected_model(models, &settings.model);
@@ -1187,8 +1193,13 @@ fn generation_settings_field(
     };
     let effort = effort_summary(settings, selected);
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
-    ui.painter()
-        .rect(rect, 4, palette.editor, egui::Stroke::NONE, StrokeKind::Inside);
+    ui.painter().rect(
+        rect,
+        4,
+        palette.editor,
+        egui::Stroke::NONE,
+        StrokeKind::Inside,
+    );
 
     let icon_width = ui.spacing().icon_width;
     let right_padding = ui.spacing().button_padding.x;
@@ -1247,10 +1258,7 @@ fn generation_settings_field(
         .rect_stroke(rect, 4, (1.0, border), StrokeKind::Inside);
 
     let mut anchor = response.rect;
-    if let Some(to_global) = ui
-        .ctx()
-        .layer_transform_to_global(response.layer_id)
-    {
+    if let Some(to_global) = ui.ctx().layer_transform_to_global(response.layer_id) {
         anchor = to_global * anchor;
     }
     let menu_height = generation_menu_max_height(ui, anchor.bottom());
@@ -1328,10 +1336,7 @@ fn generation_settings_menu(
             Vec2::new(row_width, row_height),
             Layout::left_to_right(Align::Center),
             |ui| {
-                if ui
-                    .selectable_label(selected, &model.display_name)
-                    .clicked()
-                {
+                if ui.selectable_label(selected, &model.display_name).clicked() {
                     settings.model.clone_from(&model.slug);
                     sync_effort_with_model(settings, model);
                 }
@@ -1388,11 +1393,7 @@ fn sync_effort_with_model(
         .iter()
         .any(|effort| effort == &settings.reasoning_effort)
     {
-        settings.reasoning_effort = model
-            .reasoning_efforts
-            .first()
-            .cloned()
-            .unwrap_or_default();
+        settings.reasoning_effort = model.reasoning_efforts.first().cloned().unwrap_or_default();
     }
 }
 

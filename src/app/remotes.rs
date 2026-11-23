@@ -186,11 +186,12 @@ impl SannyGitApp {
         };
         let update_tags = dialog.operation == Operation::Pull && dialog.pull.update_tags;
         let tag_policy = (dialog.operation == Operation::Pull).then_some(dialog.pull.update_tags);
-        let pull_strategy = (dialog.operation == Operation::Pull).then_some(if dialog.pull.rebase {
-            remotes::PullStrategy::Rebase
-        } else {
-            remotes::PullStrategy::FastForward
-        });
+        let pull_strategy =
+            (dialog.operation == Operation::Pull).then_some(if dialog.pull.rebase {
+                remotes::PullStrategy::Rebase
+            } else {
+                remotes::PullStrategy::FastForward
+            });
         let remote = dialog.remote.clone();
         let target = dialog.branch.clone();
         let expected_branch = state.branch.clone();

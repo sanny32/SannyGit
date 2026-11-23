@@ -25,7 +25,13 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             crate::ui::controls::icons::Icon::Warning,
         );
         dialog_style::section(ui, palette.panel, egui::Margin::symmetric(12, 10), |ui| {
-            ui.label(RichText::new(format!("Commit {}", &dialog.commit[..12.min(dialog.commit.len())])).small());
+            ui.label(
+                RichText::new(format!(
+                    "Commit {}",
+                    &dialog.commit[..12.min(dialog.commit.len())]
+                ))
+                .small(),
+            );
             for (index, hash) in dialog.parents.iter().take(2).enumerate() {
                 let label = format!("Parent {} — {}", index + 1, &hash[..8.min(hash.len())]);
                 if ui

@@ -33,20 +33,29 @@ pub fn abort(git: &GitContext, root: &Path) -> Result<(), String> {
     {
         return crate::rebase::abort(git, root);
     }
-    let args = if directory.join("MERGE_HEAD").try_exists().map_err(|error| {
-        format!("Could not check merge state: {error}")
-    })? {
+    let args = if directory
+        .join("MERGE_HEAD")
+        .try_exists()
+        .map_err(|error| format!("Could not check merge state: {error}"))?
+    {
         ["merge", "--abort"]
-    } else if directory.join("CHERRY_PICK_HEAD").try_exists().map_err(|error| {
-        format!("Could not check cherry-pick state: {error}")
-    })? {
+    } else if directory
+        .join("CHERRY_PICK_HEAD")
+        .try_exists()
+        .map_err(|error| format!("Could not check cherry-pick state: {error}"))?
+    {
         ["cherry-pick", "--abort"]
-    } else if directory.join("REVERT_HEAD").try_exists().map_err(|error| {
-        format!("Could not check revert state: {error}")
-    })? {
+    } else if directory
+        .join("REVERT_HEAD")
+        .try_exists()
+        .map_err(|error| format!("Could not check revert state: {error}"))?
+    {
         ["revert", "--abort"]
     } else {
-        return Err("There is no merge, cherry-pick, or revert in progress. Refresh the working tree.".into());
+        return Err(
+            "There is no merge, cherry-pick, or revert in progress. Refresh the working tree."
+                .into(),
+        );
     };
     git::run(git, root, &args).map(|_| ())
 }

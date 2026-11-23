@@ -4,7 +4,9 @@ use std::path::PathBuf;
 
 impl SannyGitApp {
     pub fn open_file_log(&mut self, file: String) {
-        if self.busy() || self.repositories.get(self.selected_repository).is_none() || file.is_empty()
+        if self.busy()
+            || self.repositories.get(self.selected_repository).is_none()
+            || file.is_empty()
         {
             return;
         }
@@ -116,7 +118,10 @@ impl SannyGitApp {
         generation: u64,
         result: Result<DiffPreview, String>,
     ) {
-        if !self.repositories.get(self.selected_repository).is_some_and(|repo| repo.path == path)
+        if !self
+            .repositories
+            .get(self.selected_repository)
+            .is_some_and(|repo| repo.path == path)
             || self.history.commit_preview_generation != generation
             || self.history.comparing_with.as_deref() != Some(from.as_str())
             || self.history.selected_commit.as_deref() != Some(to.as_str())
