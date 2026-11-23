@@ -421,6 +421,7 @@ impl SannyGitApp {
     fn sync_external_history(&mut self, head_moved: bool, explicit: bool, refs: Option<Vec<u8>>) {
         if head_moved {
             self.tracking.invalidate();
+            self.history.reveal_head_on_reload();
         }
         let mut reload_history = explicit || head_moved;
         let mut reload_branches = explicit || head_moved;
@@ -890,15 +891,28 @@ mod tests {
     }
 
     #[test]
-    fn external_commit_on_the_same_branch_reloads_history() {
+    fn external_commit_on_the_same_branch_reveals_head_after_reload() {
         let repo = TempRepo::new();
         repo.write("file", "base\n");
         repo.git(&["add", "file"]);
         repo.git(&["commit", "-m", "base"]);
         let mut app = opened(&repo);
+        let finish_history_load = |app: &mut SannyGitApp| {
+            app.load_history();
+            let result = app
+                .history
+                .history_worker
+                .take()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(15))
+                .unwrap();
+            app.apply_worker_result(result);
+        };
+        finish_history_load(&mut app);
         app.commit.message = "Keep draft".into();
         let head = app.branches.head_commit.clone();
-        assert!(!head.is_empty());
+        assert_eq!(app.take_history_scroll(), Some((head.clone(), 0.0)));
+        app.remember_history_scroll(head.clone(), 7.0);
         idle_history_and_refs(&mut app);
         repo.git(&["commit", "--allow-empty", "-m", "external"]);
         refresh(&mut app);
@@ -908,6 +922,12 @@ mod tests {
         assert_eq!(app.commit.message, "Keep draft");
         assert!(app.history.history_pending && app.history.history_loading);
         assert!(app.branches.pending && app.branches.loading);
+        assert!(app.take_history_scroll().is_none());
+        finish_history_load(&mut app);
+        assert_eq!(
+            app.take_history_scroll(),
+            Some((app.branches.head_commit.clone(), 0.0))
+        );
     }
 
     #[test]

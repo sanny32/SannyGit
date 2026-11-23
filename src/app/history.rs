@@ -306,6 +306,9 @@ impl SannyGitApp {
             return;
         }
         self.queue_history_reload();
+        if self.history.tag.is_none() {
+            self.history.reveal_head_on_reload();
+        }
     }
 
     pub(crate) fn history_reload_pending(&self) -> bool {
@@ -826,7 +829,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_head_keeps_rows_until_reload_which_retains_deep_selection_and_anchor() {
+    fn stale_head_keeps_rows_until_reload_which_retains_deep_selection() {
         let (repo, mut app) = opened();
         let selected = app.history.commits[499].hash.clone();
         let anchor = app.history.commits[490].hash.clone();
@@ -851,7 +854,8 @@ mod tests {
         assert!(app.history.history_error.is_none());
         assert_eq!(app.history.commits.len(), 501);
         assert_eq!(app.history.commits[500].hash, selected);
-        assert_eq!(app.take_history_scroll(), Some((anchor, 7.0)));
+        let head = app.history.commits[0].hash.clone();
+        assert_eq!(app.take_history_scroll(), Some((head, 0.0)));
     }
 
     #[test]
@@ -894,7 +898,7 @@ mod tests {
     }
 
     #[test]
-    fn journal_keeps_its_scroll_on_reload_and_reveals_head_on_request() {
+    fn journal_keeps_rows_visible_until_reload_reveals_head() {
         use crate::theme::InterfaceStyle;
         use eframe::egui::{self, Context, Event, Modifiers, Pos2, RawInput, Rect};
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
@@ -965,19 +969,11 @@ mod tests {
                     assert_ne!(before, rows(&initial));
                     repo.git(&["commit", "--allow-empty", "-m", "New HEAD"]);
                     app.reload_history();
+                    assert_eq!(before, rows(&render(&mut app, vec![])));
                     wait(&mut app);
                     assert!(app.history.history_error.is_none());
                     assert_eq!(app.history.commits.len(), 501);
-                    for _ in 0..3 {
-                        render(&mut app, vec![]);
-                    }
-                    let after = rows(&render(&mut app, vec![]));
-                    assert_eq!(
-                        before, after,
-                        "Reload moved old rows: {theme:?} {style:?} {size:?}"
-                    );
                     assert_eq!(app.history.selected_commit, selected);
-                    app.history.reveal_head();
                     for _ in 0..3 {
                         render(&mut app, vec![]);
                     }
