@@ -593,11 +593,11 @@ impl SannyGitApp {
         }
     }
 
-    fn spawn_reader(
+    fn spawn_reader<T: Send + 'static>(
         &self,
         repaint: Option<eframe::egui::Context>,
-        job: impl FnOnce(&GitContext) -> WorkerResult + Send + 'static,
-    ) -> Result<Receiver<WorkerResult>, String> {
+        job: impl FnOnce(&GitContext) -> T + Send + 'static,
+    ) -> Result<Receiver<T>, String> {
         let (sender, receiver) = mpsc::channel();
         let git_context = crate::git::GitContext::new(self.preferences.git_executable.clone());
         std::thread::Builder::new()
@@ -627,9 +627,7 @@ impl SannyGitApp {
         }
     }
 
-    fn poll_reader(
-        receiver: &mut Option<Receiver<WorkerResult>>,
-    ) -> Option<Result<WorkerResult, String>> {
+    fn poll_reader<T>(receiver: &mut Option<Receiver<T>>) -> Option<Result<T, String>> {
         let result = match receiver.as_ref()?.try_recv() {
             Ok(result) => Ok(result),
             Err(mpsc::TryRecvError::Empty) => return None,
@@ -1174,6 +1172,38 @@ impl SannyGitApp {
         self.branches.loading = false;
         self.branches.current = false;
         self.branches.error = Some(error);
+    }
+
+    pub fn copy_tag_message(&mut self, ctx: &eframe::egui::Context, oid: String) {
+        let Some(repository) = self.repositories.get(self.selected_repository) else {
+            return;
+        };
+        let root = PathBuf::from(&repository.path);
+        match self.spawn_reader(Some(ctx.clone()), move |git| {
+            crate::branches::read_tag_message(git, &root, &oid)
+        }) {
+            Ok(reader) => self.branches.tag_message_reader = Some(reader),
+            Err(error) => {
+                self.branches.tag_message_reader = None;
+                self.error = Some(error);
+            }
+        }
+    }
+
+    fn poll_tag_message(&mut self, ctx: &eframe::egui::Context) {
+        match Self::poll_reader(&mut self.branches.tag_message_reader) {
+            Some(Ok(Ok(message))) => {
+                #[cfg(windows)]
+                let message = message.replace("\r\n", "\n").replace('\n', "\r\n");
+                if !message.is_empty() {
+                    ctx.copy_text(message);
+                }
+            }
+            Some(Ok(Err(error)) | Err(error)) => {
+                self.error = Some(error);
+            }
+            None => {}
+        }
     }
 
     fn poll_refs(&mut self) {
@@ -2306,6 +2336,7 @@ impl eframe::App for SannyGitApp {
         ui.set_style(ui.ctx().global_style());
         self.poll_worker();
         self.poll_refs();
+        self.poll_tag_message(ui.ctx());
         self.poll_view_reads();
         self.finish_startup();
         self.poll_working_tree();

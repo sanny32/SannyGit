@@ -25,7 +25,7 @@ enum BranchRequest {
     ResetRef(String),
     ResetRefAdvanced(String),
     CopyRefName(String),
-    CopyMessage(String),
+    CopyTagMessage(String),
     MergeBranch(String),
     RebaseBranch(String),
     FastForward(String),
@@ -237,7 +237,7 @@ fn dispatch_branch_request(ctx: &egui::Context, app: &mut SannyGitApp, request: 
             app.open_rename_branch();
         }
         BranchRequest::CopyRefName(name) => ctx.copy_text(name),
-        BranchRequest::CopyMessage(message) => ctx.copy_text(message),
+        BranchRequest::CopyTagMessage(oid) => app.copy_tag_message(ctx, oid),
         BranchRequest::Unavailable => {}
     }
 }
@@ -705,11 +705,11 @@ fn tag_menu(tag: &BranchRef, requested: &BranchRequests) -> Vec<popup_menu::Entr
         .help("Refresh the repository and wait for the current operation"),
         E::Separator,
         E::item("Copy", true, BranchRequest::CopyRefName(tag.name.clone())),
-        if let Some(message) = &tag.tag_subject {
+        if tag.tag_subject.is_some() {
             E::item(
                 "Copy Message",
                 true,
-                BranchRequest::CopyMessage(message.clone()),
+                BranchRequest::CopyTagMessage(tag.hash.clone()),
             )
         } else {
             E::item("Copy Message", false, BranchRequest::Unavailable)

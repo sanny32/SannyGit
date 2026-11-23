@@ -531,6 +531,17 @@ fn lists_current_local_remote_upstream_and_annotated_tags_without_writes() {
         .iter()
         .filter(|r| r.name != "release")
         .all(|r| r.tag_subject.is_none()));
+    let tag = snapshot.refs.iter().find(|r| r.name == "release").unwrap();
+    assert_eq!(
+        read_tag_message(&SYSTEM_GIT, &repo.0, &tag.hash).unwrap(),
+        "Версия 1.0\ncontinued\n\nDetails\n"
+    );
+    let lightweight = snapshot
+        .refs
+        .iter()
+        .find(|r| r.name == "lightweight")
+        .unwrap();
+    assert!(read_tag_message(&SYSTEM_GIT, &repo.0, &lightweight.hash).is_err());
     assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
 }
 

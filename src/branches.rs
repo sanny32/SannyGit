@@ -26,6 +26,16 @@ pub fn load(git: &GitContext, root: &Path) -> Result<RefSnapshot, String> {
     Ok(RefSnapshot { refs, has_head })
 }
 
+pub fn read_tag_message(git: &GitContext, root: &Path, oid: &str) -> Result<String, String> {
+    let object = git::run(git, root, &["cat-file", "tag", "--", oid])?;
+    let body = object
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .ok_or("Malformed Git tag object")?
+        + 2;
+    Ok(String::from_utf8_lossy(&object[body..]).into_owned())
+}
+
 fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
     if !bytes.is_empty() && !bytes.ends_with(b"\n") {
         return Err("Truncated Git ref output".into());
