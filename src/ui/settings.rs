@@ -2,7 +2,7 @@ use super::controls::dialog_style::DialogResponse;
 use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
 use crate::{
-    app::{AiConnectionStatus, RepositoryLlmTab, SannyGitApp, SettingsPage},
+    app::{AiConnectionStatus, SannyGitApp, SettingsPage},
     logging::{self, Level},
     theme::{semibold_family, InterfaceStyle, Palette, ThemeChoice},
 };
@@ -24,16 +24,40 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         return;
     }
     if app.settings_window.llm_repository.is_some() {
-        #[cfg(target_os = "macos")]
-        crate::native_window::end_modal(ui.ctx());
-        repository_llm_dialog(ui, app);
+        repository_llm_window(ui.ctx(), app);
         return;
     }
     preferences_window(ui.ctx(), app);
 }
 
 fn preferences_window(ctx: &egui::Context, app: &mut SannyGitApp) {
-    let (title, min_size) = ("SannyGit Preferences", [680.0, 380.0]);
+    settings_viewport(
+        ctx,
+        app,
+        ViewportId::from_hash_of("sannygit.preferences"),
+        "SannyGit Preferences",
+        false,
+    );
+}
+
+fn repository_llm_window(ctx: &egui::Context, app: &mut SannyGitApp) {
+    settings_viewport(
+        ctx,
+        app,
+        ViewportId::from_hash_of("sannygit.repository.llm.settings"),
+        "Repository AI Settings",
+        true,
+    );
+}
+
+fn settings_viewport(
+    ctx: &egui::Context,
+    app: &mut SannyGitApp,
+    viewport_id: ViewportId,
+    title: &'static str,
+    repository: bool,
+) {
+    let min_size = [680.0, 380.0];
     if !app.settings_window.initial_position_set {
         app.settings_window.initial_position = ctx.input(|input| {
             let viewport = input.viewport();
@@ -57,7 +81,6 @@ fn preferences_window(ctx: &egui::Context, app: &mut SannyGitApp) {
         Some(position) => builder.with_position(position),
         None => builder,
     };
-    let viewport_id = ViewportId::from_hash_of("sannygit.preferences");
     ctx.show_viewport_immediate(viewport_id, builder, |ui, class| {
         #[cfg(target_os = "macos")]
         ui.input_mut(|input| input.events.append(&mut app.pending_native_edit_events));
@@ -81,7 +104,11 @@ fn preferences_window(ctx: &egui::Context, app: &mut SannyGitApp) {
         if let Err(error) = crate::native_window::finish_first_presentation(ui.ctx()) {
             app.error = Some(error.to_string());
         }
-        window_contents(ui, app);
+        if repository {
+            repository_window_contents(ui, app);
+        } else {
+            window_contents(ui, app);
+        }
         if app.settings_window.open
             && app.settings_window.needs_reveal
             && class == egui::ViewportClass::Immediate
@@ -169,6 +196,89 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
             }
         });
     super::show_errors(ui, app);
+}
+
+fn repository_window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
+    let palette = app.palette();
+    super::controls::dialog_style::prepare_keyboard(ui);
+    ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+    footer(ui, app, palette);
+    repository_navigation(ui, app, palette);
+    CentralPanel::default()
+        .frame(Frame::new().fill(palette.panel_alt).inner_margin(12))
+        .show(ui, |ui| {
+            let page_height = ui.available_height();
+            let content_height = page_height;
+            match app.settings_window.page {
+                SettingsPage::CommitMessages => {
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(ui.available_width(), content_height),
+                        Layout::top_down(Align::Min),
+                        |ui| {
+                            ui.set_min_height(content_height);
+                            ui.set_max_height(content_height);
+                            repository_page(ui, app, palette);
+                        },
+                    );
+                }
+                _ => {
+                    ScrollArea::vertical()
+                        .id_salt("repository.preferences.page")
+                        .auto_shrink([false, false])
+                        .max_height(content_height)
+                        .show(ui, |ui| repository_page(ui, app, palette));
+                }
+            }
+        });
+    super::show_errors(ui, app);
+}
+
+fn repository_navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
+    Panel::left("repository.preferences.navigation")
+        .resizable(false)
+        .exact_size(206.0)
+        .show_separator_line(false)
+        .frame(Frame::new().fill(palette.header).inner_margin(Margin {
+            left: 12,
+            right: 0,
+            top: 12,
+            bottom: 12,
+        }))
+        .show(ui, |ui| {
+            ui.take_available_space();
+            let panel_size = ui.available_size();
+            Frame::new()
+                .fill(palette.panel)
+                .stroke((1.0, palette.border))
+                .show(ui, |ui| {
+                    ui.set_min_size(panel_size - Vec2::splat(2.0));
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let scroll_height = ui.available_height();
+                    ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .max_height(scroll_height)
+                        .show(ui, |ui| {
+                            section(ui, app, SettingsPage::Llm, "AI", |ui, app| {
+                                entry(ui, app, SettingsPage::CommitMessages, "Commit messages");
+                            });
+                        });
+                });
+        });
+}
+
+fn repository_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+    let Some(path) = app.settings_window.llm_repository.clone() else {
+        return;
+    };
+    match app.settings_window.page {
+        SettingsPage::Llm => repository_ai_page(ui, app, palette, &path),
+        SettingsPage::CommitMessages => {
+            heading(ui, "Commit messages");
+            repository_llm_prompt_tab(ui, app, Some(&path));
+        }
+        _ => {}
+    }
 }
 
 fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
@@ -551,7 +661,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             });
         }
         SettingsPage::Llm => {
-            ai_page(ui, app, palette);
+            ai_page(ui, app, palette, true, None);
         }
         SettingsPage::CommitMessages => {
             heading(ui, "Commit messages");
@@ -568,28 +678,41 @@ enum SettingsError {
 
 fn apply_settings(app: &mut SannyGitApp) -> Result<(), SettingsError> {
     if let Some(path) = &app.settings_window.llm_repository {
+        app.settings_window
+            .llm
+            .save_secret(&app.llm_config, None)
+            .map_err(SettingsError::Credential)?;
+        app.llm_config = app.settings_window.llm.config.clone();
+        for config in app.repository_llm_configs.values_mut() {
+            SannyGitApp::strip_repository_connection_mode(config, &app.llm_config);
+        }
+        let global = &app.llm_config;
         if let Some(draft) = app.settings_window.llm_repositories.get(path) {
-            let previous = app
-                .repository_llm_configs
-                .get(path)
-                .unwrap_or(&app.llm_config);
-            draft
-                .save_secret(previous, Some(path))
-                .map_err(SettingsError::Credential)?;
+            let previous = app.repository_llm_configs.get(path).unwrap_or(global);
             let mut config = draft.config.clone();
-            SannyGitApp::strip_repository_connection_mode(
-                &mut config,
-                &app.settings_window.llm.config,
-            );
-            app.repository_llm_configs.insert(path.clone(), config);
+            SannyGitApp::strip_repository_connection_mode(&mut config, global);
+            let store_override = !SannyGitApp::repository_model_matches_global(&config, global)
+                || draft.secret_changed(previous);
+            if store_override {
+                draft
+                    .save_secret(previous, Some(path))
+                    .map_err(SettingsError::Credential)?;
+                app.repository_llm_configs.insert(path.clone(), config);
+            } else {
+                app.repository_llm_configs.remove(path);
+            }
         } else {
             app.repository_llm_configs.remove(path);
         }
-        if let Some(instructions) = app.settings_window.llm_instructions.get(path) {
-            app.repository_llm_instructions
-                .insert(path.clone(), instructions.clone());
-        } else {
-            app.repository_llm_instructions.remove(path);
+        let global_instructions = &app.settings_window.llm.config.instructions;
+        match app.settings_window.llm_instructions.get(path) {
+            Some(instructions) if instructions != global_instructions => {
+                app.repository_llm_instructions
+                    .insert(path.clone(), instructions.clone());
+            }
+            _ => {
+                app.repository_llm_instructions.remove(path);
+            }
         }
     } else {
         app.settings_window
@@ -627,7 +750,6 @@ fn report_settings_error(app: &mut SannyGitApp, error: SettingsError) {
         }
     };
     app.settings_window.page = SettingsPage::Llm;
-    app.settings_window.llm_repository_tab = RepositoryLlmTab::Model;
     let draft = match app.settings_window.llm_repository.as_deref() {
         Some(path) => app.settings_window.llm_repositories.get_mut(path),
         None => Some(&mut app.settings_window.llm),
@@ -637,182 +759,40 @@ fn report_settings_error(app: &mut SannyGitApp, error: SettingsError) {
     }
 }
 
-fn repository_llm_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
-    let Some(path) = app.settings_window.llm_repository.clone() else {
-        app.settings_window.open = false;
+fn ensure_repository_model_draft(app: &mut SannyGitApp, path: &str) {
+    if app.settings_window.llm_repositories.contains_key(path) {
         return;
-    };
-    let palette = app.palette();
-    let ctx = ui.ctx().clone();
+    }
+    let mut config = app.effective_llm_config(path).clone();
+    SannyGitApp::strip_repository_connection_mode(
+        &mut config,
+        &app.settings_window.llm.config,
+    );
+    app.settings_window.llm_repositories.insert(
+        path.to_owned(),
+        crate::app::LlmSettings {
+            config,
+            ..Default::default()
+        },
+    );
+}
+
+fn repository_ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette, path: &str) {
     let name = app
         .repositories
         .iter()
         .find(|repository| repository.path == path)
-        .map_or(path.as_str(), |repository| repository.name.as_str())
-        .to_owned();
-    let mut accept = false;
-    let mut close = false;
-    super::controls::dialog_style::modal(&ctx, palette, "repository.llm.settings").show(&ctx, |ui| {
-        ui.set_width(560.0_f32.min(ctx.content_rect().width() - 48.0));
-        super::controls::dialog_style::setup(ui);
-        ui.spacing_mut().item_spacing.y = 0.0;
-        super::controls::dialog_style::header(
-            ui,
-            palette,
-            "Repository LLM Settings",
-            &format!("Model and prompt used to generate commit messages for {name}. The default settings can be found in the Preferences."),
-        );
-        super::controls::dialog_style::section(
-            ui,
-            palette.header,
-            egui::Margin::symmetric(12, 10),
-            |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                // Keep checkboxes and label rows compact so the editors remain
-                // accessible; input fields retain their shared height.
-                ui.spacing_mut().interact_size.y = 20.0;
-                let mut tab = app.settings_window.llm_repository_tab;
-                ui.horizontal(|ui| {
-                    // Size the tab buttons like the repository settings dialog.
-                    ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
-                    ui.spacing_mut().interact_size.y = crate::theme::CONTROL_HEIGHT;
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    for (candidate, label) in [
-                        (RepositoryLlmTab::Model, "Model"),
-                        (RepositoryLlmTab::Prompt, "Prompt"),
-                    ] {
-                        if ui.selectable_label(tab == candidate, label).clicked() {
-                            tab = candidate;
-                        }
-                    }
-                });
-                app.settings_window.llm_repository_tab = tab;
-                // A fixed content height keeps the dialog size stable when
-                // switching tabs; the prompt editor fills the remaining space.
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), 212.0),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        // The requested allocation bounds the editor, but does
-                        // not reserve unused space in the shorter Model tab.
-                        ui.set_min_height(212.0);
-                        match tab {
-                            RepositoryLlmTab::Model => {
-                                repository_llm_model_tab(ui, app, palette, Some(&path));
-                            }
-                            RepositoryLlmTab::Prompt => repository_llm_prompt_tab(ui, app, Some(&path)),
-                        }
-                    },
-                );
-            },
-        );
-        super::controls::dialog_style::section(
-            ui,
-            palette.header,
-            egui::Margin::symmetric(12, 8),
-            |ui| {
-                super::controls::dialog_style::button_row(ui, |ui| {
-                    accept = ui
-                        .add(super::controls::dialog_style::primary("OK", palette))
-                        .dialog_accept();
-                    if ui
-                        .add(super::controls::dialog_style::button("Cancel"))
-                        .dialog_cancel()
-                    {
-                        close = true;
-                    }
-                });
-            },
-        );
-    });
-    if close {
-        app.settings_window.open = false;
-    } else if accept {
-        match apply_settings(app) {
-            Ok(()) => app.settings_window.open = false,
-            Err(error) => report_settings_error(app, error),
-        }
-    }
-    super::show_errors(ui, app);
-}
-
-fn repository_llm_model_tab(
-    ui: &mut Ui,
-    app: &mut SannyGitApp,
-    palette: Palette,
-    path: Option<&str>,
-) {
-    let config = &app.settings_window.llm.config;
-    let provider = config
-        .chatgpt_subscription
-        .then_some(config.subscription_provider);
-    if provider == Some(crate::llm::SubscriptionProvider::ChatGpt) {
-        app.update_chatgpt_models(ui.ctx());
-    }
-    let window = &mut app.settings_window;
-    let mut inherit = path.is_none_or(|path| !window.llm_repositories.contains_key(path));
-    let response = ui.add_enabled(
-        path.is_some(),
-        egui::Checkbox::new(&mut inherit, "Use global model settings"),
+        .map_or(path, |repository| repository.name.as_str());
+    heading(ui, "AI");
+    ui.label(
+        RichText::new(format!(
+            "Model settings used to generate commit messages for {name}. Matching Preferences uses the application defaults."
+        ))
+        .color(palette.muted),
     );
-    if response.changed() {
-        if let Some(path) = path {
-            if inherit {
-                if let Some(draft) = window.llm_repositories.get(path) {
-                    if draft.config.instructions != window.llm.config.instructions {
-                        window
-                            .llm_instructions
-                            .insert(path.to_owned(), draft.config.instructions.clone());
-                    }
-                }
-                window.llm_repositories.remove(path);
-            } else {
-                window.llm_repositories.insert(
-                    path.to_owned(),
-                    crate::app::LlmSettings {
-                        config: window.llm.config.clone(),
-                        api_key_dirty: !window.llm.config.api_key.is_empty(),
-                        ..Default::default()
-                    },
-                );
-            }
-        }
-    }
-    if let Some(path) = path {
-        if let Some(draft) = window.llm_repositories.get_mut(path) {
-            llm_form(
-                ui,
-                draft,
-                palette,
-                Some(path),
-                &mut app.llm_models,
-                &window.chatgpt_models,
-                provider,
-            );
-        } else {
-            ui.add_enabled_ui(false, |ui| {
-                llm_form(
-                    ui,
-                    &mut window.llm,
-                    palette,
-                    None,
-                    &mut app.llm_models,
-                    &window.chatgpt_models,
-                    provider,
-                );
-            });
-        }
-    } else {
-        llm_form(
-            ui,
-            &mut window.llm,
-            palette,
-            None,
-            &mut app.llm_models,
-            &window.chatgpt_models,
-            provider,
-        );
-    }
+    ui.add_space(8.0);
+    ensure_repository_model_draft(app, path);
+    ai_page(ui, app, palette, false, Some(path));
 }
 
 fn repository_llm_prompt_tab(ui: &mut Ui, app: &mut SannyGitApp, path: Option<&str>) {
@@ -823,57 +803,43 @@ fn repository_llm_prompt_tab(ui: &mut Ui, app: &mut SannyGitApp, path: Option<&s
         instructions_editor(ui, &mut instructions, false);
         return;
     };
-    // An entry in the instructions map marks the override, so the checkbox
-    // stays unchecked even before the prompt starts to differ from the global
-    // text; a repository config only mirrors the effective instructions.
-    let mut inherit = !window.llm_instructions.contains_key(path);
-    if ui
-        .checkbox(&mut inherit, "Use global generation instructions")
-        .changed()
-    {
-        if inherit {
-            window.llm_instructions.remove(path);
-            if let Some(draft) = window.llm_repositories.get_mut(path) {
-                draft.config.instructions.clone_from(&global);
-            }
-        } else {
-            let current = window
-                .llm_instructions
-                .get(path)
-                .cloned()
-                .or_else(|| {
-                    window
-                        .llm_repositories
-                        .get(path)
-                        .map(|draft| draft.config.instructions.clone())
-                })
-                .unwrap_or_else(|| global.clone());
-            window.llm_instructions.insert(path.to_owned(), current);
-        }
-    }
     let mut instructions = window
         .llm_instructions
         .get(path)
         .cloned()
+        .or_else(|| {
+            window
+                .llm_repositories
+                .get(path)
+                .filter(|draft| draft.config.instructions != global)
+                .map(|draft| draft.config.instructions.clone())
+        })
         .unwrap_or_else(|| global.clone());
-    if inherit {
-        ui.add_enabled_ui(false, |ui| {
-            instructions_editor(ui, &mut instructions, false)
-        });
-        return;
+    ui.label("Generation instructions:");
+    instructions_editor(ui, &mut instructions, true);
+    if instructions == global {
+        window.llm_instructions.remove(path);
+    } else {
+        window.llm_instructions.insert(path.to_owned(), instructions);
     }
-    instructions_editor(ui, &mut instructions, false);
-    window
-        .llm_instructions
-        .insert(path.to_owned(), instructions.clone());
     if let Some(draft) = window.llm_repositories.get_mut(path) {
-        draft.config.instructions = instructions;
+        draft.config.instructions.clone_from(&global);
     }
 }
 
-fn ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
-    ui.label(RichText::new("AI").size(18.0).family(semibold_family()));
-    ui.label(RichText::new("Connect a service to generate commit messages.").color(palette.muted));
+fn ai_page(
+    ui: &mut Ui,
+    app: &mut SannyGitApp,
+    palette: Palette,
+    show_heading: bool,
+    repository: Option<&str>,
+) {
+    if show_heading {
+        heading(ui, "AI");
+        ui.label(
+            RichText::new("Connect a service to generate commit messages.").color(palette.muted),
+        );
+    }
     let section_gap = ui.spacing().item_spacing.y;
     ui.add_space(section_gap);
 
@@ -954,16 +920,44 @@ fn ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             SubscriptionProvider::Copilot => "GitHub Copilot sign-in is unavailable in this build.",
         };
         ai_sign_in_banner(ui, palette, instructions);
+        if let Some(path) = repository {
+            use crate::llm::SubscriptionProvider;
+            if provider == SubscriptionProvider::ChatGpt {
+                ensure_repository_model_draft(app, path);
+                let window = &mut app.settings_window;
+                let draft = window.llm_repositories.get_mut(path).expect("draft");
+                ui.add_space(section_gap);
+                chatgpt_model_row(ui, &mut draft.config, &window.chatgpt_models, palette);
+            }
+        }
         return;
     }
-    llm_api_form(
-        ui,
-        &mut app.settings_window.llm,
-        palette,
-        None,
-        &mut app.llm_models,
-        false,
-    );
+    match repository {
+        None => llm_api_form(
+            ui,
+            &mut app.settings_window.llm,
+            palette,
+            None,
+            &mut app.llm_models,
+            false,
+        ),
+        Some(path) => {
+            ensure_repository_model_draft(app, path);
+            let draft = app
+                .settings_window
+                .llm_repositories
+                .get_mut(path)
+                .expect("draft");
+            llm_api_form(
+                ui,
+                draft,
+                palette,
+                Some(path),
+                &mut app.llm_models,
+                false,
+            );
+        }
+    }
 }
 
 fn subscription_provider(
@@ -1168,24 +1162,6 @@ fn connection_choice(
         .rect_stroke(response.rect, 7, (1.0, border), egui::StrokeKind::Inside);
     if response.clicked() {
         *subscription = value;
-    }
-}
-
-fn llm_form(
-    ui: &mut Ui,
-    draft: &mut crate::app::LlmSettings,
-    palette: Palette,
-    repository: Option<&str>,
-    catalog: &mut crate::app::ModelCatalog,
-    chatgpt_models: &[crate::llm::chatgpt::Model],
-    provider: Option<crate::llm::SubscriptionProvider>,
-) {
-    match provider {
-        Some(crate::llm::SubscriptionProvider::ChatGpt) => {
-            chatgpt_model_row(ui, &mut draft.config, chatgpt_models, palette);
-        }
-        Some(crate::llm::SubscriptionProvider::Copilot) => {}
-        None => llm_api_form(ui, draft, palette, repository, catalog, true),
     }
 }
 

@@ -354,10 +354,7 @@ mod tests {
             app.settings_window.llm_repository.as_deref(),
             Some("/project")
         );
-        assert_eq!(
-            app.settings_window.llm_repository_tab,
-            crate::app::RepositoryLlmTab::Model
-        );
+        assert_eq!(app.settings_window.page, SettingsPage::Llm);
 
         app.repository_llm_instructions.clear();
         app.repository_llm_configs.insert(

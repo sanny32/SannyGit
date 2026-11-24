@@ -73,7 +73,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         .help(app.generate_commit_message_blocker().unwrap_or("")),
                     );
                     entries.push(Entry::item(
-                        "Repository LLM settings…",
+                        "Repository AI settings…",
                         app.repositories.get(app.selected_repository).is_some(),
                         MessageAction::Settings,
                     ));

@@ -20,11 +20,11 @@ fn repository_instructions_are_editable_with_global_model_settings() {
         let render = |app: &mut SannyGitApp, events| {
             let mut output = ctx.run_ui(
                 RawInput {
-                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(620.0, 500.0))),
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(790.0, 456.0))),
                     events,
                     ..Default::default()
                 },
-                |ui| repository_llm_dialog(ui, app),
+                |ui| repository_window_contents(ui, app),
             );
             output.textures_delta.clear();
             output
@@ -59,8 +59,7 @@ fn repository_instructions_are_editable_with_global_model_settings() {
                 output.textures_delta.clear();
             }
         };
-        click(&mut app, "Prompt");
-        click(&mut app, "Use global generation instructions");
+        click(&mut app, "Commit messages");
         let mut output = render(&mut app, vec![]);
         let position = output
             .shapes
@@ -153,11 +152,11 @@ fn repository_prompt_tab_restores_global_instructions_without_touching_model_set
         let render = |app: &mut SannyGitApp, events| {
             let mut output = context.run_ui(
                 RawInput {
-                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(620.0, 500.0))),
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(790.0, 456.0))),
                     events,
                     ..Default::default()
                 },
-                |ui| repository_llm_dialog(ui, app),
+                |ui| repository_window_contents(ui, app),
             );
             output.textures_delta.clear();
             output
@@ -192,17 +191,15 @@ fn repository_prompt_tab_restores_global_instructions_without_touching_model_set
                 output.textures_delta.clear();
             }
         };
-        click(&mut app, "Prompt");
+        click(&mut app, "Commit messages");
         let mut output = render(&mut app, vec![]);
-        for label in ["Use global generation instructions", "Custom instructions"] {
-            assert!(
-                visible_text(&output.shapes, label),
-                "Missing {label} ({theme:?})"
-            );
-        }
+        assert!(
+            visible_text(&output.shapes, "Custom instructions"),
+            "Missing custom instructions ({theme:?})"
+        );
         output.textures_delta.clear();
-        click(&mut app, "Use global generation instructions");
-        click(&mut app, "OK");
+        app.settings_window.llm_instructions.remove("/project");
+        apply_settings(&mut app).unwrap();
         assert!(app.repository_llm_instructions.is_empty());
         let config = app.effective_generation_config("/project");
         assert_eq!(config.instructions, "Global instructions");
@@ -226,7 +223,7 @@ fn settings_position_centers_on_main_window() {
 #[test]
 fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes() {
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
-        for size in [Vec2::new(620.0, 500.0), Vec2::new(560.0, 460.0)] {
+        for size in [Vec2::new(790.0, 456.0), Vec2::new(680.0, 380.0)] {
             let context = egui::Context::default();
             crate::theme::install_fonts(&context);
             egui_extras::install_image_loaders(&context);
@@ -247,7 +244,7 @@ fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes(
                         events,
                         ..Default::default()
                     },
-                    |ui| repository_llm_dialog(ui, app),
+                    |ui| repository_window_contents(ui, app),
                 )
             };
             let click = |app: &mut SannyGitApp, label: &str| {
@@ -279,44 +276,25 @@ fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes(
                     output.textures_delta.clear();
                 }
             };
-            let modal_rect = |app: &mut SannyGitApp| {
-                let mut output = render(app, vec![]);
-                output.textures_delta.clear();
-                context.memory(|m| m.area_rect(egui::Id::unique("repository.llm.settings")))
-            };
             app.open_repository_llm_settings();
             assert_eq!(
                 app.settings_window.llm_repository.as_deref(),
                 Some(path.as_str())
             );
-            // The first frame of a fresh context sizes the modal without painting.
-            let mut warm = render(&mut app, vec![]);
-            warm.textures_delta.clear();
             let mut output = render(&mut app, vec![]);
             output.textures_delta.clear();
-            for label in [
-                "Repository LLM Settings",
-                "Use global model settings",
-                "Endpoint:",
-                "OK",
-                "Cancel",
-            ] {
+            for label in ["AI", "Commit messages", "Endpoint:", "OK", "Cancel"] {
                 assert!(
                     visible_text(&output.shapes, label),
                     "Missing {label} at {size:?} {theme:?}"
                 );
             }
-            // Switching tabs must not resize or move the dialog.
-            let rect = modal_rect(&mut app).unwrap();
-            for tab in [
-                crate::app::RepositoryLlmTab::Prompt,
-                crate::app::RepositoryLlmTab::Model,
-            ] {
-                app.settings_window.llm_repository_tab = tab;
-                assert_eq!(
-                    modal_rect(&mut app),
-                    Some(rect),
-                    "Tab {tab:?} resized the dialog"
+            click(&mut app, "Commit messages");
+            output = render(&mut app, vec![]);
+            for label in ["Generation instructions:", "OK"] {
+                assert!(
+                    visible_text(&output.shapes, label),
+                    "Missing {label} on commit messages page at {size:?} {theme:?}"
                 );
             }
             for label in [
@@ -331,28 +309,28 @@ fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes(
                 );
             }
             output.textures_delta.clear();
-            click(&mut app, "Use global model settings");
+            render(&mut app, vec![]);
             let draft = app.settings_window.llm_repositories.get_mut(&path).unwrap();
-            assert_eq!(draft.config.instructions, "Global instructions");
-            draft.config.instructions = "Project instructions".into();
             draft.config.model = "project-model".into();
+            app.settings_window
+                .llm_instructions
+                .insert(path.clone(), "Project instructions".into());
             assert_eq!(
                 app.settings_window.llm.config.instructions,
                 "Global instructions"
             );
-            // Saving the repository form must not apply global preferences.
-            app.settings_window.llm.config.instructions = "Unrelated global draft".into();
+            // Saving the repository form must not apply unrelated preferences.
             app.settings_window.theme = if theme == ThemeChoice::Light {
                 ThemeChoice::Dark
             } else {
                 ThemeChoice::Light
             };
-            click(&mut app, "OK");
+            apply_settings(&mut app).unwrap();
             assert_eq!(
-                app.effective_llm_config(&path).instructions,
+                app.effective_generation_config(&path).instructions,
                 "Project instructions"
             );
-            assert_eq!(app.effective_llm_config(&path).model, "project-model");
+            assert_eq!(app.effective_generation_config(&path).model, "project-model");
             assert_eq!(
                 app.effective_llm_config("/another").instructions,
                 "Global instructions"
@@ -368,13 +346,17 @@ fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes(
                 .instructions = "Discard me".into();
             click(&mut app, "Cancel");
             assert_eq!(
-                app.effective_llm_config(&path).instructions,
+                app.effective_generation_config(&path).instructions,
                 "Project instructions"
             );
 
             app.open_repository_llm_settings();
-            click(&mut app, "Use global model settings");
-            click(&mut app, "OK");
+            let global = app.llm_config.clone();
+            let draft = app.settings_window.llm_repositories.get_mut(&path).unwrap();
+            draft.config.endpoint = global.endpoint;
+            draft.config.model = global.model;
+            draft.config.store_api_key = global.store_api_key;
+            apply_settings(&mut app).unwrap();
             assert!(!app.repository_llm_configs.contains_key(&path));
             assert_eq!(app.effective_llm_config(&path), &app.llm_config);
         }
@@ -1248,7 +1230,7 @@ fn opening_and_applying_llm_settings_never_reads_saved_credentials() {
                     },
                     |ui| {
                         if repository {
-                            repository_llm_dialog(ui, &mut app);
+                            repository_window_contents(ui, &mut app);
                         } else {
                             window_contents(ui, &mut app);
                         }

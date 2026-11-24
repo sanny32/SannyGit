@@ -162,13 +162,6 @@ pub enum SettingsPage {
     CommitMessages,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RepositoryLlmTab {
-    #[default]
-    Model,
-    Prompt,
-}
-
 #[derive(Clone, Default)]
 pub struct LlmSettings {
     pub config: crate::llm::Config,
@@ -188,7 +181,7 @@ impl LlmSettings {
         Ok(())
     }
 
-    fn secret_changed(&self, previous: &crate::llm::Config) -> bool {
+    pub(crate) fn secret_changed(&self, previous: &crate::llm::Config) -> bool {
         let config = &self.config;
         // An unloaded key is empty in the draft. Preserve it when only the
         // model, endpoint or other preferences change; never read it to save.
@@ -245,7 +238,6 @@ pub struct SettingsWindow {
     pub llm_repositories: BTreeMap<String, LlmSettings>,
     pub llm_instructions: BTreeMap<String, String>,
     pub llm_repository: Option<String>,
-    pub llm_repository_tab: RepositoryLlmTab,
     pub chatgpt_status: AiConnectionStatus,
     chatgpt_status_reader: Option<Receiver<Result<bool, String>>>,
     pub copilot_status: AiConnectionStatus,
@@ -277,7 +269,6 @@ impl SettingsWindow {
             llm_repositories: BTreeMap::new(),
             llm_instructions: BTreeMap::new(),
             llm_repository: None,
-            llm_repository_tab: RepositoryLlmTab::Model,
             chatgpt_status: AiConnectionStatus::Unknown,
             chatgpt_status_reader: None,
             copilot_status: AiConnectionStatus::Unknown,
@@ -1078,6 +1069,21 @@ impl SannyGitApp {
         }
     }
 
+    pub(crate) fn repository_model_matches_global(
+        repo: &crate::llm::Config,
+        global: &crate::llm::Config,
+    ) -> bool {
+        let mut repo = repo.clone();
+        Self::strip_repository_connection_mode(&mut repo, global);
+        if global.chatgpt_subscription {
+            repo.subscription_models == global.subscription_models
+        } else {
+            repo.endpoint == global.endpoint
+                && repo.model == global.model
+                && repo.store_api_key == global.store_api_key
+        }
+    }
+
     pub(crate) fn sync_global_ai_connection_from_draft(&mut self) {
         let draft = &self.settings_window.llm.config;
         self.llm_config.chatgpt_subscription = draft.chatgpt_subscription;
@@ -1125,7 +1131,6 @@ impl SannyGitApp {
         self.open_settings();
         self.settings_window.page = SettingsPage::Llm;
         self.settings_window.llm_repository = Some(path);
-        self.settings_window.llm_repository_tab = RepositoryLlmTab::Model;
     }
 
     pub fn refresh(&mut self) {
@@ -2851,9 +2856,8 @@ impl eframe::App for SannyGitApp {
                 || (Vec::new(), Vec::new()),
                 |menu| (menu.take_actions(), menu.take_edit_events()),
             );
-            // The OS preferences window needs the edit events forwarded; the
-            // in-app repository LLM dialog reads them from the main viewport.
-            if self.settings_window.open && self.settings_window.llm_repository.is_none() {
+            // Settings viewports live outside the main egui viewport on macOS.
+            if self.settings_window.open {
                 self.pending_native_edit_events.extend(edit_events);
             } else {
                 ui.input_mut(|input| input.events.extend(edit_events));
