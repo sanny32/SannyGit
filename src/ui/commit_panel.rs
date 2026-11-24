@@ -231,15 +231,17 @@ fn token_badge_size(ui: &Ui, usage: crate::llm::TokenUsage, palette: Palette) ->
     let label = token_badge_label(usage);
     let font = FontId::new(11.0, eframe::egui::FontFamily::Proportional);
     let padding = Vec2::new(4.0, 2.0);
-    let text_size = ui
-        .painter()
-        .layout_no_wrap(label, font, palette.muted);
+    let text_size = ui.painter().layout_no_wrap(label, font, palette.muted);
     text_size.size() + padding * 2.0
 }
 
 fn token_badge_rect(editor: Rect, badge_size: Vec2) -> Rect {
     Rect::from_min_size(
-        editor.right_bottom() + Vec2::new(-badge_size.x - TOKEN_BADGE_INSET.x, -badge_size.y - TOKEN_BADGE_INSET.y),
+        editor.right_bottom()
+            + Vec2::new(
+                -badge_size.x - TOKEN_BADGE_INSET.x,
+                -badge_size.y - TOKEN_BADGE_INSET.y,
+            ),
         badge_size,
     )
 }
@@ -253,7 +255,11 @@ fn draw_token_usage_badge(ui: &Ui, rect: Rect, usage: crate::llm::TokenUsage, pa
     let padding = Vec2::new(4.0, 2.0);
     let badge = token_badge_rect(rect, token_badge_size(ui, usage, palette));
     let _response = ui
-        .interact(badge, eframe::egui::Id::unique("commit.message.tokens"), Sense::hover())
+        .interact(
+            badge,
+            eframe::egui::Id::unique("commit.message.tokens"),
+            Sense::hover(),
+        )
         .on_hover_cursor(CursorIcon::Default)
         .help_text(token_usage_tooltip(usage));
     // Opaque scrub: long unbreakable lines can still scroll under the corner.

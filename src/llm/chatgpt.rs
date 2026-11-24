@@ -1,4 +1,4 @@
-use super::{read_response_body, Config, GenerationResult, token_usage_from_json};
+use super::{read_response_body, token_usage_from_json, Config, GenerationResult};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::{Client, RequestBuilder, Url};
 use ring::{digest, rand, signature};
@@ -957,10 +957,7 @@ mod tests {
         assert!(parse_response(partial).is_err());
         let mut complete = partial.to_vec();
         complete.extend(b"data: {\"type\":\"response.completed\"}\n\n");
-        assert_eq!(
-            parse_response(&complete).unwrap().message,
-            "Fix parsing"
-        );
+        assert_eq!(parse_response(&complete).unwrap().message, "Fix parsing");
         let mut with_usage = partial.to_vec();
         with_usage.extend(
             b"data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":3,\"total_tokens\":13}}}\n\n",

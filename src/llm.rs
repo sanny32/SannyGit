@@ -728,7 +728,7 @@ pub fn format_token_count(tokens: u32) -> String {
     }
     if tokens < 1_000_000 {
         let thousands = tokens as f64 / 1_000.0;
-        if tokens % 1_000 == 0 {
+        if tokens.is_multiple_of(1_000) {
             format!("{}k", tokens / 1_000)
         } else if thousands >= 100.0 {
             format!("{:.0}k", thousands)

@@ -392,7 +392,14 @@ fn parses_openai_compatible_response() {
         "choices": [{"message": {"content": "Done"}}],
         "usage": {"prompt_tokens": 120, "completion_tokens": 8, "total_tokens": 128}
     });
-    assert_eq!(parse_chat_completion(&with_usage).unwrap().usage.unwrap().total, 128);
+    assert_eq!(
+        parse_chat_completion(&with_usage)
+            .unwrap()
+            .usage
+            .unwrap()
+            .total,
+        128
+    );
     assert!(parse_chat_completion(&json!({"choices": []})).is_err());
 }
 

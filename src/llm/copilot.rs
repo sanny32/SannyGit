@@ -11,7 +11,9 @@ use copilot_sdk::{
     InProcessRuntimeOptions, RuntimeConnection,
 };
 
-use super::{token_usage_from_json, validate_generated_message, Config, GenerationResult, TokenUsage};
+use super::{
+    token_usage_from_json, validate_generated_message, Config, GenerationResult, TokenUsage,
+};
 
 mod oauth;
 pub use oauth::{can_sign_in, has_saved_session, sign_in, sign_out};
