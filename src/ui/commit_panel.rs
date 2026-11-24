@@ -140,14 +140,18 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             .max_height(editor_height)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
-                                ui.add(
+                                let response = ui.add(
                                     TextEdit::multiline(&mut app.commit.message)
                                         .id(eframe::egui::Id::unique("commit.message"))
                                         .frame(Frame::NONE.inner_margin(Margin::symmetric(6, 4)))
                                         .desired_rows(1)
                                         .desired_width(f32::INFINITY)
                                         .min_size(Vec2::new(0.0, editor_height)),
-                                )
+                                );
+                                if app.commit.message.trim().is_empty() {
+                                    app.commit.last_generation_tokens = None;
+                                }
+                                response
                             })
                             .inner
                     });
@@ -213,28 +217,48 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         });
 }
 
+const TOKEN_BADGE_INSET: Vec2 = Vec2::new(6.0, 6.0);
+
+fn token_badge_label(usage: crate::llm::TokenUsage) -> String {
+    format!(
+        "↓{} ↑{}",
+        crate::llm::format_token_count(usage.input),
+        crate::llm::format_token_count(usage.output),
+    )
+}
+
+fn token_badge_size(ui: &Ui, usage: crate::llm::TokenUsage, palette: Palette) -> Vec2 {
+    let label = token_badge_label(usage);
+    let font = FontId::new(11.0, eframe::egui::FontFamily::Proportional);
+    let padding = Vec2::new(4.0, 2.0);
+    let text_size = ui
+        .painter()
+        .layout_no_wrap(label, font, palette.muted);
+    text_size.size() + padding * 2.0
+}
+
+fn token_badge_rect(editor: Rect, badge_size: Vec2) -> Rect {
+    Rect::from_min_size(
+        editor.right_bottom() + Vec2::new(-badge_size.x - TOKEN_BADGE_INSET.x, -badge_size.y - TOKEN_BADGE_INSET.y),
+        badge_size,
+    )
+}
+
 fn draw_token_usage_badge(ui: &Ui, rect: Rect, usage: crate::llm::TokenUsage, palette: Palette) {
     if !ui.is_rect_visible(rect) {
         return;
     }
-    let label = format!(
-        "↓{} ↑{}",
-        crate::llm::format_token_count(usage.input),
-        crate::llm::format_token_count(usage.output),
-    );
+    let label = token_badge_label(usage);
     let font = FontId::new(11.0, eframe::egui::FontFamily::Proportional);
     let padding = Vec2::new(4.0, 2.0);
-    let text_size = ui.painter().layout_no_wrap(label.clone(), font.clone(), palette.muted);
-    let size = text_size.size() + padding * 2.0;
-    let badge = Rect::from_min_size(rect.right_bottom() + Vec2::new(-size.x - 6.0, -size.y - 6.0), size);
+    let badge = token_badge_rect(rect, token_badge_size(ui, usage, palette));
     let _response = ui
-        .interact(
-            badge,
-            eframe::egui::Id::unique("commit.message.tokens"),
-            Sense::hover(),
-        )
+        .interact(badge, eframe::egui::Id::unique("commit.message.tokens"), Sense::hover())
         .on_hover_cursor(CursorIcon::Default)
         .help_text(token_usage_tooltip(usage));
+    // Opaque scrub: long unbreakable lines can still scroll under the corner.
+    ui.painter()
+        .rect_filled(badge, 3.0, ui.visuals().text_edit_bg_color());
     ui.painter().text(
         badge.min + padding,
         Align2::LEFT_TOP,
