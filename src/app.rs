@@ -441,11 +441,6 @@ impl SannyGitApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.llm"))
             .unwrap_or_default();
-        if app.llm_config.subscription_provider == crate::llm::SubscriptionProvider::Copilot
-            && !crate::llm::copilot::can_sign_in()
-        {
-            app.llm_config.subscription_provider = crate::llm::SubscriptionProvider::ChatGpt;
-        }
         app.repository_llm_configs = creation_context
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.repository_llm"))
@@ -454,9 +449,6 @@ impl SannyGitApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.repository_llm_instructions"))
             .unwrap_or_default();
-        if let Some(api_key) = std::env::var_os("SANNYGIT_LLM_API_KEY") {
-            app.llm_config.api_key = api_key.to_string_lossy().into_owned();
-        }
         app.llm_models = creation_context
             .storage
             .and_then(|storage| eframe::get_value(storage, llm_models::STORAGE_KEY))
@@ -2143,20 +2135,19 @@ impl SannyGitApp {
                 None
             };
             let branch = branch.as_deref();
-            let result =
-                crate::llm::load_api_key_if_needed(&mut config, repository_scope.as_deref())
-                    .and_then(|()| config.validate())
-                    .and_then(|()| {
-                        git::commit_patch(git, &root, contents, head.as_deref(), patch_options)
-                    })
-                    .and_then(git::limit_diff)
-                    .and_then(|patch| {
-                        if patch.trim().is_empty() {
-                            Err("The commit diff is empty".into())
-                        } else {
-                            crate::llm::generate(&config, &patch, branch, &cancel)
-                        }
-                    });
+            let result = git::commit_patch(git, &root, contents, head.as_deref(), patch_options)
+                .and_then(git::limit_diff)
+                .and_then(|patch| {
+                    if patch.trim().is_empty() {
+                        return Err("The commit diff is empty".into());
+                    }
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err("Commit message generation cancelled".into());
+                    }
+                    crate::llm::load_api_key_if_needed(&mut config, repository_scope.as_deref())?;
+                    config.validate()?;
+                    crate::llm::generate(&config, &patch, branch, &cancel)
+                });
             WorkerResult::CommitMessage {
                 result,
                 config,

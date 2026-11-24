@@ -7,8 +7,7 @@ use crate::{
     theme::{semibold_family, ui_font_size, Palette, TOOLBAR_BRAND_FONT_SIZE},
 };
 use eframe::egui::{
-    Align, Align2, Button, FontId, Frame, Layout, Margin, Panel, Rect, Response,
-    Ui, Vec2,
+    Align, Align2, Button, FontId, Frame, Layout, Margin, Panel, Rect, Response, Ui, Vec2,
 };
 
 const TOOLBAR_BUTTON_HEIGHT: f32 = 48.0;
@@ -541,4 +540,3 @@ mod tests {
         }
     }
 }
-

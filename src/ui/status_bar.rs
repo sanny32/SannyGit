@@ -11,7 +11,6 @@ pub(crate) fn operation_cancel_id() -> Id {
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
-    track_provider_connection(app, ui.ctx());
     let palette = app.palette();
     let status = if app.tag_patch_pending() {
         "Exporting patch…".to_owned()
@@ -99,15 +98,6 @@ fn show_operation_cancel(ui: &mut Ui, app: &mut SannyGitApp) {
     }
 }
 
-fn track_provider_connection(app: &mut SannyGitApp, ctx: &eframe::egui::Context) {
-    if !app.llm_config.chatgpt_subscription
-        || app.repositories.get(app.selected_repository).is_none()
-    {
-        return;
-    }
-    app.update_ai_connection_status(ctx, app.llm_config.subscription_provider);
-}
-
 fn open_ai_settings(app: &mut SannyGitApp) {
     let path = app
         .repositories
@@ -185,6 +175,28 @@ mod tests {
         app.repositories = vec![repository(path)];
         app.selected_repository = 0;
         app.branches.current_branch = "main".into();
+    }
+
+    #[test]
+    fn rendering_status_bar_does_not_check_saved_provider_sessions() {
+        for provider in [SubscriptionProvider::ChatGpt, SubscriptionProvider::Copilot] {
+            let context = Context::default();
+            let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+            open_repository(&mut app, "/project");
+            app.llm_config.chatgpt_subscription = true;
+            app.llm_config.subscription_provider = provider;
+
+            let _ = context.run_ui(RawInput::default(), |ui| show(ui, &mut app));
+
+            assert!(matches!(
+                app.settings_window.chatgpt_status,
+                AiConnectionStatus::Unknown
+            ));
+            assert!(matches!(
+                app.settings_window.copilot_status,
+                AiConnectionStatus::Unknown
+            ));
+        }
     }
 
     #[test]

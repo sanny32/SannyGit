@@ -578,7 +578,13 @@ fn load_secret(user: &str, allow_legacy: bool) -> Result<Option<String>, String>
 
 pub fn load_api_key_if_needed(config: &mut Config, repository: Option<&str>) -> Result<(), String> {
     if !config.chatgpt_subscription && config.api_key.is_empty() {
-        if let Some(api_key) = load_api_key(config, repository)? {
+        if let Some(api_key) = repository
+            .is_none()
+            .then(|| std::env::var_os("SANNYGIT_LLM_API_KEY"))
+            .flatten()
+        {
+            config.api_key = api_key.to_string_lossy().into_owned();
+        } else if let Some(api_key) = load_api_key(config, repository)? {
             restore_credential(config, api_key)?;
         }
     }

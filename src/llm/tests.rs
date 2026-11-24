@@ -643,7 +643,7 @@ fn explicitly_provided_api_key_is_not_replaced() {
 
     config.api_key.clear();
     config.store_api_key = false;
-    load_api_key_if_needed(&mut config, None).unwrap();
+    load_api_key_if_needed(&mut config, Some("/repo")).unwrap();
     assert!(config.api_key.is_empty());
 }
 

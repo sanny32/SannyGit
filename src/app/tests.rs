@@ -1711,8 +1711,16 @@ fn adding_tags_closes_the_form_and_shows_progress_in_the_status_bar() {
                         assert!(!visible_text(&output.shapes, "Cancel operation"));
                         assert_eq!(
                             visible_text_count(&output.shapes, progress),
-                            if push { 2 } else { 1 },
-                            "Progress should stay in the status bar and sit ahead of toolbar Cancel"
+                            1,
+                            "Tag progress should appear exactly once"
+                        );
+                        assert!(
+                            output.shapes.iter().any(|shape| {
+                                matches!(&shape.shape, egui::Shape::Text(text)
+                                    if text.galley.job.text == progress
+                                        && text.pos.y >= size.y - 26.0)
+                            }),
+                            "Tag progress should appear in the status bar"
                         );
                     }
                 }

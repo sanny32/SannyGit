@@ -188,11 +188,9 @@ pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str) -> Response {
 /// Borderless icon control with a hover fill and no stroke, like JetBrains inline dismiss buttons.
 pub fn ghost_button(ui: &mut Ui, icon: Icon, color: Color32, tooltip: &str) -> Response {
     button_scope(ui, |ui| {
-        let (rect, response) =
-            ui.allocate_exact_size(Vec2::splat(BUTTON_SIZE), Sense::click());
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(BUTTON_SIZE), Sense::click());
         if response.hovered() || response.has_focus() {
-            let radius =
-                (rect.width().min(rect.height()) / 2.0 - GHOST_HOVER_INSET).max(0.0);
+            let radius = (rect.width().min(rect.height()) / 2.0 - GHOST_HOVER_INSET).max(0.0);
             ui.painter().circle_filled(
                 rect.center(),
                 radius,
