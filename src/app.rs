@@ -211,9 +211,27 @@ pub enum AiConnectionStatus {
     Failed,
 }
 
+#[derive(Clone)]
+struct GlobalAiConnectionSnapshot {
+    chatgpt_subscription: bool,
+    subscription_provider: crate::llm::SubscriptionProvider,
+    subscription_models: std::collections::BTreeMap<String, crate::llm::SubscriptionModelSettings>,
+}
+
+impl From<&crate::llm::Config> for GlobalAiConnectionSnapshot {
+    fn from(config: &crate::llm::Config) -> Self {
+        Self {
+            chatgpt_subscription: config.chatgpt_subscription,
+            subscription_provider: config.subscription_provider,
+            subscription_models: config.subscription_models.clone(),
+        }
+    }
+}
+
 pub struct SettingsWindow {
     pub open: bool,
     resume_after_ai_action: bool,
+    global_ai_connection_snapshot: Option<GlobalAiConnectionSnapshot>,
     pub initial_position_set: bool,
     pub initial_position: Option<eframe::egui::Pos2>,
     pub needs_reveal: bool,
@@ -242,6 +260,7 @@ impl SettingsWindow {
         Self {
             open: false,
             resume_after_ai_action: false,
+            global_ai_connection_snapshot: None,
             initial_position_set: false,
             initial_position: None,
             needs_reveal: false,
@@ -1046,6 +1065,52 @@ impl SannyGitApp {
                     .or_insert_with(|| config.instructions.clone());
             }
         }
+        self.settings_window.global_ai_connection_snapshot = Some((&self.llm_config).into());
+    }
+
+    pub(crate) fn strip_repository_connection_mode(
+        config: &mut crate::llm::Config,
+        global: &crate::llm::Config,
+    ) {
+        config.chatgpt_subscription = false;
+        if !global.chatgpt_subscription {
+            config.subscription_models.clear();
+        }
+    }
+
+    pub(crate) fn sync_global_ai_connection_from_draft(&mut self) {
+        let draft = &self.settings_window.llm.config;
+        self.llm_config.chatgpt_subscription = draft.chatgpt_subscription;
+        self.llm_config.subscription_provider = draft.subscription_provider;
+        if draft.chatgpt_subscription {
+            self.llm_config
+                .subscription_models
+                .clone_from(&draft.subscription_models);
+        }
+        for config in self.repository_llm_configs.values_mut() {
+            Self::strip_repository_connection_mode(config, &self.llm_config);
+        }
+    }
+
+    pub(crate) fn revert_global_ai_connection(&mut self) {
+        let Some(snapshot) = self.settings_window.global_ai_connection_snapshot.clone() else {
+            return;
+        };
+        self.llm_config.chatgpt_subscription = snapshot.chatgpt_subscription;
+        self.llm_config.subscription_provider = snapshot.subscription_provider;
+        self.llm_config.subscription_models = snapshot.subscription_models;
+        for config in self.repository_llm_configs.values_mut() {
+            Self::strip_repository_connection_mode(config, &self.llm_config);
+        }
+    }
+
+    pub(crate) fn discard_unsaved_global_ai_connection(&mut self) {
+        self.revert_global_ai_connection();
+        self.settings_window.global_ai_connection_snapshot = None;
+    }
+
+    pub(crate) fn commit_global_ai_connection_session(&mut self) {
+        self.settings_window.global_ai_connection_snapshot = None;
     }
 
     pub fn open_repository_llm_settings(&mut self) {
@@ -2083,6 +2148,7 @@ impl SannyGitApp {
             ctx.request_repaint();
             WorkerResult::CopilotConnection(result)
         }) {
+            self.sync_global_ai_connection_from_draft();
             self.settings_window.copilot_status_reader = None;
             self.settings_window.copilot_status = AiConnectionStatus::ChangingSession;
             self.settings_window.open = false;
@@ -2113,6 +2179,7 @@ impl SannyGitApp {
             ctx.request_repaint();
             WorkerResult::AiConnection { sign_in, result }
         }) {
+            self.sync_global_ai_connection_from_draft();
             self.settings_window.chatgpt_status_reader = None;
             self.settings_window.chatgpt_models.clear();
             self.settings_window.chatgpt_models_reader = None;
@@ -2408,6 +2475,7 @@ impl SannyGitApp {
                     } else {
                         AiConnectionStatus::SignedOut
                     };
+                    self.sync_global_ai_connection_from_draft();
                     self.status = status;
                 }
                 Err(error) => {
@@ -2419,7 +2487,10 @@ impl SannyGitApp {
             WorkerResult::CopilotConnection(result) => {
                 self.settings_window.copilot_status = AiConnectionStatus::Unknown;
                 match result {
-                    Ok(status) => self.status = status,
+                    Ok(status) => {
+                        self.sync_global_ai_connection_from_draft();
+                        self.status = status;
+                    }
                     Err(error) => {
                         self.error = Some(error);
                         self.status = "GitHub Copilot connection failed".into();

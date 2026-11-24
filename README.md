@@ -66,7 +66,7 @@ You need add `~/.local/bin` to `PATH` on Linux.
 ## Commit message generation
 
 In **Settings → AI**, configure browser sign-in, an API key, or a local
-model. For browser sign-in, select **Login** and follow the prompts. Reopen
+model. For browser sign-in, select **Sign in** and follow the prompts. Reopen
 Settings and select **OK** to save your choice. When you generate a commit
 message, SannyGit sends the selected diff to the configured service.
 

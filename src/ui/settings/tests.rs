@@ -395,6 +395,8 @@ fn global_ai_connection_mode_persists_and_applies_to_repositories() {
     );
     app.open_settings();
     app.settings_window.llm.config.chatgpt_subscription = true;
+    app.settings_window.llm.config.subscription_provider =
+        crate::llm::SubscriptionProvider::Copilot;
     use crate::llm::chatgpt::PROVIDER_ID;
     app.settings_window.llm.config.subscription_models.insert(
         PROVIDER_ID.into(),
@@ -406,6 +408,10 @@ fn global_ai_connection_mode_persists_and_applies_to_repositories() {
     apply_settings(&mut app).unwrap();
     assert!(app.llm_config.chatgpt_subscription);
     assert_eq!(
+        app.llm_config.subscription_provider,
+        crate::llm::SubscriptionProvider::Copilot
+    );
+    assert_eq!(
         app.llm_config.subscription_models[&PROVIDER_ID.to_owned()].model,
         "gpt-test"
     );
@@ -414,6 +420,10 @@ fn global_ai_connection_mode_persists_and_applies_to_repositories() {
         serde_json::from_str(&serde_json::to_string(&app.llm_config).unwrap()).unwrap();
     assert!(restored.chatgpt_subscription);
     assert_eq!(
+        restored.subscription_provider,
+        crate::llm::SubscriptionProvider::Copilot
+    );
+    assert_eq!(
         restored.subscription_models[&PROVIDER_ID.to_owned()].model,
         "gpt-test"
     );
@@ -421,10 +431,47 @@ fn global_ai_connection_mode_persists_and_applies_to_repositories() {
     let generation = app.effective_generation_config("/project");
     assert!(generation.chatgpt_subscription);
     assert_eq!(
+        generation.subscription_provider,
+        crate::llm::SubscriptionProvider::Copilot
+    );
+    assert_eq!(
         generation.subscription_models[&PROVIDER_ID.to_owned()].model,
         "gpt-test"
     );
     assert_eq!(generation.model, "local-model");
+}
+
+#[test]
+fn global_ai_provider_applies_without_ok_and_cancel_restores_it() {
+    use crate::llm::SubscriptionProvider;
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.llm_config.chatgpt_subscription = true;
+    app.llm_config.subscription_provider = SubscriptionProvider::ChatGpt;
+    app.open_settings();
+    app.settings_window.llm.config.subscription_provider = SubscriptionProvider::Copilot;
+    app.sync_global_ai_connection_from_draft();
+    assert_eq!(
+        app.llm_config.subscription_provider,
+        SubscriptionProvider::Copilot
+    );
+    assert_eq!(
+        app.effective_generation_config("/any")
+            .subscription_provider,
+        SubscriptionProvider::Copilot
+    );
+
+    app.discard_unsaved_global_ai_connection();
+    assert_eq!(
+        app.llm_config.subscription_provider,
+        SubscriptionProvider::ChatGpt
+    );
+
+    let restored: crate::llm::Config =
+        serde_json::from_str(&serde_json::to_string(&app.llm_config).unwrap()).unwrap();
+    assert_eq!(
+        restored.subscription_provider,
+        SubscriptionProvider::ChatGpt
+    );
 }
 
 #[test]
@@ -977,8 +1024,8 @@ fn copilot_sign_in_controls_fit_in_both_themes() {
         config.subscription_provider = crate::llm::SubscriptionProvider::Copilot;
         for size in [Vec2::new(680.0, 380.0), PREFERENCES_SIZE] {
             for (status, action, hidden_action) in [
-                (AiConnectionStatus::SignedOut, "Login", "Logout"),
-                (AiConnectionStatus::Connected, "Logout", "Login"),
+                (AiConnectionStatus::SignedOut, "Sign in", "Sign out"),
+                (AiConnectionStatus::Connected, "Sign out", "Sign in"),
             ] {
                 app.settings_window.copilot_status = status;
                 let mut output = context.run_ui(
@@ -1055,7 +1102,7 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
             }
             if page == SettingsPage::Llm {
                 assert!(!visible_text(&output.shapes, "Generation instructions:"));
-                assert!(!visible_text(&output.shapes, "Login"));
+                assert!(!visible_text(&output.shapes, "Sign in"));
                 assert!(!visible_text(&output.shapes, "Test connection"));
                 assert!(!visible_text(&output.shapes, "Manage usage"));
                 assert!(visible_text(&output.shapes, crate::llm::DEFAULT_ENDPOINT));
@@ -1076,8 +1123,8 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
                 }];
                 app.settings_window.chatgpt_models_attempted = true;
                 for (status, action, hidden_action) in [
-                    (AiConnectionStatus::SignedOut, "Login", "Logout"),
-                    (AiConnectionStatus::Connected, "Logout", "Login"),
+                    (AiConnectionStatus::SignedOut, "Sign in", "Sign out"),
+                    (AiConnectionStatus::Connected, "Sign out", "Sign in"),
                 ] {
                     app.settings_window.chatgpt_status = status;
                     let mut provider = context.run_ui(

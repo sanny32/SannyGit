@@ -12,7 +12,7 @@ use eframe::egui::{
 };
 
 const PREFERENCES_SIZE: Vec2 = egui::vec2(790.0, 456.0);
-/// Keeps both provider rows aligned with the Login / Logout button.
+/// Keeps both provider rows aligned with the Sign in / Sign out button.
 const AI_ACTION_BUTTON_MIN_WIDTH: f32 = 86.0;
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -62,7 +62,7 @@ fn preferences_window(ctx: &egui::Context, app: &mut SannyGitApp) {
         #[cfg(target_os = "macos")]
         ui.input_mut(|input| input.events.append(&mut app.pending_native_edit_events));
         if escape_pressed(ui.ctx(), app) || ui.input(|input| input.viewport().close_requested()) {
-            close(ui.ctx(), app);
+            close_without_saving(ui.ctx(), app);
             return;
         }
 
@@ -72,7 +72,7 @@ fn preferences_window(ctx: &egui::Context, app: &mut SannyGitApp) {
                 app.error = Some(format!(
                     "Cannot attach settings to the main window: {error}"
                 ));
-                close(ui.ctx(), app);
+                close_without_saving(ui.ctx(), app);
                 return;
             }
         }
@@ -103,7 +103,17 @@ fn escape_pressed(ctx: &egui::Context, app: &SannyGitApp) -> bool {
         && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape))
 }
 
-fn close(ctx: &egui::Context, app: &mut SannyGitApp) {
+fn close_after_save(ctx: &egui::Context, app: &mut SannyGitApp) {
+    app.commit_global_ai_connection_session();
+    finish_close(ctx, app);
+}
+
+fn close_without_saving(ctx: &egui::Context, app: &mut SannyGitApp) {
+    app.discard_unsaved_global_ai_connection();
+    finish_close(ctx, app);
+}
+
+fn finish_close(ctx: &egui::Context, app: &mut SannyGitApp) {
     #[cfg(target_os = "windows")]
     crate::native_window::cancel_first_presentation(ctx);
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -176,9 +186,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     .dialog_accept()
                 {
                     match apply_settings(app) {
-                        Ok(()) => {
-                            close(ui.ctx(), app);
-                        }
+                        Ok(()) => close_after_save(ui.ctx(), app),
                         Err(error) => report_settings_error(app, error),
                     }
                 }
@@ -186,7 +194,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     .add(super::controls::dialog_style::button("Cancel"))
                     .dialog_cancel()
                 {
-                    close(ui.ctx(), app);
+                    close_without_saving(ui.ctx(), app);
                 }
             });
         });
@@ -558,13 +566,6 @@ enum SettingsError {
     Logging(String),
 }
 
-fn strip_repository_connection_mode(config: &mut crate::llm::Config, global: &crate::llm::Config) {
-    config.chatgpt_subscription = false;
-    if !global.chatgpt_subscription {
-        config.subscription_models.clear();
-    }
-}
-
 fn apply_settings(app: &mut SannyGitApp) -> Result<(), SettingsError> {
     if let Some(path) = &app.settings_window.llm_repository {
         if let Some(draft) = app.settings_window.llm_repositories.get(path) {
@@ -576,7 +577,10 @@ fn apply_settings(app: &mut SannyGitApp) -> Result<(), SettingsError> {
                 .save_secret(previous, Some(path))
                 .map_err(SettingsError::Credential)?;
             let mut config = draft.config.clone();
-            strip_repository_connection_mode(&mut config, &app.settings_window.llm.config);
+            SannyGitApp::strip_repository_connection_mode(
+                &mut config,
+                &app.settings_window.llm.config,
+            );
             app.repository_llm_configs.insert(path.clone(), config);
         } else {
             app.repository_llm_configs.remove(path);
@@ -607,7 +611,7 @@ fn apply_settings(app: &mut SannyGitApp) -> Result<(), SettingsError> {
         app.tracking.set_auto_fetch(app.settings_window.auto_fetch);
         app.llm_config = app.settings_window.llm.config.clone();
         for config in app.repository_llm_configs.values_mut() {
-            strip_repository_connection_mode(config, &app.llm_config);
+            SannyGitApp::strip_repository_connection_mode(config, &app.llm_config);
         }
     }
     Ok(())
@@ -873,11 +877,11 @@ fn ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     let section_gap = ui.spacing().item_spacing.y;
     ui.add_space(section_gap);
 
-    let subscription = &mut app.settings_window.llm.config.chatgpt_subscription;
+    let subscription_mode = app.settings_window.llm.config.chatgpt_subscription;
     ui.columns(2, |columns| {
         connection_choice(
             &mut columns[0],
-            subscription,
+            &mut app.settings_window.llm.config.chatgpt_subscription,
             true,
             Icon::Sparkles,
             ("AI Provider", "Sign in with your AI Provider account"),
@@ -885,14 +889,17 @@ fn ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         );
         connection_choice(
             &mut columns[1],
-            subscription,
+            &mut app.settings_window.llm.config.chatgpt_subscription,
             false,
             Icon::Code,
             ("OpenAI API", "OpenAI-compatible API or local server"),
             palette,
         );
     });
-    let subscription = *subscription;
+    if app.settings_window.llm.config.chatgpt_subscription != subscription_mode {
+        app.sync_global_ai_connection_from_draft();
+    }
+    let subscription = app.settings_window.llm.config.chatgpt_subscription;
     ui.separator();
     ui.add_space(section_gap);
     let idle = !app.busy();
@@ -919,14 +926,17 @@ fn ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             ) && (provider == SubscriptionProvider::ChatGpt
                 || connected
                 || crate::llm::copilot::can_sign_in());
-        if subscription_provider(
+        let chatgpt_models = std::mem::take(&mut app.settings_window.chatgpt_models);
+        let connection_clicked = subscription_provider(
             ui,
+            app,
             palette,
             can_change_session,
             connected,
-            &mut app.settings_window.llm.config,
-            &app.settings_window.chatgpt_models,
-        ) {
+            &chatgpt_models,
+        );
+        app.settings_window.chatgpt_models = chatgpt_models;
+        if connection_clicked {
             match provider {
                 SubscriptionProvider::ChatGpt => {
                     app.change_chatgpt_connection(ui.ctx(), !connected)
@@ -958,13 +968,15 @@ fn ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
 
 fn subscription_provider(
     ui: &mut Ui,
+    app: &mut SannyGitApp,
     palette: Palette,
     enabled: bool,
     connected: bool,
-    config: &mut crate::llm::Config,
     models: &[crate::llm::chatgpt::Model],
 ) -> bool {
     let mut clicked = false;
+    let config = &mut app.settings_window.llm.config;
+    let previous_provider = config.subscription_provider;
     Frame::new().inner_margin(Margin::ZERO).show(ui, |ui| {
         use crate::llm::SubscriptionProvider::{ChatGpt, Copilot};
         let label = |provider| match provider {
@@ -1024,6 +1036,9 @@ fn subscription_provider(
                 }
             });
     });
+    if config.subscription_provider != previous_provider {
+        app.sync_global_ai_connection_from_draft();
+    }
     clicked
 }
 
@@ -1037,11 +1052,11 @@ fn ai_provider_field_row(
     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
         if let Some((enabled, connected)) = action {
             let button = if connected {
-                egui::Button::new("Logout")
+                egui::Button::new("Sign out")
             } else {
                 egui::Button::image_and_text(
                     icons::image(Icon::ExternalLink, palette.text, 18.0),
-                    "Login",
+                    "Sign in",
                 )
                 .gap(6.0)
             };

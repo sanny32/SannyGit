@@ -322,7 +322,7 @@ fn wait_for_callback(
             return result;
         }
     }
-    Err("ChatGPT sign-in timed out. Select Login to try again.".into())
+    Err("ChatGPT sign-in timed out. Select Sign in to try again.".into())
 }
 
 fn callback_page(success: bool) -> String {
@@ -470,7 +470,7 @@ async fn exchange(
             .is_some_and(|value| value["error"] == "invalid_grant")
         {
             return Err(
-                "The ChatGPT authorization expired or was revoked. Select Login to reconnect."
+                "The ChatGPT authorization expired or was revoked. Select Sign in to reconnect."
                     .into(),
             );
         }
@@ -606,7 +606,7 @@ pub fn sign_out() -> Result<String, String> {
 
 fn http_error(status: reqwest::StatusCode) -> String {
     match status.as_u16() {
-        401 => "ChatGPT rejected the session. Select Login to reconnect.".into(),
+        401 => "ChatGPT rejected the session. Select Sign in to reconnect.".into(),
         403 => "Your ChatGPT plan or workspace does not allow this request.".into(),
         429 => "The ChatGPT usage limit was reached. Check ChatGPT Settings > Usage.".into(),
         _ => format!("ChatGPT returned HTTP {}", status.as_u16()),
