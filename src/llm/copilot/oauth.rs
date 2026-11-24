@@ -220,7 +220,7 @@ fn valid_client_id(id: &str) -> bool {
 }
 
 pub fn can_sign_in() -> bool {
-    client_id().is_some()
+    client_id().is_some() && client_secret().is_some()
 }
 
 pub fn has_saved_session() -> Result<bool, String> {

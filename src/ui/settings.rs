@@ -1068,7 +1068,12 @@ fn subscription_provider(
                             .width(ui.available_width())
                             .selected_text(label(config.subscription_provider))
                             .show_ui(ui, |ui| {
-                                for provider in [ChatGpt, Copilot] {
+                                let providers: &[_] = if crate::llm::copilot::can_sign_in() {
+                                    &[ChatGpt, Copilot]
+                                } else {
+                                    &[ChatGpt]
+                                };
+                                for &provider in providers {
                                     if ui
                                         .selectable_value(
                                             &mut config.subscription_provider,

@@ -74,8 +74,19 @@ class BuildScriptTests(unittest.TestCase):
             self.assertEqual(result.returncode, expected, result.stderr)
             self.assertEqual(self.commands(), [])
 
-    def test_release_build_requires_the_github_client_secret(self):
-        del self.env["SANNYGIT_GITHUB_CLIENT_SECRET"]
+    def test_release_build_accepts_missing_or_empty_github_client_secret(self):
+        for secret in (None, ""):
+            with self.subTest(secret=secret):
+                if secret is None:
+                    self.env.pop("SANNYGIT_GITHUB_CLIENT_SECRET", None)
+                else:
+                    self.env["SANNYGIT_GITHUB_CLIENT_SECRET"] = secret
+                result = self.run_build()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"Built: {self.binary}", result.stdout)
+
+    def test_release_build_rejects_invalid_github_client_secret(self):
+        self.env["SANNYGIT_GITHUB_CLIENT_SECRET"] = "invalid secret"
         result = self.run_build()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SANNYGIT_GITHUB_CLIENT_SECRET", result.stderr)

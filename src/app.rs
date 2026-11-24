@@ -441,6 +441,11 @@ impl SannyGitApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.llm"))
             .unwrap_or_default();
+        if app.llm_config.subscription_provider == crate::llm::SubscriptionProvider::Copilot
+            && !crate::llm::copilot::can_sign_in()
+        {
+            app.llm_config.subscription_provider = crate::llm::SubscriptionProvider::ChatGpt;
+        }
         app.repository_llm_configs = creation_context
             .storage
             .and_then(|storage| eframe::get_value(storage, "sannygit.repository_llm"))

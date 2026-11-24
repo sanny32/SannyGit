@@ -22,8 +22,8 @@ Missing tools are installed with winget (elevation may be requested).
 Default install location: %LOCALAPPDATA%\Programs\SannyGit.
 Distribution packages are produced by CI.
 
-Set SANNYGIT_GITHUB_CLIENT_SECRET to the GitHub App client secret.
-The release build compiles that secret into SannyGit.
+Set SANNYGIT_GITHUB_CLIENT_SECRET to enable GitHub Copilot.
+When provided, the build compiles the GitHub App client secret into SannyGit.
 "@
     exit 0
 }
@@ -114,8 +114,8 @@ try {
         if ($line -match '^([^=]+)=(.*)$') { Set-Item -Path "Env:$($Matches[1])" -Value $Matches[2] }
     }
 
-    if (-not (Test-GitHubClientSecret $env:SANNYGIT_GITHUB_CLIENT_SECRET)) {
-        throw "Set SANNYGIT_GITHUB_CLIENT_SECRET to the GitHub App client secret before building a release."
+    if ($env:SANNYGIT_GITHUB_CLIENT_SECRET -and -not (Test-GitHubClientSecret $env:SANNYGIT_GITHUB_CLIENT_SECRET)) {
+        throw "SANNYGIT_GITHUB_CLIENT_SECRET must be a valid GitHub App client secret or empty."
     }
     Push-Location $PSScriptRoot
     try {

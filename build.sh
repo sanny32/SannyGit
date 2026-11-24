@@ -21,8 +21,8 @@ Missing build dependencies are installed automatically (sudo may be required).
 Default install location: ~/Applications on macOS, ~/.local on Linux.
 Distribution packages are produced by CI.
 
-Set SANNYGIT_GITHUB_CLIENT_SECRET to the GitHub App client secret.
-The release build compiles that secret into SannyGit.
+Set SANNYGIT_GITHUB_CLIENT_SECRET to enable GitHub Copilot.
+When provided, the build compiles the GitHub App client secret into SannyGit.
 HELP
 }
 
@@ -74,8 +74,8 @@ if [ -n "$keychain_profile" ] && [ -z "$signing_identity" ]; then
 fi
 if [ "$debug_build" -eq 0 ]; then
     secret="${SANNYGIT_GITHUB_CLIENT_SECRET-}"
-    if [ -z "$secret" ] || [ "${#secret}" -gt 256 ] || printf '%s' "$secret" | LC_ALL=C grep -q '[^!-~]'; then
-        echo 'Error: set SANNYGIT_GITHUB_CLIENT_SECRET to the GitHub App client secret before building a release.' >&2
+    if [ -n "$secret" ] && { [ "${#secret}" -gt 256 ] || printf '%s' "$secret" | LC_ALL=C grep -q '[^!-~]'; }; then
+        echo 'Error: SANNYGIT_GITHUB_CLIENT_SECRET must be a valid GitHub App client secret or empty.' >&2
         exit 1
     fi
 fi
