@@ -1381,30 +1381,41 @@ fn panel_reads_keep_repository_actions_available_and_reject_superseded_results()
                 egui_extras::install_image_loaders(&ctx);
                 theme.apply_style(&ctx, style);
                 let render = |app: &mut SannyGitApp| {
+                    let mut toolbar_id = None;
                     let mut output = ctx.run_ui(
                         egui::RawInput {
                             screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
                             ..Default::default()
                         },
-                        |ui| ui::show(ui, app),
+                        |ui| {
+                            toolbar_id = Some(
+                                ui.scope_id()
+                                    .with_salt(egui::IdSalt::new("working_tree.v2.toolbar")),
+                            );
+                            ui::show(ui, app);
+                        },
                     );
                     output.textures_delta.clear();
+                    let toolbar_rect = egui::PanelState::load(&ctx, toolbar_id.unwrap())
+                        .expect("toolbar panel state")
+                        .outer_rect;
                     output
                         .shapes
                         .into_iter()
                         .filter_map(|shape| match shape.shape {
                             egui::Shape::Text(text)
-                                if [
-                                    "Pull",
-                                    "Sync",
-                                    "Push",
-                                    "Stage",
-                                    "Unstage",
-                                    "Discard",
-                                    "Save Stash",
-                                    "Settings",
-                                ]
-                                .contains(&text.galley.job.text.as_str()) =>
+                                if toolbar_rect.contains(text.pos)
+                                    && [
+                                        "Pull",
+                                        "Sync",
+                                        "Push",
+                                        "Stage",
+                                        "Unstage",
+                                        "Discard",
+                                        "Save Stash",
+                                        "Settings",
+                                    ]
+                                    .contains(&text.galley.job.text.as_str()) =>
                             {
                                 Some((text.galley.job.text.clone(), text.pos, text.fallback_color))
                             }
@@ -1414,6 +1425,7 @@ fn panel_reads_keep_repository_actions_available_and_reject_superseded_results()
                 };
                 render(&mut app);
                 let toolbar = render(&mut app);
+                assert_eq!(toolbar.len(), 8);
                 app.reload_history();
                 app.load_history();
                 app.load_selected_diff(&ctx);
