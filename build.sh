@@ -20,6 +20,9 @@ Missing build dependencies are installed automatically (sudo may be required).
 
 Default install location: ~/Applications on macOS, ~/.local on Linux.
 Distribution packages are produced by CI.
+
+Set SANNYGIT_GITHUB_CLIENT_SECRET to the GitHub App client secret.
+The release build compiles that secret into SannyGit.
 HELP
 }
 
@@ -69,6 +72,13 @@ if [ -n "$keychain_profile" ] && [ -z "$signing_identity" ]; then
     echo 'Error: --keychain-profile requires --sign with the certificate authorized by the profile.' >&2
     exit 1
 fi
+if [ "$debug_build" -eq 0 ]; then
+    secret="${SANNYGIT_GITHUB_CLIENT_SECRET-}"
+    if [ -z "$secret" ] || [ "${#secret}" -gt 256 ] || printf '%s' "$secret" | LC_ALL=C grep -q '[^!-~]'; then
+        echo 'Error: set SANNYGIT_GITHUB_CLIENT_SECRET to the GitHub App client secret before building a release.' >&2
+        exit 1
+    fi
+fi
 
 run_as_root() {
     if [ "$EUID" -eq 0 ]; then
@@ -99,26 +109,26 @@ ensure_linux_dependencies() {
         *' debian '*|*' ubuntu '*)
             run_as_root apt-get update
             run_as_root apt-get install -y build-essential pkg-config python3 git curl \
-                libdbus-1-dev libwayland-dev libxkbcommon-dev libx11-dev \
+                libssl-dev libdbus-1-dev libwayland-dev libxkbcommon-dev libx11-dev \
                 libxrandr-dev libxi-dev libxcursor-dev libgl1-mesa-dev libxcb1-dev libxcb-randr0-dev
             ;;
         *' fedora '*|*' rhel '*)
             run_as_root dnf install -y gcc gcc-c++ pkgconf-pkg-config python3 git curl \
-                dbus-devel wayland-devel libxkbcommon-devel libX11-devel \
+                openssl-devel dbus-devel wayland-devel libxkbcommon-devel libX11-devel \
                 libXrandr-devel libXi-devel libXcursor-devel mesa-libGL-devel libxcb-devel
             ;;
         *' suse '*|*' opensuse-tumbleweed '*|*' opensuse-leap '*)
             run_as_root zypper --non-interactive install gcc gcc-c++ pkgconf-pkg-config python3 git curl \
-                dbus-1-devel wayland-devel libxkbcommon-devel libX11-devel \
+                libopenssl-devel dbus-1-devel wayland-devel libxkbcommon-devel libX11-devel \
                 libXrandr-devel libXi-devel libXcursor-devel Mesa-libGL-devel libxcb-devel
             ;;
         *' arch '*)
             run_as_root pacman -S --needed --noconfirm base-devel pkgconf python git curl \
-                dbus wayland libxkbcommon libx11 libxrandr libxi libxcursor mesa libxcb
+                openssl dbus wayland libxkbcommon libx11 libxrandr libxi libxcursor mesa libxcb
             ;;
         *)
             echo "Error: automatic dependency installation is unavailable for ${ID:-this distribution}." >&2
-            echo 'Install a C/C++ toolchain, Python 3.9+, Git, curl, pkg-config and DBus, Wayland, X11/XCB, xkbcommon and OpenGL development libraries.' >&2
+            echo 'Install a C/C++ toolchain, Python 3.9+, Git, curl, pkg-config and OpenSSL 3, DBus, Wayland, X11/XCB, xkbcommon and OpenGL development libraries.' >&2
             exit 1
             ;;
     esac

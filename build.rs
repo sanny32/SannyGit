@@ -1,4 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-env-changed=SANNYGIT_GITHUB_CLIENT_ID");
+    println!("cargo:rerun-if-env-changed=SANNYGIT_GITHUB_CLIENT_SECRET");
     println!("cargo:rerun-if-changed=assets/app/sannygit.ico");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         winresource::WindowsResource::new()

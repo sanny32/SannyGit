@@ -885,11 +885,15 @@ fn text_rows(shapes: &[ClippedShape], expected: &str) -> Option<usize> {
 }
 
 fn text_left(shapes: &[ClippedShape], expected: &str) -> Option<f32> {
+    text_position(shapes, expected).map(|position| position.x)
+}
+
+fn text_position(shapes: &[ClippedShape], expected: &str) -> Option<egui::Pos2> {
     shapes.iter().find_map(|shape| {
         let egui::Shape::Text(text) = &shape.shape else {
             return None;
         };
-        (text.galley.job.text == expected).then_some(text.pos.x)
+        (text.galley.job.text == expected).then_some(text.pos)
     })
 }
 
@@ -955,6 +959,48 @@ fn logging_path_shares_a_row_with_its_label_and_copy_button() {
             assert!((path.center().y - copy.center().y).abs() < 2.0);
             assert!(file.right() < path.left() && path.right() < copy.left());
             assert!(copy.right() < size.x);
+        }
+    }
+}
+
+#[test]
+fn copilot_sign_in_controls_fit_in_both_themes() {
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        let context = egui::Context::default();
+        crate::theme::install_fonts(&context);
+        egui_extras::install_image_loaders(&context);
+        theme.apply(&context);
+        let mut app = SannyGitApp::with_theme(theme);
+        app.settings_window.page = SettingsPage::Llm;
+        let config = &mut app.settings_window.llm.config;
+        config.chatgpt_subscription = true;
+        config.subscription_provider = crate::llm::SubscriptionProvider::Copilot;
+        for size in [Vec2::new(680.0, 380.0), PREFERENCES_SIZE] {
+            for (status, action, hidden_action) in [
+                (AiConnectionStatus::SignedOut, "Login", "Logout"),
+                (AiConnectionStatus::Connected, "Logout", "Login"),
+            ] {
+                app.settings_window.copilot_status = status;
+                let mut output = context.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                        ..Default::default()
+                    },
+                    |ui| window_contents(ui, &mut app),
+                );
+                output.textures_delta.clear();
+                let provider = text_position(&output.shapes, "GitHub Copilot").unwrap();
+                let button = text_position(&output.shapes, action).unwrap();
+                assert!(button.x > provider.x && (button.y - provider.y).abs() < 7.0);
+                assert!(!visible_text(&output.shapes, "Model:"));
+                assert!(!visible_text(&output.shapes, "Provider default"));
+                assert!(!visible_text(&output.shapes, hidden_action));
+                assert!(visible_text(&output.shapes, "OK"));
+                assert!(
+                    filled_rect_count(&output.shapes, app.palette().selection.gamma_multiply(0.4))
+                        > 0
+                );
+            }
         }
     }
 }
@@ -1030,8 +1076,8 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
                 }];
                 app.settings_window.chatgpt_models_attempted = true;
                 for (status, action, hidden_action) in [
-                    (ChatGptStatus::SignedOut, "Login", "Logout"),
-                    (ChatGptStatus::Connected, "Logout", "Login"),
+                    (AiConnectionStatus::SignedOut, "Login", "Logout"),
+                    (AiConnectionStatus::Connected, "Logout", "Login"),
                 ] {
                     app.settings_window.chatgpt_status = status;
                     let mut provider = context.run_ui(

@@ -65,10 +65,10 @@ You need add `~/.local/bin` to `PATH` on Linux.
 
 ## Commit message generation
 
-In **Settings → AI**, select **AI Provider**, then **Login** to
-connect an eligible plan in your browser. Reopen Settings and select **OK** to
-save your choice. Generating a message sends the selected commit diff to OpenAI.
-Choose **OpenAI API** to use an API key or a local model.
+In **Settings → AI**, configure browser sign-in, an API key, or a local
+model. For browser sign-in, select **Login** and follow the prompts. Reopen
+Settings and select **OK** to save your choice. When you generate a commit
+message, SannyGit sends the selected diff to the configured service.
 
 ## MIT License
 

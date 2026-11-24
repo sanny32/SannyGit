@@ -7,6 +7,7 @@ use std::{
 };
 
 pub mod chatgpt;
+pub mod copilot;
 
 pub const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
 pub const DEFAULT_MODEL: &str = "gpt-4.1-mini";
@@ -16,6 +17,7 @@ const KEYRING_SERVICE: &str = "SannyGit";
 #[cfg(target_os = "macos")]
 const PROTECTED_KEYRING_SERVICE: &str = "SannyGit LLM API keys";
 const LEGACY_KEYRING_USER: &str = "llm-api-key";
+const COPILOT_KEYRING_USER: &str = "github-copilot-oauth";
 
 pub struct ProviderPreset {
     pub name: &'static str,
@@ -80,6 +82,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
 #[serde(default)]
 pub struct Config {
     pub chatgpt_subscription: bool,
+    pub subscription_provider: SubscriptionProvider,
     pub subscription_models: std::collections::BTreeMap<String, SubscriptionModelSettings>,
     pub endpoint: String,
     pub model: String,
@@ -93,6 +96,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             chatgpt_subscription: false,
+            subscription_provider: SubscriptionProvider::default(),
             subscription_models: Default::default(),
             endpoint: DEFAULT_ENDPOINT.into(),
             model: DEFAULT_MODEL.into(),
@@ -101,6 +105,13 @@ impl Default for Config {
             api_key: String::new(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub enum SubscriptionProvider {
+    #[default]
+    ChatGpt,
+    Copilot,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -399,13 +410,17 @@ fn load_api_key(config: &Config, repository: Option<&str>) -> Result<Option<Stri
     let user = credential_user(&endpoint, repository);
     #[cfg(test)]
     CREDENTIAL_READS.with(|reads| reads.set(reads.get() + 1));
+    load_secret(&user, repository.is_none() && endpoint == DEFAULT_ENDPOINT)
+}
+
+fn load_secret(user: &str, allow_legacy: bool) -> Result<Option<String>, String> {
     #[cfg(target_os = "macos")]
     {
         load_api_key_from_stores(
-            || macos_credentials::load(&user),
-            || macos_credentials::load_unprotected(&user),
+            || macos_credentials::load(user),
+            || macos_credentials::load_unprotected(user),
             || {
-                if repository.is_none() && endpoint == DEFAULT_ENDPOINT {
+                if allow_legacy {
                     macos_credentials::load_legacy()
                 } else {
                     Ok(None)
@@ -415,12 +430,10 @@ fn load_api_key(config: &Config, repository: Option<&str>) -> Result<Option<Stri
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let entry = credential_entry(&user)?;
+        let entry = credential_entry(user)?;
         match entry.get_password() {
             Ok(secret) => Ok(Some(secret)),
-            Err(keyring::Error::NoEntry)
-                if repository.is_none() && endpoint == DEFAULT_ENDPOINT =>
-            {
+            Err(keyring::Error::NoEntry) if allow_legacy => {
                 match credential_entry(LEGACY_KEYRING_USER)?.get_password() {
                     Ok(secret) => Ok(Some(secret)),
                     Err(keyring::Error::NoEntry) => Ok(None),
@@ -449,36 +462,17 @@ pub fn load_api_key_if_needed(config: &mut Config, repository: Option<&str>) -> 
 pub fn save_api_key(config: &Config, repository: Option<&str>) -> Result<(), String> {
     let endpoint = chat_completions_endpoint(&config.endpoint);
     let user = credential_user(&endpoint, repository);
-    #[cfg(not(target_os = "macos"))]
-    let entry = credential_entry(&user)?;
-    if config.store_api_key && !config.api_key.is_empty() {
+    let secret = if config.store_api_key && !config.api_key.is_empty() {
         let secret = serde_json::to_string(&SavedCredential {
             model: config.model.trim().to_owned(),
             api_key: config.api_key.clone(),
         })
         .map_err(|_| "Cannot encode the LLM credential".to_owned())?;
-        #[cfg(target_os = "macos")]
-        {
-            macos_credentials::save(&user, &secret)?;
-        }
-        #[cfg(not(target_os = "macos"))]
-        entry
-            .set_password(&secret)
-            .map_err(|error| format!("Cannot save the LLM API key securely: {error}"))?;
+        Some(secret)
     } else {
-        #[cfg(target_os = "macos")]
-        {
-            macos_credentials::delete(&user)?;
-            macos_credentials::delete_unprotected(&user)?;
-        }
-        #[cfg(not(target_os = "macos"))]
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => {}
-            Err(error) => {
-                return Err(format!("Cannot remove the saved LLM API key: {error}"));
-            }
-        }
-    }
+        None
+    };
+    save_secret(&user, secret.as_deref())?;
     if repository.is_none() && endpoint == DEFAULT_ENDPOINT {
         #[cfg(target_os = "macos")]
         {
@@ -493,6 +487,30 @@ pub fn save_api_key(config: &Config, repository: Option<&str>) -> Result<(), Str
         }
     } else {
         Ok(())
+    }
+}
+
+fn save_secret(user: &str, secret: Option<&str>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    match secret {
+        Some(secret) => macos_credentials::save(user, secret),
+        None => {
+            macos_credentials::delete(user)?;
+            macos_credentials::delete_unprotected(user)
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let entry = credential_entry(user)?;
+        if let Some(secret) = secret {
+            return entry
+                .set_password(secret)
+                .map_err(|error| format!("Cannot save the credential securely: {error}"));
+        }
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(format!("Cannot remove the saved credential: {error}")),
+        }
     }
 }
 
@@ -543,6 +561,10 @@ pub fn generate(config: &Config, patch: &str, cancel: &AtomicBool) -> Result<Str
         .enable_all()
         .build()
         .map_err(|error| format!("Cannot initialize the LLM runtime: {error}"))?;
+    if config.chatgpt_subscription && config.subscription_provider == SubscriptionProvider::Copilot
+    {
+        return runtime.block_on(copilot::generate(config, patch, cancel));
+    }
     let token = if config.chatgpt_subscription {
         Some(chatgpt::access_token(&runtime)?)
     } else {
@@ -747,6 +769,11 @@ fn parse_message(value: &Value) -> Result<String, String> {
         .map(str::trim)
         .filter(|message| !message.is_empty())
         .ok_or("LLM API response does not contain a commit message")?;
+    validate_generated_message(message)
+}
+
+fn validate_generated_message(message: &str) -> Result<String, String> {
+    let message = message.trim();
     crate::git::validate_message(message)?;
     Ok(message.to_owned())
 }

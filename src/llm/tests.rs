@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn subscription_provider_defaults_to_chatgpt_and_persists_copilot() {
+    let config: Config = serde_json::from_value(json!({"chatgpt_subscription": true})).unwrap();
+    assert_eq!(config.subscription_provider, SubscriptionProvider::ChatGpt);
+
+    let config = Config {
+        subscription_provider: SubscriptionProvider::Copilot,
+        endpoint: String::new(),
+        model: String::new(),
+        ..config
+    };
+    let saved = serde_json::to_value(&config).unwrap();
+    let restored: Config = serde_json::from_value(saved).unwrap();
+    assert_eq!(restored, config);
+    assert!(restored.validate().is_ok());
+}
+
+#[test]
 fn model_urls_accept_base_and_chat_endpoints() {
     for endpoint in [
         " https://example.test/coding/v1/ ",
@@ -113,6 +130,7 @@ fn models_are_loaded_with_optional_auth_and_bounded_responses() {
             store_api_key: false,
             chatgpt_subscription: false,
             subscription_models: Default::default(),
+            subscription_provider: super::SubscriptionProvider::ChatGpt,
         };
         let result = list_models(&config);
         let headers = server.join().unwrap();

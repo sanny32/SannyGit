@@ -18,10 +18,8 @@
     --text: #e8eaef;
     --muted: #a3abba;
     --faint: #8b93a3;
-    --ok: #97ea8b;
-    --ok-bg: #173722;
-    --bad: #f46a6f;
-    --bad-bg: #3e1e24;
+    --seal: #3cba66;
+    --seal-bad: #ef5d66;
     --glow: rgba(244, 91, 53, 0.22);
     --shadow: rgba(0, 0, 0, 0.38);
   }
@@ -35,10 +33,8 @@
       --text: #17202e;
       --muted: #5c677a;
       --faint: #6d788b;
-      --ok: #0d7a32;
-      --ok-bg: #e5f8ea;
-      --bad: #c62832;
-      --bad-bg: #fdecee;
+      --seal: #148a3e;
+      --seal-bad: #d82632;
       --glow: rgba(244, 91, 53, 0.16);
       --shadow: rgba(23, 37, 61, 0.14);
     }
@@ -79,18 +75,19 @@
   }
   .badge {
     position: absolute;
-    right: -2px;
-    bottom: -2px;
+    right: -4px;
+    bottom: -4px;
     display: grid;
     place-items: center;
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
+    color: #fff;
     border-radius: 999px;
-    box-shadow: 0 0 0 4px var(--card);
+    box-shadow: 0 0 0 3px var(--card), 0 4px 10px rgba(0, 0, 0, 0.22);
   }
-  .badge svg { width: 16px; height: 16px; }
-  body.ok .badge { background: var(--ok-bg); color: var(--ok); }
-  body.bad .badge { background: var(--bad-bg); color: var(--bad); }
+  .badge svg { width: 18px; height: 18px; }
+  body.ok .badge { background: var(--seal); }
+  body.bad .badge { background: var(--seal-bad); }
   body.ok .icon-bad, body.bad .icon-ok { display: none; }
   .wordmark {
     margin: 0 0 8px;
@@ -153,11 +150,11 @@
       </g>
     </svg>
     <span class="badge">
-      <svg class="icon-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="m5 12.5 4.2 4.2L19 7.5"/>
+      <svg class="icon-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6.4 12.5 10.3 16.4 17.7 8.2"/>
       </svg>
-      <svg class="icon-bad" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
-        <path d="M12 7.5v6M12 17h.01"/>
+      <svg class="icon-bad" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" aria-hidden="true">
+        <path d="M8 8 16 16M16 8 8 16"/>
       </svg>
     </span>
   </div>

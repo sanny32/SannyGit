@@ -29,7 +29,8 @@ class BuildScriptTests(unittest.TestCase):
         self.prefix = self.root / "install with spaces"
         self.log = self.root / "commands.jsonl"
         self.env = dict(os.environ, PATH=f"{self.tools}{os.pathsep}{os.environ['PATH']}",
-                        TEST_BINARY=str(self.binary), TEST_LOG=str(self.log), TEST_OS="Linux")
+                        TEST_BINARY=str(self.binary), TEST_LOG=str(self.log), TEST_OS="Linux",
+                        SANNYGIT_GITHUB_CLIENT_SECRET="test-client-secret")
         for name in ["cargo", "rustc", "uname", "pkg-config", "xcode-select", "codesign"]:
             tool = self.tools / name
             tool.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''\
@@ -72,6 +73,13 @@ class BuildScriptTests(unittest.TestCase):
             result = self.run_build(*args)
             self.assertEqual(result.returncode, expected, result.stderr)
             self.assertEqual(self.commands(), [])
+
+    def test_release_build_requires_the_github_client_secret(self):
+        del self.env["SANNYGIT_GITHUB_CLIENT_SECRET"]
+        result = self.run_build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SANNYGIT_GITHUB_CLIENT_SECRET", result.stderr)
+        self.assertEqual(self.commands(), [])
 
     def test_default_build_does_not_install_and_honors_cargo_executable_path(self):
         result = self.run_build()

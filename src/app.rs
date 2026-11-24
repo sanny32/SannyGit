@@ -111,6 +111,7 @@ enum WorkerResult {
         sign_in: bool,
         result: Result<String, String>,
     },
+    CopilotConnection(Result<String, String>),
     AmendMessage(Result<(String, String), String>),
     Repository(Result<crate::git::Snapshot, String>),
     Operation {
@@ -201,7 +202,7 @@ impl LlmSettings {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ChatGptStatus {
+pub enum AiConnectionStatus {
     Unknown,
     Checking,
     SignedOut,
@@ -227,8 +228,10 @@ pub struct SettingsWindow {
     pub llm_instructions: BTreeMap<String, String>,
     pub llm_repository: Option<String>,
     pub llm_repository_tab: RepositoryLlmTab,
-    pub chatgpt_status: ChatGptStatus,
+    pub chatgpt_status: AiConnectionStatus,
     chatgpt_status_reader: Option<Receiver<Result<bool, String>>>,
+    pub copilot_status: AiConnectionStatus,
+    copilot_status_reader: Option<Receiver<Result<bool, String>>>,
     pub chatgpt_models: Vec<crate::llm::chatgpt::Model>,
     chatgpt_models_reader: Option<Receiver<Result<Vec<crate::llm::chatgpt::Model>, String>>>,
     pub chatgpt_models_attempted: bool,
@@ -256,8 +259,10 @@ impl SettingsWindow {
             llm_instructions: BTreeMap::new(),
             llm_repository: None,
             llm_repository_tab: RepositoryLlmTab::Model,
-            chatgpt_status: ChatGptStatus::Unknown,
+            chatgpt_status: AiConnectionStatus::Unknown,
             chatgpt_status_reader: None,
+            copilot_status: AiConnectionStatus::Unknown,
+            copilot_status_reader: None,
             chatgpt_models: Vec::new(),
             chatgpt_models_reader: None,
             chatgpt_models_attempted: false,
@@ -2001,6 +2006,7 @@ impl SannyGitApp {
             config.instructions.clone_from(instructions);
         }
         config.chatgpt_subscription = self.llm_config.chatgpt_subscription;
+        config.subscription_provider = self.llm_config.subscription_provider;
         if config.chatgpt_subscription {
             if config.subscription_models.is_empty() {
                 config
@@ -2063,6 +2069,32 @@ impl SannyGitApp {
         }
     }
 
+    pub fn change_copilot_connection(&mut self, ctx: &eframe::egui::Context, sign_in: bool) {
+        if self.busy() {
+            return;
+        }
+        let ctx = ctx.clone();
+        if self.start_worker(move |_| {
+            let result = if sign_in {
+                crate::llm::copilot::sign_in()
+            } else {
+                crate::llm::copilot::sign_out()
+            };
+            ctx.request_repaint();
+            WorkerResult::CopilotConnection(result)
+        }) {
+            self.settings_window.copilot_status_reader = None;
+            self.settings_window.copilot_status = AiConnectionStatus::ChangingSession;
+            self.settings_window.open = false;
+            self.settings_window.resume_after_ai_action = true;
+            self.status = if sign_in {
+                "Complete GitHub Copilot sign-in in your browser".into()
+            } else {
+                "Disconnecting GitHub Copilot…".into()
+            };
+        }
+    }
+
     pub fn change_chatgpt_connection(&mut self, ctx: &eframe::egui::Context, sign_in: bool) {
         let (status, job): (_, fn() -> Result<String, String>) = if sign_in {
             (
@@ -2085,55 +2117,77 @@ impl SannyGitApp {
             self.settings_window.chatgpt_models.clear();
             self.settings_window.chatgpt_models_reader = None;
             self.settings_window.chatgpt_models_attempted = false;
-            self.settings_window.chatgpt_status = ChatGptStatus::ChangingSession;
+            self.settings_window.chatgpt_status = AiConnectionStatus::ChangingSession;
             self.settings_window.open = false;
             self.settings_window.resume_after_ai_action = true;
             self.status = status.into();
         }
     }
 
-    fn update_chatgpt_status(&mut self, ctx: &eframe::egui::Context) {
-        let result = match self.settings_window.chatgpt_status {
-            ChatGptStatus::Unknown => {
-                match self.spawn_reader(Some(ctx.clone()), |_| {
-                    crate::llm::chatgpt::has_saved_session()
-                }) {
-                    Ok(reader) => {
-                        self.settings_window.chatgpt_status_reader = Some(reader);
-                        self.settings_window.chatgpt_status = ChatGptStatus::Checking;
-                        return;
-                    }
-                    Err(error) => Err(error),
-                }
+    pub fn update_ai_connection_status(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        provider: crate::llm::SubscriptionProvider,
+    ) {
+        use crate::llm::SubscriptionProvider::{ChatGpt, Copilot};
+        let check: fn() -> Result<bool, String> = match provider {
+            ChatGpt => crate::llm::chatgpt::has_saved_session,
+            Copilot => crate::llm::copilot::has_saved_session,
+        };
+        let started = matches!(
+            match provider {
+                ChatGpt => self.settings_window.chatgpt_status,
+                Copilot => self.settings_window.copilot_status,
+            },
+            AiConnectionStatus::Unknown
+        )
+        .then(|| self.spawn_reader(Some(ctx.clone()), move |_| check()));
+        let window = &mut self.settings_window;
+        let (status, reader) = match provider {
+            ChatGpt => (
+                &mut window.chatgpt_status,
+                &mut window.chatgpt_status_reader,
+            ),
+            Copilot => (
+                &mut window.copilot_status,
+                &mut window.copilot_status_reader,
+            ),
+        };
+        let result = match started {
+            Some(Ok(started)) => {
+                *reader = Some(started);
+                *status = AiConnectionStatus::Checking;
+                return;
             }
-            ChatGptStatus::Checking => {
-                let Some(reader) = &self.settings_window.chatgpt_status_reader else {
+            Some(Err(error)) => Err(error),
+            None if *status == AiConnectionStatus::Checking => {
+                let Some(reader) = reader else {
                     return;
                 };
                 match reader.try_recv() {
                     Ok(result) => result,
                     Err(mpsc::TryRecvError::Empty) => return,
                     Err(mpsc::TryRecvError::Disconnected) => {
-                        Err("Could not check the saved ChatGPT session".into())
+                        Err("Could not check the saved AI provider session".into())
                     }
                 }
             }
-            _ => return,
+            None => return,
         };
-        self.settings_window.chatgpt_status_reader = None;
-        self.settings_window.chatgpt_status = match result {
-            Ok(true) => ChatGptStatus::Connected,
-            Ok(false) => ChatGptStatus::SignedOut,
+        *reader = None;
+        *status = match result {
+            Ok(true) => AiConnectionStatus::Connected,
+            Ok(false) => AiConnectionStatus::SignedOut,
             Err(error) => {
                 self.error = Some(error);
-                ChatGptStatus::Failed
+                AiConnectionStatus::Failed
             }
         };
     }
 
     pub fn update_chatgpt_models(&mut self, ctx: &eframe::egui::Context) {
-        self.update_chatgpt_status(ctx);
-        if self.settings_window.chatgpt_status != ChatGptStatus::Connected {
+        self.update_ai_connection_status(ctx, crate::llm::SubscriptionProvider::ChatGpt);
+        if self.settings_window.chatgpt_status != AiConnectionStatus::Connected {
             return;
         }
         if let Some(reader) = &self.settings_window.chatgpt_models_reader {
@@ -2181,8 +2235,11 @@ impl SannyGitApp {
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.worker = None;
-                if self.settings_window.chatgpt_status == ChatGptStatus::ChangingSession {
-                    self.settings_window.chatgpt_status = ChatGptStatus::Unknown;
+                if self.settings_window.chatgpt_status == AiConnectionStatus::ChangingSession {
+                    self.settings_window.chatgpt_status = AiConnectionStatus::Unknown;
+                }
+                if self.settings_window.copilot_status == AiConnectionStatus::ChangingSession {
+                    self.settings_window.copilot_status = AiConnectionStatus::Unknown;
                 }
                 self.background_progress_only = false;
                 self.commit.generating_message = false;
@@ -2347,18 +2404,28 @@ impl SannyGitApp {
             WorkerResult::AiConnection { sign_in, result } => match result {
                 Ok(status) => {
                     self.settings_window.chatgpt_status = if sign_in {
-                        ChatGptStatus::Connected
+                        AiConnectionStatus::Connected
                     } else {
-                        ChatGptStatus::SignedOut
+                        AiConnectionStatus::SignedOut
                     };
                     self.status = status;
                 }
                 Err(error) => {
-                    self.settings_window.chatgpt_status = ChatGptStatus::Unknown;
+                    self.settings_window.chatgpt_status = AiConnectionStatus::Unknown;
                     self.error = Some(error);
                     self.status = "AI connection failed".into();
                 }
             },
+            WorkerResult::CopilotConnection(result) => {
+                self.settings_window.copilot_status = AiConnectionStatus::Unknown;
+                match result {
+                    Ok(status) => self.status = status,
+                    Err(error) => {
+                        self.error = Some(error);
+                        self.status = "GitHub Copilot connection failed".into();
+                    }
+                }
+            }
             WorkerResult::Repository(Ok(snapshot)) => {
                 logging::record(logging::Level::Info, format_args!("Repository opened"));
                 self.apply_snapshot(snapshot);

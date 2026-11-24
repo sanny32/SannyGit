@@ -2,7 +2,7 @@ use super::controls::dialog_style::DialogResponse;
 use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
 use crate::{
-    app::{ChatGptStatus, RepositoryLlmTab, SannyGitApp, SettingsPage},
+    app::{AiConnectionStatus, RepositoryLlmTab, SannyGitApp, SettingsPage},
     logging::{self, Level},
     theme::{semibold_family, InterfaceStyle, Palette, ThemeChoice},
 };
@@ -12,8 +12,8 @@ use eframe::egui::{
 };
 
 const PREFERENCES_SIZE: Vec2 = egui::vec2(790.0, 456.0);
-/// Matches `chatgpt_provider` Login / Logout min width so grid column 3 sizes both rows.
-const CHATGPT_ACTION_BUTTON_MIN_WIDTH: f32 = 86.0;
+/// Keeps both provider rows aligned with the Login / Logout button.
+const AI_ACTION_BUTTON_MIN_WIDTH: f32 = 86.0;
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if !app.settings_window.open {
@@ -738,8 +738,11 @@ fn repository_llm_model_tab(
     palette: Palette,
     path: Option<&str>,
 ) {
-    let subscription_mode = app.settings_window.llm.config.chatgpt_subscription;
-    if subscription_mode {
+    let config = &app.settings_window.llm.config;
+    let provider = config
+        .chatgpt_subscription
+        .then_some(config.subscription_provider);
+    if provider == Some(crate::llm::SubscriptionProvider::ChatGpt) {
         app.update_chatgpt_models(ui.ctx());
     }
     let window = &mut app.settings_window;
@@ -780,7 +783,7 @@ fn repository_llm_model_tab(
                 Some(path),
                 &mut app.llm_models,
                 &window.chatgpt_models,
-                subscription_mode,
+                provider,
             );
         } else {
             ui.add_enabled_ui(false, |ui| {
@@ -791,7 +794,7 @@ fn repository_llm_model_tab(
                     None,
                     &mut app.llm_models,
                     &window.chatgpt_models,
-                    subscription_mode,
+                    provider,
                 );
             });
         }
@@ -803,7 +806,7 @@ fn repository_llm_model_tab(
             None,
             &mut app.llm_models,
             &window.chatgpt_models,
-            subscription_mode,
+            provider,
         );
     }
 }
@@ -894,12 +897,29 @@ fn ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     ui.add_space(section_gap);
     let idle = !app.busy();
     if subscription {
-        app.update_chatgpt_models(ui.ctx());
-        let status = app.settings_window.chatgpt_status;
-        let connected = status == ChatGptStatus::Connected;
+        use crate::llm::SubscriptionProvider;
+        let provider = app.settings_window.llm.config.subscription_provider;
+        let status = match provider {
+            SubscriptionProvider::ChatGpt => {
+                app.update_chatgpt_models(ui.ctx());
+                app.settings_window.chatgpt_status
+            }
+            SubscriptionProvider::Copilot => {
+                app.update_ai_connection_status(ui.ctx(), provider);
+                app.settings_window.copilot_status
+            }
+        };
+        let connected = status == AiConnectionStatus::Connected;
         let can_change_session =
-            idle && !matches!(status, ChatGptStatus::Unknown | ChatGptStatus::Checking);
-        if chatgpt_provider(
+            idle && !matches!(
+                status,
+                AiConnectionStatus::Unknown
+                    | AiConnectionStatus::Checking
+                    | AiConnectionStatus::ChangingSession
+            ) && (provider == SubscriptionProvider::ChatGpt
+                || connected
+                || crate::llm::copilot::can_sign_in());
+        if subscription_provider(
             ui,
             palette,
             can_change_session,
@@ -907,10 +927,23 @@ fn ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             &mut app.settings_window.llm.config,
             &app.settings_window.chatgpt_models,
         ) {
-            app.change_chatgpt_connection(ui.ctx(), !connected);
+            match provider {
+                SubscriptionProvider::ChatGpt => {
+                    app.change_chatgpt_connection(ui.ctx(), !connected)
+                }
+                SubscriptionProvider::Copilot => {
+                    app.change_copilot_connection(ui.ctx(), !connected)
+                }
+            }
         }
         ui.add_space(section_gap);
-        chatgpt_sign_in_banner(ui, palette);
+        let instructions = match app.settings_window.llm.config.subscription_provider {
+            SubscriptionProvider::ChatGpt => "Sign in to ChatGPT in your browser. SannyGit uses your account and sends the selected diff when you generate a message.",
+            SubscriptionProvider::Copilot if crate::llm::copilot::can_sign_in() =>
+                "Sign in to GitHub in your browser. SannyGit sends the selected diff to Copilot when you generate a message.",
+            SubscriptionProvider::Copilot => "GitHub Copilot sign-in is unavailable in this build.",
+        };
+        ai_sign_in_banner(ui, palette, instructions);
         return;
     }
     llm_api_form(
@@ -923,7 +956,7 @@ fn ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     );
 }
 
-fn chatgpt_provider(
+fn subscription_provider(
     ui: &mut Ui,
     palette: Palette,
     enabled: bool,
@@ -933,51 +966,68 @@ fn chatgpt_provider(
 ) -> bool {
     let mut clicked = false;
     Frame::new().inner_margin(Margin::ZERO).show(ui, |ui| {
-        use crate::llm::chatgpt::PROVIDER_ID;
-        let settings = config
-            .subscription_models
-            .entry(PROVIDER_ID.into())
-            .or_default();
-        egui::Grid::new("preferences.chatgpt.provider")
+        use crate::llm::SubscriptionProvider::{ChatGpt, Copilot};
+        let label = |provider| match provider {
+            ChatGpt => (
+                icons::image(Icon::OpenAi, palette.text, 20.0),
+                "OpenAI (ChatGPT)",
+            ),
+            Copilot => (
+                icons::image(Icon::GitHub, palette.text, 20.0),
+                "GitHub Copilot",
+            ),
+        };
+        egui::Grid::new("preferences.ai.provider")
             .num_columns(2)
             .spacing([8.0, 6.0])
             .show(ui, |ui| {
                 form_label(ui, "Provider:");
-                chatgpt_provider_field_row(
+                ai_provider_field_row(
                     ui,
                     palette,
                     Some((enabled, connected)),
                     &mut clicked,
                     |ui| {
-                        let provider = (
-                            icons::image(Icon::OpenAi, palette.text, 20.0),
-                            "OpenAI (ChatGPT)",
-                        );
                         egui::ComboBox::from_id_salt("preferences.ai.provider")
                             .width(ui.available_width())
-                            .selected_text(provider.clone())
+                            .selected_text(label(config.subscription_provider))
                             .show_ui(ui, |ui| {
-                                if ui.selectable_label(true, provider).clicked() {
-                                    ui.close();
+                                for provider in [ChatGpt, Copilot] {
+                                    if ui
+                                        .selectable_value(
+                                            &mut config.subscription_provider,
+                                            provider,
+                                            label(provider),
+                                        )
+                                        .clicked()
+                                    {
+                                        ui.close();
+                                    }
                                 }
                             });
                     },
                 );
                 ui.end_row();
 
-                form_label(ui, "Model:");
-                chatgpt_provider_field_row(ui, palette, None, &mut clicked, |ui| {
-                    ui.add_enabled_ui(!models.is_empty(), |ui| {
-                        generation_settings_field(ui, palette, settings, models);
+                if config.subscription_provider != Copilot {
+                    form_label(ui, "Model:");
+                    ai_provider_field_row(ui, palette, None, &mut clicked, |ui| {
+                        let settings = config
+                            .subscription_models
+                            .entry(crate::llm::chatgpt::PROVIDER_ID.into())
+                            .or_default();
+                        ui.add_enabled_ui(!models.is_empty(), |ui| {
+                            generation_settings_field(ui, palette, settings, models);
+                        });
                     });
-                });
-                ui.end_row();
+                    ui.end_row();
+                }
             });
     });
     clicked
 }
 
-fn chatgpt_provider_field_row(
+fn ai_provider_field_row(
     ui: &mut Ui,
     palette: Palette,
     action: Option<(bool, bool)>,
@@ -999,17 +1049,14 @@ fn chatgpt_provider_field_row(
                 .add_enabled(
                     enabled,
                     button.corner_radius(6).min_size(Vec2::new(
-                        CHATGPT_ACTION_BUTTON_MIN_WIDTH,
+                        AI_ACTION_BUTTON_MIN_WIDTH,
                         crate::theme::CONTROL_HEIGHT,
                     )),
                 )
                 .clicked();
         } else {
             ui.allocate_exact_size(
-                Vec2::new(
-                    CHATGPT_ACTION_BUTTON_MIN_WIDTH,
-                    crate::theme::CONTROL_HEIGHT,
-                ),
+                Vec2::new(AI_ACTION_BUTTON_MIN_WIDTH, crate::theme::CONTROL_HEIGHT),
                 Sense::hover(),
             );
         }
@@ -1020,7 +1067,7 @@ fn chatgpt_provider_field_row(
     });
 }
 
-fn chatgpt_sign_in_banner(ui: &mut Ui, palette: Palette) {
+fn ai_sign_in_banner(ui: &mut Ui, palette: Palette, instructions: &str) {
     Frame::new()
         .fill(palette.selection.gamma_multiply(0.4))
         .corner_radius(6)
@@ -1029,12 +1076,7 @@ fn chatgpt_sign_in_banner(ui: &mut Ui, palette: Palette) {
             ui.set_min_width(ui.available_width());
             ui.horizontal_top(|ui| {
                 icons::paint(ui, Icon::Info, palette.accent, 17.0);
-                ui.label(
-                    RichText::new(
-                        "Sign in to ChatGPT in your browser. SannyGit uses your account and sends the selected diff when you generate a message.",
-                    )
-                    .color(palette.muted),
-                );
+                ui.label(RichText::new(instructions).color(palette.muted));
             });
         });
 }
@@ -1121,12 +1163,14 @@ fn llm_form(
     repository: Option<&str>,
     catalog: &mut crate::app::ModelCatalog,
     chatgpt_models: &[crate::llm::chatgpt::Model],
-    subscription_mode: bool,
+    provider: Option<crate::llm::SubscriptionProvider>,
 ) {
-    if subscription_mode {
-        chatgpt_model_row(ui, &mut draft.config, chatgpt_models, palette);
-    } else {
-        llm_api_form(ui, draft, palette, repository, catalog, true);
+    match provider {
+        Some(crate::llm::SubscriptionProvider::ChatGpt) => {
+            chatgpt_model_row(ui, &mut draft.config, chatgpt_models, palette);
+        }
+        Some(crate::llm::SubscriptionProvider::Copilot) => {}
+        None => llm_api_form(ui, draft, palette, repository, catalog, true),
     }
 }
 

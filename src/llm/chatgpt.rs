@@ -341,7 +341,7 @@ fn callback_page(success: bool) -> String {
             "bad",
         )
     };
-    include_str!("../../assets/chatgpt-callback.html")
+    include_str!("../../assets/oauth-callback.html")
         .replace("__TONE__", tone)
         .replace("__HEADING__", heading)
         .replace("__MESSAGE__", message)

@@ -24,6 +24,9 @@ jobs:
       - uses: ./.github/actions/project-version
         id: version
       - name: Build and stage application
+        env:
+          SANNYGIT_GITHUB_CLIENT_ID: ${{ vars.SANNYGIT_GITHUB_CLIENT_ID }}
+          SANNYGIT_GITHUB_CLIENT_SECRET: ${{ secrets.SANNYGIT_GITHUB_CLIENT_SECRET }}
         run: ./build.sh --install="$GITHUB_WORKSPACE/target/ci-stage"
       - name: Verify bundle and build disk image
         env:

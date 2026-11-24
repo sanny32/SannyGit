@@ -34,6 +34,9 @@ jobs:
       - uses: ./.github/actions/project-version
         id: version
       - name: Build and stage package root
+        env:
+          SANNYGIT_GITHUB_CLIENT_ID: ${{ vars.SANNYGIT_GITHUB_CLIENT_ID }}
+          SANNYGIT_GITHUB_CLIENT_SECRET: ${{ secrets.SANNYGIT_GITHUB_CLIENT_SECRET }}
         run: ./build.sh --install="$GITHUB_WORKSPACE/target/rpm-root/usr"
       - name: Build and verify RPM
         env:
