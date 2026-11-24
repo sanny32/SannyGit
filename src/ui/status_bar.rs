@@ -6,6 +6,10 @@ use eframe::egui::{
     Align, CursorIcon, Frame, Id, Label, Layout, Margin, Panel, RichText, Sense, Ui, Vec2,
 };
 
+pub(crate) fn operation_cancel_id() -> Id {
+    Id::unique("status.operation.cancel")
+}
+
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     track_provider_connection(app, ui.ctx());
     let palette = app.palette();
@@ -69,11 +73,24 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 .truncate()
                                 .show_tooltip_when_elided(false),
                         )
-                        .help_text(status);
+                        .help_text(&status);
+                        show_operation_cancel(ui, app);
                     });
                 });
             });
         });
+}
+
+fn show_operation_cancel(ui: &mut Ui, app: &mut SannyGitApp) {
+    if !(app.background_progress_only && app.manager.cancel.is_some()) {
+        return;
+    }
+    let response = icons::button(ui, Icon::Close, "Cancel the background operation");
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(operation_cancel_id(), response.rect));
+    if response.clicked() {
+        app.cancel_repository_job();
+    }
 }
 
 fn track_provider_connection(app: &mut SannyGitApp, ctx: &eframe::egui::Context) {
@@ -423,5 +440,130 @@ mod tests {
         assert!(app.settings_window.open);
         assert_eq!(app.settings_window.page, SettingsPage::Llm);
         assert!(app.settings_window.llm_repository.is_none());
+    }
+
+    fn text_rects(shapes: &[ClippedShape], expected: &str) -> Vec<Rect> {
+        shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == expected => {
+                    Some(Rect::from_min_size(text.pos, text.galley.size()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn operation_cancel_follows_the_message_in_the_status_bar() {
+        use crate::theme::{InterfaceStyle, ThemeChoice};
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for style in [InterfaceStyle::Classic, InterfaceStyle::Modern] {
+                for size in [Vec2::new(1100.0, 700.0), Vec2::new(1400.0, 900.0)] {
+                    let ctx = Context::default();
+                    crate::theme::install_fonts(&ctx);
+                    theme.apply(&ctx);
+                    theme.apply_style(&ctx, style);
+                    let mut app = SannyGitApp::with_theme(theme);
+                    app.interface_style = style;
+                    app.repositories.push(Repository {
+                        name: "Test".into(),
+                        path: "D:/repositories/example".into(),
+                    });
+                    app.selected_repository = 0;
+                    app.branches.current_branch = "main".into();
+                    app.status = "Syncing with remote…".into();
+                    app.background_progress_only = true;
+                    app.manager.cancel = Some(Arc::new(AtomicBool::new(false)));
+
+                    let render = |app: &mut SannyGitApp, events: Vec<Event>| {
+                        let mut output = ctx.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                                events,
+                                ..Default::default()
+                            },
+                            |ui| crate::ui::show(ui, app),
+                        );
+                        output.textures_delta.clear();
+                        output
+                    };
+
+                    let output = render(&mut app, vec![]);
+                    let messages = text_rects(&output.shapes, "Syncing with remote…");
+                    assert_eq!(
+                        messages.len(),
+                        1,
+                        "Status should appear only in the status bar in {theme:?} {style:?} at {size:?}"
+                    );
+                    let status_message = messages[0];
+                    let cancel = ctx
+                        .data(|data| data.get_temp::<Rect>(super::operation_cancel_id()))
+                        .unwrap_or_else(|| {
+                            panic!("Cancel cross missing in {theme:?} {style:?} at {size:?}")
+                        });
+                    let window = Rect::from_min_size(Pos2::ZERO, size).expand(2.0);
+                    assert!(
+                        window.contains_rect(cancel),
+                        "Cancel cross {cancel:?} leaves the {size:?} window"
+                    );
+                    assert!(
+                        status_message.right() <= cancel.left() + 1.0
+                            && cancel.left() - status_message.right() < 16.0,
+                        "Cross is not immediately after the message in {theme:?} {style:?} at {size:?}: message {status_message:?} cancel {cancel:?}"
+                    );
+                    assert!(
+                        (cancel.center().y - status_message.center().y).abs() < 6.0,
+                        "Cross left the status row"
+                    );
+                    assert!(status_message.top() > size.y - 40.0);
+                    assert!(cancel.top() > size.y - 40.0);
+                    let settings = text_rects(&output.shapes, "Settings")
+                        .into_iter()
+                        .min_by(|left, right| left.top().total_cmp(&right.top()))
+                        .expect("Settings in toolbar");
+                    assert!(
+                        settings.bottom() + 20.0 < cancel.top(),
+                        "Cancel should not sit beside Settings: settings {settings:?}, cancel {cancel:?}"
+                    );
+
+                    let pointer = cancel.center();
+                    for pressed in [true, false] {
+                        render(
+                            &mut app,
+                            vec![
+                                Event::PointerMoved(pointer),
+                                Event::PointerButton {
+                                    pos: pointer,
+                                    button: PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Modifiers::NONE,
+                                },
+                            ],
+                        );
+                    }
+                    assert!(
+                        app.manager
+                            .cancel
+                            .as_ref()
+                            .is_some_and(|cancel| cancel.load(Ordering::Relaxed)),
+                        "Clicking the cross did not cancel"
+                    );
+                    assert_eq!(app.status, "Cancelling operation…");
+
+                    app.manager.cancel = None;
+                    app.background_progress_only = false;
+                    app.status = "Idle".into();
+                    let output = render(&mut app, vec![]);
+                    assert!(text_rects(&output.shapes, "Syncing with remote…").is_empty());
+                    assert_eq!(text_rects(&output.shapes, "Idle").len(), 1);
+                }
+            }
+        }
     }
 }
