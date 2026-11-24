@@ -6,6 +6,11 @@ use eframe::egui::{
     Align, CursorIcon, Frame, Id, Label, Layout, Margin, Panel, RichText, Sense, Ui, Vec2,
 };
 
+const HEIGHT: f32 = 26.0;
+const BORDER_WIDTH: f32 = 1.0;
+const CANCEL_INSET: f32 = BORDER_WIDTH + 1.0;
+const CANCEL_SIZE: Vec2 = Vec2::new(icons::BUTTON_SIZE, HEIGHT - 2.0 * CANCEL_INSET);
+
 pub(crate) fn operation_cancel_id() -> Id {
     Id::unique("status.operation.cancel")
 }
@@ -18,11 +23,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         app.status.clone()
     };
     Panel::bottom("working_tree.v2.status")
-        .exact_size(26.0)
+        .exact_size(HEIGHT)
+        .show_separator_line(false)
         .frame(
             Frame::new()
                 .fill(palette.background)
-                .stroke((1.0, palette.border))
+                .stroke((BORDER_WIDTH, palette.border))
                 .inner_margin(Margin::symmetric(8, 0)),
         )
         .show(ui, |ui| {
@@ -90,6 +96,7 @@ fn show_operation_cancel(ui: &mut Ui, app: &mut SannyGitApp) {
         Icon::Close,
         palette.muted,
         "Cancel the background operation",
+        CANCEL_SIZE,
     );
     ui.ctx()
         .data_mut(|data| data.insert_temp(operation_cancel_id(), response.rect));
@@ -540,7 +547,8 @@ mod tests {
                         "Cross left the status row"
                     );
                     assert!(status_message.top() > size.y - 40.0);
-                    assert!(cancel.top() > size.y - 40.0);
+                    assert!(cancel.top() >= size.y - HEIGHT + CANCEL_INSET);
+                    assert!(cancel.bottom() <= size.y - CANCEL_INSET, "Cancel {cancel:?}, status {status_message:?}, window {size:?}, {theme:?} {style:?}");
                     let settings = text_rects(&output.shapes, "Settings")
                         .into_iter()
                         .min_by(|left, right| left.top().total_cmp(&right.top()))
@@ -579,7 +587,9 @@ mod tests {
                     app.status = "Idle".into();
                     let output = render(&mut app, vec![]);
                     assert!(text_rects(&output.shapes, "Syncing with remote…").is_empty());
-                    assert_eq!(text_rects(&output.shapes, "Idle").len(), 1);
+                    let idle = text_rects(&output.shapes, "Idle");
+                    assert_eq!(idle.len(), 1);
+                    assert_eq!(idle[0].center().y, status_message.center().y);
                 }
             }
         }
