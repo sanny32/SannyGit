@@ -139,6 +139,18 @@ pub fn install_fonts(context: &Context) {
             .or_default()
             .insert(0, name.into());
     }
+    fonts.font_data.insert(
+        "Noto Sans SC".into(),
+        egui::FontData::from_static(include_bytes!("../assets/fonts/NotoSansSC-Regular.otf"))
+            .into(),
+    );
+    for family in [FontFamily::Proportional, semibold_family()] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .push("Noto Sans SC".into());
+    }
     context.set_fonts(fonts);
 }
 

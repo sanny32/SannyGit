@@ -13,5 +13,10 @@ and are distributed under the SIL Open Font License 1.1. See `OFL-Inter.txt`.
 Source Sans 3 is used on other platforms and as a fallback on Windows. The diff
 uses a monospace font.
 
+Noto Sans SC version 2.004 (region Subset OTF), from the Noto CJK project, is used
+as a fallback for Simplified Chinese UI glyphs and commit message templates. See
+the SIL Open Font License in the Noto CJK `LICENSE` file:
+https://github.com/notofonts/noto-cjk/blob/main/Sans/LICENSE
+
 Text uses egui's font hinting in both themes. Inter uses fractional horizontal
 glyph positions. Source Sans 3 uses horizontal grid fitting.

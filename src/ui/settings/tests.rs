@@ -221,6 +221,34 @@ fn settings_position_centers_on_main_window() {
 }
 
 #[test]
+fn reset_repository_settings_draft_disables_when_matching_defaults() {
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.repositories = vec![crate::models::Repository {
+        name: "Project".into(),
+        path: "/projects/example".into(),
+    }];
+    app.selected_repository = 0;
+    let path = app.repositories[0].path.clone();
+    app.repository_llm_configs.insert(
+        path.clone(),
+        crate::llm::Config {
+            model: "project-model".into(),
+            ..Default::default()
+        },
+    );
+    app.repository_llm_instructions
+        .insert(path.clone(), "Project instructions".into());
+    app.open_repository_llm_settings();
+    assert!(repository_settings_differ_from_defaults(&app, &path));
+    reset_repository_settings_draft(&mut app, &path);
+    assert!(
+        !repository_settings_differ_from_defaults(&app, &path),
+        "Reset should disable while overrides remain on disk until OK"
+    );
+    assert!(app.repository_llm_configs.contains_key(&path));
+}
+
+#[test]
 fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes() {
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
         for size in [Vec2::new(790.0, 456.0), Vec2::new(680.0, 380.0)] {
@@ -330,7 +358,10 @@ fn repository_overrides_can_be_enabled_saved_cancelled_and_reset_in_both_themes(
                 app.effective_generation_config(&path).instructions,
                 "Project instructions"
             );
-            assert_eq!(app.effective_generation_config(&path).model, "project-model");
+            assert_eq!(
+                app.effective_generation_config(&path).model,
+                "project-model"
+            );
             assert_eq!(
                 app.effective_llm_config("/another").instructions,
                 "Global instructions"
@@ -650,6 +681,7 @@ fn clicking_tree_labels_and_row_backgrounds_selects_the_page() {
                 (SettingsPage::Logging, "Logging"),
                 (SettingsPage::Llm, "AI"),
                 (SettingsPage::CommitMessages, "Commit messages"),
+                (SettingsPage::CommitContext, "Context"),
             ] {
                 let mut output = render(&mut app, Vec::new());
                 let rect = output
@@ -1051,6 +1083,7 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
             (SettingsPage::Remote, "Automatic fetch"),
             (SettingsPage::Llm, "Endpoint:"),
             (SettingsPage::CommitMessages, "Generation instructions:"),
+            (SettingsPage::CommitContext, "Patch size:"),
         ] {
             app.settings_window.page = page;
             let mut output = context.run_ui(
@@ -1139,10 +1172,41 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
             }
             if page == SettingsPage::CommitMessages {
                 assert!(!visible_text(&output.shapes, "Endpoint:"));
+                assert!(!visible_text(&output.shapes, "Patch size:"));
+                assert!(visible_text(&output.shapes, "Language:"));
+                assert!(visible_text(&output.shapes, "English"));
                 assert!(visible_text(
                     &output.shapes,
                     &app.settings_window.llm.config.instructions
                 ));
+            }
+            if page == SettingsPage::CommitContext {
+                assert!(!visible_text(&output.shapes, "Endpoint:"));
+                assert!(!visible_text(&output.shapes, "Generation instructions:"));
+                for label in [
+                    "Changes:",
+                    "Same as commit panel",
+                    "256 KiB",
+                    "Include the current branch name",
+                    "Excluded paths:",
+                ] {
+                    assert!(visible_text(&output.shapes, label), "Missing {label}");
+                }
+                for label in [
+                    "New file content:",
+                    "Total patch size:",
+                    "When the patch is too large:",
+                    "Diff context:",
+                    "Ignore whitespace when building the diff",
+                    "Changes to describe:",
+                ] {
+                    assert!(!visible_text(&output.shapes, label), "Unexpected {label}");
+                }
+                let left = text_left(&output.shapes, "Changes:").unwrap();
+                assert!((text_left(&output.shapes, "Patch size:").unwrap() - left).abs() < 0.5);
+                for label in ["Changes:", "Patch size:"] {
+                    assert_eq!(text_rows(&output.shapes, label), Some(1));
+                }
             }
         }
     }

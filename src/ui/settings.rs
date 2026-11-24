@@ -162,7 +162,7 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     super::controls::dialog_style::prepare_keyboard(ui);
     ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-    footer(ui, app, palette);
+    footer(ui, app, palette, false);
     navigation(ui, app, palette);
     let page_background = if app.settings_window.page == SettingsPage::Llm {
         palette.panel_alt
@@ -202,7 +202,7 @@ fn repository_window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     super::controls::dialog_style::prepare_keyboard(ui);
     ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-    footer(ui, app, palette);
+    footer(ui, app, palette, true);
     repository_navigation(ui, app, palette);
     CentralPanel::default()
         .frame(Frame::new().fill(palette.panel_alt).inner_margin(12))
@@ -259,6 +259,7 @@ fn repository_navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         .max_height(scroll_height)
                         .show(ui, |ui| {
                             section(ui, app, SettingsPage::Llm, "AI", |ui, app| {
+                                entry(ui, app, SettingsPage::CommitContext, "Context");
                                 entry(ui, app, SettingsPage::CommitMessages, "Commit messages");
                             });
                         });
@@ -275,13 +276,22 @@ fn repository_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         SettingsPage::Llm => repository_ai_page(ui, app, palette, &path),
         SettingsPage::CommitMessages => {
             heading(ui, "Commit messages");
-            repository_llm_prompt_tab(ui, app, Some(&path));
+            repository_llm_prompt_tab(ui, app, Some(&path), palette);
+        }
+        SettingsPage::CommitContext => {
+            heading(ui, "Context");
+            commit_context_page(
+                ui,
+                palette,
+                &mut app.settings_window.llm.config,
+                "repository.commit_context",
+            );
         }
         _ => {}
     }
 }
 
-fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
+fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette, repository: bool) {
     Panel::bottom("preferences.footer")
         .exact_size(46.0)
         .frame(
@@ -290,24 +300,78 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                 .inner_margin(Margin::symmetric(12, 9)),
         )
         .show(ui, |ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
-                    .add(super::controls::dialog_style::primary("OK", palette))
-                    .dialog_accept()
-                {
-                    match apply_settings(app) {
-                        Ok(()) => close_after_save(ui.ctx(), app),
-                        Err(error) => report_settings_error(app, error),
+            ui.horizontal(|ui| {
+                if repository {
+                    if let Some(path) = app.settings_window.llm_repository.clone() {
+                        let enabled = repository_settings_differ_from_defaults(app, &path);
+                        if ui
+                            .add_enabled(
+                                enabled,
+                                super::controls::dialog_style::button("Reset"),
+                            )
+                            .help_text(
+                                "Reset to defaults: discard repository overrides and use the settings from Preferences",
+                            )
+                            .disabled_help_text(
+                                "This repository already uses the application defaults",
+                            )
+                            .clicked()
+                        {
+                            reset_repository_settings_draft(app, &path);
+                        }
                     }
                 }
-                if ui
-                    .add(super::controls::dialog_style::button("Cancel"))
-                    .dialog_cancel()
-                {
-                    close_without_saving(ui.ctx(), app);
-                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.set_width(ui.available_width());
+                    if ui
+                        .add(super::controls::dialog_style::primary("OK", palette))
+                        .dialog_accept()
+                    {
+                        match apply_settings(app) {
+                            Ok(()) => close_after_save(ui.ctx(), app),
+                            Err(error) => report_settings_error(app, error),
+                        }
+                    }
+                    if ui
+                        .add(super::controls::dialog_style::button("Cancel"))
+                        .dialog_cancel()
+                    {
+                        close_without_saving(ui.ctx(), app);
+                    }
+                });
             });
         });
+}
+
+fn repository_settings_differ_from_defaults(app: &SannyGitApp, path: &str) -> bool {
+    let window = &app.settings_window;
+    let global = &app.llm_config;
+    if window.llm_instructions.contains_key(path) {
+        return true;
+    }
+    if let Some(draft) = window.llm_repositories.get(path) {
+        let mut config = draft.config.clone();
+        SannyGitApp::strip_repository_connection_mode(&mut config, global);
+        if !SannyGitApp::repository_model_matches_global(&config, global) {
+            return true;
+        }
+    }
+    false
+}
+
+fn reset_repository_settings_draft(app: &mut SannyGitApp, path: &str) {
+    let window = &mut app.settings_window;
+    window.llm_instructions.remove(path);
+    window.llm_repositories.remove(path);
+    let mut config = app.llm_config.clone();
+    SannyGitApp::strip_repository_connection_mode(&mut config, &app.llm_config);
+    window.llm_repositories.insert(
+        path.to_owned(),
+        crate::app::LlmSettings {
+            config,
+            ..Default::default()
+        },
+    );
 }
 
 fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
@@ -350,7 +414,8 @@ fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                                 entry(ui, app, SettingsPage::Remote, "Remote");
                             });
                             section(ui, app, SettingsPage::Llm, "AI", |ui, app| {
-                                entry(ui, app, SettingsPage::CommitMessages, "Commit messages")
+                                entry(ui, app, SettingsPage::CommitContext, "Context");
+                                entry(ui, app, SettingsPage::CommitMessages, "Commit messages");
                             });
                         });
                 });
@@ -665,7 +730,16 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         }
         SettingsPage::CommitMessages => {
             heading(ui, "Commit messages");
-            instructions_form(ui, &mut app.settings_window.llm, true);
+            instructions_form(ui, &mut app.settings_window.llm, palette, true);
+        }
+        SettingsPage::CommitContext => {
+            heading(ui, "Context");
+            commit_context_page(
+                ui,
+                palette,
+                &mut app.settings_window.llm.config,
+                "preferences.commit_context",
+            );
         }
     }
 }
@@ -764,10 +838,7 @@ fn ensure_repository_model_draft(app: &mut SannyGitApp, path: &str) {
         return;
     }
     let mut config = app.effective_llm_config(path).clone();
-    SannyGitApp::strip_repository_connection_mode(
-        &mut config,
-        &app.settings_window.llm.config,
-    );
+    SannyGitApp::strip_repository_connection_mode(&mut config, &app.settings_window.llm.config);
     app.settings_window.llm_repositories.insert(
         path.to_owned(),
         crate::app::LlmSettings {
@@ -795,7 +866,12 @@ fn repository_ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette, path
     ai_page(ui, app, palette, false, Some(path));
 }
 
-fn repository_llm_prompt_tab(ui: &mut Ui, app: &mut SannyGitApp, path: Option<&str>) {
+fn repository_llm_prompt_tab(
+    ui: &mut Ui,
+    app: &mut SannyGitApp,
+    path: Option<&str>,
+    palette: Palette,
+) {
     let window = &mut app.settings_window;
     let global = window.llm.config.instructions.clone();
     let Some(path) = path else {
@@ -815,12 +891,20 @@ fn repository_llm_prompt_tab(ui: &mut Ui, app: &mut SannyGitApp, path: Option<&s
                 .map(|draft| draft.config.instructions.clone())
         })
         .unwrap_or_else(|| global.clone());
+    commit_message_language_instructions_row(
+        ui,
+        palette,
+        "repository.commit_message.language",
+        &mut instructions,
+    );
     ui.label("Generation instructions:");
     instructions_editor(ui, &mut instructions, true);
     if instructions == global {
         window.llm_instructions.remove(path);
     } else {
-        window.llm_instructions.insert(path.to_owned(), instructions);
+        window
+            .llm_instructions
+            .insert(path.to_owned(), instructions);
     }
     if let Some(draft) = window.llm_repositories.get_mut(path) {
         draft.config.instructions.clone_from(&global);
@@ -948,14 +1032,7 @@ fn ai_page(
                 .llm_repositories
                 .get_mut(path)
                 .expect("draft");
-            llm_api_form(
-                ui,
-                draft,
-                palette,
-                Some(path),
-                &mut app.llm_models,
-                false,
-            );
+            llm_api_form(ui, draft, palette, Some(path), &mut app.llm_models, false);
         }
     }
 }
@@ -1618,9 +1695,139 @@ fn store_api_key(ui: &mut Ui, enabled: &mut bool) {
         });
 }
 
-fn instructions_form(ui: &mut Ui, draft: &mut crate::app::LlmSettings, fill_to_bottom: bool) {
+fn instructions_form(
+    ui: &mut Ui,
+    draft: &mut crate::app::LlmSettings,
+    palette: Palette,
+    fill_to_bottom: bool,
+) {
+    commit_message_language_row(
+        ui,
+        palette,
+        "preferences.commit_message.language",
+        &mut draft.config,
+    );
     ui.label("Generation instructions:");
     instructions_editor(ui, &mut draft.config.instructions, fill_to_bottom);
+}
+
+fn commit_message_language_row(
+    ui: &mut Ui,
+    palette: Palette,
+    id: &str,
+    config: &mut crate::llm::Config,
+) {
+    commit_message_language_selector(
+        ui,
+        palette,
+        id,
+        config.selected_commit_message_language(),
+        |language| config.apply_commit_message_language(language),
+    );
+}
+
+fn commit_context_page(
+    ui: &mut Ui,
+    palette: Palette,
+    config: &mut crate::llm::Config,
+    id_prefix: &str,
+) {
+    ui.label(
+        RichText::new("What is sent when you generate a commit message.").color(palette.muted),
+    );
+    ui.add_space(8.0);
+    egui::Grid::new(format!("{id_prefix}.fields"))
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            form_label(ui, "Changes:");
+            egui::ComboBox::from_id_salt(format!("{id_prefix}.generation_scope"))
+                .selected_text(config.generation_scope.label())
+                .width(200.0)
+                .show_ui(ui, |ui| {
+                    for scope in [
+                        crate::llm::CommitGenerationScope::FollowCommitPanel,
+                        crate::llm::CommitGenerationScope::AllChanges,
+                        crate::llm::CommitGenerationScope::StagedOnly,
+                    ] {
+                        ui.selectable_value(&mut config.generation_scope, scope, scope.label());
+                    }
+                })
+                .response
+                .help_text("Used only when generating a commit message.");
+            ui.end_row();
+            form_label(ui, "Patch size:");
+            let mut limit = config.max_patch_bytes;
+            egui::ComboBox::from_id_salt(format!("{id_prefix}.patch_limit"))
+                .selected_text(crate::llm::patch_byte_limit_label(limit))
+                .width(200.0)
+                .show_ui(ui, |ui| {
+                    for &(value, label) in crate::llm::PATCH_BYTE_LIMITS {
+                        ui.selectable_value(&mut limit, value, label);
+                    }
+                })
+                .response
+                .help_text(
+                    "Generation stops if the diff is larger. Each new file sends at most 64 KiB.",
+                );
+            config.max_patch_bytes = limit;
+            ui.end_row();
+        });
+    ui.add_space(4.0);
+    ui.checkbox(
+        &mut config.include_branch_in_prompt,
+        "Include the current branch name",
+    );
+    ui.add_space(6.0);
+    ui.label("Excluded paths:");
+    ui.label(
+        RichText::new("One pattern per line. Matching files are left out.")
+            .small()
+            .color(palette.muted),
+    );
+    egui::TextEdit::multiline(&mut config.patch_path_excludes)
+        .id_salt(format!("{id_prefix}.path_excludes"))
+        .desired_width(f32::INFINITY)
+        .desired_rows(4)
+        .hint_text("*.lock\npackage-lock.json\ndist/")
+        .show(ui);
+}
+
+fn commit_message_language_selector(
+    ui: &mut Ui,
+    _palette: Palette,
+    id: &str,
+    mut selected: crate::llm::CommitMessageLanguage,
+    mut apply: impl FnMut(crate::llm::CommitMessageLanguage),
+) {
+    ui.horizontal(|ui| {
+        ui.label("Language:");
+        let previous = selected;
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(selected.label())
+            .width(200.0)
+            .show_ui(ui, |ui| {
+                for language in crate::llm::CommitMessageLanguage::ALL {
+                    ui.selectable_value(&mut selected, language, language.label());
+                }
+            });
+        if selected != previous {
+            apply(selected);
+        }
+    });
+    ui.add_space(6.0);
+}
+
+fn commit_message_language_instructions_row(
+    ui: &mut Ui,
+    palette: Palette,
+    id: &str,
+    instructions: &mut String,
+) {
+    let selected =
+        crate::llm::CommitMessageLanguage::from_instructions(instructions).unwrap_or_default();
+    commit_message_language_selector(ui, palette, id, selected, |language| {
+        *instructions = language.instructions();
+    });
 }
 
 fn instructions_editor(ui: &mut Ui, instructions: &mut String, fill_to_bottom: bool) {

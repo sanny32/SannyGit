@@ -160,6 +160,7 @@ pub enum SettingsPage {
     Remote,
     Llm,
     CommitMessages,
+    CommitContext,
 }
 
 #[derive(Clone, Default)]
@@ -1075,13 +1076,14 @@ impl SannyGitApp {
     ) -> bool {
         let mut repo = repo.clone();
         Self::strip_repository_connection_mode(&mut repo, global);
-        if global.chatgpt_subscription {
+        let models = if global.chatgpt_subscription {
             repo.subscription_models == global.subscription_models
         } else {
             repo.endpoint == global.endpoint
                 && repo.model == global.model
                 && repo.store_api_key == global.store_api_key
-        }
+        };
+        models && repo.commit_context_matches(global)
     }
 
     pub(crate) fn sync_global_ai_connection_from_draft(&mut self) {
@@ -2107,25 +2109,38 @@ impl SannyGitApp {
             self.error = Some(error);
             return;
         }
-        let contents = self.commit.contents;
+        let panel_contents = self.commit.contents;
+        let contents = config.generation_scope.resolve(panel_contents);
         let head = self.commit.amend_head.clone().filter(|_| self.commit.amend);
+        let patch_options = git::CommitPatchOptions::from(&config);
+        let include_branch = config.include_branch_in_prompt;
         self.error = None;
         self.status = "Generating commit message…".into();
         let cancel = Arc::new(AtomicBool::new(false));
         self.commit.generation_cancel = Some(cancel.clone());
         self.commit.generating_message = self.start_worker(move |git| {
+            let branch = if include_branch {
+                git::run(git, &root, &["branch", "--show-current"])
+                    .ok()
+                    .and_then(|bytes| git::text(bytes).ok())
+                    .map(|name| name.trim().to_owned())
+                    .filter(|name| !name.is_empty())
+            } else {
+                None
+            };
+            let branch = branch.as_deref();
             let result =
                 crate::llm::load_api_key_if_needed(&mut config, repository_scope.as_deref())
                     .and_then(|()| config.validate())
-                    .and_then(|()| git::commit_patch(git, &root, contents, head.as_deref()))
+                    .and_then(|()| {
+                        git::commit_patch(git, &root, contents, head.as_deref(), patch_options)
+                    })
                     .and_then(git::limit_diff)
                     .and_then(|patch| {
                         if patch.trim().is_empty() {
                             Err("The commit diff is empty".into())
-                        } else if patch.len() > crate::llm::MAX_DIFF_BYTES {
-                            Err("The commit diff exceeds the LLM request limit".into())
                         } else {
-                            crate::llm::generate(&config, &patch, &cancel)
+                            crate::llm::generate(&config, &patch, branch, &cancel)
                         }
                     });
             WorkerResult::CommitMessage {

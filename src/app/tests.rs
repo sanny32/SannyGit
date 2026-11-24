@@ -2553,7 +2553,17 @@ fn check_generation_request(stage_first: bool) {
         repo.write("review.txt", "unstaged edits in the staged file\n");
         repo.write("excluded.txt", "unstaged file must not reach the LLM\n");
     }
-    let patch = git::commit_patch(&SYSTEM_GIT, &repo.0, app.commit.contents, None).unwrap();
+    let patch = git::commit_patch(
+        &SYSTEM_GIT,
+        &repo.0,
+        app.commit.contents,
+        None,
+        git::CommitPatchOptions {
+            max_new_file_content_bytes: usize::MAX,
+            ..git::CommitPatchOptions::default()
+        },
+    )
+    .unwrap();
     if stage_first {
         assert!(!patch.contains("unstaged edits"));
         assert!(!patch.contains("excluded.txt"));

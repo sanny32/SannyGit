@@ -748,10 +748,15 @@ pub fn selected_model<'a>(models: &'a [Model], slug: &str) -> Option<&'a Model> 
     }
 }
 
-pub(super) async fn generate(config: &Config, patch: &str, token: &str) -> Result<String, String> {
+pub(super) async fn generate(
+    config: &Config,
+    patch: &str,
+    branch: Option<&str>,
+    token: &str,
+) -> Result<String, String> {
     let client = client()?;
     let models = fetch_models(&client, token).await?;
-    let body = request_body(config, patch, &models)?;
+    let body = request_body(config, patch, branch, &models)?;
     let mut response = send(
         client
             .post(format!("{RESOURCE}/responses"))
@@ -765,7 +770,12 @@ pub(super) async fn generate(config: &Config, patch: &str, token: &str) -> Resul
     parse_response(&read_response_body(&mut response).await?)
 }
 
-fn request_body(config: &Config, patch: &str, models: &[Model]) -> Result<Value, String> {
+fn request_body(
+    config: &Config,
+    patch: &str,
+    branch: Option<&str>,
+    models: &[Model],
+) -> Result<Value, String> {
     let settings = config.subscription_models.get(PROVIDER_ID);
     let slug = settings.map_or("", |settings| settings.model.as_str());
     let model = selected_model(models, slug)
@@ -780,7 +790,7 @@ fn request_body(config: &Config, patch: &str, models: &[Model]) -> Result<Value,
         "instructions": config.instructions.trim(),
         "input": [{
             "role": "user",
-            "content": format!("Generate a commit message for these changes:\n\n{patch}")
+            "content": super::generation_user_content(config, patch, branch)
         }],
         "store": false,
         "stream": true
@@ -862,7 +872,7 @@ mod tests {
                 reasoning_effort: "max".into(),
             },
         );
-        let default = request_body(&config, "patch", &models).unwrap();
+        let default = request_body(&config, "patch", None, &models).unwrap();
         assert_eq!(default["model"], "gpt-6-luna");
         assert_eq!(default["reasoning"]["effort"], "none");
         assert_eq!(models.len(), 3);
@@ -873,7 +883,7 @@ mod tests {
             .or_default();
         selection.model = "second".into();
         selection.reasoning_effort = "high".into();
-        let selected = request_body(&config, "patch", &models).unwrap();
+        let selected = request_body(&config, "patch", None, &models).unwrap();
         assert_eq!(selected["model"], "second");
         assert_eq!(selected["reasoning"]["effort"], "high");
         config
@@ -881,7 +891,7 @@ mod tests {
             .get_mut(PROVIDER_ID)
             .unwrap()
             .reasoning_effort = "max".into();
-        assert!(request_body(&config, "patch", &models).is_err());
+        assert!(request_body(&config, "patch", None, &models).is_err());
     }
 
     #[test]

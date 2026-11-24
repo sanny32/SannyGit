@@ -1,6 +1,40 @@
 use super::*;
 
 #[test]
+fn prepare_patch_for_llm_rejects_an_oversized_diff() {
+    let config = Config {
+        max_patch_bytes: 32,
+        ..Config::default()
+    };
+    assert_eq!(prepare_patch_for_llm(&config, "ok".into()).unwrap(), "ok");
+    assert!(prepare_patch_for_llm(&config, "x".repeat(64)).is_err());
+}
+
+#[test]
+fn commit_message_language_defaults_and_updates_instructions() {
+    let mut config = Config::default();
+    assert_eq!(
+        config.commit_message_language,
+        CommitMessageLanguage::English
+    );
+    assert_eq!(CommitMessageLanguage::Russian.subject_limit(), 60);
+    assert_eq!(CommitMessageLanguage::ChineseSimplified.subject_limit(), 50);
+    config.apply_commit_message_language(CommitMessageLanguage::Russian);
+    assert!(config.instructions.contains("русском"));
+    assert!(config.instructions.contains("60"));
+    let restored: Config = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(restored.max_patch_bytes, DEFAULT_MAX_PATCH_BYTES);
+    assert_eq!(
+        restored.commit_message_language,
+        CommitMessageLanguage::English
+    );
+    assert_eq!(
+        restored.instructions,
+        CommitMessageLanguage::English.instructions()
+    );
+}
+
+#[test]
 fn subscription_provider_defaults_to_chatgpt_and_persists_copilot() {
     let config: Config = serde_json::from_value(json!({"chatgpt_subscription": true})).unwrap();
     assert_eq!(config.subscription_provider, SubscriptionProvider::ChatGpt);
@@ -131,6 +165,7 @@ fn models_are_loaded_with_optional_auth_and_bounded_responses() {
             chatgpt_subscription: false,
             subscription_models: Default::default(),
             subscription_provider: super::SubscriptionProvider::ChatGpt,
+            ..Default::default()
         };
         let result = list_models(&config);
         let headers = server.join().unwrap();
@@ -214,7 +249,7 @@ fn cancellation_closes_requests_waiting_for_headers_or_body() {
                 ..Config::default()
             };
             sender
-                .send(generate(&config, "test patch", &worker_cancel))
+                .send(generate(&config, "test patch", None, &worker_cancel))
                 .unwrap();
         });
         ready_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -325,7 +360,12 @@ fn local_generation_sends_patch_without_auth_and_handles_server_failures() {
             store_api_key: false,
             ..Config::default()
         };
-        let result = generate(&config, "diff --git a/file b/file", &AtomicBool::new(false));
+        let result = generate(
+            &config,
+            "diff --git a/file b/file",
+            None,
+            &AtomicBool::new(false),
+        );
         let (headers, request) = server.join().unwrap();
         assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"));
         assert!(!headers.to_ascii_lowercase().contains("authorization:"));
@@ -588,7 +628,7 @@ fn explicitly_provided_api_key_is_not_replaced() {
 
 #[test]
 fn omits_temperature_from_generation_requests() {
-    let body = request_body(&Config::default(), "diff --git a/file b/file");
+    let body = request_body(&Config::default(), "diff --git a/file b/file", None);
     assert!(body.get("temperature").is_none());
     assert_eq!(body.get("model"), Some(&json!(DEFAULT_MODEL)));
 }
@@ -747,7 +787,8 @@ fn redirects_and_provider_bodies_are_never_disclosed_or_followed() {
             api_key: "secret".into(),
             ..Config::default()
         };
-        let error = generate(&config, "submitted patch", &AtomicBool::new(false)).unwrap_err();
+        let error =
+            generate(&config, "submitted patch", None, &AtomicBool::new(false)).unwrap_err();
         server.join().unwrap();
         assert!(error.contains(&format!("HTTP {status}")));
         assert!(!error.contains("secret"));

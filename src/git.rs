@@ -952,6 +952,30 @@ impl CommitContents {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct CommitPatchOptions {
+    pub max_new_file_content_bytes: usize,
+    pub path_excludes: Vec<String>,
+}
+
+impl Default for CommitPatchOptions {
+    fn default() -> Self {
+        Self {
+            max_new_file_content_bytes: crate::llm::DEFAULT_MAX_NEW_FILE_CONTENT_BYTES as usize,
+            path_excludes: Vec::new(),
+        }
+    }
+}
+
+impl From<&crate::llm::Config> for CommitPatchOptions {
+    fn from(config: &crate::llm::Config) -> Self {
+        Self {
+            path_excludes: config.patch_path_excludes(),
+            ..Self::default()
+        }
+    }
+}
+
 /// Read-only preview of the resulting commit relative to its first parent.
 /// For amend this includes the existing commit as well as the selected changes.
 pub fn commit_patch(
@@ -959,6 +983,7 @@ pub fn commit_patch(
     root: &Path,
     contents: CommitContents,
     amend_head: Option<&str>,
+    options: CommitPatchOptions,
 ) -> Result<String, String> {
     let head = text(run(git, root, &["rev-parse", "--revs-only", "HEAD"])?)?;
     let base = if let Some(expected) = amend_head {
@@ -984,19 +1009,44 @@ pub fn commit_patch(
         .trim()
         .to_owned(),
     };
-    let mut args = vec!["diff", "--no-ext-diff", "--no-textconv"];
+    let mut arg_storage = vec![
+        "diff".to_owned(),
+        "--no-ext-diff".to_owned(),
+        "--no-textconv".to_owned(),
+    ];
     if contents == CommitContents::Staged {
-        args.push("--cached");
+        arg_storage.push("--cached".to_owned());
     }
-    args.push(&base);
-    args.push("--");
+    arg_storage.push(base);
+    arg_storage.push("--".to_owned());
+    arg_storage.push(".".to_owned());
+    for pattern in &options.path_excludes {
+        arg_storage.push(format!(":(exclude){pattern}"));
+    }
+    let args: Vec<&str> = arg_storage.iter().map(String::as_str).collect();
     let mut patch = text(run(git, root, &args)?)?;
     if contents == CommitContents::All {
         // Preview new files without staging them or modifying the real index.
         for change in load(git, root)?.changes {
             if change.kind == ChangeKind::Untracked {
-                writeln!(patch, "\nNew file: {}", change.path).map_err(|e| e.to_string())?;
-                patch.push_str(&diff(git, root, &change.path, change.kind, None)?);
+                if path_excluded(&change.path, &options.path_excludes) {
+                    continue;
+                }
+                if omit_untracked_patch_content(
+                    root,
+                    &change.path,
+                    options.max_new_file_content_bytes,
+                ) {
+                    writeln!(
+                        patch,
+                        "\nNew file: {} (content omitted; use the path only)",
+                        change.path
+                    )
+                    .map_err(|e| e.to_string())?;
+                } else {
+                    writeln!(patch, "\nNew file: {}", change.path).map_err(|e| e.to_string())?;
+                    patch.push_str(&diff(git, root, &change.path, change.kind, None)?);
+                }
                 if patch.len() > OUTPUT_LIMIT {
                     return Err("Commit diff exceeds the 2 MiB limit".into());
                 }
@@ -1484,6 +1534,47 @@ pub fn parse_status(bytes: &[u8]) -> Result<Vec<ChangeFile>, String> {
     Ok(changes)
 }
 
+fn path_excluded(path: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|pattern| {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            return false;
+        }
+        if let Some(suffix) = pattern.strip_prefix('*') {
+            path.ends_with(suffix)
+        } else {
+            path == pattern || path.ends_with(&format!("/{pattern}"))
+        }
+    })
+}
+
+fn omit_untracked_patch_content(root: &Path, path: &str, max_content_bytes: usize) -> bool {
+    if max_content_bytes == 0 || untracked_binary_path(path) {
+        return true;
+    }
+    let file = root.join(path);
+    let metadata = match std::fs::symlink_metadata(&file) {
+        Ok(metadata) => metadata,
+        Err(_) => return true,
+    };
+    if !metadata.is_file() {
+        return true;
+    }
+    metadata.len() > max_content_bytes as u64
+}
+
+fn untracked_binary_path(path: &str) -> bool {
+    let Some(ext) = Path::new(path).extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    [
+        "otf", "ttf", "woff", "woff2", "eot", "png", "jpg", "jpeg", "gif", "webp", "ico", "icns",
+        "pdf", "zip", "gz", "exe", "dll", "dylib", "so", "wasm",
+    ]
+    .iter()
+    .any(|kind| ext.eq_ignore_ascii_case(kind))
+}
+
 pub fn diff(
     git: &GitContext,
     root: &Path,
@@ -1504,11 +1595,15 @@ pub fn file_diff(
 ) -> Result<String, String> {
     if kind == ChangeKind::Untracked || kind == ChangeKind::Ignored {
         let file = root.join(path);
-        if !std::fs::symlink_metadata(&file)
-            .map_err(|e| e.to_string())?
-            .is_file()
-        {
+        let metadata = std::fs::symlink_metadata(&file).map_err(|e| e.to_string())?;
+        if !metadata.is_file() {
             return Ok("Preview is unavailable for directories and symbolic links".into());
+        }
+        if metadata.len() > OUTPUT_LIMIT as u64 {
+            return Ok("File exceeds the 2 MiB preview limit — preview unavailable".into());
+        }
+        if untracked_binary_path(path) {
+            return Ok("Binary file — text preview unavailable".into());
         }
         let mut bytes = Vec::new();
         std::fs::File::open(file)
@@ -1517,7 +1612,7 @@ pub fn file_diff(
             .read_to_end(&mut bytes)
             .map_err(|e| e.to_string())?;
         if bytes.len() > OUTPUT_LIMIT {
-            return Err("File exceeds the 2 MiB preview limit".into());
+            return Ok("File exceeds the 2 MiB preview limit — preview unavailable".into());
         }
         if bytes.contains(&0) {
             return Ok("Binary file — text preview unavailable".into());

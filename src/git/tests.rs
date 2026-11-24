@@ -480,11 +480,31 @@ fn staged_commit_preview_and_commit_preserve_partial_file_and_untracked_contents
         repo.write("file", "excluded\n");
         repo.write("new", "private untracked\n");
         let index = std::fs::read(repo.0.join(".git/index")).unwrap();
-        let patch = commit_patch(&SYSTEM_GIT, &repo.0, CommitContents::Staged, None).unwrap();
+        let patch = commit_patch(
+            &SYSTEM_GIT,
+            &repo.0,
+            CommitContents::Staged,
+            None,
+            CommitPatchOptions {
+                max_new_file_content_bytes: usize::MAX,
+                ..CommitPatchOptions::default()
+            },
+        )
+        .unwrap();
         assert!(patch.contains("+selected"));
         assert!(!patch.contains("excluded"));
         assert!(!patch.contains("private untracked"));
-        let all = commit_patch(&SYSTEM_GIT, &repo.0, CommitContents::All, None).unwrap();
+        let all = commit_patch(
+            &SYSTEM_GIT,
+            &repo.0,
+            CommitContents::All,
+            None,
+            CommitPatchOptions {
+                max_new_file_content_bytes: usize::MAX,
+                ..CommitPatchOptions::default()
+            },
+        )
+        .unwrap();
         assert!(all.contains("+excluded"));
         assert!(!all.contains("+selected"));
         assert!(all.contains("private untracked"));
@@ -521,7 +541,17 @@ fn staged_commit_handles_deletion_rename_and_recreated_working_file() {
     repo.git(&["rm", "deleted"]);
     repo.write("deleted", "recreated unstaged\n");
     repo.write("renamed", "changed after rename\n");
-    let patch = commit_patch(&SYSTEM_GIT, &repo.0, CommitContents::Staged, None).unwrap();
+    let patch = commit_patch(
+        &SYSTEM_GIT,
+        &repo.0,
+        CommitContents::Staged,
+        None,
+        CommitPatchOptions {
+            max_new_file_content_bytes: usize::MAX,
+            ..CommitPatchOptions::default()
+        },
+    )
+    .unwrap();
     assert!(patch.contains("deleted"));
     assert!(patch.contains("renamed"));
     assert!(!patch.contains("recreated unstaged"));
@@ -563,8 +593,17 @@ fn staged_amend_preview_includes_original_commit_and_preserves_unstaged_changes(
         repo.git(&["add", "new"]);
         repo.write("new", "excluded addition\n");
         let index = std::fs::read(repo.0.join(".git/index")).unwrap();
-        let patch =
-            commit_patch(&SYSTEM_GIT, &repo.0, CommitContents::Staged, Some(&head)).unwrap();
+        let patch = commit_patch(
+            &SYSTEM_GIT,
+            &repo.0,
+            CommitContents::Staged,
+            Some(&head),
+            CommitPatchOptions {
+                max_new_file_content_bytes: usize::MAX,
+                ..CommitPatchOptions::default()
+            },
+        )
+        .unwrap();
         assert!(patch.contains("+original commit content"));
         assert!(patch.contains("+selected addition"));
         assert!(!patch.contains("unstaged private"));
@@ -609,12 +648,66 @@ fn staged_amend_preview_includes_original_commit_and_preserves_unstaged_changes(
             assert!(amend_commit(&SYSTEM_GIT, &repo.0, "Stale", &head, mode)
                 .unwrap_err()
                 .contains("HEAD has changed"));
-            assert!(commit_patch(&SYSTEM_GIT, &repo.0, mode, Some(&head))
-                .unwrap_err()
-                .contains("HEAD has changed"));
+            assert!(commit_patch(
+                &SYSTEM_GIT,
+                &repo.0,
+                mode,
+                Some(&head),
+                CommitPatchOptions {
+                    max_new_file_content_bytes: usize::MAX,
+                    ..CommitPatchOptions::default()
+                },
+            )
+            .unwrap_err()
+            .contains("HEAD has changed"));
         }
         assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), before);
     }
+}
+
+#[test]
+fn commit_patch_honors_path_excludes_for_untracked_files() {
+    let repo = TempRepo::new();
+    repo.write("keep.txt", "keep\n");
+    repo.write("skip.txt", "skip\n");
+    let patch = commit_patch(
+        &SYSTEM_GIT,
+        &repo.0,
+        CommitContents::All,
+        None,
+        CommitPatchOptions {
+            path_excludes: vec!["skip.txt".into()],
+            ..CommitPatchOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(patch.contains("keep.txt"));
+    assert!(!patch.contains("skip.txt"));
+}
+
+#[test]
+fn commit_patch_omits_untracked_binary_and_oversized_file_contents() {
+    let repo = TempRepo::new();
+    repo.write("note.txt", "describe the font\n");
+    repo.write("Noto.otf", "\0binary");
+    let large = repo.0.join("large.bin");
+    std::fs::write(&large, vec![b'a'; 2 * 1024 * 1024 + 1]).unwrap();
+    let limit = crate::llm::DEFAULT_MAX_NEW_FILE_CONTENT_BYTES as usize;
+    let patch = commit_patch(
+        &SYSTEM_GIT,
+        &repo.0,
+        CommitContents::All,
+        None,
+        CommitPatchOptions {
+            max_new_file_content_bytes: limit,
+            ..CommitPatchOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(patch.contains("New file: Noto.otf (content omitted"));
+    assert!(!patch.contains("\0binary"));
+    assert!(patch.contains("New file: large.bin (content omitted"));
+    assert!(patch.contains("+describe the font"));
 }
 
 #[test]
@@ -629,7 +722,17 @@ fn commit_patch_includes_new_files_without_changing_the_index() {
     repo.write("ignored.txt", "ignored contents\n");
     let before = repo.git(&["status", "--porcelain=v1", "-z"]);
 
-    let patch = commit_patch(&SYSTEM_GIT, &repo.0, CommitContents::All, None).unwrap();
+    let patch = commit_patch(
+        &SYSTEM_GIT,
+        &repo.0,
+        CommitContents::All,
+        None,
+        CommitPatchOptions {
+            max_new_file_content_bytes: usize::MAX,
+            ..CommitPatchOptions::default()
+        },
+    )
+    .unwrap();
     assert!(patch.contains("+unstaged"));
     assert!(patch.contains("untracked.txt"));
     assert!(patch.contains("+new contents"));
@@ -643,7 +746,17 @@ fn new_files_can_generate_a_patch_and_create_the_initial_commit() {
     repo.write("new file.txt", "initial contents\n");
     repo.write(".gitignore", "ignored\n");
     repo.write("ignored", "keep private\n");
-    let patch = commit_patch(&SYSTEM_GIT, &repo.0, CommitContents::All, None).unwrap();
+    let patch = commit_patch(
+        &SYSTEM_GIT,
+        &repo.0,
+        CommitContents::All,
+        None,
+        CommitPatchOptions {
+            max_new_file_content_bytes: usize::MAX,
+            ..CommitPatchOptions::default()
+        },
+    )
+    .unwrap();
     assert!(patch.contains("new file.txt"));
     assert!(patch.contains("+initial contents"));
     assert!(!patch.contains("keep private"));

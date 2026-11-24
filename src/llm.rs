@@ -11,7 +11,54 @@ pub mod copilot;
 
 pub const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
 pub const DEFAULT_MODEL: &str = "gpt-4.1-mini";
-pub const MAX_DIFF_BYTES: usize = 256 * 1024;
+/// Cap for one new untracked file inside a commit patch sent to the model.
+pub const DEFAULT_MAX_NEW_FILE_CONTENT_BYTES: u32 = 64 * 1024;
+pub const DEFAULT_MAX_PATCH_BYTES: u32 = 256 * 1024;
+
+pub const PATCH_BYTE_LIMITS: &[(u32, &str)] = &[
+    (64 * 1024, "64 KiB"),
+    (128 * 1024, "128 KiB"),
+    (256 * 1024, "256 KiB"),
+    (512 * 1024, "512 KiB"),
+    (1024 * 1024, "1 MiB"),
+];
+
+pub fn patch_byte_limit_label(bytes: u32) -> String {
+    PATCH_BYTE_LIMITS
+        .iter()
+        .find(|(value, _)| *value == bytes)
+        .map(|(_, label)| (*label).to_owned())
+        .unwrap_or_else(|| format!("{bytes} bytes"))
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitGenerationScope {
+    #[default]
+    #[serde(rename = "panel")]
+    FollowCommitPanel,
+    #[serde(rename = "all")]
+    AllChanges,
+    #[serde(rename = "staged")]
+    StagedOnly,
+}
+
+impl CommitGenerationScope {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FollowCommitPanel => "Same as commit panel",
+            Self::AllChanges => "All changes",
+            Self::StagedOnly => "Staged only",
+        }
+    }
+
+    pub fn resolve(self, panel: crate::git::CommitContents) -> crate::git::CommitContents {
+        match self {
+            Self::FollowCommitPanel => panel,
+            Self::AllChanges => crate::git::CommitContents::All,
+            Self::StagedOnly => crate::git::CommitContents::Staged,
+        }
+    }
+}
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const KEYRING_SERVICE: &str = "SannyGit";
 #[cfg(target_os = "macos")]
@@ -78,6 +125,74 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
     },
 ];
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitMessageLanguage {
+    #[default]
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "de")]
+    German,
+    #[serde(rename = "ru")]
+    Russian,
+    #[serde(rename = "zh-Hans")]
+    ChineseSimplified,
+}
+
+impl CommitMessageLanguage {
+    pub const ALL: [Self; 4] = [
+        Self::English,
+        Self::German,
+        Self::Russian,
+        Self::ChineseSimplified,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::English => "English",
+            Self::German => "Deutsch",
+            Self::Russian => "Русский",
+            Self::ChineseSimplified => "简体中文",
+        }
+    }
+
+    /// Rough Git subject length suited to how much fits on one line per script.
+    pub fn subject_limit(self) -> usize {
+        match self {
+            Self::English | Self::German => 72,
+            Self::Russian => 60,
+            Self::ChineseSimplified => 50,
+        }
+    }
+
+    pub fn instructions(self) -> String {
+        let limit = self.subject_limit();
+        match self {
+            Self::English => format!(
+                "Write a concise Git commit message in English. Use an imperative subject of at most {limit} characters. Add a short body only when it helps explain why. Return only the commit message."
+            ),
+            Self::German => format!(
+                "Schreibe eine prägnante Git-Commit-Nachricht auf Deutsch. Verwende einen Imperativ als Betreff mit höchstens {limit} Zeichen. Füge einen kurzen Textkörper nur hinzu, wenn er das Warum erklärt. Gib nur die Commit-Nachricht zurück."
+            ),
+            Self::Russian => format!(
+                "Напиши краткое сообщение коммита Git на русском языке. Используй повелительное наклонение в теме длиной не более {limit} символов. Добавь короткое тело только если нужно объяснить причину. Верни только текст сообщения коммита."
+            ),
+            Self::ChineseSimplified => format!(
+                "使用简体中文撰写简洁的 Git 提交说明。主题使用祈使语气，最多 {limit} 个汉字。仅在有助于说明原因时添加简短正文。只返回提交说明。"
+            ),
+        }
+    }
+
+    pub fn matches_instructions(self, text: &str) -> bool {
+        self.instructions() == text.trim()
+    }
+
+    pub fn from_instructions(text: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|language| language.matches_instructions(text))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Config {
@@ -86,6 +201,11 @@ pub struct Config {
     pub subscription_models: std::collections::BTreeMap<String, SubscriptionModelSettings>,
     pub endpoint: String,
     pub model: String,
+    pub commit_message_language: CommitMessageLanguage,
+    pub max_patch_bytes: u32,
+    pub generation_scope: CommitGenerationScope,
+    pub include_branch_in_prompt: bool,
+    pub patch_path_excludes: String,
     pub instructions: String,
     pub store_api_key: bool,
     #[serde(skip)]
@@ -94,13 +214,19 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
+        let commit_message_language = CommitMessageLanguage::default();
         Self {
             chatgpt_subscription: false,
             subscription_provider: SubscriptionProvider::default(),
             subscription_models: Default::default(),
             endpoint: DEFAULT_ENDPOINT.into(),
             model: DEFAULT_MODEL.into(),
-            instructions: "Write a concise Git commit message in English. Use an imperative subject of at most 72 characters. Add a short body only when it helps explain why. Return only the commit message.".into(),
+            commit_message_language,
+            max_patch_bytes: DEFAULT_MAX_PATCH_BYTES,
+            generation_scope: CommitGenerationScope::default(),
+            include_branch_in_prompt: false,
+            patch_path_excludes: String::new(),
+            instructions: commit_message_language.instructions(),
             store_api_key: true,
             api_key: String::new(),
         }
@@ -515,6 +641,36 @@ fn save_secret(user: &str, secret: Option<&str>) -> Result<(), String> {
 }
 
 impl Config {
+    pub fn apply_commit_message_language(&mut self, language: CommitMessageLanguage) {
+        self.commit_message_language = language;
+        self.instructions = language.instructions();
+    }
+
+    pub fn selected_commit_message_language(&self) -> CommitMessageLanguage {
+        CommitMessageLanguage::from_instructions(&self.instructions)
+            .unwrap_or(self.commit_message_language)
+    }
+
+    pub fn max_patch_bytes(&self) -> usize {
+        self.max_patch_bytes as usize
+    }
+
+    pub fn patch_path_excludes(&self) -> Vec<String> {
+        self.patch_path_excludes
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    pub fn commit_context_matches(&self, other: &Self) -> bool {
+        self.max_patch_bytes == other.max_patch_bytes
+            && self.generation_scope == other.generation_scope
+            && self.include_branch_in_prompt == other.include_branch_in_prompt
+            && self.patch_path_excludes == other.patch_path_excludes
+    }
+
     pub fn is_local(&self) -> bool {
         reqwest::Url::parse(self.endpoint.trim())
             .ok()
@@ -542,7 +698,36 @@ impl Config {
     }
 }
 
-pub fn generate(config: &Config, patch: &str, cancel: &AtomicBool) -> Result<String, String> {
+pub fn prepare_patch_for_llm(config: &Config, patch: String) -> Result<String, String> {
+    let limit = config.max_patch_bytes();
+    if patch.len() <= limit {
+        return Ok(patch);
+    }
+    Err(format!(
+        "The commit diff exceeds the {} KiB LLM request limit",
+        limit / 1024
+    ))
+}
+
+pub fn generation_user_content(config: &Config, patch: &str, branch: Option<&str>) -> String {
+    let mut text = String::from("Generate a commit message for these changes:");
+    if config.include_branch_in_prompt {
+        if let Some(branch) = branch.filter(|name| !name.is_empty()) {
+            text.push_str("\n\nRepository branch: ");
+            text.push_str(branch);
+        }
+    }
+    text.push_str("\n\n");
+    text.push_str(patch);
+    text
+}
+
+pub fn generate(
+    config: &Config,
+    patch: &str,
+    branch: Option<&str>,
+    cancel: &AtomicBool,
+) -> Result<String, String> {
     if cancel.load(Ordering::Relaxed) {
         return Err("Commit message generation cancelled".into());
     }
@@ -550,12 +735,7 @@ pub fn generate(config: &Config, patch: &str, cancel: &AtomicBool) -> Result<Str
     if patch.trim().is_empty() {
         return Err("The staged diff is empty".into());
     }
-    if patch.len() > MAX_DIFF_BYTES {
-        return Err(format!(
-            "The commit diff exceeds the {} KiB LLM request limit",
-            MAX_DIFF_BYTES / 1024
-        ));
-    }
+    let patch = prepare_patch_for_llm(config, patch.to_owned())?;
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -563,7 +743,7 @@ pub fn generate(config: &Config, patch: &str, cancel: &AtomicBool) -> Result<Str
         .map_err(|error| format!("Cannot initialize the LLM runtime: {error}"))?;
     if config.chatgpt_subscription && config.subscription_provider == SubscriptionProvider::Copilot
     {
-        return runtime.block_on(copilot::generate(config, patch, cancel));
+        return runtime.block_on(copilot::generate(config, &patch, branch, cancel));
     }
     let token = if config.chatgpt_subscription {
         Some(chatgpt::access_token(&runtime)?)
@@ -573,9 +753,9 @@ pub fn generate(config: &Config, patch: &str, cancel: &AtomicBool) -> Result<Str
     runtime.block_on(async {
         let request = async {
             if let Some(token) = token {
-                chatgpt::generate(config, patch, &token).await
+                chatgpt::generate(config, &patch, branch, &token).await
             } else {
-                generate_response(config, patch).await
+                generate_response(config, &patch, branch).await
             }
         };
         let mut request = std::pin::pin!(request);
@@ -593,8 +773,12 @@ pub fn generate(config: &Config, patch: &str, cancel: &AtomicBool) -> Result<Str
     })
 }
 
-async fn generate_response(config: &Config, patch: &str) -> Result<String, String> {
-    let request = request_body(config, patch);
+async fn generate_response(
+    config: &Config,
+    patch: &str,
+    branch: Option<&str>,
+) -> Result<String, String> {
+    let request = request_body(config, patch, branch);
     let client = api_client(config, if config.is_local() { 300 } else { 60 })?;
     let request = client.post(request_endpoint(config)?).json(&request);
     let request = if config.api_key.trim().is_empty() {
@@ -710,13 +894,13 @@ fn chat_completions_endpoint(endpoint: &str) -> String {
     }
 }
 
-fn request_body(config: &Config, patch: &str) -> Value {
+fn request_body(config: &Config, patch: &str, branch: Option<&str>) -> Value {
     json!({
         "model": config.model.trim(),
         "stream": false,
         "messages": [
             { "role": "system", "content": config.instructions.trim() },
-            { "role": "user", "content": format!("Generate a commit message for these changes:\n\n{patch}") }
+            { "role": "user", "content": generation_user_content(config, patch, branch) }
         ]
     })
 }
