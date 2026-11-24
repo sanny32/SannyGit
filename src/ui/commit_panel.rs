@@ -5,8 +5,8 @@ use crate::{
     theme::{semibold_family, Palette},
 };
 use eframe::egui::{
-    Align, Align2, Button, FontId, Frame, Layout, Margin, Rect, RichText, ScrollArea, Sense, Shape,
-    Stroke, StrokeKind, TextEdit, Ui, Vec2,
+    Align, Align2, Button, CursorIcon, FontId, Frame, Layout, Margin, Rect, RichText, ScrollArea,
+    Sense, Shape, Stroke, StrokeKind, TextEdit, Ui, Vec2,
 };
 
 #[derive(Clone, Copy)]
@@ -166,7 +166,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     let time = ui.input(|input| input.time);
                     draw_generation_animation(ui, editor.response.rect, time, palette);
                 } else if let Some(usage) = app.commit.last_generation_tokens {
-                    draw_token_usage_badge(ui, editor.response.rect, usage, palette, app.commit.session_generation_tokens);
+                    draw_token_usage_badge(ui, editor.response.rect, usage, palette);
                 }
             });
             ui.add_space(10.0);
@@ -213,13 +213,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         });
 }
 
-fn draw_token_usage_badge(
-    ui: &Ui,
-    rect: Rect,
-    usage: crate::llm::TokenUsage,
-    palette: Palette,
-    session_total: u64,
-) {
+fn draw_token_usage_badge(ui: &Ui, rect: Rect, usage: crate::llm::TokenUsage, palette: Palette) {
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -233,49 +227,28 @@ fn draw_token_usage_badge(
     let text_size = ui.painter().layout_no_wrap(label.clone(), font.clone(), palette.muted);
     let size = text_size.size() + padding * 2.0;
     let badge = Rect::from_min_size(rect.right_bottom() + Vec2::new(-size.x - 6.0, -size.y - 6.0), size);
-    let response = ui
+    let _response = ui
         .interact(
             badge,
             eframe::egui::Id::unique("commit.message.tokens"),
             Sense::hover(),
         )
-        .help_text(token_usage_tooltip(usage, session_total));
-    let color = if response.hovered() {
-        palette.text
-    } else {
-        palette.muted
-    };
+        .on_hover_cursor(CursorIcon::Default)
+        .help_text(token_usage_tooltip(usage));
     ui.painter().text(
         badge.min + padding,
         Align2::LEFT_TOP,
         label,
         font,
-        color,
+        palette.muted,
     );
 }
 
-fn token_usage_tooltip(usage: crate::llm::TokenUsage, session_total: u64) -> String {
-    let session = if session_total > 0 {
-        format!(
-            "\nSession total: {} tokens",
-            crate::llm::format_token_count(session_total.min(u32::MAX as u64) as u32)
-        )
-    } else {
-        String::new()
-    };
-    let total_note = if usage.total != usage.input.saturating_add(usage.output) {
-        format!(
-            "\nTotal reported by provider: {} tokens",
-            crate::llm::format_token_count(usage.total)
-        )
-    } else {
-        format!(
-            "\nTotal: {} tokens",
-            crate::llm::format_token_count(usage.total)
-        )
-    };
+fn token_usage_tooltip(usage: crate::llm::TokenUsage) -> String {
     format!(
-        "Input tokens include the generation instructions and the selected diff.\nOutput tokens are the generated commit message.{total_note}{session}"
+        "↓ {} input tokens\n↑ {} output tokens",
+        crate::llm::format_token_count(usage.input),
+        crate::llm::format_token_count(usage.output),
     )
 }
 
