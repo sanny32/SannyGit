@@ -103,7 +103,7 @@ enum WorkerResult {
         result: Result<crate::models::DiffPreview, String>,
     },
     CommitMessage {
-        result: Result<String, String>,
+        result: Result<crate::llm::GenerationResult, String>,
         config: crate::llm::Config,
         repository: Option<String>,
     },
@@ -594,6 +594,12 @@ impl SannyGitApp {
         (self.loaded_diff == Some(self.selection.active))
             .then_some(self.diff_preview.as_ref())
             .flatten()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn show_diff_preview_for_test(&mut self, preview: crate::models::DiffPreview) {
+        self.loaded_diff = Some(self.selection.active);
+        self.diff_preview = Some(preview);
     }
 
     fn refresh_llm_models(&mut self, context: &eframe::egui::Context) {
@@ -2474,12 +2480,19 @@ impl SannyGitApp {
                     }
                 }
                 match result {
-                    Ok(message) => {
+                    Ok(generation) => {
                         logging::record(
                             logging::Level::Info,
                             format_args!("Commit message generated"),
                         );
-                        self.commit.message = message;
+                        self.commit.message = generation.message;
+                        if let Some(usage) = generation.usage {
+                            self.commit.last_generation_tokens = Some(usage);
+                            self.commit.session_generation_tokens = self
+                                .commit
+                                .session_generation_tokens
+                                .saturating_add(u64::from(usage.total));
+                        }
                         self.status = "Commit message generated".into();
                     }
                     Err(error) => {

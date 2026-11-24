@@ -709,6 +709,67 @@ pub fn prepare_patch_for_llm(config: &Config, patch: String) -> Result<String, S
     ))
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TokenUsage {
+    pub input: u32,
+    pub output: u32,
+    pub total: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenerationResult {
+    pub message: String,
+    pub usage: Option<TokenUsage>,
+}
+
+pub fn format_token_count(tokens: u32) -> String {
+    if tokens < 1_000 {
+        return tokens.to_string();
+    }
+    if tokens < 1_000_000 {
+        let thousands = tokens as f64 / 1_000.0;
+        if tokens % 1_000 == 0 {
+            format!("{}k", tokens / 1_000)
+        } else if thousands >= 100.0 {
+            format!("{:.0}k", thousands)
+        } else {
+            format!("{:.1}k", thousands)
+        }
+    } else {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    }
+}
+
+pub(crate) fn token_usage_from_json(usage: &Value) -> Option<TokenUsage> {
+    let total = usage
+        .get("total_tokens")
+        .and_then(Value::as_u64)
+        .map(|count| count as u32);
+    let input = usage
+        .get("input_tokens")
+        .or_else(|| usage.get("prompt_tokens"))
+        .and_then(Value::as_u64)
+        .map(|count| count as u32);
+    let output = usage
+        .get("output_tokens")
+        .or_else(|| usage.get("completion_tokens"))
+        .and_then(Value::as_u64)
+        .map(|count| count as u32);
+    let total = total.or_else(|| {
+        let input = input?;
+        let output = output.unwrap_or(0);
+        Some(input.saturating_add(output))
+    })?;
+    if total == 0 {
+        return None;
+    }
+    Some(TokenUsage {
+        input: input.unwrap_or(0),
+        output: output.unwrap_or(0),
+        total,
+    })
+}
+
 pub fn generation_user_content(config: &Config, patch: &str, branch: Option<&str>) -> String {
     let mut text = String::from("Generate a commit message for these changes:");
     if config.include_branch_in_prompt {
@@ -727,7 +788,7 @@ pub fn generate(
     patch: &str,
     branch: Option<&str>,
     cancel: &AtomicBool,
-) -> Result<String, String> {
+) -> Result<GenerationResult, String> {
     if cancel.load(Ordering::Relaxed) {
         return Err("Commit message generation cancelled".into());
     }
@@ -777,7 +838,7 @@ async fn generate_response(
     config: &Config,
     patch: &str,
     branch: Option<&str>,
-) -> Result<String, String> {
+) -> Result<GenerationResult, String> {
     let request = request_body(config, patch, branch);
     let client = api_client(config, if config.is_local() { 300 } else { 60 })?;
     let request = client.post(request_endpoint(config)?).json(&request);
@@ -790,7 +851,7 @@ async fn generate_response(
         .send()
         .await
         .map_err(|error| format!("LLM request failed: {}", error.without_url()))?;
-    parse_message(&read_api_response(response).await?)
+    parse_chat_completion(&read_api_response(response).await?)
 }
 
 /// Fetch the provider's OpenAI-compatible model catalogue without generating text.
@@ -946,14 +1007,18 @@ pub fn request_endpoint(config: &Config) -> Result<String, String> {
     Ok(url.into())
 }
 
-fn parse_message(value: &Value) -> Result<String, String> {
+fn parse_chat_completion(value: &Value) -> Result<GenerationResult, String> {
     let message = value
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|message| !message.is_empty())
         .ok_or("LLM API response does not contain a commit message")?;
-    validate_generated_message(message)
+    let usage = value.get("usage").and_then(token_usage_from_json);
+    Ok(GenerationResult {
+        message: validate_generated_message(message)?,
+        usage,
+    })
 }
 
 fn validate_generated_message(message: &str) -> Result<String, String> {

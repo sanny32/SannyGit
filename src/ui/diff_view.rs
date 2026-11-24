@@ -55,78 +55,99 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let unstage_reason = (!conflicted).then(|| app.diff_edit_blocker(DiffEdit::Unstage));
     let discard_reason = (!conflicted).then(|| app.diff_edit_blocker(DiffEdit::Discard));
 
-    super::header(ui, 52.0, palette, |ui| {
+    super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
         ui.spacing_mut().interact_size.y = 20.0;
-        ui.spacing_mut().item_spacing.y = 2.0;
-        ui.vertical(|ui| {
-            ui.horizontal(|ui| {
-                let wide = ui.available_width() >= 760.0;
-                let path_width = (ui.available_width() - if wide { 460.0 } else { 390.0 }).max(64.0);
-                ui.allocate_ui_with_layout(
-                    Vec2::new(path_width, 22.0),
-                    Layout::left_to_right(Align::Center),
-                    |ui| {
-                        ui.set_min_width(path_width);
-                        ui.add(
-                            eframe::egui::Label::new(RichText::new(&path).color(palette.muted))
-                                .show_tooltip_when_elided(false),
-                        )
-                        .help_text(&path);
-                    },
-                );
-                ui.label(
-                    RichText::new(format!("+{added}"))
-                        .family(crate::theme::semibold_family())
-                        .color(palette.added_text),
-                );
-                ui.label(
-                    RichText::new(format!("−{removed}"))
-                        .family(crate::theme::semibold_family())
-                        .color(palette.removed_text),
-                );
-                let mut side = app.preferences.diff_side_by_side;
-                let before = side;
-                ui.selectable_value(&mut side, false, "Unified")
-                    .help_text("Show the diff as one column");
-                ui.selectable_value(&mut side, true, "Side by Side")
-                    .help_text("Show old and new lines in two columns");
-                if side != before {
-                    app.preferences.diff_side_by_side = side;
-                }
-                let mut ignore = app.preferences.diff_ignore_whitespace;
-                let whitespace = if wide { "Ignore whitespace" } else { "Whitespace" };
-                if ui
-                    .checkbox(&mut ignore, whitespace)
-                    .help_text("Hide changes that only add or remove whitespace. Line edits stay disabled while this is on.")
-                    .changed()
-                {
-                    app.preferences.diff_ignore_whitespace = ignore;
-                    app.reload_selected_diff();
-                }
-            });
-            if !conflicted {
-                ui.horizontal(|ui| {
-                    let noun = if hunk { "Hunk" } else { "Lines" };
-                    for (label, reason, edit) in [
-                        (format!("Stage {noun}"), stage_reason.clone(), DiffEdit::Stage),
-                        (format!("Unstage {noun}"), unstage_reason.clone(), DiffEdit::Unstage),
-                        (format!("Discard {noun}"), discard_reason.clone(), DiffEdit::Discard),
-                    ] {
-                        let enabled = reason.as_ref().is_some_and(Option::is_none);
-                        let help = reason.as_ref().and_then(|reason| reason.as_deref());
-                        let response = ui.add_enabled(enabled, Button::new(label));
-                        let response = if let Some(help) = help {
-                            response.disabled_help_text(help)
-                        } else {
-                            response
-                        };
-                        if response.clicked() {
+        let wide = ui.available_width() >= 760.0;
+        // Place the actions first so a right-to-left row pins them to the edge,
+        // then fill the remaining width from the left. The row itself must not
+        // take hover, or it covers the buttons and hides their tooltips.
+        ui.scope_builder(
+            eframe::egui::UiBuilder::new()
+                .layout(Layout::right_to_left(Align::Center))
+                .sense(eframe::egui::Sense::empty()),
+            |ui| {
+                if !conflicted {
+                    let noun = if hunk { "hunk" } else { "lines" };
+                    let actions = [
+                        (
+                            Icon::Check,
+                            "Stage",
+                            format!("Stage the selected {noun}"),
+                            &stage_reason,
+                            DiffEdit::Stage,
+                        ),
+                        (
+                            Icon::File,
+                            "Unstage",
+                            format!("Unstage the selected {noun}"),
+                            &unstage_reason,
+                            DiffEdit::Unstage,
+                        ),
+                        (
+                            Icon::Discard,
+                            "Discard",
+                            format!("Discard the selected {noun}"),
+                            &discard_reason,
+                            DiffEdit::Discard,
+                        ),
+                    ];
+                    for (icon, label, tooltip, reason, edit) in actions.into_iter().rev() {
+                        if line_action(ui, icon, label, &tooltip, reason) {
                             app.open_diff_edit(edit);
                         }
                     }
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    let path_width =
+                        (ui.available_width() - if wide { 460.0 } else { 390.0 }).max(64.0);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(path_width, 22.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.set_min_width(path_width);
+                            ui.add(
+                                eframe::egui::Label::new(RichText::new(&path).color(palette.muted))
+                                    .show_tooltip_when_elided(false),
+                            )
+                            .help_text(&path);
+                        },
+                    );
+                    ui.label(
+                        RichText::new(format!("+{added}"))
+                            .family(crate::theme::semibold_family())
+                            .color(palette.added_text),
+                    );
+                    ui.label(
+                        RichText::new(format!("−{removed}"))
+                            .family(crate::theme::semibold_family())
+                            .color(palette.removed_text),
+                    );
+                    let mut side = app.preferences.diff_side_by_side;
+                    let before = side;
+                    ui.selectable_value(&mut side, false, "Unified")
+                        .help_text("Show the diff as one column");
+                    ui.selectable_value(&mut side, true, "Side by Side")
+                        .help_text("Show old and new lines in two columns");
+                    if side != before {
+                        app.preferences.diff_side_by_side = side;
+                    }
+                    let mut ignore = app.preferences.diff_ignore_whitespace;
+                    let whitespace = if wide {
+                        "Ignore whitespace"
+                    } else {
+                        "Whitespace"
+                    };
+                    if ui
+                        .checkbox(&mut ignore, whitespace)
+                        .help_text("Hide changes that only add or remove whitespace. Line edits stay disabled while this is on.")
+                        .changed()
+                    {
+                        app.preferences.diff_ignore_whitespace = ignore;
+                        app.reload_selected_diff();
+                    }
                 });
-            }
-        });
+            },
+        );
     });
     let side_by_side = app.preferences.diff_side_by_side;
     let selection = app.diff_line_selection.clone();
@@ -212,6 +233,35 @@ fn conflict_bar(ui: &mut Ui, app: &mut SannyGitApp, index: usize) {
         app.open_conflict(index, action);
     } else if stage {
         app.set_staged(index, true);
+    }
+}
+
+fn line_action(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    tooltip: &str,
+    reason: &Option<Option<String>>,
+) -> bool {
+    let enabled = reason.as_ref().is_some_and(Option::is_none);
+    let response = ui
+        .add_enabled_ui(enabled, |ui| {
+            ui.add(
+                Button::image_and_text(icons::image(icon, ui.visuals().text_color(), 14.0), label)
+                    .gap(4.0)
+                    .frame(true)
+                    .frame_when_inactive(false)
+                    .wrap_mode(TextWrapMode::Extend),
+            )
+        })
+        .inner;
+    response.widget_info(|| {
+        eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, enabled, label)
+    });
+    if let Some(help) = reason.as_ref().and_then(|reason| reason.as_deref()) {
+        response.disabled_help_text(help).clicked()
+    } else {
+        response.help_text(tooltip).clicked()
     }
 }
 
@@ -931,6 +981,162 @@ mod tests {
                 );
                 output.textures_delta.clear();
             }
+        }
+    }
+
+    #[test]
+    fn line_actions_are_labeled_and_pinned_to_the_right() {
+        use crate::theme::{install_fonts, ThemeChoice};
+        use eframe::egui::{Context, Event, Pos2, RawInput, Rect, Shape};
+
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let ctx = Context::default();
+            install_fonts(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            theme.apply(&ctx);
+            ctx.all_styles_mut(|style| {
+                style.interaction.tooltip_delay = 0.0;
+                style.interaction.tooltip_grace_time = 0.0;
+                style.interaction.show_tooltips_only_when_still = false;
+            });
+            let mut app = SannyGitApp::with_theme(theme);
+            app.repositories.push(crate::models::Repository {
+                name: "demo".into(),
+                path: "D:/demo".into(),
+            });
+            app.selected_repository = 0;
+            app.state_current = true;
+            app.changes = crate::git::parse_status(b" M src/theme.rs\0").unwrap();
+            app.selection.active = 0;
+            let preview =
+                crate::models::DiffPreview::new("Working tree changes\n@@ -1 +1 @@\n-old\n+new\n");
+            let added = preview
+                .lines
+                .iter()
+                .position(|line| line.kind == crate::models::DiffLineKind::Added)
+                .expect("added line");
+            app.diff_line_selection.insert(added);
+            app.show_diff_preview_for_test(preview);
+
+            let render = |app: &mut SannyGitApp, events| {
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            Pos2::ZERO,
+                            Vec2::new(1100.0, 320.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| show(ui, app),
+                );
+                output.textures_delta.clear();
+                output
+            };
+            render(&mut app, vec![]);
+            let output = render(&mut app, vec![]);
+            let text = |output: &eframe::egui::FullOutput, label: &str| {
+                output.shapes.iter().find_map(|shape| match &shape.shape {
+                    Shape::Text(text) if text.galley.job.text == label => {
+                        Some(Rect::from_min_size(text.pos, text.galley.size()))
+                    }
+                    _ => None,
+                })
+            };
+            let path = text(&output, "src/theme.rs").expect("path");
+            let unified = text(&output, "Unified").expect("Unified");
+            let whitespace = text(&output, "Ignore whitespace").expect("Ignore whitespace");
+            let stage = text(&output, "Stage").expect("Stage");
+            let unstage = text(&output, "Unstage").expect("Unstage");
+            let discard = text(&output, "Discard").expect("Discard");
+            assert!(
+                (path.center().y - unified.center().y).abs() < 2.0,
+                "Path and view mode are on different rows in {theme:?}"
+            );
+            assert!(
+                (path.center().y - whitespace.center().y).abs() < 2.0,
+                "Whitespace toggle left the path row in {theme:?}"
+            );
+            for (label, rect) in [("Stage", stage), ("Unstage", unstage), ("Discard", discard)] {
+                assert!(
+                    (rect.center().y - path.center().y).abs() < 4.0,
+                    "{label} left the path row in {theme:?}"
+                );
+            }
+            let palette = theme.palette();
+            let header = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    Shape::Rect(rect)
+                        if rect.fill == palette.header
+                            && rect.rect.contains(path.center())
+                            && (rect.rect.height() - super::super::WORKSPACE_HEADER_HEIGHT)
+                                .abs()
+                                < 0.1 =>
+                    {
+                        Some(rect.rect)
+                    }
+                    _ => None,
+                })
+                .expect("Single-row path header");
+            assert!(
+                output.shapes.iter().all(|shape| match &shape.shape {
+                    Shape::Rect(rect) => {
+                        rect.fill != palette.header || (rect.rect.height() - 52.0).abs() > 0.1
+                    }
+                    _ => true,
+                }),
+                "Line actions still occupy a second header row in {theme:?}"
+            );
+            assert!(
+                stage.left() > whitespace.right() + 16.0,
+                "Actions sit against the view controls in {theme:?}: {whitespace:?} {stage:?}"
+            );
+            assert!(stage.right() < unstage.left(), "{theme:?}");
+            assert!(unstage.right() < discard.left(), "{theme:?}");
+            assert!(
+                header.right() - discard.right() < 32.0 && discard.right() < header.right(),
+                "Discard is not pinned to the right edge in {theme:?}: {discard:?} {header:?}"
+            );
+            let actions = stage.union(discard).expand(4.0);
+            let borders: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    Shape::Rect(rect)
+                        if rect.stroke.width > 0.0
+                            && rect.stroke.color.a() > 0
+                            && actions.intersects(rect.rect) =>
+                    {
+                        Some(rect.rect)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                borders.is_empty(),
+                "Line actions still draw a border in {theme:?}: {borders:?}"
+            );
+            // Hover opens a tooltip on a sizing pass, which paints nothing.
+            // Leaving another tooltip can take one more frame. Two still frames
+            // are enough for the words to appear.
+            let expect_tooltip = |app: &mut SannyGitApp, at, tooltip: &str| {
+                render(app, vec![Event::PointerMoved(at)]);
+                render(app, vec![]);
+                let shown = render(app, vec![]);
+                assert!(
+                    text(&shown, tooltip).is_some(),
+                    "{tooltip} is missing in {theme:?}"
+                );
+            };
+            expect_tooltip(&mut app, stage.center(), "Stage the selected lines");
+            expect_tooltip(&mut app, discard.center(), "Discard the selected lines");
+            expect_tooltip(
+                &mut app,
+                unstage.center(),
+                "Select staged lines to unstage.",
+            );
         }
     }
 }

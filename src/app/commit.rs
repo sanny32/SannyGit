@@ -12,6 +12,8 @@ pub(super) struct CommitDraft {
 pub struct CommitState {
     pub message: String,
     pub contents: crate::git::CommitContents,
+    pub last_generation_tokens: Option<crate::llm::TokenUsage>,
+    pub session_generation_tokens: u64,
     pub generating_message: bool,
     pub(super) generation_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub amend: bool,

@@ -376,7 +376,7 @@ fn local_generation_sends_patch_without_auth_and_handles_server_failures() {
             .unwrap()
             .contains("diff --git a/file b/file"));
         match expected {
-            Ok(message) => assert_eq!(result.unwrap(), message),
+            Ok(message) => assert_eq!(result.unwrap().message, message),
             Err(detail) => assert!(result.unwrap_err().contains(detail)),
         }
     }
@@ -385,8 +385,22 @@ fn local_generation_sends_patch_without_auth_and_handles_server_failures() {
 #[test]
 fn parses_openai_compatible_response() {
     let value = json!({"choices": [{"message": {"content": "  Add LLM commit messages\n"}}]});
-    assert_eq!(parse_message(&value).unwrap(), "Add LLM commit messages");
-    assert!(parse_message(&json!({"choices": []})).is_err());
+    let parsed = parse_chat_completion(&value).unwrap();
+    assert_eq!(parsed.message, "Add LLM commit messages");
+    assert!(parsed.usage.is_none());
+    let with_usage = json!({
+        "choices": [{"message": {"content": "Done"}}],
+        "usage": {"prompt_tokens": 120, "completion_tokens": 8, "total_tokens": 128}
+    });
+    assert_eq!(parse_chat_completion(&with_usage).unwrap().usage.unwrap().total, 128);
+    assert!(parse_chat_completion(&json!({"choices": []})).is_err());
+}
+
+#[test]
+fn formats_token_counts_compactly() {
+    assert_eq!(super::format_token_count(42), "42");
+    assert_eq!(super::format_token_count(1_500), "1.5k");
+    assert_eq!(super::format_token_count(12_000), "12k");
 }
 
 #[test]

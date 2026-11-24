@@ -1,4 +1,4 @@
-use super::{read_response_body, Config};
+use super::{read_response_body, Config, GenerationResult, token_usage_from_json};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::{Client, RequestBuilder, Url};
 use ring::{digest, rand, signature};
@@ -753,7 +753,7 @@ pub(super) async fn generate(
     patch: &str,
     branch: Option<&str>,
     token: &str,
-) -> Result<String, String> {
+) -> Result<GenerationResult, String> {
     let client = client()?;
     let models = fetch_models(&client, token).await?;
     let body = request_body(config, patch, branch, &models)?;
@@ -808,7 +808,7 @@ fn request_body(
     Ok(body)
 }
 
-fn parse_response(body: &[u8]) -> Result<String, String> {
+fn parse_response(body: &[u8]) -> Result<GenerationResult, String> {
     let mut message = String::new();
     let body = std::str::from_utf8(body).map_err(|_| "ChatGPT returned invalid response text")?;
     for data in body.lines().filter_map(|line| line.strip_prefix("data:")) {
@@ -828,7 +828,13 @@ fn parse_response(body: &[u8]) -> Result<String, String> {
                     return Err("ChatGPT did not return a commit message".into());
                 }
                 crate::git::validate_message(message)?;
-                return Ok(message.into());
+                let usage = event
+                    .pointer("/response/usage")
+                    .and_then(token_usage_from_json);
+                return Ok(GenerationResult {
+                    message: message.into(),
+                    usage,
+                });
             }
             Some("response.failed" | "response.incomplete" | "error") => {
                 let code = event
@@ -951,6 +957,16 @@ mod tests {
         assert!(parse_response(partial).is_err());
         let mut complete = partial.to_vec();
         complete.extend(b"data: {\"type\":\"response.completed\"}\n\n");
-        assert_eq!(parse_response(&complete).unwrap(), "Fix parsing");
+        assert_eq!(
+            parse_response(&complete).unwrap().message,
+            "Fix parsing"
+        );
+        let mut with_usage = partial.to_vec();
+        with_usage.extend(
+            b"data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":3,\"total_tokens\":13}}}\n\n",
+        );
+        let parsed = parse_response(&with_usage).unwrap();
+        assert_eq!(parsed.message, "Fix parsing");
+        assert_eq!(parsed.usage.unwrap().total, 13);
     }
 }

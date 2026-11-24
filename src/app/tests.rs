@@ -2400,7 +2400,10 @@ fn commit_file_selection_retains_list_after_errors_and_rejects_stale_results() {
 
 fn commit_message_result(result: Result<String, String>) -> WorkerResult {
     WorkerResult::CommitMessage {
-        result,
+        result: result.map(|message| crate::llm::GenerationResult {
+            message,
+            usage: None,
+        }),
         config: crate::llm::Config::default(),
         repository: None,
     }
@@ -2420,7 +2423,10 @@ fn unlocked_generation_key_is_reused_after_success_and_network_failure_without_p
         deliver(
             &mut app,
             WorkerResult::CommitMessage {
-                result,
+                result: result.map(|message| crate::llm::GenerationResult {
+                    message,
+                    usage: None,
+                }),
                 config,
                 repository: None,
             },
@@ -2500,7 +2506,10 @@ fn late_unlock_does_not_restore_removed_or_changed_credentials() {
         deliver(
             &mut app,
             WorkerResult::CommitMessage {
-                result: Ok("Generated message".into()),
+                result: Ok(crate::llm::GenerationResult {
+                    message: "Generated message".into(),
+                    usage: None,
+                }),
                 config,
                 repository: Some("/repo".into()),
             },

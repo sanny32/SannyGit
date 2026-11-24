@@ -165,6 +165,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 if app.commit.generating_message {
                     let time = ui.input(|input| input.time);
                     draw_generation_animation(ui, editor.response.rect, time, palette);
+                } else if let Some(usage) = app.commit.last_generation_tokens {
+                    draw_token_usage_badge(ui, editor.response.rect, usage, palette, app.commit.session_generation_tokens);
                 }
             });
             ui.add_space(10.0);
@@ -209,6 +211,64 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
             });
         });
+}
+
+fn draw_token_usage_badge(
+    ui: &Ui,
+    rect: Rect,
+    usage: crate::llm::TokenUsage,
+    palette: Palette,
+    session_total: u64,
+) {
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let label = format!("{} tok", crate::llm::format_token_count(usage.total));
+    let font = FontId::new(11.0, eframe::egui::FontFamily::Proportional);
+    let padding = Vec2::new(6.0, 2.0);
+    let text_size = ui.painter().layout_no_wrap(label.clone(), font.clone(), palette.muted);
+    let size = text_size.size() + padding * 2.0;
+    let badge = Rect::from_min_size(rect.right_bottom() + Vec2::new(-size.x - 6.0, -size.y - 6.0), size);
+    let response =
+        ui.interact(
+            badge,
+            eframe::egui::Id::unique("commit.message.tokens"),
+            Sense::hover(),
+        );
+    let fill = ui
+        .visuals()
+        .text_edit_bg_color()
+        .lerp_to_gamma(palette.panel_alt, if response.hovered() { 0.65 } else { 0.35 });
+    ui.painter().rect_filled(badge, 4.0, fill);
+    ui.painter().rect_stroke(badge, 4.0, (1.0, palette.border), StrokeKind::Inside);
+    ui.painter().text(
+        badge.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font,
+        palette.muted,
+    );
+    if response.hovered() {
+        let session = if session_total >= u64::from(usage.total) {
+            format!(
+                "Session total: {} tokens",
+                crate::llm::format_token_count(session_total.min(u32::MAX as u64) as u32)
+            )
+        } else {
+            String::new()
+        };
+        response.help_text(format!(
+            "Last generation: {} in + {} out = {} total.{}",
+            crate::llm::format_token_count(usage.input),
+            crate::llm::format_token_count(usage.output),
+            crate::llm::format_token_count(usage.total),
+            if session.is_empty() {
+                String::new()
+            } else {
+                format!("\n{session}")
+            }
+        ));
+    }
 }
 
 fn draw_generation_animation(ui: &Ui, rect: Rect, time: f64, palette: Palette) {
