@@ -139,6 +139,8 @@ pub fn paint(ui: &mut Ui, icon: Icon, color: Color32, size: f32) {
 // controls. Local dialog padding must not change their hit area or hover frame.
 pub const BUTTON_SIZE: f32 = 26.0;
 const BUTTON_ICON_SIZE: f32 = 16.0;
+/// Keeps the circular hover inside compact strips such as the status bar.
+const GHOST_HOVER_INSET: f32 = 3.0;
 
 fn button_widget(ui: &Ui, icon: Icon) -> Button<'static> {
     Button::new(image(icon, ui.visuals().text_color(), BUTTON_ICON_SIZE))
@@ -189,7 +191,8 @@ pub fn ghost_button(ui: &mut Ui, icon: Icon, color: Color32, tooltip: &str) -> R
         let (rect, response) =
             ui.allocate_exact_size(Vec2::splat(BUTTON_SIZE), Sense::click());
         if response.hovered() || response.has_focus() {
-            let radius = rect.width().min(rect.height()) / 2.0;
+            let radius =
+                (rect.width().min(rect.height()) / 2.0 - GHOST_HOVER_INSET).max(0.0);
             ui.painter().circle_filled(
                 rect.center(),
                 radius,
