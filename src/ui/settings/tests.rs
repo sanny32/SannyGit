@@ -1067,6 +1067,21 @@ fn copilot_sign_in_controls_fit_in_both_themes() {
 }
 
 #[test]
+fn restore_all_confirmations_clears_skips_on_ok_and_reopens_unchecked() {
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.skip_push_confirmation = true;
+    app.preferences.skip_sync_confirmation = true;
+    app.open_settings();
+    assert!(!app.settings_window.restore_all_confirmations);
+    app.settings_window.restore_all_confirmations = true;
+    apply_settings(&mut app).unwrap();
+    assert!(!app.skip_push_confirmation);
+    assert!(!app.preferences.skip_sync_confirmation);
+    app.open_settings();
+    assert!(!app.settings_window.restore_all_confirmations);
+}
+
+#[test]
 fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
         let context = egui::Context::default();
@@ -1102,7 +1117,7 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
                     "Language:",
                     "English",
                     "Use Staged only when opening or staging files",
-                    "Restore confirmation dialogs",
+                    "Restore all confirmation dialogs",
                 ] {
                     assert!(
                         visible_text(&output.shapes, label),

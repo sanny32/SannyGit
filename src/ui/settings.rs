@@ -506,28 +506,17 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             });
             ui.add_space(4.0);
             group(ui, palette, "Confirmations", |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Skip upstream confirmations:");
-                    ui.checkbox(&mut app.settings_window.skip_push_confirmation, "Push");
-                    ui.checkbox(
-                        &mut app.settings_window.preferences.skip_sync_confirmation,
-                        "Sync",
-                    )
-                    .help_text("Skipped operations report results in the status bar.");
-                });
-                if ui
-                    .add_enabled(
-                        app.settings_window.skip_push_confirmation
-                            || app.settings_window.preferences.skip_sync_confirmation,
-                        egui::Button::new("Restore confirmation dialogs"),
-                    )
-                    .help_text("Re-enable upstream push and sync confirmations")
-                    .disabled_help_text("All confirmation dialogs are already enabled")
-                    .clicked()
-                {
-                    app.settings_window.skip_push_confirmation = false;
-                    app.settings_window.preferences.skip_sync_confirmation = false;
-                }
+                let restore_enabled = app.settings_window.skip_push_confirmation
+                    || app.settings_window.preferences.skip_sync_confirmation;
+                ui.add_enabled(
+                    restore_enabled,
+                    egui::Checkbox::new(
+                        &mut app.settings_window.restore_all_confirmations,
+                        "Restore all confirmation dialogs",
+                    ),
+                )
+                .help_text("Re-enable upstream push and sync confirmations")
+                .disabled_help_text("All confirmation dialogs are already enabled");
             });
         }
         SettingsPage::Appearance => {
@@ -802,6 +791,10 @@ fn apply_settings(app: &mut SannyGitApp) -> Result<(), SettingsError> {
             );
         }
         app.theme = app.settings_window.theme;
+        if app.settings_window.restore_all_confirmations {
+            app.settings_window.skip_push_confirmation = false;
+            app.settings_window.preferences.skip_sync_confirmation = false;
+        }
         app.preferences = app.settings_window.preferences.clone();
         app.interface_style = app.settings_window.interface_style;
         app.skip_push_confirmation = app.settings_window.skip_push_confirmation;

@@ -235,6 +235,7 @@ pub struct SettingsWindow {
     pub interface_style: InterfaceStyle,
     pub auto_fetch: bool,
     pub skip_push_confirmation: bool,
+    pub restore_all_confirmations: bool,
     pub llm: LlmSettings,
     pub llm_repositories: BTreeMap<String, LlmSettings>,
     pub llm_instructions: BTreeMap<String, String>,
@@ -266,6 +267,7 @@ impl SettingsWindow {
             interface_style: InterfaceStyle::default(),
             auto_fetch: true,
             skip_push_confirmation: false,
+            restore_all_confirmations: false,
             llm: LlmSettings::default(),
             llm_repositories: BTreeMap::new(),
             llm_instructions: BTreeMap::new(),
@@ -1035,6 +1037,7 @@ impl SannyGitApp {
         self.settings_window.theme = self.theme;
         self.settings_window.auto_fetch = self.tracking.auto_fetch;
         self.settings_window.skip_push_confirmation = self.skip_push_confirmation;
+        self.settings_window.restore_all_confirmations = false;
         self.settings_window.llm = LlmSettings {
             config: self.llm_config.clone(),
             ..Default::default()
