@@ -189,9 +189,10 @@ pub fn ghost_button(ui: &mut Ui, icon: Icon, color: Color32, tooltip: &str) -> R
         let (rect, response) =
             ui.allocate_exact_size(Vec2::splat(BUTTON_SIZE), Sense::click());
         if response.hovered() || response.has_focus() {
-            ui.painter().rect_filled(
-                rect,
-                ui.visuals().widgets.inactive.corner_radius,
+            let radius = rect.width().min(rect.height()) / 2.0;
+            ui.painter().circle_filled(
+                rect.center(),
+                radius,
                 ui.visuals().widgets.hovered.weak_bg_fill,
             );
         }
