@@ -20,7 +20,6 @@ on:
       - 'assets/fonts/*.ttf'
       - 'assets/fonts/OFL*.txt'
       - 'assets/icons/*.svg'
-      - 'assets/previews/*.png'
       - 'assets/chatgpt-callback.html'
       - 'assets/app/sannygit.png'
       - 'assets/app/sannygit.svg'

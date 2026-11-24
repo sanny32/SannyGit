@@ -522,50 +522,54 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         SettingsPage::Appearance => {
             heading(ui, "Appearance");
             group(ui, palette, "Interface", |ui| {
-                interface_choices(
-                    ui,
-                    &mut app.settings_window.interface_style,
-                    if app.settings_window.preferences.follow_system_theme {
-                        ThemeChoice::from_system(ui.ctx(), app.settings_window.theme)
-                    } else {
-                        app.settings_window.theme
-                    },
-                );
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.label("Color theme:");
-                    egui::ComboBox::from_id_salt("preferences.theme")
-                        .selected_text(if app.settings_window.preferences.follow_system_theme {
-                            "Automatic (system)"
-                        } else {
-                            app.settings_window.theme.label()
-                        })
-                        .width(150.0)
-                        .show_ui(ui, |ui| {
-                            if ui
-                                .selectable_label(
-                                    app.settings_window.preferences.follow_system_theme,
-                                    "Automatic (system)",
-                                )
-                                .clicked()
-                            {
-                                app.settings_window.preferences.follow_system_theme = true;
-                            }
-                            for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+                egui::Grid::new("preferences.appearance")
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        form_label(ui, "Interface style:");
+                        let style = &mut app.settings_window.interface_style;
+                        egui::ComboBox::from_id_salt("preferences.interface_style")
+                            .selected_text(style.label())
+                            .width(150.0)
+                            .show_ui(ui, |ui| {
+                                for choice in [InterfaceStyle::Classic, InterfaceStyle::Modern] {
+                                    ui.selectable_value(style, choice, choice.label());
+                                }
+                            });
+                        ui.end_row();
+                        form_label(ui, "Color theme:");
+                        egui::ComboBox::from_id_salt("preferences.theme")
+                            .selected_text(if app.settings_window.preferences.follow_system_theme {
+                                "Automatic (system)"
+                            } else {
+                                app.settings_window.theme.label()
+                            })
+                            .width(150.0)
+                            .show_ui(ui, |ui| {
                                 if ui
                                     .selectable_label(
-                                        !app.settings_window.preferences.follow_system_theme
-                                            && app.settings_window.theme == theme,
-                                        theme.label(),
+                                        app.settings_window.preferences.follow_system_theme,
+                                        "Automatic (system)",
                                     )
                                     .clicked()
                                 {
-                                    app.settings_window.preferences.follow_system_theme = false;
-                                    app.settings_window.theme = theme;
+                                    app.settings_window.preferences.follow_system_theme = true;
                                 }
-                            }
-                        });
-                });
+                                for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+                                    if ui
+                                        .selectable_label(
+                                            !app.settings_window.preferences.follow_system_theme
+                                                && app.settings_window.theme == theme,
+                                            theme.label(),
+                                        )
+                                        .clicked()
+                                    {
+                                        app.settings_window.preferences.follow_system_theme = false;
+                                        app.settings_window.theme = theme;
+                                    }
+                                }
+                            });
+                        ui.end_row();
+                    });
             });
         }
         SettingsPage::DateTime => {
@@ -1881,77 +1885,6 @@ fn group(ui: &mut Ui, palette: Palette, title: &str, contents: impl FnOnce(&mut 
             ui.set_width(ui.available_width());
             contents(ui);
         });
-}
-
-fn interface_choices(ui: &mut Ui, selected: &mut InterfaceStyle, theme: ThemeChoice) {
-    let width = ui.available_width().min(380.0);
-    ui.allocate_ui_with_layout(Vec2::new(width, 0.0), Layout::top_down(Align::Min), |ui| {
-        ui.set_width(width);
-        ui.columns(2, |columns| {
-            for (column, style) in columns
-                .iter_mut()
-                .zip([InterfaceStyle::Classic, InterfaceStyle::Modern])
-            {
-                column.with_layout(Layout::top_down(Align::Center), |column| {
-                    let (uri, bytes): (&str, &[u8]) = match (style, theme) {
-                        (InterfaceStyle::Classic, ThemeChoice::Light) => (
-                            "bytes://previews/classic-light.png",
-                            include_bytes!("../../assets/previews/classic-light.png"),
-                        ),
-                        (InterfaceStyle::Classic, ThemeChoice::Dark) => (
-                            "bytes://previews/classic-dark.png",
-                            include_bytes!("../../assets/previews/classic-dark.png"),
-                        ),
-                        (InterfaceStyle::Modern, ThemeChoice::Light) => (
-                            "bytes://previews/modern-light.png",
-                            include_bytes!("../../assets/previews/modern-light.png"),
-                        ),
-                        (InterfaceStyle::Modern, ThemeChoice::Dark) => (
-                            "bytes://previews/modern-dark.png",
-                            include_bytes!("../../assets/previews/modern-dark.png"),
-                        ),
-                    };
-                    let palette = style.palette(theme);
-                    let (rect, _) =
-                        column.allocate_exact_size(Vec2::splat(112.0), egui::Sense::hover());
-                    egui::Image::from_bytes(uri, bytes)
-                        .fit_to_exact_size(Vec2::splat(112.0))
-                        .corner_radius(4)
-                        .paint_at(column, rect);
-                    let response = column.interact(
-                        rect,
-                        column.scope_id().with(("interface.preview", style.label())),
-                        egui::Sense::click(),
-                    );
-                    response.widget_info(|| {
-                        egui::WidgetInfo::selected(
-                            egui::Role::Button,
-                            true,
-                            *selected == style,
-                            format!("{} interface preview", style.label()),
-                        )
-                    });
-                    column.painter().rect_stroke(
-                        response.rect,
-                        4,
-                        (
-                            if *selected == style { 2.0 } else { 1.0 },
-                            if *selected == style || response.hovered() {
-                                palette.accent
-                            } else {
-                                palette.border
-                            },
-                        ),
-                        egui::StrokeKind::Inside,
-                    );
-                    if response.clicked() {
-                        *selected = style;
-                    }
-                    column.radio_value(selected, style, style.label());
-                });
-            }
-        });
-    });
 }
 
 #[cfg(test)]

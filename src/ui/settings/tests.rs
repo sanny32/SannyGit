@@ -724,100 +724,57 @@ fn clicking_tree_labels_and_row_backgrounds_selects_the_page() {
 }
 
 #[test]
-fn thumbnails_load_and_support_image_and_radio_selection() {
+fn interface_style_dropdown_updates_the_draft_in_both_themes() {
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
         let context = egui::Context::default();
         crate::theme::install_fonts(&context);
-        egui_extras::install_image_loaders(&context);
         theme.apply(&context);
-        context.options_mut(|options| options.warn_on_id_clash = true);
         let mut app = SannyGitApp::with_theme(theme);
         let render = |app: &mut SannyGitApp, events| {
-            let mut output = context.run_ui(
+            context.run_ui(
                 RawInput {
                     screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(680.0, 380.0))),
                     events,
                     ..Default::default()
                 },
                 |ui| window_contents(ui, app),
-            );
-            output.textures_delta.clear();
-            assert!(!output.shapes.iter().any(|shape| {
-                matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("widget ID"))
-            }), "Interface choices have conflicting widget IDs");
-            output
+            )
         };
-        let mut output = render(&mut app, vec![]);
-        output.textures_delta.clear();
-        let mut thumbnails: Vec<_> = output
-            .shapes
-            .iter()
-            .filter_map(|shape| match &shape.shape {
-                egui::Shape::Rect(rect) if rect.rect.size() == Vec2::splat(112.0) => {
-                    Some(rect.rect)
-                }
-                _ => None,
-            })
-            .collect();
-        thumbnails.sort_by(|a, b| a.left().total_cmp(&b.left()));
-        thumbnails.dedup();
-        assert_eq!(thumbnails.len(), 2);
-        assert!(thumbnails[1].right() - thumbnails[0].left() <= 380.0);
-        assert!((thumbnails[1].center().x - thumbnails[0].center().x) < 220.0);
-        let suffix = if theme == ThemeChoice::Light {
-            "light"
-        } else {
-            "dark"
-        };
-        for style in ["classic", "modern"] {
-            let uri = format!("bytes://previews/{style}-{suffix}.png");
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            let image = loop {
-                match context.try_load_image(&uri, Default::default()).unwrap() {
-                    egui::load::ImagePoll::Ready { image } => break image,
-                    egui::load::ImagePoll::Pending { .. } => {
-                        assert!(std::time::Instant::now() < deadline, "Preview did not load");
-                        std::thread::sleep(std::time::Duration::from_millis(1));
+        let click = |app: &mut SannyGitApp, label| {
+            let output = render(app, vec![]);
+            let position = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
                     }
-                }
-            };
-            assert_eq!(image.resolution(), [224, 224]);
-        }
-        let classic_radio = output
-            .shapes
-            .iter()
-            .find_map(|shape| match &shape.shape {
-                egui::Shape::Text(text) if text.galley.job.text == "Classic" => {
-                    Some(text.pos + text.galley.size() / 2.0)
-                }
-                _ => None,
-            })
-            .unwrap();
-        output.textures_delta.clear();
-        for (target, expected) in [
-            (thumbnails[1].center(), InterfaceStyle::Modern),
-            (thumbnails[0].center(), InterfaceStyle::Classic),
-            (thumbnails[1].center(), InterfaceStyle::Modern),
-            (classic_radio, InterfaceStyle::Classic),
-        ] {
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("Missing {label}"));
             for pressed in [true, false] {
-                let mut output = render(
-                    &mut app,
+                render(
+                    app,
                     vec![
-                        Event::PointerMoved(target),
+                        Event::PointerMoved(position),
                         Event::PointerButton {
-                            pos: target,
+                            pos: position,
                             button: PointerButton::Primary,
                             pressed,
                             modifiers: Modifiers::NONE,
                         },
                     ],
                 );
-                output.textures_delta.clear();
             }
-            assert_eq!(app.settings_window.interface_style, expected);
-            assert_eq!(app.interface_style, InterfaceStyle::Classic);
-        }
+        };
+
+        click(&mut app, "Classic");
+        click(&mut app, "Modern");
+        assert_eq!(app.settings_window.interface_style, InterfaceStyle::Modern);
+        click(&mut app, "Modern");
+        click(&mut app, "Classic");
+        assert_eq!(app.settings_window.interface_style, InterfaceStyle::Classic);
+        assert_eq!(app.interface_style, InterfaceStyle::Classic);
     }
 }
 
@@ -1123,6 +1080,11 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
                         visible_text(&output.shapes, label),
                         "Missing {label} at minimum size"
                     );
+                }
+            }
+            if page == SettingsPage::Appearance {
+                for label in ["Interface style:", "Color theme:"] {
+                    assert_eq!(text_rows(&output.shapes, label), Some(1));
                 }
             }
             if page == SettingsPage::DateTime {
