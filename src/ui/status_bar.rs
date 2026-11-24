@@ -85,7 +85,13 @@ fn show_operation_cancel(ui: &mut Ui, app: &mut SannyGitApp) {
     if !(app.background_progress_only && app.manager.cancel.is_some()) {
         return;
     }
-    let response = icons::button(ui, Icon::Close, "Cancel the background operation");
+    let palette = app.palette();
+    let response = icons::ghost_button(
+        ui,
+        Icon::Close,
+        palette.muted,
+        "Cancel the background operation",
+    );
     ui.ctx()
         .data_mut(|data| data.insert_temp(operation_cancel_id(), response.rect));
     if response.clicked() {

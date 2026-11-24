@@ -1,5 +1,5 @@
 use super::tooltips::TooltipResponse;
-use eframe::egui::{Button, Color32, Image, Response, Ui, Vec2};
+use eframe::egui::{Button, Color32, Image, Rect, Response, Sense, Ui, Vec2};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
@@ -181,6 +181,29 @@ pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str) -> Response {
         eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, true, tooltip)
     });
     response.help_text(tooltip)
+}
+
+/// Borderless icon control with a hover fill and no stroke, like JetBrains inline dismiss buttons.
+pub fn ghost_button(ui: &mut Ui, icon: Icon, color: Color32, tooltip: &str) -> Response {
+    button_scope(ui, |ui| {
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::splat(BUTTON_SIZE), Sense::click());
+        if response.hovered() || response.has_focus() {
+            ui.painter().rect_filled(
+                rect,
+                ui.visuals().widgets.inactive.corner_radius,
+                ui.visuals().widgets.hovered.weak_bg_fill,
+            );
+        }
+        image(icon, color, BUTTON_ICON_SIZE).paint_at(
+            ui,
+            Rect::from_center_size(rect.center(), Vec2::splat(BUTTON_ICON_SIZE)),
+        );
+        response.widget_info(|| {
+            eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, true, tooltip)
+        });
+        response.help_text(tooltip)
+    })
 }
 
 #[cfg(any(not(target_os = "macos"), test))]
