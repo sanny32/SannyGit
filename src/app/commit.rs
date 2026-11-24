@@ -28,6 +28,7 @@ impl CommitState {
         self.message = self.amend_draft.take().unwrap_or_default();
         self.amend = false;
         self.amend_head = None;
+        self.last_generation_tokens = None;
     }
 
     pub(super) fn begin_amend(&mut self, head: String, message: String) {

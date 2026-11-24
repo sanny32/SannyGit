@@ -223,52 +223,60 @@ fn draw_token_usage_badge(
     if !ui.is_rect_visible(rect) {
         return;
     }
-    let label = format!("{} tok", crate::llm::format_token_count(usage.total));
+    let label = format!(
+        "↓{} ↑{}",
+        crate::llm::format_token_count(usage.input),
+        crate::llm::format_token_count(usage.output),
+    );
     let font = FontId::new(11.0, eframe::egui::FontFamily::Proportional);
-    let padding = Vec2::new(6.0, 2.0);
+    let padding = Vec2::new(4.0, 2.0);
     let text_size = ui.painter().layout_no_wrap(label.clone(), font.clone(), palette.muted);
     let size = text_size.size() + padding * 2.0;
     let badge = Rect::from_min_size(rect.right_bottom() + Vec2::new(-size.x - 6.0, -size.y - 6.0), size);
-    let response =
-        ui.interact(
+    let response = ui
+        .interact(
             badge,
             eframe::egui::Id::unique("commit.message.tokens"),
             Sense::hover(),
-        );
-    let fill = ui
-        .visuals()
-        .text_edit_bg_color()
-        .lerp_to_gamma(palette.panel_alt, if response.hovered() { 0.65 } else { 0.35 });
-    ui.painter().rect_filled(badge, 4.0, fill);
-    ui.painter().rect_stroke(badge, 4.0, (1.0, palette.border), StrokeKind::Inside);
+        )
+        .help_text(token_usage_tooltip(usage, session_total));
+    let color = if response.hovered() {
+        palette.text
+    } else {
+        palette.muted
+    };
     ui.painter().text(
-        badge.center(),
-        Align2::CENTER_CENTER,
+        badge.min + padding,
+        Align2::LEFT_TOP,
         label,
         font,
-        palette.muted,
+        color,
     );
-    if response.hovered() {
-        let session = if session_total >= u64::from(usage.total) {
-            format!(
-                "Session total: {} tokens",
-                crate::llm::format_token_count(session_total.min(u32::MAX as u64) as u32)
-            )
-        } else {
-            String::new()
-        };
-        response.help_text(format!(
-            "Last generation: {} in + {} out = {} total.{}",
-            crate::llm::format_token_count(usage.input),
-            crate::llm::format_token_count(usage.output),
-            crate::llm::format_token_count(usage.total),
-            if session.is_empty() {
-                String::new()
-            } else {
-                format!("\n{session}")
-            }
-        ));
-    }
+}
+
+fn token_usage_tooltip(usage: crate::llm::TokenUsage, session_total: u64) -> String {
+    let session = if session_total > 0 {
+        format!(
+            "\nSession total: {} tokens",
+            crate::llm::format_token_count(session_total.min(u32::MAX as u64) as u32)
+        )
+    } else {
+        String::new()
+    };
+    let total_note = if usage.total != usage.input.saturating_add(usage.output) {
+        format!(
+            "\nTotal reported by provider: {} tokens",
+            crate::llm::format_token_count(usage.total)
+        )
+    } else {
+        format!(
+            "\nTotal: {} tokens",
+            crate::llm::format_token_count(usage.total)
+        )
+    };
+    format!(
+        "Input tokens include the generation instructions and the selected diff.\nOutput tokens are the generated commit message.{total_note}{session}"
+    )
 }
 
 fn draw_generation_animation(ui: &Ui, rect: Rect, time: f64, palette: Palette) {
