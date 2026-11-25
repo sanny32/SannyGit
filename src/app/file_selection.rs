@@ -1,4 +1,7 @@
-use super::{SannyGitApp, WorkerResult};
+use super::{
+    working_tree::{FileDiff, Update},
+    SannyGitApp, WorkerResult,
+};
 use crate::git::GitContext;
 use crate::{git, models::ChangeKind};
 use std::path::{Path, PathBuf};
@@ -118,24 +121,58 @@ impl FileSelection {
     }
 }
 
-impl SannyGitApp {
-    pub(super) fn start_index_worker(
-        &mut self,
-        job: impl FnOnce(&GitContext) -> WorkerResult + Send + 'static,
-    ) {
-        // Index edits supersede working-tree reads but leave immutable commit
-        // previews, history and refs (including their in-flight reads) intact.
-        self.working_tree.invalidate();
-        self.diff_worker = None;
-        match self.spawn_reader(None, job) {
-            Ok(receiver) => self.worker = Some(receiver),
-            Err(error) => {
-                self.error = Some(error);
-                self.status = "Operation failed".into();
+struct IndexRow {
+    path: String,
+    kind: ChangeKind,
+    original_path: Option<String>,
+}
+
+fn index_rows(changes: &[crate::models::ChangeFile], paths: &[String]) -> Vec<IndexRow> {
+    changes
+        .iter()
+        .filter(|row| paths.iter().any(|path| path == &row.path))
+        .map(|row| IndexRow {
+            path: row.path.clone(),
+            kind: row.kind,
+            original_path: row.original_path.clone(),
+        })
+        .collect()
+}
+
+/// Rows the file list can show after one unstage command, before the next status read.
+fn preview_unstage(rows: &[IndexRow], paths: &[String]) -> Vec<crate::models::ChangeFile> {
+    let mut changes = Vec::new();
+    for path in paths {
+        let Some(row) = rows.iter().find(|row| row.path == *path) else {
+            continue;
+        };
+        let mut push = |path: String, kind: ChangeKind| {
+            changes.push(crate::models::ChangeFile {
+                path,
+                original_path: None,
+                kind,
+                conflict_status: None,
+                staged: false,
+                unstaged: true,
+                diff: String::new(),
+            });
+        };
+        match row.kind {
+            ChangeKind::Renamed => {
+                if let Some(source) = &row.original_path {
+                    push(source.clone(), ChangeKind::Deleted);
+                }
+                push(path.clone(), ChangeKind::Untracked);
             }
+            ChangeKind::Added => push(path.clone(), ChangeKind::Untracked),
+            ChangeKind::Deleted => push(path.clone(), ChangeKind::Deleted),
+            _ => push(path.clone(), ChangeKind::Modified),
         }
     }
+    changes
+}
 
+impl SannyGitApp {
     pub fn change_is_selected(&self, index: usize) -> bool {
         self.changes.get(index).is_some_and(|change| {
             if self.selection.paths.is_empty() {
@@ -267,33 +304,206 @@ impl SannyGitApp {
             .filter(|&i| self.staging_allowed(i, staged))
             .map(|i| self.changes[i].path.clone())
             .collect();
+        self.update_index(paths, staged);
+    }
+
+    pub(super) fn update_index(&mut self, paths: Vec<String>, staged: bool) {
         let root = PathBuf::from(&self.repositories[self.selected_repository].path);
-        self.state_current = false;
-        self.error = None;
-        self.status = if staged {
-            "Staging selected files…"
-        } else {
-            "Unstaging selected files…"
+        let mut refresh_paths = paths.clone();
+        if !staged {
+            // Unstaging a rename can recreate a separate row for its source.
+            refresh_paths.extend(
+                self.changes
+                    .iter()
+                    .filter(|row| row.kind == ChangeKind::Renamed && paths.contains(&row.path))
+                    .filter_map(|row| row.original_path.clone()),
+            );
+            refresh_paths.sort_unstable();
+            refresh_paths.dedup();
         }
-        .into();
+        self.error = None;
+        self.status = if staged { "Staging?" } else { "Unstaging?" }.into();
         let selected = self
             .changes
             .get(self.selection.active)
             .map(|c| c.path.clone());
         let ignore_whitespace = self.preferences.diff_ignore_whitespace;
         let show_ignored = self.preferences.show_ignored_files;
-        self.start_index_worker(move |git| WorkerResult::Index {
-            staged,
-            outcome: git::set_staged_paths(git, &root, &paths, staged),
-            update: super::working_tree::Update::read(
-                git,
-                root.to_string_lossy().into_owned(),
-                selected,
-                ignore_whitespace,
-                show_ignored,
-                false,
-            ),
-        });
+        // The file list already shows this HEAD. Unstage does not ask Git again.
+        let has_head = !self.branches.head_commit.is_empty();
+        let rows = index_rows(&self.changes, &paths);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let git = GitContext::new(self.preferences.git_executable.clone());
+        let repaint = self.index_repaint.clone();
+        let worker = std::thread::Builder::new()
+            .name("sannygit-index".into())
+            .spawn(move || {
+                let publish = |result| {
+                    if sender.send(result).is_err() {
+                        return false;
+                    }
+                    if let Some(context) = &repaint {
+                        context.request_repaint();
+                    }
+                    true
+                };
+                let outcome = if staged {
+                    git::set_staged_paths(&git, &root, &paths, true)
+                } else {
+                    git::unstage_paths(&git, &root, &refresh_paths, has_head)
+                };
+                if !staged {
+                    if outcome.is_ok() {
+                        let changes = preview_unstage(&rows, &paths);
+                        let selected_change = changes
+                            .iter()
+                            .find(|change| Some(&change.path) == selected.as_ref())
+                            .map(|change| (change.kind, change.original_path.clone()));
+                        if !publish(WorkerResult::IndexPathsUpdated {
+                            staged,
+                            paths: refresh_paths,
+                            changes,
+                        }) {
+                            return;
+                        }
+                        if let (Some(path), Some((kind, original_path))) =
+                            (&selected, selected_change)
+                        {
+                            let diff = FileDiff::read(
+                                &git,
+                                &root,
+                                path,
+                                kind,
+                                original_path.as_deref(),
+                                ignore_whitespace,
+                            );
+                            if diff.succeeded()
+                                && !publish(WorkerResult::IndexDiffUpdated {
+                                    diff,
+                                    ignore_whitespace,
+                                })
+                            {
+                                return;
+                            }
+                        }
+                    }
+                    publish(WorkerResult::IndexFinished { staged, outcome });
+                    return;
+                }
+                let mut early_diff = None;
+                let scoped_changes = outcome
+                    .is_ok()
+                    .then(|| git::load_path_changes(&git, &root, &refresh_paths).ok())
+                    .flatten();
+                if let Some(changes) = scoped_changes {
+                    let selected_change = changes
+                        .iter()
+                        .find(|change| Some(&change.path) == selected.as_ref())
+                        .map(|change| (change.kind, change.original_path.clone()));
+                    if !publish(WorkerResult::IndexPathsUpdated {
+                        staged,
+                        paths: refresh_paths,
+                        changes,
+                    }) {
+                        return;
+                    }
+                    if let (Some(path), Some((kind, original_path))) = (&selected, selected_change)
+                    {
+                        let diff = FileDiff::read(
+                            &git,
+                            &root,
+                            path,
+                            kind,
+                            original_path.as_deref(),
+                            ignore_whitespace,
+                        );
+                        if diff.succeeded() {
+                            if !publish(WorkerResult::IndexDiffUpdated {
+                                diff,
+                                ignore_whitespace,
+                            }) {
+                                return;
+                            }
+                            early_diff = Some((kind, original_path));
+                        }
+                    }
+                }
+                let mut update = Update::read_status(
+                    &git,
+                    root.to_string_lossy().into_owned(),
+                    show_ignored,
+                    false,
+                );
+                // Full status can discover a rename outside the selected paths.
+                update.read_diff(
+                    &git,
+                    selected.as_deref(),
+                    ignore_whitespace,
+                    early_diff
+                        .as_ref()
+                        .map(|(kind, path)| (*kind, path.as_deref())),
+                );
+                publish(WorkerResult::Index {
+                    staged,
+                    outcome,
+                    update,
+                });
+            });
+        match worker {
+            Ok(_) => {
+                // Keep immutable previews and history reads while replacing stale working-tree reads.
+                self.working_tree.invalidate();
+                self.diff_worker = None;
+                self.state_current = false;
+                self.worker = Some(receiver);
+            }
+            Err(error) => {
+                self.error = Some(format!("Cannot start index worker: {error}"));
+                self.status = "Operation failed".into();
+            }
+        }
+    }
+
+    pub(super) fn show_updated_index_paths(
+        &mut self,
+        staged: bool,
+        paths: Vec<String>,
+        changes: Vec<crate::models::ChangeFile>,
+    ) {
+        let paths: std::collections::HashSet<_> = paths.iter().map(String::as_str).collect();
+        let mut changed: std::collections::HashMap<_, _> = changes
+            .into_iter()
+            .map(|change| (change.path.clone(), change))
+            .collect();
+        for row in &mut self.changes {
+            if let Some(change) = changed.remove(&row.path) {
+                row.staged = change.staged;
+                row.unstaged = change.unstaged;
+                row.kind = change.kind;
+                row.original_path = change.original_path;
+                row.conflict_status = change.conflict_status;
+            } else if paths.contains(row.path.as_str()) {
+                // A path may become clean when its index entry matches HEAD.
+                row.staged = false;
+                row.unstaged = false;
+            }
+        }
+        let mut new_rows: Vec<_> = changed.into_values().collect();
+        new_rows.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+        self.changes.extend(new_rows);
+        self.status = if staged {
+            "File staged"
+        } else {
+            "Index updated"
+        }
+        .into();
+        if staged
+            && self.preferences.staged_only_after_staging
+            && self.changes.iter().any(|row| row.staged)
+        {
+            self.commit.contents = git::CommitContents::Staged;
+        }
+        self.update_commit_contents_after_refresh(false);
     }
 }
 
@@ -302,6 +512,7 @@ mod tests {
     use super::*;
     use crate::test_support::SYSTEM_GIT;
     use crate::{test_support::TempRepo, theme::ThemeChoice};
+    use std::path::PathBuf;
 
     #[test]
     fn toggles_ranges_and_refresh_keep_selection_by_path() {
@@ -327,6 +538,188 @@ mod tests {
         app.changes.clear();
         app.retain_change_selection();
         assert!(app.selected_change_indices().is_empty());
+    }
+
+    #[test]
+    fn confirmed_stage_updates_rows_before_full_refresh() {
+        let repo = TempRepo::new();
+        repo.write("reverted", "base\n");
+        git::commit(&SYSTEM_GIT, &repo.0, "base", git::CommitContents::All).unwrap();
+        repo.write("reverted", "staged\n");
+        repo.git(&["add", "reverted"]);
+        repo.write("reverted", "base\n");
+        repo.write("new", "new\n");
+
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        let visible = (0..app.changes.len()).collect::<Vec<_>>();
+        app.select_change(visible[0], false, false, &visible);
+        app.select_change(visible[1], true, false, &visible);
+        app.set_selected_staged(true);
+        assert_eq!(app.status, "Staging?");
+        assert!(app
+            .changes
+            .iter()
+            .any(|row| row.path == "new" && !row.staged));
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while app.status == "Staging?" {
+            app.poll_worker();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Stage confirmation timed out"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(app.status, "File staged");
+        assert!(app.busy(), "Full refresh is still pending");
+        assert!(!app.state_current);
+        assert!(app
+            .changes
+            .iter()
+            .any(|row| row.path == "new" && row.staged && !row.unstaged));
+        assert!(app
+            .changes
+            .iter()
+            .any(|row| row.path == "reverted" && !row.staged));
+        while app.busy() {
+            app.poll_worker();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Stage refresh timed out"
+            );
+            std::thread::yield_now();
+        }
+        assert!(app.state_current);
+        assert!(app.error.is_none());
+        assert_eq!(app.changes.len(), 1);
+        assert_eq!(app.changes[0].path, "new");
+    }
+
+    #[test]
+    fn confirmed_unstage_splits_a_rename_before_full_refresh() {
+        let repo = TempRepo::new();
+        repo.write("old", "base\n");
+        git::commit(&SYSTEM_GIT, &repo.0, "base", git::CommitContents::All).unwrap();
+        repo.git(&["mv", "old", "new"]);
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        assert_eq!(app.changes[0].kind, ChangeKind::Renamed);
+
+        app.set_staged(0, false);
+        assert_eq!(app.status, "Unstaging?");
+        assert!(app.changes[0].staged);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while app.status == "Unstaging?" {
+            app.poll_worker();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Unstage confirmation timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(app.status, "Index updated");
+        assert!(app.busy(), "Full refresh is still pending");
+        assert!(app.changes.iter().all(|row| !row.staged && row.unstaged));
+        assert!(app
+            .changes
+            .iter()
+            .any(|row| row.path == "old" && row.kind == ChangeKind::Deleted));
+        assert!(app
+            .changes
+            .iter()
+            .any(|row| row.path == "new" && row.kind == ChangeKind::Untracked));
+        assert!(repo.git(&["diff", "--cached", "--name-only"]).is_empty());
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("new")).unwrap(),
+            "base\n"
+        );
+    }
+
+    #[test]
+    fn unstage_before_first_commit_keeps_the_worktree_file() {
+        let repo = TempRepo::new();
+        repo.write("new", "contents\n");
+        repo.git(&["add", "--", "new"]);
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        assert!(app.branches.head_commit.is_empty());
+        app.set_staged(0, false);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while app.status == "Unstaging?" {
+            app.poll_worker();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(app.status, "Index updated");
+        assert!(app.changes.iter().any(|row| {
+            row.path == "new"
+                && row.kind == ChangeKind::Untracked
+                && !row.staged
+                && row.unstaged
+        }));
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("new")).unwrap(),
+            "contents\n"
+        );
+        assert!(repo.git(&["diff", "--cached", "--name-only"]).is_empty());
+    }
+
+    #[test]
+    fn unstage_checkbox_does_not_wait_for_status() {
+        let repo = TempRepo::new();
+        repo.write("selected", "base\n");
+        repo.write("other", "base\n");
+        git::commit(&SYSTEM_GIT, &repo.0, "base", git::CommitContents::All).unwrap();
+        repo.write("selected", "edited\n");
+        repo.write("other", "edited\n");
+        repo.git(&["add", "--", "selected", "other"]);
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        let root = PathBuf::from(&app.repositories[app.selected_repository].path);
+        let counter = crate::test_support::GitCommandCount::new(&root);
+        let selected = app
+            .changes
+            .iter()
+            .position(|row| row.path == "selected")
+            .unwrap();
+        let other = app
+            .changes
+            .iter()
+            .position(|row| row.path == "other")
+            .unwrap();
+        app.selection.active = selected;
+        app.selection.paths.clear();
+        app.selection.paths.insert("selected".into());
+        app.set_staged(other, false);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while app.busy() {
+            assert!(std::time::Instant::now() < deadline);
+            app.poll_worker();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(app.state_current);
+        assert!(app.changes.iter().any(|row| row.path == "other" && !row.staged));
+        assert_eq!(counter.get(), 1, "an unselected unstage is one Git command");
+
+        let before = counter.get();
+        app.set_staged(selected, false);
+        while app.busy() {
+            assert!(std::time::Instant::now() < deadline);
+            app.poll_worker();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert_eq!(
+            counter.get() - before,
+            3,
+            "a selected modified unstage is reset plus two diffs"
+        );
+        assert!(app
+            .changes
+            .iter()
+            .any(|row| row.path == "selected" && !row.staged && row.unstaged));
     }
 
     #[test]

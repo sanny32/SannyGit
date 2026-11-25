@@ -7,7 +7,7 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::AtomicBool,
         mpsc::{self, Receiver},
         Arc,
     },
@@ -475,7 +475,7 @@ impl SannyGitApp {
 
     pub fn cancel_repository_job(&mut self) {
         if let Some(cancel) = &self.manager.cancel {
-            cancel.store(true, Ordering::Relaxed);
+            git::signal_cancel(cancel);
             self.status = "Cancelling operation…".into();
         }
     }

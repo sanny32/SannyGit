@@ -6,7 +6,7 @@ use crate::{
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::AtomicBool,
         mpsc::Receiver,
         Arc,
     },
@@ -89,7 +89,7 @@ impl View {
     pub(super) fn invalidate_reads(&mut self) {
         if self.history_worker.take().is_some() {
             if let Some(cancel) = self.history_session.cancel.take() {
-                cancel.store(true, Ordering::Relaxed);
+                crate::git::signal_cancel(&cancel);
             }
             self.history_session.generation = self.history_session.generation.wrapping_add(1);
             self.history_pending = true;
@@ -127,7 +127,7 @@ impl Session {
     pub(super) fn clear_view(&mut self) {
         let generation = self.generation.wrapping_add(1);
         if let Some(cancel) = &self.cancel {
-            cancel.store(true, Ordering::Relaxed);
+            crate::git::signal_cancel(&cancel);
         }
         *self = Self {
             generation,
@@ -312,7 +312,7 @@ impl SannyGitApp {
 
     pub(super) fn queue_history_reload(&mut self) {
         if let Some(cancel) = self.history.history_session.cancel.take() {
-            cancel.store(true, Ordering::Relaxed);
+            crate::git::signal_cancel(&cancel);
             self.history.history_worker = None;
         }
         self.history.history_session.generation =
@@ -390,7 +390,7 @@ impl SannyGitApp {
             return;
         }
         if let Some(cancel) = self.history.history_session.cancel.take() {
-            cancel.store(true, Ordering::Relaxed);
+            crate::git::signal_cancel(&cancel);
             self.history.history_worker = None;
         }
         self.history.history_error = None;
@@ -813,7 +813,7 @@ mod tests {
         let generation = app.history.history_session.generation;
         let flag = app.history.history_session.cancel.clone().unwrap();
         app.cancel_history();
-        assert!(flag.load(Ordering::Relaxed));
+        assert!(flag.load(std::sync::atomic::Ordering::Relaxed));
         assert!(!app.busy());
         assert_eq!(app.history.commits.len(), 500);
         assert_eq!(app.history.selected_commit, selected);

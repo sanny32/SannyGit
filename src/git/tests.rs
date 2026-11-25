@@ -201,7 +201,7 @@ fn main() {
     );
 
     thread::spawn(move || {
-        let git = &crate::git::GitContext::new(executable.to_string_lossy().into_owned());
+        let git = &GitContext::new(executable.to_string_lossy().into_owned());
         for scenario in ["timeout", "cancel", "blocked-input", "success"] {
             let directory = repo.0.join(scenario);
             std::fs::create_dir(&directory).unwrap();
@@ -219,7 +219,7 @@ fn main() {
                         // Let the wrapper exit before cancelling/releasing its descendant.
                         thread::sleep(Duration::from_millis(100));
                         if scenario == "cancel" {
-                            cancel.store(true, Ordering::Relaxed);
+                            signal_cancel(cancel);
                         } else {
                             std::fs::write(directory.join("release"), b"").unwrap();
                         }
@@ -344,12 +344,12 @@ fn structured_timeouts_output_limits_and_failed_symbolic_refs_keep_their_meaning
     assert_eq!(timeout.kind, FailureKind::TimedOut);
     assert_eq!(timeout.exit_code, None);
     let executable = repo.0.join("mock-git");
-    std::fs::write(&executable, "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\ncase \"$1\" in\nrev-parse) pwd; exit 0;;\nsymbolic-ref) echo 'fatal: dépôt introuvable' >&2; exit 128;;\nesac\nshift\ndone\nexit 1\n").unwrap();
+    std::fs::write(&executable, "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\ncase \"$1\" in\nrev-parse) pwd; exit 0;;\nsymbolic-ref) echo 'fatal: repository not found' >&2; exit 128;;\nesac\nshift\ndone\nexit 1\n").unwrap();
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
     // Thread-local configuration cannot affect other tests.
     thread::scope(|scope| {
         scope.spawn(|| {
-            let git = &crate::git::GitContext::new(executable.to_string_lossy().into_owned());
+            let git = &GitContext::new(executable.to_string_lossy().into_owned());
             let error = load(git, &repo.0).err().unwrap();
             assert!(error.contains("symbolic-ref exit code: 128"));
             assert!(!error.contains("Detached at"));
@@ -369,7 +369,7 @@ fn structured_timeouts_output_limits_and_failed_symbolic_refs_keep_their_meaning
             thread::scope(|scope| {
                 scope.spawn(|| {
                     thread::sleep(Duration::from_millis(50));
-                    cancel.store(true, Ordering::Relaxed);
+                    signal_cancel(&cancel);
                 });
                 let error = execute(git, &repo.0, &["status"], None, TIMEOUT, Some(&cancel), CommandMode::Normal).unwrap_err();
                 assert_eq!(error.kind, FailureKind::Cancelled);
@@ -426,7 +426,7 @@ fn configured_executable_reports_missing_file_without_falling_back() {
     thread::spawn(|| {
         let directory = std::env::temp_dir();
         let missing = directory.join(format!("missing Git executable {}", std::process::id()));
-        let git = &crate::git::GitContext::new(missing.to_string_lossy().into_owned());
+        let git = &GitContext::new(missing.to_string_lossy().into_owned());
         let typed = execute(
             git,
             &directory,
@@ -460,7 +460,7 @@ fn configured_executable_supports_spaces_and_preserves_arguments() {
         let executable = repo.0.join("custom Git executable");
         std::fs::write(&executable, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let git = &crate::git::GitContext::new(executable.to_string_lossy().into_owned());
+        let git = &GitContext::new(executable.to_string_lossy().into_owned());
         let output = run(git, &repo.0, &["--version", "argument with spaces", "$(literal)"]).unwrap();
         assert_eq!(String::from_utf8(output).unwrap(),
             "--no-pager\n--no-optional-locks\n-c\ncolor.ui=false\n--version\nargument with spaces\n$(literal)\n");
@@ -912,7 +912,7 @@ fn loads_real_index_worktree_rename_deletion_and_detached_head() {
 }
 
 #[test]
-fn literal_pathspec_does_not_include_other_files() {
+fn literal_bracket_path_does_not_include_other_files() {
     let repo = TempRepo::new();
     repo.write("[x].txt", "one\n");
     repo.write("x.txt", "two\n");
@@ -1298,6 +1298,37 @@ fn stages_deletion_and_unstages_both_sides_of_rename() {
         .any(|c| c.kind == ChangeKind::Deleted && c.staged));
     set_staged(&SYSTEM_GIT, &repo.0, "old", false).unwrap();
     assert!(!repo.0.join("old").exists());
+}
+
+#[test]
+fn scoped_staging_rejects_a_rename_source_and_checks_literal_ignored_paths() {
+    let repo = TempRepo::new();
+    repo.write("old", "rename contents\n");
+    repo.write("ordinary", "base\n");
+    repo.write(".gitignore", "*.ignored\n");
+    commit(&SYSTEM_GIT, &repo.0, "base", CommitContents::All).unwrap();
+    repo.git(&["mv", "old", "new"]);
+    repo.write("ordinary", "edited\n");
+    repo.git(&["add", "ordinary"]);
+    let index_before = repo.git(&["diff", "--cached", "--name-status"]);
+    assert!(set_staged_paths(
+        &SYSTEM_GIT,
+        &repo.0,
+        &["ordinary".into(), "old".into()],
+        false
+    )
+    .is_err());
+    assert_eq!(
+        repo.git(&["diff", "--cached", "--name-status"]),
+        index_before
+    );
+
+    repo.write("[x].ignored", "selected\n");
+    repo.write("x.ignored", "unrelated\n");
+    set_staged(&SYSTEM_GIT, &repo.0, "[x].ignored", true).unwrap();
+    let staged = repo.git(&["diff", "--cached", "--name-only"]);
+    assert!(staged.lines().any(|path| path == "[x].ignored"));
+    assert!(!staged.lines().any(|path| path == "x.ignored"));
 }
 
 #[test]

@@ -3,20 +3,8 @@
 C3 baseline, November 11, 2026. These are local measurements, not release
 performance guarantees or CI timing thresholds.
 
-## Reproduce
-
-```sh
-cargo test backend_measurements -- --ignored --nocapture --test-threads=1
-```
-
-The ignored test creates and removes three temporary repositories. It never
-opens the user's repositories, accesses credentials or contacts a server.
-It prints JSON records with sample count, minimum/median/maximum wall time,
-and observed Git process counts. The default test suite skips this benchmark.
-Use `cargo test --release backend_measurements -- --ignored --nocapture --test-threads=1`
-to measure an optimized build separately. Avoid concurrent builds and tests.
-
-Fixtures contain 100 files/100 commits, 1,000 files/1,000 commits, and
+The measurement harness has been removed. The tables below are the recorded
+baseline. Fixtures contained 100 files/100 commits, 1,000 files/1,000 commits, and
 5,000 files/10,000 commits. Each has a linear history and a local upstream one
 commit behind HEAD. The root commit adds every file; subsequent commits change
 one file. Dirty fixtures modify 1% of tracked files and add the same number of
@@ -29,7 +17,6 @@ history graph preparation. Diff timings also include `DiffPreview` construction.
 They exclude fixture construction and GUI rendering. Counts observe successful
 Git launches through the backend for the fixture path, including worker threads;
 they exclude fixture setup and subprocesses launched internally by Git.
-The counter and benchmark helpers are compiled only for tests.
 
 ## Local results
 

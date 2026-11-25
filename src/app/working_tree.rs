@@ -1,7 +1,7 @@
 //! Periodic, read-only working-tree checks, independent of interactive operations.
 use super::SannyGitApp;
 use crate::git::GitContext;
-use crate::models::ChangeFile;
+use crate::models::{ChangeFile, ChangeKind};
 use crate::{git, models::DiffPreview};
 use std::{
     collections::HashMap,
@@ -29,10 +29,6 @@ fn stabilize_change_order(previous_paths: &[String], changes: Vec<ChangeFile>) -
 
 const CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
-#[cfg(test)]
-#[path = "working_tree_performance.rs"]
-mod performance;
-
 pub(super) struct Update {
     path: String,
     snapshot: Result<git::Snapshot, String>,
@@ -42,9 +38,34 @@ pub(super) struct Update {
     refs: Option<Vec<u8>>,
 }
 
-struct FileDiff {
+pub(super) struct FileDiff {
     path: String,
     result: Result<(String, DiffPreview), String>,
+}
+
+impl FileDiff {
+    pub(super) fn read(
+        git: &GitContext,
+        root: &Path,
+        path: &str,
+        kind: ChangeKind,
+        original_path: Option<&str>,
+        ignore_whitespace: bool,
+    ) -> Self {
+        let result =
+            git::file_diff(git, root, path, kind, original_path, ignore_whitespace).map(|patch| {
+                let preview = DiffPreview::new(&patch);
+                (patch, preview)
+            });
+        Self {
+            path: path.into(),
+            result,
+        }
+    }
+
+    pub(super) fn succeeded(&self) -> bool {
+        self.result.is_ok()
+    }
 }
 
 impl Update {
@@ -53,6 +74,17 @@ impl Update {
         path: String,
         selected: Option<String>,
         ignore_whitespace: bool,
+        show_ignored: bool,
+        sample_refs: bool,
+    ) -> Self {
+        let mut update = Self::read_status(git, path, show_ignored, sample_refs);
+        update.read_diff(git, selected.as_deref(), ignore_whitespace, None);
+        update
+    }
+
+    pub(super) fn read_status(
+        git: &GitContext,
+        path: String,
         show_ignored: bool,
         sample_refs: bool,
     ) -> Self {
@@ -66,32 +98,6 @@ impl Update {
             (Ok(snapshot), Ok(ignored)) => (Ok(snapshot), ignored),
             (Err(error), _) | (Ok(_), Err(error)) => (Err(error), Vec::new()),
         };
-        let diff = snapshot.as_ref().ok().and_then(|snapshot| {
-            let change = snapshot
-                .changes
-                .iter()
-                .find(|change| Some(&change.path) == selected.as_ref())
-                .or_else(|| {
-                    ignored
-                        .iter()
-                        .find(|change| Some(&change.path) == selected.as_ref())
-                })?;
-            Some(FileDiff {
-                path: change.path.clone(),
-                result: git::file_diff(
-                    git,
-                    Path::new(&path),
-                    &change.path,
-                    change.kind,
-                    change.original_path.as_deref(),
-                    ignore_whitespace,
-                )
-                .map(|patch| {
-                    let preview = DiffPreview::new(&patch);
-                    (patch, preview)
-                }),
-            })
-        });
         let refs = match &snapshot {
             Ok(_) if sample_refs => crate::history::ref_identity(git, Path::new(&path)).ok(),
             _ => None,
@@ -99,10 +105,41 @@ impl Update {
         Self {
             path,
             snapshot,
-            diff,
+            diff: None,
             ignored,
             refs,
         }
+    }
+
+    pub(super) fn read_diff(
+        &mut self,
+        git: &GitContext,
+        selected: Option<&str>,
+        ignore_whitespace: bool,
+        already_read: Option<(ChangeKind, Option<&str>)>,
+    ) {
+        let change = selected.and_then(|selected| {
+            self.snapshot
+                .as_ref()
+                .ok()?
+                .changes
+                .iter()
+                .chain(&self.ignored)
+                .find(|change| change.path == selected)
+        });
+        self.diff = change.and_then(|change| {
+            let metadata = (change.kind, change.original_path.as_deref());
+            (already_read != Some(metadata)).then(|| {
+                FileDiff::read(
+                    git,
+                    Path::new(&self.path),
+                    &change.path,
+                    metadata.0,
+                    metadata.1,
+                    ignore_whitespace,
+                )
+            })
+        });
     }
 }
 
@@ -342,6 +379,7 @@ impl SannyGitApp {
         let refresh_error = match snapshot {
             Ok(snapshot) => {
                 let head_moved = self.apply_working_tree_snapshot(snapshot);
+                self.diff_refresh_pending |= head_moved && diff.is_none();
                 self.sync_external_history(head_moved, false, refs);
                 if outcome.is_ok() {
                     self.history.reveal_head();
@@ -482,6 +520,21 @@ impl SannyGitApp {
         }
         if reload_history {
             self.queue_history_reload();
+        }
+    }
+
+    pub(super) fn apply_early_index_diff(&mut self, diff: FileDiff, ignore_whitespace: bool) {
+        if self.preferences.diff_ignore_whitespace != ignore_whitespace
+            || !self
+                .changes
+                .get(self.selection.active)
+                .is_some_and(|change| change.path == diff.path)
+        {
+            self.diff_refresh_pending = true;
+            return;
+        }
+        if let Err(error) = self.apply_working_tree_diff(diff) {
+            self.error = Some(format!("Could not refresh diff: {error}"));
         }
     }
 
@@ -672,6 +725,24 @@ mod tests {
             assert_eq!(app.diff_preview.as_ref().unwrap().lines.as_ptr(), preview);
             assert_eq!(app.changes[app.selection.active].diff, patch);
             let deadline = Instant::now() + Duration::from_secs(10);
+            if group {
+                while app.busy() && app.changes[app.selection.active].diff == patch {
+                    assert!(Instant::now() < deadline);
+                    app.poll_worker();
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                assert!(
+                    app.busy(),
+                    "Selected diff should arrive before the full status"
+                );
+                assert!(!app.state_current);
+                assert_eq!(
+                    app.changes[app.selection.active]
+                        .diff
+                        .contains("Staged changes"),
+                    staged
+                );
+            }
             while app.busy() {
                 assert!(Instant::now() < deadline);
                 app.poll_worker();

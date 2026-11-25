@@ -165,3 +165,30 @@ pub(crate) fn restart_memory(ctx: &eframe::egui::Context) -> eframe::egui::Memor
 
 pub(crate) static SYSTEM_GIT: std::sync::LazyLock<crate::git::GitContext> =
     std::sync::LazyLock::new(|| crate::git::GitContext::new(String::new()));
+
+thread_local! {
+    static MUTATION_TIME: std::cell::Cell<Option<std::time::Duration>> = const { std::cell::Cell::new(None) };
+}
+
+pub(crate) fn record_mutation_time(args: &[&str], elapsed: std::time::Duration) {
+    if matches!(args.first(), Some(&("add" | "restore"))) {
+        MUTATION_TIME.with(|time| {
+            if let Some(total) = time.get() {
+                time.set(Some(total + elapsed));
+            }
+        });
+    }
+}
+
+pub(crate) fn measure_mutation(
+    operation: impl FnOnce(),
+) -> (std::time::Duration, std::time::Duration) {
+    MUTATION_TIME.with(|time| {
+        time.set(Some(std::time::Duration::ZERO));
+        let start = std::time::Instant::now();
+        operation();
+        let elapsed = start.elapsed();
+        let write = time.take().unwrap();
+        (elapsed - write, write)
+    })
+}

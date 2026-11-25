@@ -59,10 +59,6 @@ impl<T: Send + 'static> Worker<T> {
         })
     }
 
-    pub fn is_finished(&self) -> bool {
-        self.handle.as_ref().is_none_or(JoinHandle::is_finished)
-    }
-
     pub fn finish(mut self) -> thread::Result<Result<T, String>> {
         match self.handle.take() {
             Some(handle) => handle.join(),

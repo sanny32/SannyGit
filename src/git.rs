@@ -8,8 +8,11 @@ use std::{
     fmt::Write,
     io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::atomic::{AtomicBool, Ordering},
+    process::{Child, Command, ExitStatus, Stdio},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc, Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -361,6 +364,8 @@ fn execute(
     };
     let started = Instant::now();
     let result = execute_command(git, path, args, input, timeout, cancel, mode, operation);
+    #[cfg(test)]
+    crate::test_support::record_mutation_time(args, started.elapsed());
     let milliseconds = started.elapsed().as_millis();
     match &result {
         Ok(output) => logging::record(
@@ -396,7 +401,7 @@ fn execute_command(
     operation: &'static str,
 ) -> Result<CommandOutput, CommandError> {
     let fail = |kind, message: String| CommandError::new(operation, kind, message);
-    if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+    if cancel.is_some_and(|flag| flag.load(Ordering::Acquire)) {
         return Err(fail(FailureKind::Cancelled, "Operation cancelled".into()));
     }
     let executable = &git.executable;
@@ -452,84 +457,127 @@ fn execute_command(
         .take()
         .ok_or_else(|| fail(FailureKind::Io, "Cannot read Git errors".into()))?;
     let stdin = child.stdin.take();
+    // Kill the child if pipe setup fails before the wait thread owns it.
+    // After the hand-off, Drop is a no-op and the waiter reaps the process.
+    let mut child = ChildGuard(Some(child));
     let result = (|| {
         let input = input.map(<[u8]>::to_vec);
-        let start = Instant::now();
+        let started = Instant::now();
+        let deadline = started + timeout;
         let spawn_error = |error: std::io::Error| {
             fail(
                 FailureKind::Worker,
                 format!("Cannot start Git pipe worker: {error}"),
             )
         };
+        let (wake_tx, wake_rx) = mpsc::channel();
+        let (child_tx, child_rx) = mpsc::channel::<Child>();
+        let parent_exited = Arc::new(AtomicBool::new(false));
+        let exited_flag = Arc::clone(&parent_exited);
+        let wait_tx = wake_tx.clone();
+        let mut waiter = JoinGuard(Some(
+            thread::Builder::new()
+                .name("sannygit-git-wait".into())
+                .spawn(move || {
+                    let Ok(mut child) = child_rx.recv() else {
+                        return;
+                    };
+                    let status = child.wait();
+                    if status.is_ok() {
+                        exited_flag.store(true, Ordering::Release);
+                    }
+                    let _ = wait_tx.send(GitWake::Exit(status));
+                })
+                .map_err(spawn_error)?,
+        ));
+        // Shadow the sender so it drops before `waiter`. An early return then
+        // unblocks the thread before the join, instead of waiting forever.
+        let child_tx = child_tx;
         let writer = match (stdin, input) {
-            (Some(stdin), Some(bytes)) => Some(
-                pipe::Worker::spawn(stdin, move |pipe, stop| pipe::write(pipe, &bytes, stop))
+            (Some(stdin), Some(bytes)) => {
+                let wake = wake_tx.clone();
+                Some(
+                    pipe::Worker::spawn(stdin, move |pipe, stop| {
+                        let result = pipe::write(pipe, &bytes, stop);
+                        let _ = wake.send(GitWake::Pipe);
+                        result
+                    })
                     .map_err(spawn_error)?,
-            ),
+                )
+            }
             _ => None,
         };
-        let out = pipe::Worker::spawn(stdout, pipe::capture).map_err(spawn_error)?;
-        let err = pipe::Worker::spawn(stderr, pipe::capture).map_err(spawn_error)?;
-        let status = loop {
-            match child.try_wait() {
-                // Process exit alone does not mean its descendants closed our
-                // pipes. Keep cancellation and the deadline active until all I/O ends.
-                Ok(Some(status))
-                    if out.is_finished()
-                        && err.is_finished()
-                        && writer.as_ref().is_none_or(pipe::Worker::is_finished) =>
-                {
-                    break Ok(status)
-                }
-                Ok(_)
-                    if start.elapsed() < timeout
-                        && !cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) =>
-                {
-                    thread::sleep(Duration::from_millis(20))
-                }
-                result => {
-                    #[cfg(unix)]
-                    if let Ok(id) = i32::try_from(child.id()) {
-                        // SAFETY: This child was started in its own process group.
-                        unsafe {
-                            libc::kill(-id, libc::SIGKILL);
-                        }
-                    }
-                    #[cfg(target_os = "windows")]
-                    if !matches!(result, Ok(Some(_))) {
-                        // An exited PID may already have been reused. Its pipes
-                        // are cancelled by the workers without targeting that PID.
-                        use std::os::windows::process::CommandExt;
-                        let _ = Command::new("taskkill")
-                            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-                            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                            .stdout(Stdio::null())
-                            .stderr(Stdio::null())
-                            .status();
-                    }
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break Err(match result {
-                        Err(e) => fail(FailureKind::Io, format!("Cannot wait for Git: {e}")),
-                        _ if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) => fail(
-                            FailureKind::Cancelled,
-                            "Operation cancelled; refresh local and remote state before retrying"
-                                .into(),
-                        ),
-                        _ => fail(
-                            FailureKind::TimedOut,
-                            format!(
-                                "Git operation timed out after {} seconds",
-                                timeout.as_secs()
-                            ),
-                        ),
-                    });
+        let wake = wake_tx.clone();
+        let out = pipe::Worker::spawn(stdout, move |pipe, stop| {
+            let result = pipe::capture(pipe, stop);
+            let _ = wake.send(GitWake::Pipe);
+            result
+        })
+        .map_err(spawn_error)?;
+        let wake = wake_tx.clone();
+        let err = pipe::Worker::spawn(stderr, move |pipe, stop| {
+            let result = pipe::capture(pipe, stop);
+            let _ = wake.send(GitWake::Pipe);
+            result
+        })
+        .map_err(spawn_error)?;
+        let required_pipes = 2 + u8::from(writer.is_some());
+        let Some(git_child) = child.0.take() else {
+            return Err(fail(
+                FailureKind::Io,
+                "Cannot wait for Git: process is unavailable".into(),
+            ));
+        };
+        #[cfg(windows)]
+        let handle = {
+            use std::os::windows::io::AsHandle;
+            match git_child.as_handle().try_clone_to_owned() {
+                Ok(handle) => handle,
+                Err(error) => {
+                    let mut git_child = git_child;
+                    let _ = git_child.kill();
+                    let _ = git_child.wait();
+                    return Err(fail(
+                        FailureKind::Io,
+                        format!("Cannot wait for Git: {error}"),
+                    ));
                 }
             }
         };
+        let pid = git_child.id();
+        if let Err(mpsc::SendError(mut git_child)) = child_tx.send(git_child) {
+            let _ = git_child.kill();
+            let _ = git_child.wait();
+            return Err(fail(
+                FailureKind::Io,
+                "Cannot wait for Git: wait thread stopped".into(),
+            ));
+        }
+        let running = RunningGit {
+            pid,
+            parent_exited,
+            #[cfg(windows)]
+            handle,
+        };
+        let Some(waiter) = waiter.take() else {
+            return Err(fail(
+                FailureKind::Io,
+                "Cannot wait for Git: wait thread stopped".into(),
+            ));
+        };
+        let status = await_git(
+            &wake_rx,
+            &wake_tx,
+            waiter,
+            running,
+            deadline,
+            timeout,
+            cancel,
+            required_pipes,
+            operation,
+        )?;
         // Stop pipe workers on failure before joining: descendants may have
         // escaped process-tree termination or outlived the original Git PID.
-        let status = status?;
         let mut output = out
             .finish()
             .map_err(|_| fail(FailureKind::Worker, "Git output reader failed".into()))?
@@ -562,12 +610,215 @@ fn execute_command(
             stdout: output,
         })
     })();
-    if result.is_err() {
-        // Also reap a process if pipe setup or worker startup failed.
-        let _ = child.kill();
-        let _ = child.wait();
-    }
     result
+}
+
+enum GitWake {
+    Exit(std::io::Result<ExitStatus>),
+    Pipe,
+    Cancel,
+}
+
+struct CancelWaiter {
+    key: usize,
+    id: u64,
+    sender: mpsc::Sender<GitWake>,
+}
+
+static CANCEL_WAITERS: std::sync::Mutex<Vec<CancelWaiter>> = std::sync::Mutex::new(Vec::new());
+static CANCEL_WAITER_ID: AtomicU64 = AtomicU64::new(1);
+
+struct CancelWatch {
+    id: u64,
+}
+
+impl Drop for CancelWatch {
+    fn drop(&mut self) {
+        CANCEL_WAITERS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|waiter| waiter.id != self.id);
+    }
+}
+
+fn watch_cancel(flag: &AtomicBool, sender: mpsc::Sender<GitWake>) -> CancelWatch {
+    let id = CANCEL_WAITER_ID.fetch_add(1, Ordering::Relaxed);
+    CANCEL_WAITERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(CancelWaiter {
+            key: std::ptr::from_ref(flag) as usize,
+            id,
+            sender,
+        });
+    CancelWatch { id }
+}
+
+/// Mark a Git operation cancelled and wake any command waiting on this flag.
+pub(crate) fn signal_cancel(flag: &AtomicBool) {
+    flag.store(true, Ordering::Release);
+    let key = std::ptr::from_ref(flag) as usize;
+    let senders: Vec<_> = CANCEL_WAITERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter(|waiter| waiter.key == key)
+        .map(|waiter| waiter.sender.clone())
+        .collect();
+    for sender in senders {
+        let _ = sender.send(GitWake::Cancel);
+    }
+}
+
+struct ChildGuard(Option<Child>);
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+struct JoinGuard(Option<thread::JoinHandle<()>>);
+
+impl JoinGuard {
+    fn take(&mut self) -> Option<thread::JoinHandle<()>> {
+        self.0.take()
+    }
+}
+
+impl Drop for JoinGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+struct RunningGit {
+    pid: u32,
+    parent_exited: Arc<AtomicBool>,
+    #[cfg(windows)]
+    handle: std::os::windows::io::OwnedHandle,
+}
+
+fn stop_git_tree(git: &RunningGit) {
+    #[cfg(unix)]
+    if let Ok(id) = i32::try_from(git.pid) {
+        // SAFETY: this child was started in its own process group. The direct
+        // signal matches Child::kill when the group id cannot be targeted.
+        unsafe {
+            libc::kill(-id, libc::SIGKILL);
+            libc::kill(id, libc::SIGKILL);
+        }
+    }
+    #[cfg(windows)]
+    {
+        if !git.parent_exited.load(Ordering::Acquire) {
+            // An exited PID may already have been reused. Its pipes are
+            // cancelled by the workers without targeting that PID.
+            use std::os::windows::process::CommandExt;
+            let _ = Command::new("taskkill")
+                .args(["/PID", &git.pid.to_string(), "/T", "/F"])
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        use std::os::windows::io::AsRawHandle;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn TerminateProcess(process: *mut std::ffi::c_void, exit_code: u32) -> i32;
+        }
+        // SAFETY: the handle was duplicated from this child and stays open
+        // until the wait returns. It names the original process, not a reused PID.
+        unsafe {
+            TerminateProcess(git.handle.as_raw_handle(), 1);
+        }
+    }
+}
+
+/// Block until Git has exited and every pipe worker has reported completion.
+///
+/// Process exit, pipe completion and cancellation all arrive on `rx`.
+fn await_git(
+    rx: &mpsc::Receiver<GitWake>,
+    wake_tx: &mpsc::Sender<GitWake>,
+    waiter: thread::JoinHandle<()>,
+    running: RunningGit,
+    deadline: Instant,
+    timeout: Duration,
+    cancel: Option<&AtomicBool>,
+    required_pipes: u8,
+    operation: &'static str,
+) -> Result<ExitStatus, CommandError> {
+    let fail = |kind, message: String| CommandError::new(operation, kind, message);
+    let mut waiter = JoinGuard(Some(waiter));
+    // Register before reading the flag so a cancel stored during registration
+    // is still visible, and a later store wakes this wait immediately.
+    let _watch = cancel.map(|flag| watch_cancel(flag, wake_tx.clone()));
+    let mut status = None;
+    let mut wait_error = None;
+    let mut pipes = 0u8;
+    let note = |wake: GitWake,
+                status: &mut Option<ExitStatus>,
+                wait_error: &mut Option<std::io::Error>,
+                pipes: &mut u8| {
+        match wake {
+            GitWake::Exit(Ok(exit)) => *status = Some(exit),
+            GitWake::Exit(Err(error)) => *wait_error = Some(error),
+            GitWake::Pipe => *pipes = pipes.saturating_add(1),
+            GitWake::Cancel => {}
+        }
+    };
+    let join = |waiter: &mut JoinGuard| {
+        if let Some(handle) = waiter.take() {
+            let _ = handle.join();
+        }
+    };
+    loop {
+        while let Ok(wake) = rx.try_recv() {
+            note(wake, &mut status, &mut wait_error, &mut pipes);
+        }
+        if pipes >= required_pipes {
+            if let Some(exit) = status.take() {
+                join(&mut waiter);
+                return Ok(exit);
+            }
+        }
+        let cancelled = cancel.is_some_and(|flag| flag.load(Ordering::Acquire));
+        let timed_out = Instant::now() >= deadline;
+        if cancelled || timed_out || wait_error.is_some() {
+            stop_git_tree(&running);
+            join(&mut waiter);
+            return Err(match wait_error.take() {
+                Some(error) => fail(FailureKind::Io, format!("Cannot wait for Git: {error}")),
+                None if cancelled => fail(
+                    FailureKind::Cancelled,
+                    "Operation cancelled; refresh local and remote state before retrying".into(),
+                ),
+                None => fail(
+                    FailureKind::TimedOut,
+                    format!("Git operation timed out after {} seconds", timeout.as_secs()),
+                ),
+            });
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(remaining) {
+            Ok(wake) => note(wake, &mut status, &mut wait_error, &mut pipes),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                stop_git_tree(&running);
+                join(&mut waiter);
+                return Err(fail(
+                    FailureKind::Io,
+                    "Cannot wait for Git: wait thread stopped".into(),
+                ));
+            }
+        }
+    }
 }
 
 fn command_error(operation: &str) -> String {
@@ -740,11 +991,12 @@ pub(crate) fn ignore_paths(
     update().map_err(|error| format!("Cannot update .gitignore: {error}"))
 }
 
-/// Stages or unstages the complete selected file; never changes working-tree bytes.
+#[cfg(test)]
 pub fn set_staged(git: &GitContext, root: &Path, path: &str, staged: bool) -> Result<(), String> {
     set_staged_paths(git, root, &[path.to_owned()], staged)
 }
 
+/// Stages or unstages the selected paths while preserving working-tree bytes.
 pub fn set_staged_paths(
     git: &GitContext,
     root: &Path,
@@ -755,8 +1007,15 @@ pub fn set_staged_paths(
         return Err("Select files first.".into());
     }
     let merging = check_operation(git, root, staged)?;
-    // Staging needs fresh file states, not repository/branch discovery.
-    let status = load_changes(git, root)?;
+    let mut status = load_path_changes(git, root, paths)?;
+    // A scoped status can split a rename into a deletion or an addition.
+    // Resolve those cases globally before allowing either side to change.
+    if status.iter().any(|change| {
+        matches!(change.kind, ChangeKind::Deleted | ChangeKind::Renamed)
+            || (!staged && change.staged && change.kind == ChangeKind::Added)
+    }) {
+        status = load_changes(git, root)?;
+    }
     let by_path: BTreeMap<_, _> = status.iter().map(|c| (c.path.as_str(), c)).collect();
     let mut changes = Vec::new();
     let mut ignored = Vec::new();
@@ -767,14 +1026,15 @@ pub fn set_staged_paths(
             ignored.push(path.as_str());
         }
     }
-    if !ignored.is_empty() {
-        let ignored_now = ignored_paths(git, root)?;
-        if !staged || ignored.iter().any(|path| !ignored_now.contains(*path)) {
-            return Err(
-                "A selected file changed since the last refresh. Refresh and select it again."
-                    .into(),
-            );
-        }
+    if !ignored.is_empty()
+        && (!staged || {
+            let ignored_now = ignored_paths(git, root, &ignored)?;
+            ignored.iter().any(|path| !ignored_now.contains(*path))
+        })
+    {
+        return Err(
+            "A selected file changed since the last refresh. Refresh and select it again.".into(),
+        );
     }
     if changes
         .iter()
@@ -821,18 +1081,45 @@ pub fn set_staged_paths(
     Ok(())
 }
 
-fn ignored_paths(git: &GitContext, root: &Path) -> Result<BTreeSet<String>, String> {
-    let bytes = run(
-        git,
-        root,
-        &[
-            "ls-files",
-            "-z",
-            "--others",
-            "--ignored",
-            "--exclude-standard",
-        ],
-    )?;
+/// Unstage paths the way SmartGit does: one Git command and no status read.
+/// `has_head` comes from the snapshot already shown in the file list.
+pub(crate) fn unstage_paths(
+    git: &GitContext,
+    root: &Path,
+    paths: &[String],
+    has_head: bool,
+) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("Select files first.".into());
+    }
+    let mut args = if has_head {
+        vec!["reset", "-q", "HEAD", "--"]
+    } else {
+        vec!["rm", "--cached", "--force", "--"]
+    };
+    for path in paths {
+        args.push(path);
+    }
+    run(git, root, &args).map(|_| ())
+}
+
+fn ignored_paths(
+    git: &GitContext,
+    root: &Path,
+    paths: &[&str],
+) -> Result<BTreeSet<String>, String> {
+    let mut args = vec![
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+    ];
+    if !paths.is_empty() {
+        args.push("--");
+        args.extend_from_slice(paths);
+    }
+    let bytes = run(git, root, &args)?;
     if bytes.is_empty() {
         return Ok(BTreeSet::new());
     }
@@ -852,7 +1139,7 @@ fn ignored_paths(git: &GitContext, root: &Path) -> Result<BTreeSet<String>, Stri
 
 pub fn ignored_changes(git: &GitContext, root: &Path) -> Result<Vec<ChangeFile>, String> {
     let mut changes = Vec::new();
-    for path in ignored_paths(git, root)? {
+    for path in ignored_paths(git, root, &[])? {
         changes.push(ChangeFile {
             path,
             original_path: None,
@@ -901,7 +1188,7 @@ pub fn move_path(git: &GitContext, root: &Path, from: &str, to: &str) -> Result<
     }
     let status = load_changes(git, root)?;
     let change = status.iter().find(|change| change.path == from);
-    let ignored = change.is_none() && ignored_paths(git, root)?.contains(from);
+    let ignored = change.is_none() && ignored_paths(git, root, &[])?.contains(from);
     match change {
         Some(change) if change.kind == ChangeKind::Conflicted => {
             Err("Resolve the conflict before renaming this file.".into())
@@ -1444,18 +1731,27 @@ fn read_merge_message(directory: &Path) -> Result<Option<String>, String> {
     Ok(validate_message(&message).is_ok().then_some(message))
 }
 
-fn load_changes(git: &GitContext, path: &Path) -> Result<Vec<ChangeFile>, String> {
-    parse_status(&run(
-        git,
-        path,
-        &[
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--ignore-submodules=none",
-        ],
-    )?)
+pub(crate) fn load_changes(git: &GitContext, path: &Path) -> Result<Vec<ChangeFile>, String> {
+    load_path_changes(git, path, &[])
+}
+
+pub(crate) fn load_path_changes(
+    git: &GitContext,
+    root: &Path,
+    paths: &[String],
+) -> Result<Vec<ChangeFile>, String> {
+    let mut args = vec![
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--ignore-submodules=none",
+    ];
+    if !paths.is_empty() {
+        args.push("--");
+        args.extend(paths.iter().map(String::as_str));
+    }
+    parse_status(&run(git, root, &args)?)
 }
 
 pub fn parse_status(bytes: &[u8]) -> Result<Vec<ChangeFile>, String> {

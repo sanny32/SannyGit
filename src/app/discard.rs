@@ -124,10 +124,13 @@ impl SannyGitApp {
         if dialog.paths.len() > 1 {
             let paths = dialog.paths.clone();
             self.start_worker(move |git| WorkerResult::DiscardBatchPrepared {
-                result: paths
-                    .iter()
-                    .map(|path| prepare(git, &PathBuf::from(&root), path))
-                    .collect(),
+                result: backend::prepare_many(
+                    git,
+                    std::path::Path::new(&root),
+                    &paths,
+                    remove,
+                    merging,
+                ),
                 root,
                 paths,
             });

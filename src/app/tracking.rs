@@ -5,7 +5,7 @@ use crate::{
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::AtomicBool,
         mpsc::{self, Receiver},
         Arc,
     },
@@ -55,7 +55,7 @@ impl Monitor {
             self.next_read = Instant::now();
         }
         if let Some(cancel) = self.cancel.take() {
-            cancel.store(true, Ordering::Relaxed);
+            crate::git::signal_cancel(&cancel);
         }
         self.receiver = None;
         self.checking = false;

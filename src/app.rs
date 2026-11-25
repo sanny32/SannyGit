@@ -37,10 +37,24 @@ use std::{
 
 enum WorkerResult {
     ConflictReview(Result<Box<crate::conflict::Review>, String>),
+    IndexPathsUpdated {
+        staged: bool,
+        paths: Vec<String>,
+        changes: Vec<crate::models::ChangeFile>,
+    },
+    IndexDiffUpdated {
+        diff: working_tree::FileDiff,
+        ignore_whitespace: bool,
+    },
     Index {
         staged: bool,
         outcome: Result<(), String>,
         update: working_tree::Update,
+    },
+    /// Unstage finished. Row flags were already published; no full status snapshot.
+    IndexFinished {
+        staged: bool,
+        outcome: Result<(), String>,
     },
     DiscardBatchPrepared {
         root: String,
@@ -349,6 +363,7 @@ pub struct SannyGitApp {
     pub error_dialogs: errors::ErrorDialogs,
     pub status: String,
     worker: Option<Receiver<WorkerResult>>,
+    index_repaint: Option<eframe::egui::Context>,
     diff_worker: Option<Receiver<WorkerResult>>,
     diff_refresh_pending: bool,
     working_tree: working_tree::Monitor,
@@ -414,6 +429,7 @@ impl SannyGitApp {
         theme.select(&creation_context.egui_ctx, preferences.follow_system_theme);
 
         let mut app = Self::with_theme(theme);
+        app.index_repaint = Some(creation_context.egui_ctx.clone());
         app.preferences = preferences;
         if let Err(error) = logging::configure(app.preferences.log_level) {
             app.error = Some(error);
@@ -576,6 +592,7 @@ impl SannyGitApp {
             error_dialogs: Default::default(),
             status: "Ready".into(),
             worker: None,
+            index_repaint: None,
             diff_worker: None,
             diff_refresh_pending: false,
             working_tree: working_tree::Monitor::default(),
@@ -1916,37 +1933,7 @@ impl SannyGitApp {
         if !self.staging_allowed(index, staged) {
             return;
         }
-        let root = PathBuf::from(&self.repositories[self.selected_repository].path);
-        let path = self.changes[index].path.clone();
-        self.state_current = false;
-        self.error = None;
-        self.status = if staged {
-            "Staging file…"
-        } else {
-            "Unstaging file…"
-        }
-        .into();
-        let selected = self
-            .changes
-            .get(self.selection.active)
-            .map(|c| c.path.clone());
-        let ignore_whitespace = self.preferences.diff_ignore_whitespace;
-        let show_ignored = self.preferences.show_ignored_files;
-        self.start_index_worker(move |git| {
-            let outcome = git::set_staged(git, &root, &path, staged);
-            WorkerResult::Index {
-                staged,
-                outcome,
-                update: working_tree::Update::read(
-                    git,
-                    root.to_string_lossy().into_owned(),
-                    selected,
-                    ignore_whitespace,
-                    show_ignored,
-                    false,
-                ),
-            }
-        });
+        self.update_index(vec![self.changes[index].path.clone()], staged);
     }
 
     pub fn amend_blocker(&self) -> Option<&'static str> {
@@ -2370,14 +2357,28 @@ impl SannyGitApp {
                 return;
             }
         };
-        self.worker = None;
-        self.background_progress_only = false;
+        if !matches!(
+            result,
+            WorkerResult::IndexPathsUpdated { .. } | WorkerResult::IndexDiffUpdated { .. }
+        ) {
+            self.worker = None;
+            self.background_progress_only = false;
+        }
         self.apply_worker_result(result);
     }
 
     fn apply_worker_result(&mut self, result: WorkerResult) {
         match result {
             WorkerResult::ConflictReview(result) => self.finish_conflict_review(result),
+            WorkerResult::IndexPathsUpdated {
+                staged,
+                paths,
+                changes,
+            } => self.show_updated_index_paths(staged, paths, changes),
+            WorkerResult::IndexDiffUpdated {
+                diff,
+                ignore_whitespace,
+            } => self.apply_early_index_diff(diff, ignore_whitespace),
             WorkerResult::Index {
                 staged,
                 outcome,
@@ -2392,6 +2393,25 @@ impl SannyGitApp {
                     logging::record(logging::Level::Info, format_args!("{event}"));
                 }
                 self.apply_index_update(update, staged, outcome);
+            }
+            WorkerResult::IndexFinished { staged, outcome } => {
+                if let Err(error) = outcome {
+                    self.state_current = false;
+                    self.status = "Operation failed".into();
+                    // Refresh clears a stale error, so put this failure back afterwards.
+                    self.refresh_working_tree();
+                    self.error = Some(error);
+                } else {
+                    let event = if staged {
+                        "Index staged"
+                    } else {
+                        "Index unstaged"
+                    };
+                    logging::record(logging::Level::Info, format_args!("{event}"));
+                    self.state_current = true;
+                    // Reconcile a clean worktree without blocking the checkbox.
+                    self.refresh_working_tree();
+                }
             }
             WorkerResult::DiscardBatchPrepared {
                 root,
@@ -2809,6 +2829,7 @@ impl SannyGitApp {
             Err(error) => self.error = Some(error),
         }
     }
+
 }
 
 impl eframe::App for SannyGitApp {
@@ -2945,11 +2966,11 @@ impl eframe::App for SannyGitApp {
             cancel.store(true, Ordering::Relaxed);
         }
         if let Some(cancel) = &self.history.history_session.cancel {
-            cancel.store(true, Ordering::Relaxed);
+            crate::git::signal_cancel(cancel);
         }
         self.tracking.cancel();
         if let Some(cancel) = &self.manager.cancel {
-            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            crate::git::signal_cancel(cancel);
             if let Some(receiver) = &self.worker {
                 let _ = receiver.recv_timeout(std::time::Duration::from_secs(3));
             }

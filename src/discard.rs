@@ -1,7 +1,11 @@
 //! Destructive file operations on reviewed working copies and index entries.
 use crate::git::GitContext;
-use crate::{git, models::ChangeKind};
+use crate::{
+    git,
+    models::{ChangeFile, ChangeKind},
+};
 use std::{
+    collections::BTreeSet,
     io::Read,
     path::{Component, Path, PathBuf},
     time::SystemTime,
@@ -204,117 +208,185 @@ pub(crate) fn prepare_action(
     remove: bool,
     merging: bool,
 ) -> Result<Prepared, String> {
-    let target = safe_path(root, path)?;
-    if git::check_operation(git, root, merging)? != merging {
-        return Err("The merge state changed. Refresh and review the selected files again.".into());
-    }
-    let snapshot = git::load(git, root)?;
-    let changes: Vec<_> = snapshot
-        .changes
-        .iter()
-        .filter(|change| change.path == path)
-        .collect();
-    let ignored = if changes.is_empty() {
-        crate::git::ignored_changes(git, root)?
-            .into_iter()
-            .any(|change| change.path == path)
-    } else {
-        false
-    };
-    if changes.is_empty() && !ignored {
-        return Err("This file no longer has changes. Refresh before retrying.".into());
-    }
-    if !merging
-        && changes
-            .iter()
-            .any(|change| change.kind == ChangeKind::Conflicted)
-    {
-        return Err("Resolve conflicts outside SannyGit before discarding changes.".into());
-    }
-    let index = index_entry(git, root, path)?;
-    let action = if remove {
-        if index.is_empty()
-            && !changes
-                .iter()
-                .any(|change| change.kind == ChangeKind::Deleted && change.staged)
-        {
-            return Err("Select a tracked file to remove.".into());
-        }
-        if index.is_empty() && file_state(&target)?.contents != Contents::Missing {
-            return Err("The staged deletion has a new working copy. Review that untracked file separately.".into());
-        }
-        Action::Remove
-    } else if merging
-        && changes
-            .iter()
-            .any(|change| change.staged || change.kind == ChangeKind::Conflicted)
-    {
-        if changes.iter().any(|change| change.original_path.is_some()) {
-            return Err(
-                "Review both paths of a merge rename before restoring them with Git.".into(),
-            );
-        }
-        Action::RestoreHead
-    } else if ignored
-        || (index.is_empty()
-            && changes
-                .iter()
-                .any(|change| change.kind == ChangeKind::Untracked))
-    {
-        Action::DeleteUntracked
-    } else if !index.is_empty() && changes.iter().any(|change| change.unstaged) {
-        Action::Restore
-    } else {
-        return Err("There are no supported unstaged changes for this path. Use Unstage separately for staged changes.".into());
-    };
-    let file = file_state(&target)?;
-    if action == Action::DeleteUntracked && file.contents == Contents::Missing {
-        return Err("The untracked file no longer exists. Refresh before retrying.".into());
-    }
-    let summary = match &file.contents {
-        Contents::Missing => "The working copy is missing.".into(),
-        Contents::File(bytes) => format!("{} bytes in the current working copy.", bytes.len()),
-        Contents::Link(target) => format!(
-            "Symbolic link to {:?}; the target will not be followed.",
-            target
-        ),
-    };
-    Ok(Prepared {
-        path: path.into(),
-        action,
-        summary,
-        file,
-        merging,
-        index,
-        head: git::run(
-            git,
-            root,
-            &["rev-parse", "--revs-only", "HEAD", "MERGE_HEAD"],
-        )?,
-        status: git::run(
-            git,
-            root,
-            &[
-                "status",
-                "--porcelain=v1",
-                "-z",
-                "--untracked-files=all",
-                "--",
-                path,
-            ],
-        )?,
-    })
+    let mut review = Review::read(git, root, merging)?;
+    review.prepare(git, root, path, remove)
 }
 
-pub fn execute(git: &GitContext, root: &Path, expected: &Prepared) -> Result<(), String> {
-    if prepare_action(
+struct Review {
+    merging: bool,
+    head: Vec<u8>,
+    changes: Vec<ChangeFile>,
+    ignored: Option<BTreeSet<String>>,
+}
+
+impl Review {
+    fn read(git: &GitContext, root: &Path, merging: bool) -> Result<Self, String> {
+        if git::check_operation(git, root, merging)? != merging {
+            return Err(
+                "The merge state changed. Refresh and review the selected files again.".into(),
+            );
+        }
+        Ok(Self {
+            merging,
+            changes: git::load_changes(git, root)?,
+            head: review_head(git, root)?,
+            ignored: None,
+        })
+    }
+
+    fn prepare(
+        &mut self,
+        git: &GitContext,
+        root: &Path,
+        path: &str,
+        remove: bool,
+    ) -> Result<Prepared, String> {
+        let target = safe_path(root, path)?;
+        let merging = self.merging;
+        let changes: Vec<_> = self
+            .changes
+            .iter()
+            .filter(|change| change.path == path)
+            .collect();
+        let ignored = if changes.is_empty() {
+            if self.ignored.is_none() {
+                self.ignored = Some(
+                    git::ignored_changes(git, root)?
+                        .into_iter()
+                        .map(|change| change.path)
+                        .collect(),
+                );
+            }
+            self.ignored
+                .as_ref()
+                .is_some_and(|paths| paths.contains(path))
+        } else {
+            false
+        };
+        if changes.is_empty() && !ignored {
+            return Err("This file no longer has changes. Refresh before retrying.".into());
+        }
+        if !merging
+            && changes
+                .iter()
+                .any(|change| change.kind == ChangeKind::Conflicted)
+        {
+            return Err("Resolve conflicts outside SannyGit before discarding changes.".into());
+        }
+        let index = index_entry(git, root, path)?;
+        let action = if remove {
+            if index.is_empty()
+                && !changes
+                    .iter()
+                    .any(|change| change.kind == ChangeKind::Deleted && change.staged)
+            {
+                return Err("Select a tracked file to remove.".into());
+            }
+            if index.is_empty() && file_state(&target)?.contents != Contents::Missing {
+                return Err("The staged deletion has a new working copy. Review that untracked file separately.".into());
+            }
+            Action::Remove
+        } else if merging
+            && changes
+                .iter()
+                .any(|change| change.staged || change.kind == ChangeKind::Conflicted)
+        {
+            if changes.iter().any(|change| change.original_path.is_some()) {
+                return Err(
+                    "Review both paths of a merge rename before restoring them with Git.".into(),
+                );
+            }
+            Action::RestoreHead
+        } else if ignored
+            || (index.is_empty()
+                && changes
+                    .iter()
+                    .any(|change| change.kind == ChangeKind::Untracked))
+        {
+            Action::DeleteUntracked
+        } else if !index.is_empty() && changes.iter().any(|change| change.unstaged) {
+            Action::Restore
+        } else {
+            return Err("There are no supported unstaged changes for this path. Use Unstage separately for staged changes.".into());
+        };
+        let file = file_state(&target)?;
+        if action == Action::DeleteUntracked && file.contents == Contents::Missing {
+            return Err("The untracked file no longer exists. Refresh before retrying.".into());
+        }
+        let summary = match &file.contents {
+            Contents::Missing => "The working copy is missing.".into(),
+            Contents::File(bytes) => format!("{} bytes in the current working copy.", bytes.len()),
+            Contents::Link(target) => format!(
+                "Symbolic link to {:?}; the target will not be followed.",
+                target
+            ),
+        };
+        Ok(Prepared {
+            path: path.into(),
+            action,
+            summary,
+            file,
+            merging,
+            index,
+            head: self.head.clone(),
+            status: path_status(git, root, path)?,
+        })
+    }
+}
+
+fn review_head(git: &GitContext, root: &Path) -> Result<Vec<u8>, String> {
+    git::run(
         git,
         root,
-        &expected.path,
-        expected.action == Action::Remove,
-        expected.merging,
-    )? != *expected
-    {
+        &["rev-parse", "--revs-only", "HEAD", "MERGE_HEAD"],
+    )
+}
+
+fn path_status(git: &GitContext, root: &Path, path: &str) -> Result<Vec<u8>, String> {
+    git::run(
+        git,
+        root,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            path,
+        ],
+    )
+}
+
+#[cfg(test)]
+pub fn execute(git: &GitContext, root: &Path, expected: &Prepared) -> Result<(), String> {
+    execute_reviewed(git, root, expected, false)
+}
+
+fn execute_reviewed(
+    git: &GitContext,
+    root: &Path,
+    expected: &Prepared,
+    batch: bool,
+) -> Result<(), String> {
+    // For ordinary tracked restores, the batch preflight already classified
+    // the action. Recheck the path and repository state just before writing.
+    let unchanged = if batch && expected.action == Action::Restore && !expected.merging {
+        let target = safe_path(root, &expected.path)?;
+        !git::check_operation(git, root, false)?
+            && review_head(git, root)? == expected.head
+            && index_entry(git, root, &expected.path)? == expected.index
+            && path_status(git, root, &expected.path)? == expected.status
+            && file_state(&target)? == expected.file
+    } else {
+        prepare_action(
+            git,
+            root,
+            &expected.path,
+            expected.action == Action::Remove,
+            expected.merging,
+        )? == *expected
+    };
+    if !unchanged {
         return Err(
             "The file, index or HEAD changed after review. Reload details and confirm again."
                 .into(),
@@ -374,25 +446,31 @@ pub fn execute(git: &GitContext, root: &Path, expected: &Prepared) -> Result<(),
     Ok(())
 }
 
+pub(crate) fn prepare_many(
+    git: &GitContext,
+    root: &Path,
+    paths: &[String],
+    remove: bool,
+    merging: bool,
+) -> Result<Vec<Prepared>, String> {
+    let mut review = Review::read(git, root, merging)?;
+    paths
+        .iter()
+        .map(|path| review.prepare(git, root, path, remove))
+        .collect()
+}
+
 /// Validate every reviewed path before starting; report partial completion on I/O failure.
 pub fn execute_many(git: &GitContext, root: &Path, expected: &[Prepared]) -> Result<(), String> {
-    if expected.is_empty() {
-        return Err("Select files first.".into());
-    }
+    let first = expected.first().ok_or("Select files first.")?;
+    let mut review = Review::read(git, root, first.merging)?;
     for entry in expected {
-        if prepare_action(
-            git,
-            root,
-            &entry.path,
-            entry.action == Action::Remove,
-            entry.merging,
-        )? != *entry
-        {
+        if review.prepare(git, root, &entry.path, entry.action == Action::Remove)? != *entry {
             return Err(format!("{} changed after review. Reload details and confirm again. No files were discarded.", entry.path));
         }
     }
     for (completed, entry) in expected.iter().enumerate() {
-        execute(git, root, entry).map_err(|error| {
+        execute_reviewed(git, root, entry, expected.len() > 1).map_err(|error| {
             format!(
                 "Discard stopped at {} after {completed} of {} files completed. {error}",
                 entry.path,
@@ -418,20 +496,15 @@ mod tests {
         repo.write("new", "new\n");
         repo.write("other", "keep\n");
         let index = repo.git(&["ls-files", "--stage"]);
-        let entries = [
-            prepare(&SYSTEM_GIT, &repo.0, "file").unwrap(),
-            prepare(&SYSTEM_GIT, &repo.0, "new").unwrap(),
-        ];
+        let paths = ["file".into(), "new".into()];
+        let entries = prepare_many(&SYSTEM_GIT, &repo.0, &paths, false, false).unwrap();
         repo.write("new", "changed\n");
         assert!(execute_many(&SYSTEM_GIT, &repo.0, &entries).is_err());
         assert_eq!(
             std::fs::read_to_string(repo.0.join("file")).unwrap(),
             "unstaged\n"
         );
-        let entries = [
-            prepare(&SYSTEM_GIT, &repo.0, "file").unwrap(),
-            prepare(&SYSTEM_GIT, &repo.0, "new").unwrap(),
-        ];
+        let entries = prepare_many(&SYSTEM_GIT, &repo.0, &paths, false, false).unwrap();
         execute_many(&SYSTEM_GIT, &repo.0, &entries).unwrap();
         assert_eq!(
             std::fs::read_to_string(repo.0.join("file")).unwrap(),
@@ -443,6 +516,20 @@ mod tests {
             "keep\n"
         );
         assert_eq!(repo.git(&["ls-files", "--stage"]), index);
+    }
+
+    #[test]
+    fn batch_restore_rechecks_contents_immediately_before_writing() {
+        let repo = base();
+        repo.write("file", "reviewed\n");
+        let entry = prepare(&SYSTEM_GIT, &repo.0, "file").unwrap();
+        repo.write("file", "changed after preflight\n");
+
+        assert!(execute_reviewed(&SYSTEM_GIT, &repo.0, &entry, true).is_err());
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("file")).unwrap(),
+            "changed after preflight\n"
+        );
     }
 
     fn base() -> TempRepo {

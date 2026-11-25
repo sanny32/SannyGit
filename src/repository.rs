@@ -964,7 +964,7 @@ mod tests {
         assert!(
             clone_repository(&SYSTEM_GIT, repo.0.to_str().unwrap(), &destination, &cancel).is_err()
         );
-        cancel.store(true, Ordering::Relaxed);
+        crate::git::signal_cancel(&cancel);
         assert!(clone_repository(
             &SYSTEM_GIT,
             repo.0.to_str().unwrap(),
