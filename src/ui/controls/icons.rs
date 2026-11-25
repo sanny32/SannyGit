@@ -34,6 +34,7 @@ pub enum Icon {
     List,
     Check,
     Close,
+    Cancel,
     Stop,
     Warning,
     Star,
@@ -116,6 +117,7 @@ impl Icon {
             Self::List => svg!("list"),
             Self::Check => svg!("check"),
             Self::Close => svg!("close"),
+            Self::Cancel => svg!("cancel"),
             Self::Stop => svg!("stop"),
             Self::Warning => svg!("warning"),
             Self::Star => svg!("star"),
@@ -139,8 +141,6 @@ pub fn paint(ui: &mut Ui, icon: Icon, color: Color32, size: f32) {
 // controls. Local dialog padding must not change their hit area or hover frame.
 pub const BUTTON_SIZE: f32 = 26.0;
 const BUTTON_ICON_SIZE: f32 = 16.0;
-/// Keeps the circular hover inside compact strips such as the status bar.
-const GHOST_HOVER_INSET: f32 = 3.0;
 
 fn button_widget(ui: &Ui, icon: Icon) -> Button<'static> {
     Button::new(image(icon, ui.visuals().text_color(), BUTTON_ICON_SIZE))
@@ -185,8 +185,9 @@ pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str) -> Response {
     response.help_text(tooltip)
 }
 
-/// Borderless icon control with a hover fill and no stroke, like JetBrains inline dismiss buttons.
-pub fn ghost_button(
+/// An X inside a faint disc, like the JetBrains status-bar progress stop icon.
+/// The disc fills the shorter side of `size` and does not grow on hover.
+pub fn circled_button(
     ui: &mut Ui,
     icon: Icon,
     color: Color32,
@@ -195,17 +196,24 @@ pub fn ghost_button(
 ) -> Response {
     button_scope(ui, |ui| {
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-        if response.hovered() || response.has_focus() {
-            let radius = (rect.width().min(rect.height()) / 2.0 - GHOST_HOVER_INSET).max(0.0);
-            ui.painter().circle_filled(
-                rect.center(),
-                radius,
-                ui.visuals().widgets.hovered.weak_bg_fill,
-            );
-        }
-        image(icon, color, BUTTON_ICON_SIZE).paint_at(
+        let diameter = rect.width().min(rect.height());
+        // expui/progress/stop.svg uses a 10% disc, and 20% while hovered.
+        let alpha = if response.hovered() || response.has_focus() {
+            51
+        } else {
+            26
+        };
+        let [red, green, blue, _] = color.to_array();
+        ui.painter().circle_filled(
+            rect.center(),
+            diameter * 0.5,
+            Color32::from_rgba_unmultiplied(red, green, blue, alpha),
+        );
+        // The cancel glyph is thicker than close.svg. Keep its stroke caps inside the disc.
+        let glyph = diameter * 0.75;
+        image(icon, color, glyph).paint_at(
             ui,
-            Rect::from_center_size(rect.center(), Vec2::splat(BUTTON_ICON_SIZE)),
+            Rect::from_center_size(rect.center(), Vec2::splat(glyph)),
         );
         response.widget_info(|| {
             eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, true, tooltip)

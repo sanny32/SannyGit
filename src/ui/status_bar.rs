@@ -8,8 +8,11 @@ use eframe::egui::{
 
 const HEIGHT: f32 = 26.0;
 const BORDER_WIDTH: f32 = 1.0;
-const CANCEL_INSET: f32 = BORDER_WIDTH + 1.0;
-const CANCEL_SIZE: Vec2 = Vec2::new(icons::BUTTON_SIZE, HEIGHT - 2.0 * CANCEL_INSET);
+/// Clear background between the cancel disc and the status-bar stroke.
+const CANCEL_EDGE_GAP: f32 = 4.0;
+/// Two pixels under the largest disc that still keeps `CANCEL_EDGE_GAP`.
+const CANCEL_DIAMETER: f32 = HEIGHT - 2.0 * BORDER_WIDTH - 2.0 * CANCEL_EDGE_GAP - 2.0;
+const CANCEL_SIZE: Vec2 = Vec2::splat(CANCEL_DIAMETER);
 
 pub(crate) fn operation_cancel_id() -> Id {
     Id::unique("status.operation.cancel")
@@ -91,9 +94,9 @@ fn show_operation_cancel(ui: &mut Ui, app: &mut SannyGitApp) {
         return;
     }
     let palette = app.palette();
-    let response = icons::ghost_button(
+    let response = icons::circled_button(
         ui,
-        Icon::Close,
+        Icon::Cancel,
         palette.muted,
         "Cancel the background operation",
         CANCEL_SIZE,
@@ -550,8 +553,37 @@ mod tests {
                         "Cross left the status row"
                     );
                     assert!(status_message.top() > size.y - 40.0);
-                    assert!(cancel.top() >= size.y - HEIGHT + CANCEL_INSET);
-                    assert!(cancel.bottom() <= size.y - CANCEL_INSET, "Cancel {cancel:?}, status {status_message:?}, window {size:?}, {theme:?} {style:?}");
+                    let bar_top = size.y - HEIGHT;
+                    let bar_bottom = size.y;
+                    let edge = BORDER_WIDTH + CANCEL_EDGE_GAP;
+                    assert!(
+                        cancel.top() >= bar_top + edge - 1.0,
+                        "Cancel touches the top border in {theme:?} {style:?} at {size:?}: {cancel:?}"
+                    );
+                    assert!(
+                        cancel.bottom() <= bar_bottom - edge + 1.0,
+                        "Cancel touches the bottom border in {theme:?} {style:?} at {size:?}: {cancel:?}"
+                    );
+                    let disc = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Circle(circle)
+                                if circle.center.distance(cancel.center()) < 1.0
+                                    && (circle.radius - CANCEL_DIAMETER * 0.5).abs() < 0.5 =>
+                            {
+                                Some(*circle)
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| {
+                            panic!("Cancel disc missing in {theme:?} {style:?} at {size:?}")
+                        });
+                    assert!(
+                        disc.center.y - disc.radius >= bar_top + edge - 1.0
+                            && disc.center.y + disc.radius <= bar_bottom - edge + 1.0,
+                        "Cancel disc touches the status-bar border: {disc:?}"
+                    );
                     let settings = text_rects(&output.shapes, "Settings")
                         .into_iter()
                         .min_by(|left, right| left.top().total_cmp(&right.top()))
