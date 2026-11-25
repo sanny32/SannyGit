@@ -11,11 +11,13 @@ use std::{
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc, Arc,
+        mpsc,
     },
     thread,
     time::{Duration, Instant},
 };
+#[cfg(windows)]
+use std::sync::Arc;
 
 const OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
 const FILE_LIMIT: usize = 5_000;
@@ -28,7 +30,7 @@ use diagnostics::{CommandError, FailureKind};
 /// A completed command, kept separate from user-facing diagnostics. In Sync
 /// mode a reviewed porcelain rejection can have a non-success status.
 struct CommandOutput {
-    status: std::process::ExitStatus,
+    status: ExitStatus,
     stdout: Vec<u8>,
 }
 
@@ -510,20 +512,21 @@ fn execute_command(
             }
             _ => None,
         };
-        let wake = wake_tx.clone();
-        let out = pipe::Worker::spawn(stdout, move |pipe, stop| {
-            let result = pipe::capture(pipe, stop);
-            let _ = wake.send(GitWake::Pipe);
-            result
-        })
-        .map_err(spawn_error)?;
-        let wake = wake_tx.clone();
-        let err = pipe::Worker::spawn(stderr, move |pipe, stop| {
-            let result = pipe::capture(pipe, stop);
-            let _ = wake.send(GitWake::Pipe);
-            result
-        })
-        .map_err(spawn_error)?;
+        fn spawn_capture<P: pipe::Pipe + Read + Send + 'static>(
+            pipe: P,
+            wake_tx: &mpsc::Sender<GitWake>,
+            spawn_error: &impl Fn(std::io::Error) -> CommandError,
+        ) -> Result<pipe::Worker<Vec<u8>>, CommandError> {
+            let wake = wake_tx.clone();
+            pipe::Worker::spawn(pipe, move |pipe, stop| {
+                let result = pipe::capture(pipe, stop);
+                let _ = wake.send(GitWake::Pipe);
+                result
+            })
+            .map_err(|error| spawn_error(error))
+        }
+        let out = spawn_capture(stdout, &wake_tx, &spawn_error)?;
+        let err = spawn_capture(stderr, &wake_tx, &spawn_error)?;
         let required_pipes = 2 + u8::from(writer.is_some());
         let Some(git_child) = child.0.take() else {
             return Err(fail(
@@ -658,7 +661,7 @@ fn watch_cancel(flag: &AtomicBool, sender: mpsc::Sender<GitWake>) -> CancelWatch
     CancelWatch { id }
 }
 
-/// Mark a Git operation cancelled and wake any command waiting on this flag.
+/// Mark a Git operation canceled and wake any command waiting on this flag.
 pub(crate) fn signal_cancel(flag: &AtomicBool) {
     flag.store(true, Ordering::Release);
     let key = std::ptr::from_ref(flag) as usize;
@@ -723,7 +726,7 @@ fn stop_git_tree(git: &RunningGit) {
     {
         if !git.parent_exited.load(Ordering::Acquire) {
             // An exited PID may already have been reused. Its pipes are
-            // cancelled by the workers without targeting that PID.
+            // canceled by the workers without targeting that PID.
             use std::os::windows::process::CommandExt;
             let _ = Command::new("taskkill")
                 .args(["/PID", &git.pid.to_string(), "/T", "/F"])
@@ -1704,7 +1707,7 @@ pub(crate) fn preflight_apply_commit(
         let untracked = snapshot
             .changes
             .iter()
-            .filter(|change| change.kind == crate::models::ChangeKind::Untracked)
+            .filter(|change| change.kind == ChangeKind::Untracked)
             .map(|change| change.path.as_str())
             .collect::<Vec<_>>()
             .join("\0");
@@ -1714,7 +1717,7 @@ pub(crate) fn preflight_apply_commit(
         if snapshot
             .changes
             .iter()
-            .any(|change| change.kind != crate::models::ChangeKind::Untracked)
+            .any(|change| change.kind != ChangeKind::Untracked)
         {
             return Err("Commit or stash local changes before continuing.".into());
         }
