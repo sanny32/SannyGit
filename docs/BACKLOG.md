@@ -82,6 +82,23 @@ running total. When disabled, hide the badge and keep layout unchanged.
 
 **Status:** Not started
 
+## UI — Status bar
+
+### Space between operation message and cancel control
+
+**Problem:** While a background operation is running, the status text (e.g.
+«Pull in progress…») sits flush against the cancel disc on the right side of the
+status bar. There is no visual gap between the message and the control.
+
+**Goal:** Add comfortable horizontal spacing between the truncated operation
+label and the cancel button so the two controls read as separate affordances.
+
+**Likely touch points:** `src/ui/status_bar.rs` — layout around
+`show_operation_cancel` and `item_spacing`; layout test
+`operation_cancel_follows_the_message_in_the_status_bar`.
+
+**Status:** Not started
+
 ## Dependencies
 
 ### Drop the egui and winit git patches
