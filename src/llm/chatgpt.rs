@@ -614,6 +614,7 @@ fn http_error(status: reqwest::StatusCode) -> String {
 }
 
 pub const PROVIDER_ID: &str = "openai-chatgpt";
+pub const REASONING_EFFORT_XHIGH: &str = "xhigh";
 
 pub struct Model {
     pub slug: String,
@@ -622,7 +623,15 @@ pub struct Model {
     pub(crate) input_cost_rank: u32,
 }
 
-const EFFORT_COST_ORDER: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+const EFFORT_COST_ORDER: &[&str] = &[
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    REASONING_EFFORT_XHIGH,
+    "max",
+];
 
 pub fn list_models() -> Result<Vec<Model>, String> {
     let runtime = runtime()?;

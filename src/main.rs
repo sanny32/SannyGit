@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod branding;
 mod branches;
 mod cherry_pick;
 mod clone_source;

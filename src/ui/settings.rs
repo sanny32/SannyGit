@@ -1,14 +1,20 @@
-use super::controls::dialog_style::DialogResponse;
-use super::controls::icons::{self, Icon};
-use super::controls::tooltips::TooltipResponse;
+use super::controls::{
+    dialog_style::{self, DialogResponse},
+    editable_combobox,
+    icons::{self, Icon},
+    selectable_row, singleline,
+    tooltips::TooltipResponse,
+};
 use crate::{
     app::{AiConnectionStatus, SannyGitApp, SettingsPage},
+    branding,
     logging::{self, Level},
     theme::{semibold_family, InterfaceStyle, Palette, ThemeChoice},
 };
 use eframe::egui::{
-    self, Align, CentralPanel, Frame, Key, Layout, Margin, Panel, Popup, Rect, RectAlign, RichText,
-    ScrollArea, Sense, StrokeKind, TextWrapMode, Ui, UiBuilder, Vec2, ViewportCommand, ViewportId,
+    self, Align, CentralPanel, Frame, Key, Label, Layout, Margin, Panel, Popup, Pos2, Rect,
+    RectAlign, RichText, ScrollArea, Sense, StrokeKind, TextWrapMode, Ui, UiBuilder, Vec2,
+    ViewportCommand, ViewportId,
 };
 
 const PREFERENCES_SIZE: Vec2 = egui::vec2(790.0, 456.0);
@@ -23,31 +29,31 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         }
         return;
     }
+    let ctx = ui.ctx();
     if app.settings_window.llm_repository.is_some() {
-        repository_llm_window(ui.ctx(), app);
+        settings_viewport(
+            ctx,
+            app,
+            ViewportId::from_hash_of("sannygit.repository.llm.settings"),
+            "Repository AI Settings",
+            true,
+        );
         return;
     }
-    preferences_window(ui.ctx(), app);
-}
-
-fn preferences_window(ctx: &egui::Context, app: &mut SannyGitApp) {
     settings_viewport(
         ctx,
         app,
         ViewportId::from_hash_of("sannygit.preferences"),
-        "SannyGit Preferences",
+        branding::PREFERENCES_WINDOW_TITLE,
         false,
     );
 }
 
-fn repository_llm_window(ctx: &egui::Context, app: &mut SannyGitApp) {
-    settings_viewport(
-        ctx,
-        app,
-        ViewportId::from_hash_of("sannygit.repository.llm.settings"),
-        "Repository AI Settings",
-        true,
-    );
+#[cfg(target_os = "windows")]
+fn store_presentation_error(app: &mut SannyGitApp, result: Result<(), impl ToString>) {
+    if let Err(error) = result {
+        app.error = Some(error.to_string());
+    }
 }
 
 fn settings_viewport(
@@ -101,9 +107,10 @@ fn settings_viewport(
         }
         crate::theme::paint_native_background(ui, app.palette());
         #[cfg(target_os = "windows")]
-        if let Err(error) = crate::native_window::finish_first_presentation(ui.ctx()) {
-            app.error = Some(error.to_string());
-        }
+        store_presentation_error(
+            app,
+            crate::native_window::finish_first_presentation(ui.ctx()),
+        );
         if repository {
             repository_window_contents(ui, app);
         } else {
@@ -115,9 +122,10 @@ fn settings_viewport(
         {
             // Immediate viewports process this command after painting and swapping the frame.
             #[cfg(target_os = "windows")]
-            if let Err(error) = crate::native_window::prepare_child_presentation(ui.ctx(), title) {
-                app.error = Some(error.to_string());
-            }
+            store_presentation_error(
+                app,
+                crate::native_window::prepare_child_presentation(ui.ctx(), title),
+            );
             ui.ctx().send_viewport_cmd(ViewportCommand::Visible(true));
             app.settings_window.needs_reveal = false;
         }
@@ -126,7 +134,7 @@ fn settings_viewport(
 
 fn escape_pressed(ctx: &egui::Context, app: &SannyGitApp) -> bool {
     app.error_dialogs.pending.is_empty()
-        && !egui::Popup::is_any_open(ctx)
+        && !Popup::is_any_open(ctx)
         && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape))
 }
 
@@ -151,16 +159,36 @@ fn finish_close(ctx: &egui::Context, app: &mut SannyGitApp) {
     }
 }
 
-fn centered_position(outer: egui::Rect, inner: Option<egui::Rect>, size: Vec2) -> egui::Pos2 {
+fn centered_position(outer: Rect, inner: Option<Rect>, size: Vec2) -> Pos2 {
     let decorations = inner.map_or(Vec2::ZERO, |inner| {
         (outer.size() - inner.size()).max(Vec2::ZERO)
     });
     outer.center() - (size + decorations) / 2.0
 }
 
+fn fixed_height_page(ui: &mut Ui, content_height: f32, mut draw: impl FnMut(&mut Ui)) {
+    ui.allocate_ui_with_layout(
+        Vec2::new(ui.available_width(), content_height),
+        Layout::top_down(Align::Min),
+        |ui| {
+            ui.set_min_height(content_height);
+            ui.set_max_height(content_height);
+            draw(ui);
+        },
+    );
+}
+
+fn scrollable_page(ui: &mut Ui, content_height: f32, id_salt: &'static str, mut draw: impl FnMut(&mut Ui)) {
+    ScrollArea::vertical()
+        .id_salt(id_salt)
+        .auto_shrink([false, false])
+        .max_height(content_height)
+        .show(ui, |ui| draw(ui));
+}
+
 fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
-    super::controls::dialog_style::prepare_keyboard(ui);
+    dialog_style::prepare_keyboard(ui);
     ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
     footer(ui, app, palette, false);
     navigation(ui, app, palette);
@@ -178,21 +206,11 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
             }
             let content_height = page_height;
             if app.settings_window.page == SettingsPage::CommitMessages {
-                ui.allocate_ui_with_layout(
-                    Vec2::new(ui.available_width(), content_height),
-                    Layout::top_down(Align::Min),
-                    |ui| {
-                        ui.set_min_height(content_height);
-                        ui.set_max_height(content_height);
-                        page(ui, app, palette);
-                    },
-                );
+                fixed_height_page(ui, content_height, |ui| page(ui, app, palette));
             } else {
-                ScrollArea::vertical()
-                    .id_salt("preferences.page")
-                    .auto_shrink([false, false])
-                    .max_height(content_height)
-                    .show(ui, |ui| page(ui, app, palette));
+                scrollable_page(ui, content_height, "preferences.page", |ui| {
+                    page(ui, app, palette)
+                });
             }
         });
     super::show_errors(ui, app);
@@ -200,7 +218,7 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
 
 fn repository_window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
-    super::controls::dialog_style::prepare_keyboard(ui);
+    dialog_style::prepare_keyboard(ui);
     ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
     footer(ui, app, palette, true);
     repository_navigation(ui, app, palette);
@@ -211,23 +229,13 @@ fn repository_window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
             let content_height = page_height;
             match app.settings_window.page {
                 SettingsPage::CommitMessages => {
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(ui.available_width(), content_height),
-                        Layout::top_down(Align::Min),
-                        |ui| {
-                            ui.set_min_height(content_height);
-                            ui.set_max_height(content_height);
-                            repository_page(ui, app, palette);
-                        },
-                    );
+                    fixed_height_page(ui, content_height, |ui| {
+                        repository_page(ui, app, palette)
+                    });
                 }
-                _ => {
-                    ScrollArea::vertical()
-                        .id_salt("repository.preferences.page")
-                        .auto_shrink([false, false])
-                        .max_height(content_height)
-                        .show(ui, |ui| repository_page(ui, app, palette));
-                }
+                _ => scrollable_page(ui, content_height, "repository.preferences.page", |ui| {
+                    repository_page(ui, app, palette)
+                }),
             }
         });
     super::show_errors(ui, app);
@@ -268,7 +276,7 @@ fn repository_navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
 }
 
 fn repository_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
-    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+    ui.style_mut().wrap_mode = Some(TextWrapMode::Wrap);
     let Some(path) = app.settings_window.llm_repository.clone() else {
         return;
     };
@@ -307,7 +315,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette, repository: bool
                         if ui
                             .add_enabled(
                                 enabled,
-                                super::controls::dialog_style::button("Reset"),
+                                dialog_style::button("Reset"),
                             )
                             .help_text(
                                 "Reset to defaults: discard repository overrides and use the settings from Preferences",
@@ -324,7 +332,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette, repository: bool
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.set_width(ui.available_width());
                     if ui
-                        .add(super::controls::dialog_style::primary("OK", palette))
+                        .add(dialog_style::primary("OK", palette))
                         .dialog_accept()
                     {
                         match apply_settings(app) {
@@ -333,7 +341,7 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette, repository: bool
                         }
                     }
                     if ui
-                        .add(super::controls::dialog_style::button("Cancel"))
+                        .add(dialog_style::button("Cancel"))
                         .dialog_cancel()
                     {
                         close_without_saving(ui.ctx(), app);
@@ -365,7 +373,11 @@ fn reset_repository_settings_draft(app: &mut SannyGitApp, path: &str) {
     window.llm_repositories.remove(path);
     let mut config = app.llm_config.clone();
     SannyGitApp::strip_repository_connection_mode(&mut config, &app.llm_config);
-    window.llm_repositories.insert(
+    insert_repository_llm_draft(app, path, config);
+}
+
+fn insert_repository_llm_draft(app: &mut SannyGitApp, path: &str, config: crate::llm::Config) {
+    app.settings_window.llm_repositories.insert(
         path.to_owned(),
         crate::app::LlmSettings {
             config,
@@ -433,7 +445,7 @@ fn section(
     let mut state =
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
     let response =
-        super::controls::selectable_row(ui, app.settings_window.page == page, 23.0, |ui| {
+        selectable_row(ui, app.settings_window.page == page, 23.0, |ui| {
             state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
             ui.label(title);
         });
@@ -445,7 +457,7 @@ fn section(
 
 fn entry(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
     let selected = app.settings_window.page == page;
-    let response = super::controls::selectable_row(ui, selected, 23.0, |ui| {
+    let response = selectable_row(ui, selected, 23.0, |ui| {
         ui.add_space(24.0);
         ui.label(label);
     });
@@ -456,7 +468,7 @@ fn entry(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
 }
 
 fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
-    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+    ui.style_mut().wrap_mode = Some(TextWrapMode::Wrap);
     match app.settings_window.page {
         SettingsPage::General => {
             ui.spacing_mut().item_spacing.y = 4.0;
@@ -660,7 +672,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         ui,
                         |ui| {
                             label(ui, "Log file:");
-                            ui.add(egui::Label::new(path.as_ref()).truncate())
+                            ui.add(Label::new(path.as_ref()).truncate())
                                 .help_text(path.as_ref());
                         },
                         |ui| {
@@ -680,11 +692,11 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     let value = &mut app.settings_window.preferences.git_executable;
                     ui.add_sized(
                         [ui.available_width() - 34.0, ui.spacing().interact_size.y],
-                        crate::ui::controls::singleline(value),
+                        singleline(value),
                     );
-                    if super::controls::icons::button(
+                    if icons::button(
                         ui,
-                        super::controls::icons::Icon::Folder,
+                        Icon::Folder,
                         "Choose Git executable",
                     )
                     .clicked()
@@ -836,13 +848,7 @@ fn ensure_repository_model_draft(app: &mut SannyGitApp, path: &str) {
     }
     let mut config = app.effective_llm_config(path).clone();
     SannyGitApp::strip_repository_connection_mode(&mut config, &app.settings_window.llm.config);
-    app.settings_window.llm_repositories.insert(
-        path.to_owned(),
-        crate::app::LlmSettings {
-            config,
-            ..Default::default()
-        },
-    );
+    insert_repository_llm_draft(app, path, config);
 }
 
 fn repository_ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette, path: &str) {
@@ -995,9 +1001,10 @@ fn ai_page(
         }
         ui.add_space(section_gap);
         let instructions = match app.settings_window.llm.config.subscription_provider {
-            SubscriptionProvider::ChatGpt => "Sign in to ChatGPT in your browser. SannyGit uses your account and sends the selected diff when you generate a message.",
-            SubscriptionProvider::Copilot if crate::llm::copilot::can_sign_in() =>
-                "Sign in to GitHub in your browser. SannyGit sends the selected diff to Copilot when you generate a message.",
+            SubscriptionProvider::ChatGpt => branding::SIGN_IN_CHATGPT,
+            SubscriptionProvider::Copilot if crate::llm::copilot::can_sign_in() => {
+                branding::SIGN_IN_COPILOT
+            }
             SubscriptionProvider::Copilot => "GitHub Copilot sign-in is unavailable in this build.",
         };
         ai_sign_in_banner(ui, palette, instructions);
@@ -1238,7 +1245,7 @@ fn connection_choice(
     ui.painter()
         .set(background, egui::Shape::rect_filled(response.rect, 7, fill));
     ui.painter()
-        .rect_stroke(response.rect, 7, (1.0, border), egui::StrokeKind::Inside);
+        .rect_stroke(response.rect, 7, (1.0, border), StrokeKind::Inside);
     if response.clicked() {
         *subscription = value;
     }
@@ -1547,7 +1554,7 @@ fn reasoning_label(effort: &str) -> &str {
         "low" => "Low",
         "medium" => "Medium",
         "high" => "High",
-        "xhigh" => "Extra high",
+        crate::llm::chatgpt::REASONING_EFFORT_XHIGH => "Extra high",
         "max" => "Maximum",
         _ => effort,
     }
@@ -1575,7 +1582,7 @@ fn llm_api_form(
                         .iter()
                         .map(|provider| provider.endpoint.to_owned())
                         .collect();
-                    let endpoint_response = super::controls::editable_combobox::show(
+                    let endpoint_response = editable_combobox::show(
                         ui,
                         ui.make_persistent_id("preferences.llm.endpoint"),
                         &mut endpoint,
@@ -1619,7 +1626,7 @@ fn llm_api_form(
                     form_label(ui, "Model:");
                     let id = ui.make_persistent_id("preferences.llm.model");
                     let popup = id.with("popup");
-                    let was_open = egui::Popup::is_id_open(ui.ctx(), popup);
+                    let was_open = Popup::is_id_open(ui.ctx(), popup);
                     let models = catalog.entry(&draft.config, repository);
                     let should_load = !models.attempted || (models.error.is_some() && !was_open);
                     let empty_text = if models.loading() {
@@ -1627,7 +1634,7 @@ fn llm_api_form(
                     } else {
                         "Enter a model name"
                     };
-                    super::controls::editable_combobox::show(
+                    editable_combobox::show(
                         ui,
                         id,
                         &mut draft.config.model,
@@ -1637,7 +1644,7 @@ fn llm_api_form(
                         empty_text,
                     )
                     .help_text("Select a model from the server or enter a custom model name");
-                    if ui.is_enabled() && should_load && egui::Popup::is_id_open(ui.ctx(), popup) {
+                    if ui.is_enabled() && should_load && Popup::is_id_open(ui.ctx(), popup) {
                         if draft.api_key_dirty {
                             catalog.load(&draft.config, repository, ui.ctx());
                         } else {
@@ -1648,7 +1655,7 @@ fn llm_api_form(
                     ui.end_row();
                     form_label(ui, "API key:");
                     let api_key_response = ui.add(
-                        crate::ui::controls::singleline(&mut draft.config.api_key)
+                        singleline(&mut draft.config.api_key)
                             .hint_text(if draft.config.store_api_key {
                                 "Leave unchanged to keep saved key"
                             } else {
@@ -1842,9 +1849,9 @@ fn instructions_editor(ui: &mut Ui, instructions: &mut String, fill_to_bottom: b
         [ui.available_width(), editor_height],
         egui::TextEdit::multiline(instructions)
             .desired_rows(1)
-            .margin(egui::Margin::symmetric(6, 4)),
+            .margin(Margin::symmetric(6, 4)),
     );
-    super::controls::dialog_style::preserve_multiline_enter(&instructions);
+    dialog_style::preserve_multiline_enter(&instructions);
 }
 
 fn form_label(ui: &mut Ui, text: &str) {
@@ -1852,7 +1859,7 @@ fn form_label(ui: &mut Ui, text: &str) {
         Vec2::new(82.0, ui.spacing().interact_size.y),
         Layout::left_to_right(Align::Center),
         |ui| {
-            ui.add(egui::Label::new(text).wrap_mode(egui::TextWrapMode::Extend));
+            ui.add(Label::new(text).wrap_mode(TextWrapMode::Extend));
         },
     );
 }
@@ -1874,7 +1881,7 @@ fn group(ui: &mut Ui, palette: Palette, title: &str, contents: impl FnOnce(&mut 
     ui.horizontal(|ui| {
         ui.label(RichText::new(title).family(semibold_family()));
         let (rect, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
         ui.painter()
             .hline(rect.x_range(), rect.center().y, (1.0, palette.border));
     });
