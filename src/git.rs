@@ -364,8 +364,6 @@ fn execute(
     };
     let started = Instant::now();
     let result = execute_command(git, path, args, input, timeout, cancel, mode, operation);
-    #[cfg(test)]
-    crate::test_support::record_mutation_time(args, started.elapsed());
     let milliseconds = started.elapsed().as_millis();
     match &result {
         Ok(output) => logging::record(
@@ -472,7 +470,11 @@ fn execute_command(
         };
         let (wake_tx, wake_rx) = mpsc::channel();
         let (child_tx, child_rx) = mpsc::channel::<Child>();
+        // Once Git has exited, taskkill must not target its PID: the id may
+        // already belong to another process. Unix signals the process group.
+        #[cfg(windows)]
         let parent_exited = Arc::new(AtomicBool::new(false));
+        #[cfg(windows)]
         let exited_flag = Arc::clone(&parent_exited);
         let wait_tx = wake_tx.clone();
         let mut waiter = JoinGuard(Some(
@@ -483,6 +485,7 @@ fn execute_command(
                         return;
                     };
                     let status = child.wait();
+                    #[cfg(windows)]
                     if status.is_ok() {
                         exited_flag.store(true, Ordering::Release);
                     }
@@ -555,6 +558,7 @@ fn execute_command(
         }
         let running = RunningGit {
             pid,
+            #[cfg(windows)]
             parent_exited,
             #[cfg(windows)]
             handle,
@@ -699,6 +703,7 @@ impl Drop for JoinGuard {
 
 struct RunningGit {
     pid: u32,
+    #[cfg(windows)]
     parent_exited: Arc<AtomicBool>,
     #[cfg(windows)]
     handle: std::os::windows::io::OwnedHandle,
@@ -743,6 +748,10 @@ fn stop_git_tree(git: &RunningGit) {
 /// Block until Git has exited and every pipe worker has reported completion.
 ///
 /// Process exit, pipe completion and cancellation all arrive on `rx`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the wait, process, deadline and cancellation stay explicit at the call"
+)]
 fn await_git(
     rx: &mpsc::Receiver<GitWake>,
     wake_tx: &mpsc::Sender<GitWake>,
@@ -801,7 +810,10 @@ fn await_git(
                 ),
                 None => fail(
                     FailureKind::TimedOut,
-                    format!("Git operation timed out after {} seconds", timeout.as_secs()),
+                    format!(
+                        "Git operation timed out after {} seconds",
+                        timeout.as_secs()
+                    ),
                 ),
             });
         }

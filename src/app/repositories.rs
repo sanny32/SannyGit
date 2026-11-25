@@ -1110,7 +1110,7 @@ mod tests {
             app.manager.hosting.get("/repo").copied(),
             Some(crate::clone_source::Provider::GitHub)
         );
-        assert!(app.manager.hosting.get("/missing").is_none());
+        assert!(!app.manager.hosting.contains_key("/missing"));
 
         let mut storage = Storage::default();
         eframe::App::save(&mut app, &mut storage);
@@ -1125,8 +1125,8 @@ mod tests {
 
         app.request_remove_repository("/repo".into());
         app.confirm_remove_repository();
-        assert!(app.manager.preferences.icons.get("/repo").is_none());
-        assert!(app.manager.hosting.get("/repo").is_none());
+        assert!(!app.manager.preferences.icons.contains_key("/repo"));
+        assert!(!app.manager.hosting.contains_key("/repo"));
         assert_eq!(
             app.manager.preferences.icons.get("/missing").copied(),
             Some(crate::repository::RepositoryIcon::GitLab)

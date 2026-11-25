@@ -844,7 +844,10 @@ fn pull_rebase_still_requires_a_clean_worktree() {
     .unwrap_err();
     assert!(error.contains("move aside"), "{error}");
     assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), before);
-    assert_eq!(fs::read_to_string(other.join("notes.txt")).unwrap(), "local\n");
+    assert_eq!(
+        fs::read_to_string(other.join("notes.txt")).unwrap(),
+        "local\n"
+    );
 }
 
 #[test]

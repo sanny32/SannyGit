@@ -178,7 +178,12 @@ fn fixed_height_page(ui: &mut Ui, content_height: f32, mut draw: impl FnMut(&mut
     );
 }
 
-fn scrollable_page(ui: &mut Ui, content_height: f32, id_salt: &'static str, mut draw: impl FnMut(&mut Ui)) {
+fn scrollable_page(
+    ui: &mut Ui,
+    content_height: f32,
+    id_salt: &'static str,
+    mut draw: impl FnMut(&mut Ui),
+) {
     ScrollArea::vertical()
         .id_salt(id_salt)
         .auto_shrink([false, false])
@@ -229,9 +234,7 @@ fn repository_window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
             let content_height = page_height;
             match app.settings_window.page {
                 SettingsPage::CommitMessages => {
-                    fixed_height_page(ui, content_height, |ui| {
-                        repository_page(ui, app, palette)
-                    });
+                    fixed_height_page(ui, content_height, |ui| repository_page(ui, app, palette));
                 }
                 _ => scrollable_page(ui, content_height, "repository.preferences.page", |ui| {
                     repository_page(ui, app, palette)
@@ -444,11 +447,10 @@ fn section(
     let id = ui.make_persistent_id(("preferences.section", title));
     let mut state =
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
-    let response =
-        selectable_row(ui, app.settings_window.page == page, 23.0, |ui| {
-            state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
-            ui.label(title);
-        });
+    let response = selectable_row(ui, app.settings_window.page == page, 23.0, |ui| {
+        state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
+        ui.label(title);
+    });
     if response.clicked() {
         app.settings_window.page = page;
     }
@@ -694,13 +696,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         [ui.available_width() - 34.0, ui.spacing().interact_size.y],
                         singleline(value),
                     );
-                    if icons::button(
-                        ui,
-                        Icon::Folder,
-                        "Choose Git executable",
-                    )
-                    .clicked()
-                    {
+                    if icons::button(ui, Icon::Folder, "Choose Git executable").clicked() {
                         let mut picker = rfd::FileDialog::new().set_title("Choose Git executable");
                         if let Some(parent) =
                             std::path::Path::new(value).parent().filter(|p| p.is_dir())

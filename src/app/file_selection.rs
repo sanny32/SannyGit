@@ -653,10 +653,7 @@ mod tests {
         }
         assert_eq!(app.status, "Index updated");
         assert!(app.changes.iter().any(|row| {
-            row.path == "new"
-                && row.kind == ChangeKind::Untracked
-                && !row.staged
-                && row.unstaged
+            row.path == "new" && row.kind == ChangeKind::Untracked && !row.staged && row.unstaged
         }));
         assert_eq!(
             std::fs::read_to_string(repo.0.join("new")).unwrap(),
@@ -700,7 +697,10 @@ mod tests {
         }
         assert!(app.error.is_none(), "{:?}", app.error);
         assert!(app.state_current);
-        assert!(app.changes.iter().any(|row| row.path == "other" && !row.staged));
+        assert!(app
+            .changes
+            .iter()
+            .any(|row| row.path == "other" && !row.staged));
         assert_eq!(counter.get(), 1, "an unselected unstage is one Git command");
 
         let before = counter.get();

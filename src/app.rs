@@ -2830,7 +2830,6 @@ impl SannyGitApp {
             Err(error) => self.error = Some(error),
         }
     }
-
 }
 
 impl eframe::App for SannyGitApp {

@@ -1,8 +1,8 @@
 #![windows_subsystem = "windows"]
 
 mod app;
-mod branding;
 mod branches;
+mod branding;
 mod cherry_pick;
 mod clone_source;
 mod conflict;

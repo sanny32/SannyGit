@@ -118,9 +118,12 @@ impl SannyGitApp {
                     .as_mut()
                     .filter(|d| d.operation == operation)
                 {
-                    let defaults = self.repositories.get(self.selected_repository).and_then(
-                        |repository| self.manager.preferences.pull_defaults.get(&repository.path),
-                    );
+                    let defaults =
+                        self.repositories
+                            .get(self.selected_repository)
+                            .and_then(|repository| {
+                                self.manager.preferences.pull_defaults.get(&repository.path)
+                            });
                     fill_remote_dialog(dialog, state, defaults);
                     if skip && dialog.can_skip_confirmation() {
                         self.run_remote();
@@ -278,9 +281,10 @@ impl SannyGitApp {
                     .is_some_and(|remote| remotes.iter().any(|name| name == remote))
                 {
                     upstream_remote = status.remote.clone();
-                    upstream_ref = status.remote_ref.as_ref().and_then(|name| {
-                        name.strip_prefix("refs/heads/").map(str::to_owned)
-                    });
+                    upstream_ref = status
+                        .remote_ref
+                        .as_ref()
+                        .and_then(|name| name.strip_prefix("refs/heads/").map(str::to_owned));
                 }
             }
         }
@@ -369,7 +373,10 @@ fn local_remote_urls(root: &Path) -> (Vec<String>, BTreeMap<String, String>) {
         if trimmed.is_empty() || trimmed.starts_with(['#', ';']) {
             continue;
         }
-        if let Some(header) = trimmed.strip_prefix('[').and_then(|line| line.strip_suffix(']')) {
+        if let Some(header) = trimmed
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
             section = remote_section_name(header).map(str::to_owned);
             continue;
         }
@@ -429,11 +436,16 @@ fn git_config_file(root: &Path) -> Option<PathBuf> {
 
 fn remote_section_name(header: &str) -> Option<&str> {
     let name = header.trim().strip_prefix("remote ")?.trim();
-    name.strip_prefix('"')?.strip_suffix('"').filter(|name| !name.is_empty())
+    name.strip_prefix('"')?
+        .strip_suffix('"')
+        .filter(|name| !name.is_empty())
 }
 
 fn unquote_config(value: &str) -> String {
-    let Some(inner) = value.strip_prefix('"').and_then(|value| value.strip_suffix('"')) else {
+    let Some(inner) = value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+    else {
         return value.to_owned();
     };
     let mut decoded = String::new();

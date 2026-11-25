@@ -5,11 +5,7 @@ use crate::{
 };
 use std::{
     path::PathBuf,
-    sync::{
-        atomic::AtomicBool,
-        mpsc::Receiver,
-        Arc,
-    },
+    sync::{atomic::AtomicBool, mpsc::Receiver, Arc},
 };
 
 #[derive(Default)]
@@ -127,7 +123,7 @@ impl Session {
     pub(super) fn clear_view(&mut self) {
         let generation = self.generation.wrapping_add(1);
         if let Some(cancel) = &self.cancel {
-            crate::git::signal_cancel(&cancel);
+            crate::git::signal_cancel(cancel);
         }
         *self = Self {
             generation,
