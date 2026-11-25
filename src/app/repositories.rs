@@ -261,11 +261,7 @@ impl SannyGitApp {
                     if self.repositories.iter().any(|r| r.path == update.path) {
                         // Keep the last known icon on read errors and retry later.
                         if let Ok(provider) = update.provider {
-                            if let Some(provider) = provider {
-                                self.manager.hosting.insert(update.path.clone(), provider);
-                            } else {
-                                self.manager.hosting.remove(&update.path);
-                            }
+                            self.apply_repository_icon(&update.path, provider);
                         }
                         self.manager
                             .hosting_checked
@@ -306,6 +302,46 @@ impl SannyGitApp {
             .is_ok()
         {
             self.manager.hosting_receiver = Some(receiver);
+        }
+    }
+
+    /// Shows saved icons on the first frame, before Git reports the remote host.
+    pub(super) fn restore_repository_icons(&mut self) {
+        for repository in &self.repositories {
+            if let Some(icon) = self
+                .manager
+                .preferences
+                .icons
+                .get(&repository.path)
+                .copied()
+            {
+                self.manager
+                    .hosting
+                    .insert(repository.path.clone(), icon.provider());
+            }
+        }
+    }
+
+    fn apply_repository_icon(
+        &mut self,
+        path: &str,
+        provider: Option<crate::clone_source::Provider>,
+    ) {
+        match provider {
+            Some(provider) => {
+                self.manager.hosting.insert(path.to_owned(), provider);
+            }
+            None => {
+                self.manager.hosting.remove(path);
+            }
+        }
+        match provider.and_then(crate::repository::RepositoryIcon::from_provider) {
+            Some(icon) => {
+                self.manager.preferences.icons.insert(path.to_owned(), icon);
+            }
+            None => {
+                self.manager.preferences.icons.remove(path);
+            }
         }
     }
 
@@ -880,6 +916,7 @@ impl SannyGitApp {
         self.commit.commit_drafts.remove(&path);
         self.manager.hosting.remove(&path);
         self.manager.hosting_checked.remove(&path);
+        self.manager.preferences.icons.remove(&path);
         if self.manager.highlighted_repository.as_deref() == Some(&path) {
             self.manager.highlighted_repository = None;
         }
@@ -1020,12 +1057,20 @@ mod tests {
             app.manager.hosting.get(&path),
             Some(&crate::clone_source::Provider::GitHub)
         );
+        assert_eq!(
+            app.manager.preferences.icons.get(&path).copied(),
+            Some(crate::repository::RepositoryIcon::GitHub)
+        );
         for (provider, expected) in [
             (
                 Err("Read failed".into()),
                 Some(crate::clone_source::Provider::GitHub),
             ),
             (Ok(None), None),
+            (
+                Ok(Some(crate::clone_source::Provider::GitHubEnterprise)),
+                Some(crate::clone_source::Provider::GitHubEnterprise),
+            ),
         ] {
             let (sender, receiver) = mpsc::channel();
             sender
@@ -1037,8 +1082,55 @@ mod tests {
             app.manager.hosting_receiver = Some(receiver);
             app.update_repository_hosting(&context);
             assert_eq!(app.manager.hosting.get(&path).copied(), expected);
+            assert_eq!(
+                app.manager.preferences.icons.get(&path).copied(),
+                expected.and_then(crate::repository::RepositoryIcon::from_provider)
+            );
         }
         assert_eq!(app.selected_repository, usize::MAX);
+    }
+
+    #[test]
+    fn saved_repository_icons_restore_before_hosting_is_read() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories.push(crate::models::Repository {
+            name: "SannyGit".into(),
+            path: "/repo".into(),
+        });
+        app.manager
+            .preferences
+            .icons
+            .insert("/repo".into(), crate::repository::RepositoryIcon::GitHub);
+        app.manager
+            .preferences
+            .icons
+            .insert("/missing".into(), crate::repository::RepositoryIcon::GitLab);
+        app.restore_repository_icons();
+        assert_eq!(
+            app.manager.hosting.get("/repo").copied(),
+            Some(crate::clone_source::Provider::GitHub)
+        );
+        assert!(app.manager.hosting.get("/missing").is_none());
+
+        let mut storage = Storage::default();
+        eframe::App::save(&mut app, &mut storage);
+        let prefs: Preferences =
+            eframe::get_value(&storage, "sannygit.repository_preferences").unwrap();
+        assert_eq!(
+            prefs.icons.get("/repo").copied(),
+            Some(crate::repository::RepositoryIcon::GitHub)
+        );
+        let legacy: Preferences = serde_json::from_str(r#"{"groups":[]}"#).unwrap();
+        assert!(legacy.icons.is_empty());
+
+        app.request_remove_repository("/repo".into());
+        app.confirm_remove_repository();
+        assert!(app.manager.preferences.icons.get("/repo").is_none());
+        assert!(app.manager.hosting.get("/repo").is_none());
+        assert_eq!(
+            app.manager.preferences.icons.get("/missing").copied(),
+            Some(crate::repository::RepositoryIcon::GitLab)
+        );
     }
 
     #[derive(Default)]

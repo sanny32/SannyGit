@@ -498,6 +498,7 @@ impl SannyGitApp {
         {
             app.manager.preferences = preferences;
             app.apply_bookmark_names();
+            app.restore_repository_icons();
         }
         if let Some(path) = std::env::var_os("SANNYGIT_OPEN_REPOSITORY") {
             app.open_repository(PathBuf::from(path).to_string_lossy().into_owned());

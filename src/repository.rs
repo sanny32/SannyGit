@@ -16,6 +16,44 @@ pub struct RepositoryGroup {
     pub name: String,
     pub paths: Vec<String>,
 }
+
+/// Repository-list icon saved with the bookmark. Generic repositories are omitted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RepositoryIcon {
+    #[serde(rename = "github")]
+    GitHub,
+    #[serde(rename = "gitlab")]
+    GitLab,
+    #[serde(rename = "bitbucket")]
+    Bitbucket,
+    #[serde(rename = "azure")]
+    AzureDevOps,
+}
+
+impl RepositoryIcon {
+    pub fn from_provider(provider: crate::clone_source::Provider) -> Option<Self> {
+        use crate::clone_source::Provider;
+        match provider {
+            Provider::Url => None,
+            Provider::GitHub | Provider::GitHubEnterprise => Some(Self::GitHub),
+            Provider::GitLab | Provider::GitLabSelfHosted => Some(Self::GitLab),
+            Provider::Bitbucket | Provider::BitbucketServer => Some(Self::Bitbucket),
+            Provider::Azure | Provider::AzureServer => Some(Self::AzureDevOps),
+        }
+    }
+
+    /// Provider whose list icon matches this saved appearance.
+    pub fn provider(self) -> crate::clone_source::Provider {
+        use crate::clone_source::Provider;
+        match self {
+            Self::GitHub => Provider::GitHub,
+            Self::GitLab => Provider::GitLab,
+            Self::Bitbucket => Provider::Bitbucket,
+            Self::AzureDevOps => Provider::Azure,
+        }
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 pub struct Preferences {
     pub groups: Vec<RepositoryGroup>,
@@ -28,6 +66,9 @@ pub struct Preferences {
     /// Display names for bookmarks. Missing paths keep the directory name.
     #[serde(default)]
     pub names: std::collections::BTreeMap<String, String>,
+    /// Last known list icon for each bookmark. Loaded before hosting is read from Git.
+    #[serde(default)]
+    pub icons: std::collections::BTreeMap<String, RepositoryIcon>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
