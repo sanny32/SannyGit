@@ -122,8 +122,17 @@ pub enum PullStrategy {
     Rebase,
 }
 
-fn require_pull_ready(git: &GitContext, root: &Path) -> Result<(), String> {
-    if !git::load(git, root)?.changes.is_empty() {
+fn require_pull_ready(
+    git: &GitContext,
+    root: &Path,
+    operation: Operation,
+    strategy: PullStrategy,
+) -> Result<(), String> {
+    // Merge pull follows `git merge --ff`. Uncommitted changes stay when the
+    // incoming commits do not touch them; Git aborts when they would be
+    // overwritten. Rebase and Sync still need a clean worktree.
+    let fast_forward_pull = operation == Operation::Pull && strategy == PullStrategy::FastForward;
+    if !fast_forward_pull && !git::load(git, root)?.changes.is_empty() {
         return Err("Commit or move aside local changes before pulling.".into());
     }
     git::require_no_operation(git, root)
@@ -198,8 +207,13 @@ pub fn run_with_tags(
     let destination = format!("refs/heads/{target}");
     git::run(git, root, &["check-ref-format", &destination])?;
     let original = head(git, root)?;
+    let strategy = if operation == Operation::Pull {
+        pull_strategy.unwrap_or_default()
+    } else {
+        PullStrategy::FastForward
+    };
     if operation == Operation::Sync {
-        require_pull_ready(git, root)?;
+        require_pull_ready(git, root, operation, strategy)?;
         // Only a non-fast-forward rejection permits continuing after a failed push.
         let rejected = git::run_sync_push(
             git,
@@ -226,7 +240,7 @@ pub fn run_with_tags(
             push_tip(git, root, remote, &destination, &original, cancel)?;
         }
         Operation::Pull | Operation::Sync => {
-            require_pull_ready(git, root)?;
+            require_pull_ready(git, root, operation, strategy)?;
             if update_tags == Some(true) {
                 // Update tag refs separately so FETCH_HEAD still identifies only
                 // the reviewed branch in the following fetch.
@@ -257,7 +271,7 @@ pub fn run_with_tags(
                     "The local branch changed while fetching. Refresh before retrying.".into(),
                 );
             }
-            require_pull_ready(git, root)?;
+            require_pull_ready(git, root, operation, strategy)?;
             let remote_is_ahead = git::run(
                 git,
                 root,
@@ -271,19 +285,17 @@ pub fn run_with_tags(
                     &["merge-base", "--is-ancestor", fetched.trim(), &original],
                 )
                 .is_ok();
-            let strategy = if operation == Operation::Pull {
-                pull_strategy.unwrap_or_default()
-            } else {
-                PullStrategy::FastForward
-            };
             let diverged = !remote_is_ahead && !local_is_ahead;
-            if diverged && strategy == PullStrategy::FastForward {
+            if operation == Operation::Pull && strategy == PullStrategy::FastForward {
+                // Fast-forward when the remote is ahead. Create a merge commit when
+                // the branches diverged, matching a normal `git pull` merge.
+                merge_fetched(git, root, remote, target, fetched.trim(), cancel)?;
+            } else if diverged && strategy == PullStrategy::FastForward {
                 return Err(format!(
                     "{} requires a fast-forward. The branches diverged; merge or rebase them separately.",
                     operation.label()
                 ));
-            }
-            if remote_is_ahead || (diverged && strategy == PullStrategy::Rebase) {
+            } else if remote_is_ahead || (diverged && strategy == PullStrategy::Rebase) {
                 let fetched = fetched.trim();
                 match strategy {
                     PullStrategy::FastForward => {
@@ -335,6 +347,56 @@ pub fn run_with_tags(
         }
     }
     Ok(())
+}
+
+fn merge_fetched(
+    git: &GitContext,
+    root: &Path,
+    remote: &str,
+    target: &str,
+    fetched: &str,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let message = format!("Merge remote-tracking branch '{remote}/{target}'");
+    let error = match git::run_controlled(
+        git,
+        root,
+        &[
+            "-c",
+            "submodule.recurse=false",
+            "merge",
+            "--ff",
+            "--no-edit",
+            "--no-autostash",
+            "--no-overwrite-ignore",
+            "-m",
+            &message,
+            "--",
+            fetched,
+        ],
+        Duration::from_secs(600),
+        Some(cancel),
+    ) {
+        Ok(_) => return Ok(()),
+        Err(error) => error,
+    };
+    let snapshot = git::load(git, root)?;
+    if snapshot.sequencing == git::Sequencing::Merge
+        && snapshot
+            .changes
+            .iter()
+            .any(|change| change.kind == crate::models::ChangeKind::Conflicted)
+    {
+        return Ok(());
+    }
+    if snapshot.sequencing == git::Sequencing::Merge {
+        git::run(git, root, &["merge", "--abort"]).map_err(|abort| {
+            format!("Could not merge fetched changes: {error} Cleanup also failed: {abort}")
+        })?;
+    }
+    Err(format!(
+        "Could not merge fetched changes: {error} Check local changes, ignored-file conflicts, Git hooks, repository locks and permissions; refresh before retrying."
+    ))
 }
 
 fn fetch_tags(

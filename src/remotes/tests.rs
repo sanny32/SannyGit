@@ -637,16 +637,23 @@ fn pull_fast_forwards_and_refuses_dirty_or_diverged_worktrees() {
     )
     .unwrap();
     fs::write(other.join("file"), "local edits\n").unwrap();
-    assert!(run(
+    let dirty = head(&SYSTEM_GIT, &other).unwrap();
+    let error = run(
         &SYSTEM_GIT,
         &other,
         Operation::Pull,
         "origin",
         "main",
         Some("main"),
-        &AtomicBool::new(false)
+        &AtomicBool::new(false),
     )
-    .is_err());
+    .unwrap_err();
+    assert!(
+        error.contains("fast-forward") || error.contains("merge"),
+        "{error}"
+    );
+    assert!(!error.contains("move aside"), "{error}");
+    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), dirty);
     assert_eq!(
         fs::read_to_string(other.join("file")).unwrap(),
         "local edits\n"
@@ -680,6 +687,116 @@ fn pull_fast_forwards_and_refuses_dirty_or_diverged_worktrees() {
     )
     .unwrap();
     let old = head(&SYSTEM_GIT, &other).unwrap();
+    run(
+        &SYSTEM_GIT,
+        &other,
+        Operation::Pull,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), old);
+    assert!(other.join(".git/MERGE_HEAD").is_file());
+    let merged = fs::read_to_string(other.join("file")).unwrap();
+    assert!(merged.contains("<<<<<<<"), "{merged}");
+    assert!(merged.contains("local commit"), "{merged}");
+    assert!(merged.contains("remote commit"), "{merged}");
+}
+
+#[test]
+fn pull_fast_forward_keeps_unrelated_local_changes() {
+    let (_temp, source, other) = fixture();
+    fs::write(source.join("stable.txt"), "stable\n").unwrap();
+    command(&source, &["add", "stable.txt"]);
+    command(&source, &["commit", "-m", "stable"]);
+    run(
+        &SYSTEM_GIT,
+        &source,
+        Operation::Push,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    run(
+        &SYSTEM_GIT,
+        &other,
+        Operation::Pull,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    commit(&source, "next\n");
+    run(
+        &SYSTEM_GIT,
+        &source,
+        Operation::Push,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    fs::write(other.join("stable.txt"), "local stable\n").unwrap();
+    fs::write(other.join("extra.txt"), "staged extra\n").unwrap();
+    command(&other, &["add", "extra.txt"]);
+    fs::write(other.join("scratch.txt"), "untracked\n").unwrap();
+    run(
+        &SYSTEM_GIT,
+        &other,
+        Operation::Pull,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(
+        head(&SYSTEM_GIT, &other).unwrap(),
+        head(&SYSTEM_GIT, &source).unwrap()
+    );
+    assert_eq!(fs::read_to_string(other.join("file")).unwrap(), "next\n");
+    assert_eq!(
+        fs::read_to_string(other.join("stable.txt")).unwrap(),
+        "local stable\n"
+    );
+    assert_eq!(
+        fs::read_to_string(other.join("extra.txt")).unwrap(),
+        "staged extra\n"
+    );
+    assert_eq!(
+        fs::read_to_string(other.join("scratch.txt")).unwrap(),
+        "untracked\n"
+    );
+    let status = String::from_utf8(command(&other, &["status", "--porcelain"])).unwrap();
+    assert!(status.contains(" M stable.txt"), "{status}");
+    assert!(status.contains("A  extra.txt"), "{status}");
+    assert!(status.contains("?? scratch.txt"), "{status}");
+}
+
+#[test]
+fn pull_refuses_to_overwrite_an_untracked_file() {
+    let (_temp, source, other) = fixture();
+    fs::write(other.join("incoming.txt"), "mine\n").unwrap();
+    fs::write(source.join("incoming.txt"), "theirs\n").unwrap();
+    command(&source, &["add", "incoming.txt"]);
+    command(&source, &["commit", "-m", "add incoming"]);
+    run(
+        &SYSTEM_GIT,
+        &source,
+        Operation::Push,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let before = head(&SYSTEM_GIT, &other).unwrap();
     assert!(run(
         &SYSTEM_GIT,
         &other,
@@ -689,13 +806,107 @@ fn pull_fast_forwards_and_refuses_dirty_or_diverged_worktrees() {
         Some("main"),
         &AtomicBool::new(false)
     )
-    .unwrap_err()
-    .contains("fast-forward"));
-    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), old);
+    .is_err());
+    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), before);
+    assert_eq!(
+        fs::read_to_string(other.join("incoming.txt")).unwrap(),
+        "mine\n"
+    );
+}
+
+#[test]
+fn pull_rebase_still_requires_a_clean_worktree() {
+    let (_temp, source, other) = fixture();
+    commit(&source, "remote commit\n");
+    run(
+        &SYSTEM_GIT,
+        &source,
+        Operation::Push,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    fs::write(other.join("notes.txt"), "local\n").unwrap();
+    let before = head(&SYSTEM_GIT, &other).unwrap();
+    let error = run_with_tags(
+        &SYSTEM_GIT,
+        &other,
+        Operation::Pull,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+        None,
+        Some(PullStrategy::Rebase),
+    )
+    .unwrap_err();
+    assert!(error.contains("move aside"), "{error}");
+    assert_eq!(head(&SYSTEM_GIT, &other).unwrap(), before);
+    assert_eq!(fs::read_to_string(other.join("notes.txt")).unwrap(), "local\n");
+}
+
+#[test]
+fn pull_merges_diverged_branches_and_keeps_unrelated_local_changes() {
+    let (_temp, source, other) = fixture();
+    fs::write(other.join("local.txt"), "local\n").unwrap();
+    command(&other, &["add", "local.txt"]);
+    command(&other, &["commit", "-m", "local only"]);
+    let local = head(&SYSTEM_GIT, &other).unwrap();
+    fs::write(other.join("local.txt"), "local dirty\n").unwrap();
+    fs::write(other.join("scratch.txt"), "untracked\n").unwrap();
+    commit(&source, "remote commit\n");
+    run(
+        &SYSTEM_GIT,
+        &source,
+        Operation::Push,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let remote = head(&SYSTEM_GIT, &source).unwrap();
+    command(&other, &["config", "merge.ff", "only"]);
+    run(
+        &SYSTEM_GIT,
+        &other,
+        Operation::Pull,
+        "origin",
+        "main",
+        Some("main"),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let head = head(&SYSTEM_GIT, &other).unwrap();
+    assert_ne!(head, local);
+    assert_ne!(head, remote);
+    let parents = String::from_utf8(command(
+        &other,
+        &["rev-list", "--parents", "-n", "1", "HEAD"],
+    ))
+    .unwrap();
+    assert!(parents.contains(local.trim()), "{parents}");
+    assert!(parents.contains(remote.trim()), "{parents}");
+    let subject = String::from_utf8(command(&other, &["log", "-1", "--format=%s"])).unwrap();
+    assert!(
+        subject.contains("Merge remote-tracking branch 'origin/main'"),
+        "{subject}"
+    );
     assert_eq!(
         fs::read_to_string(other.join("file")).unwrap(),
-        "local commit\n"
+        "remote commit\n"
     );
+    assert_eq!(
+        fs::read_to_string(other.join("local.txt")).unwrap(),
+        "local dirty\n"
+    );
+    assert_eq!(
+        fs::read_to_string(other.join("scratch.txt")).unwrap(),
+        "untracked\n"
+    );
+    assert!(!other.join(".git/MERGE_HEAD").exists());
 }
 
 #[test]
@@ -716,17 +927,6 @@ fn pull_rebase_replays_local_commits_when_branches_diverged() {
     )
     .unwrap();
     let remote = head(&SYSTEM_GIT, &source).unwrap();
-    assert!(run(
-        &SYSTEM_GIT,
-        &other,
-        Operation::Pull,
-        "origin",
-        "main",
-        Some("main"),
-        &AtomicBool::new(false)
-    )
-    .unwrap_err()
-    .contains("fast-forward"));
     run_with_tags(
         &SYSTEM_GIT,
         &other,

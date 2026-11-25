@@ -132,7 +132,7 @@ fn pull_confirmation(
                         "Merge fetched remote changes",
                     )
                     .help_text(
-                        "Fast-forward only. Diverged branches must be merged separately.",
+                        "Fast-forward when possible. Otherwise create a merge commit. Uncommitted changes stay when incoming commits do not touch those files.",
                     );
                     ui.radio_value(
                         &mut dialog.pull.rebase,

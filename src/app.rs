@@ -2670,7 +2670,13 @@ impl SannyGitApp {
                 };
                 match outcome {
                     Ok(()) => {
-                        self.status = success.into();
+                        self.status = if success == "Pull complete"
+                            && self.sequencing == git::Sequencing::Merge
+                        {
+                            "Pull started. Resolve conflicts in the working tree".into()
+                        } else {
+                            success.into()
+                        };
                         self.error = refresh_error.map(|error| format!("{success}. {error}"));
                     }
                     Err(error) => {
