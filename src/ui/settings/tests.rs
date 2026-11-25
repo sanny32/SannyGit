@@ -731,14 +731,16 @@ fn interface_style_dropdown_updates_the_draft_in_both_themes() {
         theme.apply(&context);
         let mut app = SannyGitApp::with_theme(theme);
         let render = |app: &mut SannyGitApp, events| {
-            context.run_ui(
+            let mut output = context.run_ui(
                 RawInput {
                     screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(680.0, 380.0))),
                     events,
                     ..Default::default()
                 },
                 |ui| window_contents(ui, app),
-            )
+            );
+            output.textures_delta.clear();
+            output
         };
         let click = |app: &mut SannyGitApp, label| {
             let output = render(app, vec![]);

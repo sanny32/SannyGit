@@ -193,7 +193,10 @@ mod tests {
             app.llm_config.chatgpt_subscription = true;
             app.llm_config.subscription_provider = provider;
 
-            let _ = context.run_ui(RawInput::default(), |ui| show(ui, &mut app));
+            context
+                .run_ui(RawInput::default(), |ui| show(ui, &mut app))
+                .textures_delta
+                .clear();
 
             assert!(matches!(
                 app.settings_window.chatgpt_status,
