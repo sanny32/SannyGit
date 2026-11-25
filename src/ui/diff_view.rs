@@ -21,7 +21,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let index = app.selection.active;
     let Some(change) = app.changes.get(index) else {
         super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
-            ui.label("Changes");
+            ui.label(RichText::new("Changes").family(crate::theme::semibold_family()));
         });
         return;
     };
@@ -269,7 +269,7 @@ fn file_header(ui: &mut Ui, path: &str, palette: crate::theme::Palette) -> bool 
     let mut close = false;
     super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
         ui.spacing_mut().interact_size.y = 20.0;
-        ui.label("Changes");
+        ui.label(RichText::new("Changes").family(crate::theme::semibold_family()));
         ui.add_space(8.0);
         let font = eframe::egui::TextStyle::Body.resolve(ui.style());
         let text = ui
