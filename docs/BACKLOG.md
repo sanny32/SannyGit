@@ -66,7 +66,7 @@ the path `Label` in the toolbar layout around the line actions.
 ### Preference to show token usage in the commit panel
 
 **Problem:** After “Generate commit message”, input/output token counts appear
-as a small badge overlay on the message field (`↓… ↑…`). There is no user
+as a small badge overlay on the message field (`↑… ↓…`). There is no user
 setting to turn this on or off. `CommitState` also accumulates
 `session_generation_tokens`, but nothing in the commit UI exposes session
 totals.

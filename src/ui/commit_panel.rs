@@ -221,7 +221,7 @@ const TOKEN_BADGE_INSET: Vec2 = Vec2::new(6.0, 6.0);
 
 fn token_badge_label(usage: crate::llm::TokenUsage) -> String {
     format!(
-        "↓{} ↑{}",
+        "↑{} ↓{}",
         crate::llm::format_token_count(usage.input),
         crate::llm::format_token_count(usage.output),
     )
@@ -276,7 +276,7 @@ fn draw_token_usage_badge(ui: &Ui, rect: Rect, usage: crate::llm::TokenUsage, pa
 
 fn token_usage_tooltip(usage: crate::llm::TokenUsage) -> String {
     format!(
-        "↓ {} input tokens\n↑ {} output tokens",
+        "↑ {} input tokens\n↓ {} output tokens",
         crate::llm::format_token_count(usage.input),
         crate::llm::format_token_count(usage.output),
     )
@@ -374,6 +374,20 @@ mod tests {
     use super::*;
     use crate::theme::ThemeChoice;
     use eframe::egui::{self, Pos2};
+
+    #[test]
+    fn token_badge_marks_sent_tokens_up_and_received_tokens_down() {
+        let usage = crate::llm::TokenUsage {
+            input: 2_048,
+            output: 35,
+            total: 2_083,
+        };
+        assert_eq!(token_badge_label(usage), "↑2.0k ↓35");
+        assert_eq!(
+            token_usage_tooltip(usage),
+            "↑ 2.0k input tokens\n↓ 35 output tokens"
+        );
+    }
 
     #[test]
     fn commit_modes_and_generation_preserve_layout_and_draft_in_both_themes() {
