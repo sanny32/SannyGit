@@ -41,9 +41,16 @@ Windows, Linux, and macOS. The UI language is English. The license is MIT.
   `git log`, `git show`, `git branch --list`, and `git remote -v`.
 - Do not overwrite or revert other people's changes. Edit source files only
   within the task scope; do not delete unrelated files or user data.
-- Git integration tests must use separate temporary repositories. Do not create
-  test commits or perform other mutating Git operations in the project's working
-  repository or the user's repositories.
+- For any test or manual verification that touches a real Git working tree, agents
+  must use their own dedicated test repositories — isolated temporary directories
+  created for the run, or fixtures under `tests/` — never this project's working
+  copy (`D:/Work/SannyGit` or the clone path in use) and never the user's personal
+  or production repositories. Automated tests already follow this; agents doing
+  exploratory `cargo run`, scripted scenarios, or one-off Git commands must do
+  the same.
+- Do not create test commits, tags, branches, remotes, or other mutating Git
+  operations in the project workspace or in repositories the user keeps outside
+  the task scope.
 
 ## Source Map
 
@@ -183,7 +190,9 @@ other test failures separately; do not assume they are sandbox restrictions.
 
 Add meaningful tests when changing diff parsing, Git output parsing, status
 handling, branches, or error handling. Keep unit tests next to the code and
-place integration tests in `tests/` when needed.
+place integration tests in `tests/` when needed. Tests and agents must not depend
+on or modify the agent's checkout of SannyGit itself; provision separate
+repositories under `tempfile`, `tests/fixtures`, or another disposable path.
 
 In the final response, briefly describe the result, list created and modified
 files, and report the checks performed and their results. Mention checks that
