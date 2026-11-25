@@ -3,6 +3,8 @@ use crate::{
     logging::{self, Level},
     models::{ChangeFile, ChangeKind, Repository},
 };
+#[cfg(windows)]
+use std::sync::Arc;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -16,8 +18,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-#[cfg(windows)]
-use std::sync::Arc;
 
 const OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
 const FILE_LIMIT: usize = 5_000;
@@ -523,7 +523,7 @@ fn execute_command(
                 let _ = wake.send(GitWake::Pipe);
                 result
             })
-            .map_err(|error| spawn_error(error))
+            .map_err(spawn_error)
         }
         let out = spawn_capture(stdout, &wake_tx, &spawn_error)?;
         let err = spawn_capture(stderr, &wake_tx, &spawn_error)?;
