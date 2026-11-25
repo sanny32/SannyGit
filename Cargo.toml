@@ -58,6 +58,11 @@ raw-window-handle = "0.6"
 [build-dependencies]
 winresource = "0.1"
 
+# Full DWARF in every dependency rlib made the CI cache about 5 GB per OS.
+# Line tables keep file and line in backtraces.
+[profile.dev]
+debug = "line-tables-only"
+
 [patch.crates-io]
 # egui PR #8890 exposes the native winit window of child viewports.
 eframe = { git = "https://github.com/quazardous/egui.git", rev = "5a5cc7f6a70adfb7eb4f6ab9d887ae51c29d0681" }
