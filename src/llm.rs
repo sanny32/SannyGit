@@ -927,7 +927,7 @@ fn api_client(config: &Config, timeout_seconds: u64) -> Result<Client, String> {
         .map_err(|error| format!("Cannot initialize the LLM client: {error}"))
 }
 
-async fn read_api_response(mut response: reqwest::Response) -> Result<Value, String> {
+pub(super) async fn read_api_response(mut response: reqwest::Response) -> Result<Value, String> {
     let status = response.status();
     if !status.is_success() {
         return Err(api_error(status.as_u16()));
@@ -1027,7 +1027,7 @@ fn parse_chat_completion(value: &Value) -> Result<GenerationResult, String> {
     })
 }
 
-fn validate_generated_message(message: &str) -> Result<String, String> {
+pub(super) fn validate_generated_message(message: &str) -> Result<String, String> {
     let message = message.trim();
     crate::git::validate_message(message)?;
     Ok(message.to_owned())
