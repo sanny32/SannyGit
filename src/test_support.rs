@@ -5,7 +5,7 @@ use std::{
     process::Command,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
-        Arc, Mutex, Weak,
+        Arc, Mutex, OnceLock, Weak,
     },
 };
 
@@ -52,17 +52,14 @@ pub(crate) fn record_git_command(root: &Path) {
     }
 }
 
-pub(crate) struct TempRepo(pub(crate) PathBuf);
-impl TempRepo {
-    pub(crate) fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "sannygit-test-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+fn configured_template() -> &'static Path {
+    static TEMPLATE: OnceLock<PathBuf> = OnceLock::new();
+    TEMPLATE.get_or_init(|| {
+        let path =
+            std::env::temp_dir().join(format!("sannygit-test-template-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
-        let repo = Self(path);
-        repo.git(&["init", "--initial-branch=main"]);
+        run_git(&path, &["init", "--initial-branch=main"]);
         // Isolate backend write tests from the developer's identity, hooks and signing.
         for (key, value) in [
             ("user.name", "SannyGit Test"),
@@ -71,9 +68,46 @@ impl TempRepo {
             ("core.hooksPath", "disabled-test-hooks"),
             ("core.autocrlf", "false"),
         ] {
-            repo.git(&["config", "--local", key, value]);
+            run_git(&path, &["config", "--local", key, value]);
         }
-        repo
+        path
+    })
+}
+
+fn run_git(path: &Path, args: &[&str]) {
+    let output = git_command().current_dir(path).args(args).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+pub(crate) struct TempRepo(pub(crate) PathBuf);
+impl TempRepo {
+    pub(crate) fn new() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "sannygit-test-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        // Copy one configured repository instead of spawning `git init`
+        // and five `git config` processes for every test.
+        copy_dir(configured_template(), &path);
+        Self(path)
     }
     pub(crate) fn git(&self, args: &[&str]) -> String {
         let output = git_command()
@@ -165,3 +199,43 @@ pub(crate) fn restart_memory(ctx: &eframe::egui::Context) -> eframe::egui::Memor
 
 pub(crate) static SYSTEM_GIT: std::sync::LazyLock<crate::git::GitContext> =
     std::sync::LazyLock::new(|| crate::git::GitContext::new(String::new()));
+
+#[test]
+fn fresh_repositories_are_independent_copies() {
+    let first = TempRepo::new();
+    let second = TempRepo::new();
+    assert_ne!(first.0, second.0);
+    for repo in [&first, &second] {
+        assert_eq!(
+            repo.git(&["symbolic-ref", "--short", "HEAD"]).trim(),
+            "main"
+        );
+        assert_eq!(
+            repo.git(&["config", "--local", "user.name"]).trim(),
+            "SannyGit Test"
+        );
+        assert_eq!(
+            repo.git(&["config", "--local", "user.email"]).trim(),
+            "test@example.invalid"
+        );
+        assert_eq!(
+            repo.git(&["config", "--local", "commit.gpgsign"]).trim(),
+            "false"
+        );
+        assert_eq!(
+            repo.git(&["config", "--local", "core.hooksPath"]).trim(),
+            "disabled-test-hooks"
+        );
+        assert_eq!(
+            repo.git(&["config", "--local", "core.autocrlf"]).trim(),
+            "false"
+        );
+    }
+    first.git(&["config", "--local", "user.name", "Changed"]);
+    first.write("only-first", "a");
+    assert_eq!(
+        second.git(&["config", "--local", "user.name"]).trim(),
+        "SannyGit Test"
+    );
+    assert!(!second.0.join("only-first").exists());
+}
