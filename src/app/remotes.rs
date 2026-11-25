@@ -1,7 +1,8 @@
 use super::{SannyGitApp, WorkerResult};
 use crate::remotes::{self, Operation, State};
 use std::{
-    path::PathBuf,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
 
@@ -72,7 +73,7 @@ impl SannyGitApp {
             .preferences
             .pull_defaults
             .get(&self.repositories[self.selected_repository].path);
-        self.network_dialog = Some(RemoteDialog {
+        let mut dialog = RemoteDialog {
             operation,
             state: None,
             remote: String::new(),
@@ -87,7 +88,11 @@ impl SannyGitApp {
                 remember: defaults.is_some(),
                 more_options: false,
             },
-        });
+        };
+        if let Some(state) = self.known_remote_state(&root) {
+            fill_remote_dialog(&mut dialog, state, defaults);
+        }
+        self.network_dialog = Some(dialog);
         self.error = None;
         self.status = "Loading remotes…".into();
         if !self.start_worker(move |git| WorkerResult::RemoteInfo {
@@ -113,33 +118,10 @@ impl SannyGitApp {
                     .as_mut()
                     .filter(|d| d.operation == operation)
                 {
-                    dialog.remote = state
-                        .upstream_or_origin()
-                        .or_else(|| state.remotes.first().map(String::as_str))
-                        .unwrap_or_default()
-                        .to_owned();
-                    if operation == Operation::Pull {
-                        if let Some(defaults) = self
-                            .repositories
-                            .get(self.selected_repository)
-                            .and_then(|repository| {
-                                self.manager.preferences.pull_defaults.get(&repository.path)
-                            })
-                            .filter(|defaults| state.remotes.contains(&defaults.remote))
-                        {
-                            dialog.remote = defaults.remote.clone();
-                            dialog.pull.update_tags = defaults.update_tags;
-                            dialog.pull.rebase = defaults.rebase;
-                        }
-                    }
-                    dialog.branch = state
-                        .upstream_ref
-                        .clone()
-                        .or_else(|| state.branch.clone())
-                        .unwrap_or_default();
-                    dialog.set_upstream =
-                        operation == Operation::Push && state.upstream_remote.is_none();
-                    dialog.state = Some(state);
+                    let defaults = self.repositories.get(self.selected_repository).and_then(
+                        |repository| self.manager.preferences.pull_defaults.get(&repository.path),
+                    );
+                    fill_remote_dialog(dialog, state, defaults);
                     if skip && dialog.can_skip_confirmation() {
                         self.run_remote();
                     }
@@ -268,6 +250,207 @@ impl SannyGitApp {
             self.network_dialog = None;
         }
     }
+
+    /// Remote names and fetch URLs already stored in the repository config, plus
+    /// the branch and upstream the window has already loaded. This fills the
+    /// dialog on the opening frame; the background read still replaces it.
+    fn known_remote_state(&self, root: &Path) -> Option<State> {
+        let (remotes, remote_urls) = local_remote_urls(root);
+        if remotes.is_empty() {
+            return None;
+        }
+        let mut branch = if self.branches.current_branch.is_empty() {
+            None
+        } else {
+            Some(self.branches.current_branch.clone())
+        };
+        let mut upstream_remote = None;
+        let mut upstream_ref = None;
+        if let Some(status) = &self.tracking.status {
+            let same_branch = branch.as_deref().is_none_or(|name| name == status.branch);
+            if same_branch {
+                if branch.is_none() && !status.branch.is_empty() {
+                    branch = Some(status.branch.clone());
+                }
+                if status
+                    .remote
+                    .as_ref()
+                    .is_some_and(|remote| remotes.iter().any(|name| name == remote))
+                {
+                    upstream_remote = status.remote.clone();
+                    upstream_ref = status.remote_ref.as_ref().and_then(|name| {
+                        name.strip_prefix("refs/heads/").map(str::to_owned)
+                    });
+                }
+            }
+        }
+        if upstream_remote.is_none() {
+            if let Some(name) = &branch {
+                if let Some(upstream) = self
+                    .branches
+                    .entries
+                    .iter()
+                    .find(|entry| {
+                        entry.kind == crate::models::RefKind::Local && entry.name == *name
+                    })
+                    .and_then(|entry| entry.upstream.as_deref())
+                {
+                    if let Some(remote) = remotes
+                        .iter()
+                        .filter(|remote| {
+                            upstream == remote.as_str()
+                                || upstream.starts_with(&format!("{remote}/"))
+                        })
+                        .max_by_key(|remote| remote.len())
+                    {
+                        upstream_ref = upstream
+                            .strip_prefix(&format!("{remote}/"))
+                            .map(str::to_owned);
+                        upstream_remote = Some(remote.clone());
+                    }
+                }
+            }
+        }
+        Some(State {
+            remotes,
+            remote_urls,
+            branch,
+            upstream_remote,
+            upstream_ref,
+        })
+    }
+}
+
+fn fill_remote_dialog(
+    dialog: &mut RemoteDialog,
+    state: State,
+    defaults: Option<&crate::repository::PullDefaults>,
+) {
+    dialog.remote = state
+        .upstream_or_origin()
+        .or_else(|| state.remotes.first().map(String::as_str))
+        .unwrap_or_default()
+        .to_owned();
+    if dialog.operation == Operation::Pull {
+        if let Some(defaults) = defaults.filter(|defaults| state.remotes.contains(&defaults.remote))
+        {
+            dialog.remote = defaults.remote.clone();
+            dialog.pull.update_tags = defaults.update_tags;
+            dialog.pull.rebase = defaults.rebase;
+        }
+    }
+    dialog.branch = state
+        .upstream_ref
+        .clone()
+        .or_else(|| state.branch.clone())
+        .unwrap_or_default();
+    dialog.set_upstream = dialog.operation == Operation::Push && state.upstream_remote.is_none();
+    dialog.state = Some(state);
+}
+
+fn local_remote_urls(root: &Path) -> (Vec<String>, BTreeMap<String, String>) {
+    let Some(path) = git_config_file(root) else {
+        return (Vec::new(), BTreeMap::new());
+    };
+    let Ok(metadata) = std::fs::metadata(&path) else {
+        return (Vec::new(), BTreeMap::new());
+    };
+    if metadata.len() > 1024 * 1024 {
+        return (Vec::new(), BTreeMap::new());
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (Vec::new(), BTreeMap::new());
+    };
+    let mut remotes = Vec::new();
+    let mut urls: BTreeMap<String, String> = BTreeMap::new();
+    let mut section = None;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(['#', ';']) {
+            continue;
+        }
+        if let Some(header) = trimmed.strip_prefix('[').and_then(|line| line.strip_suffix(']')) {
+            section = remote_section_name(header).map(str::to_owned);
+            continue;
+        }
+        let Some(name) = section.as_deref() else {
+            continue;
+        };
+        if crate::remote_config::name_hint(name).is_some() {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "url" {
+            continue;
+        }
+        let url = crate::remote_config::redact_url(&unquote_config(value.trim()));
+        if !remotes.iter().any(|remote: &String| remote == name) {
+            remotes.push(name.to_owned());
+        }
+        urls.entry(name.to_owned())
+            .and_modify(|existing| {
+                existing.push_str("; ");
+                existing.push_str(&url);
+            })
+            .or_insert(url);
+    }
+    (remotes, urls)
+}
+
+fn git_config_file(root: &Path) -> Option<PathBuf> {
+    let dot = root.join(".git");
+    let git_dir = if dot.is_dir() {
+        dot
+    } else {
+        let text = std::fs::read_to_string(&dot).ok()?;
+        let spec = text.trim().strip_prefix("gitdir:")?.trim();
+        let dir = PathBuf::from(spec);
+        if dir.is_absolute() {
+            dir
+        } else {
+            root.join(dir)
+        }
+    };
+    let config_dir = if let Ok(common) = std::fs::read_to_string(git_dir.join("commondir")) {
+        let common = common.trim();
+        let path = PathBuf::from(common);
+        if path.is_absolute() {
+            path
+        } else {
+            git_dir.join(path)
+        }
+    } else {
+        git_dir
+    };
+    Some(config_dir.join("config"))
+}
+
+fn remote_section_name(header: &str) -> Option<&str> {
+    let name = header.trim().strip_prefix("remote ")?.trim();
+    name.strip_prefix('"')?.strip_suffix('"').filter(|name| !name.is_empty())
+}
+
+fn unquote_config(value: &str) -> String {
+    let Some(inner) = value.strip_prefix('"').and_then(|value| value.strip_suffix('"')) else {
+        return value.to_owned();
+    };
+    let mut decoded = String::new();
+    let mut chars = inner.chars();
+    while let Some(character) = chars.next() {
+        if character == '\\' {
+            match chars.next() {
+                Some('n') => decoded.push('\n'),
+                Some('t') => decoded.push('\t'),
+                Some(other) => decoded.push(other),
+                None => decoded.push('\\'),
+            }
+        } else {
+            decoded.push(character);
+        }
+    }
+    decoded
 }
 
 #[cfg(test)]
@@ -346,6 +529,8 @@ mod tests {
         let saved = serde_json::to_string(&app.manager.preferences).unwrap();
         app.manager.preferences = serde_json::from_str(&saved).unwrap();
         app.open_remote(Operation::Pull);
+        assert_eq!(app.network_dialog.as_ref().unwrap().remote, "team");
+        assert!(app.network_dialog.as_ref().unwrap().state.is_some());
         assert!(!app.network_dialog.as_ref().unwrap().pull.update_tags);
         assert!(app.network_dialog.as_ref().unwrap().pull.remember);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
