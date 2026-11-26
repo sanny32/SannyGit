@@ -26,6 +26,7 @@ pub const DIALOG_TITLE_FONT_SIZE: f32 = 16.0;
 pub const SETTINGS_TITLE_FONT_SIZE: f32 = 18.0;
 pub const TOOLBAR_BRAND_FONT_SIZE: f32 = 24.0;
 pub const ABOUT_BRAND_FONT_SIZE: f32 = 32.0;
+pub const ABOUT_CAPTION_FONT_SIZE: f32 = 14.0;
 pub const COMMIT_AVATAR_FONT_SIZE: f32 = 32.0;
 
 /// Shared minimum height for form fields and their adjacent controls, in logical pixels.

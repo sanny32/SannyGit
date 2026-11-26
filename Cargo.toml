@@ -54,6 +54,7 @@ keyring = { version = "4.2.0", default-features = false, features = ["v1"] }
 raw-window-handle = "0.6"
 
 [build-dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 winresource = "0.1"
 
 # Full DWARF in every dependency rlib made the CI cache about 5 GB per OS.

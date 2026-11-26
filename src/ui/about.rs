@@ -4,12 +4,14 @@ use super::controls::{
 };
 use crate::{
     app::SannyGitApp,
-    theme::{semibold_family, Palette, ABOUT_BRAND_FONT_SIZE},
+    theme::{semibold_family, Palette, ABOUT_BRAND_FONT_SIZE, ABOUT_CAPTION_FONT_SIZE},
 };
 use eframe::egui::{self, Align, Frame, Layout, Margin, RichText, Ui, Vec2, ViewportCommand};
 
 const TITLE: &str = "About SannyGit";
-const SIZE: Vec2 = egui::vec2(660.0, 330.0);
+const SIZE: Vec2 = egui::vec2(620.0, 305.0);
+const BODY_HEIGHT: f32 = 224.0;
+const COPYRIGHT: &str = concat!("© ", env!("SANNYGIT_BUILD_YEAR"), " Alexandr Ananev");
 
 pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let state_id = egui::Id::unique("sannygit.about.presentation");
@@ -66,11 +68,11 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             }
             let mut dismiss = false;
             if class == egui::ViewportClass::EmbeddedWindow {
-                ui.set_width(SIZE.x - 48.0);
+                ui.set_width(SIZE.x);
                 dismiss = contents(ui, app.palette());
             } else {
                 egui::CentralPanel::default()
-                    .frame(Frame::new().fill(app.palette().panel).inner_margin(24))
+                    .frame(Frame::new().fill(app.palette().panel))
                     .show(ui, |ui| dismiss = contents(ui, app.palette()));
                 super::show_errors(ui, app);
             }
@@ -102,13 +104,34 @@ fn close(ctx: &egui::Context, app: &mut SannyGitApp) {
 
 fn contents(ui: &mut Ui, palette: Palette) -> bool {
     dialog_style::setup(ui);
-    let mut dismiss = false;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    Frame::new()
+        .inner_margin(Margin::symmetric(24, 16))
+        .show(ui, |ui| body(ui, palette));
+    ui.add(egui::Separator::default().spacing(1.0));
+    Frame::new()
+        .fill(palette.header)
+        .inner_margin(Margin::symmetric(24, 10))
+        .show(ui, |ui| {
+            let mut dismiss = false;
+            dialog_style::button_row(ui, |ui| {
+                dismiss = ui.add(dialog_style::primary("OK", palette)).dialog_close();
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.label(RichText::new(COPYRIGHT).color(palette.muted));
+                });
+            });
+            dismiss
+        })
+        .inner
+}
+
+fn body(ui: &mut Ui, palette: Palette) {
     ui.horizontal_top(|ui| {
         ui.allocate_ui_with_layout(
-            egui::vec2(214.0, SIZE.y - 48.0),
+            egui::vec2(214.0, BODY_HEIGHT),
             Layout::top_down(Align::Center),
             |ui| {
-                ui.add_space(36.0);
+                ui.add_space(12.0);
                 ui.add(
                     egui::Image::from_bytes(
                         "bytes://app/sannygit.svg",
@@ -121,7 +144,7 @@ fn contents(ui: &mut Ui, palette: Palette) -> bool {
             },
         );
         let (separator, _) =
-            ui.allocate_exact_size(egui::vec2(1.0, SIZE.y - 48.0), egui::Sense::hover());
+            ui.allocate_exact_size(egui::vec2(1.0, BODY_HEIGHT), egui::Sense::hover());
         ui.painter().line_segment(
             [separator.center_top(), separator.center_bottom()],
             (1.0, palette.border),
@@ -129,20 +152,14 @@ fn contents(ui: &mut Ui, palette: Palette) -> bool {
         ui.add_space(8.0);
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.add_space(8.0);
             ui.label(
                 RichText::new("SannyGit")
                     .size(ABOUT_BRAND_FONT_SIZE)
                     .family(semibold_family()),
             );
             ui.add_space(8.0);
-            Frame::new()
-                .fill(palette.header)
-                .corner_radius(12)
-                .inner_margin(Margin::symmetric(0, 3))
-                .show(ui, |ui| {
-                    ui.label(concat!("Version ", env!("CARGO_PKG_VERSION")));
-                });
+            ui.label(concat!("Version ", env!("CARGO_PKG_VERSION")));
             ui.add_space(12.0);
             ui.label(RichText::new(
                 "A desktop Git client built with Rust and egui.",
@@ -163,20 +180,8 @@ fn contents(ui: &mut Ui, palette: Palette) -> bool {
                     "https://sanny32.github.io/SannyGit",
                 );
             });
-            ui.add_space(12.0);
-            ui.separator();
-            ui.add_space(6.0);
-            dialog_style::button_row(ui, |ui| {
-                dismiss = ui.add(dialog_style::primary("OK", palette)).dialog_close();
-                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.label(
-                        RichText::new("© 2026 SaNNy. All rights reserved.").color(palette.muted),
-                    );
-                });
-            });
         });
     });
-    dismiss
 }
 
 fn brand_caption(ui: &mut Ui, palette: Palette) {
@@ -195,7 +200,11 @@ fn brand_caption(ui: &mut Ui, palette: Palette) {
         );
     }
     ui.label(title);
-    ui.label(RichText::new("A simple Git client").color(palette.muted));
+    ui.label(
+        RichText::new("A simple Git client")
+            .size(ABOUT_CAPTION_FONT_SIZE)
+            .color(palette.muted),
+    );
 }
 
 fn detail_row(ui: &mut Ui, palette: Palette, icon: Icon, label: &str, value: impl FnOnce(&mut Ui)) {
@@ -233,6 +242,9 @@ mod tests {
                 for _ in 0..3 {
                     let mut details = 0;
                     let mut wrapped = Vec::new();
+                    let mut last_detail_bottom = 0.0_f32;
+                    let mut copyright = None;
+                    let mut ok = None;
                     let mut output = ctx.run_ui(
                         egui::RawInput {
                             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, SIZE)),
@@ -240,7 +252,7 @@ mod tests {
                         },
                         |ui| {
                             egui::CentralPanel::default()
-                                .frame(Frame::new().inner_margin(24))
+                                .frame(Frame::new())
                                 .show(ui, |ui| {
                                     let available = ui.max_rect();
                                     assert!(!contents(ui, style.palette(theme)));
@@ -254,6 +266,12 @@ mod tests {
                     );
                     for shape in &output.shapes {
                         if let egui::epaint::Shape::Text(text) = &shape.shape {
+                            let rect = text.galley.rect.translate(text.pos.to_vec2());
+                            match text.galley.job.text.as_str() {
+                                COPYRIGHT => copyright = Some(rect),
+                                "OK" => ok = Some(rect),
+                                _ => {}
+                            }
                             if [
                                 "License:",
                                 "Source code:",
@@ -263,6 +281,7 @@ mod tests {
                             ]
                             .contains(&text.galley.job.text.as_str())
                             {
+                                last_detail_bottom = last_detail_bottom.max(rect.bottom());
                                 if text.galley.rows.len() != 1 {
                                     wrapped.push(text.galley.job.text.to_owned());
                                 }
@@ -273,6 +292,10 @@ mod tests {
                     output.textures_delta.clear();
                     assert!(wrapped.is_empty(), "Wrapped About detail(s): {wrapped:?}");
                     assert_eq!(details, 5);
+                    let copyright = copyright.expect("About copyright");
+                    let ok = ok.expect("About OK button");
+                    assert!(copyright.top() > last_detail_bottom && ok.top() > last_detail_bottom);
+                    assert!(copyright.left() < SIZE.x / 3.0 && ok.right() > SIZE.x * 0.9);
                 }
             }
         }
