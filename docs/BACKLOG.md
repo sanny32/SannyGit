@@ -130,6 +130,26 @@ now if needed for column separation.
 
 **Status:** Not started
 
+### Menu shortcut labels: spacing between modifier glyphs and keys
+
+**Problem:** Shortcut text on menu rows (e.g. **F11**, **⇧⌘PageDown**, **⌘PageDown**) packs
+modifier symbols (⇧, ⌘, …) flush against the following key name with no visual
+breathing room. **⇧⌘PageDown** reads as one tight cluster instead of separate
+parts; the column looks cramped compared to polished native menus (screenshot from
+2026-11-26, Edit menu shortcut column).
+
+**Goal:** Render shortcut labels with consistent, modest spacing between modifier
+glyphs and key names (and between modifier tokens where appropriate) so the
+column looks deliberate and readable. Match SmartGit / platform conventions where
+possible; keep alignment in the shortcut column unchanged.
+
+**Likely touch points:** `eframe::egui::Context::format_shortcut` output and
+`Button::shortcut_text` layout (`src/ui/toolbar.rs`, `src/ui/controls/popup_menu.rs`,
+`src/ui/branches.rs` context menus); if spacing is inside egui’s menu button
+painter, the `quazardous/egui` fork or a local wrapper around shortcut display.
+
+**Status:** Not started
+
 ### About dialog body uses text-edit black in dark theme
 
 **Problem:** In the **About SannyGit** window, the main content background reads as

@@ -1514,7 +1514,14 @@ mod tests {
                 let conflict_prev = if compact { "Prev." } else { "Prev. Conflict" };
                 let next_conflict = position(conflict_next, Some(save.y), true);
                 assert!(next_conflict.x > previous && next_conflict.x > size.x - 110.0);
-                assert!(save.y < position("Working Tree", None, false).y);
+                assert!(output.shapes.iter().any(|shape| match &shape.shape {
+                    Shape::Text(text) if text.galley.job.text == "Working Tree" => {
+                        let rect = text.galley.rect.translate(text.pos.to_vec2());
+                        bounds.intersect(shape.clip_rect).contains_rect(rect)
+                            && rect.center().y > save.y
+                    }
+                    _ => false,
+                }));
                 let pitch = save.x - position(base_label, Some(save.y), false).x;
                 for (left, right, rightmost) in [
                     (change_prev, change_next, false),
