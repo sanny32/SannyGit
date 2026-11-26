@@ -47,6 +47,10 @@ extern "system" {
     fn IsWindowEnabled(window: Hwnd) -> i32;
     fn IsWindowVisible(window: Hwnd) -> i32;
     fn SetActiveWindow(window: Hwnd) -> Hwnd;
+    fn GetFocus() -> Hwnd;
+    fn SetFocus(window: Hwnd) -> Hwnd;
+    fn GetActiveWindow() -> Hwnd;
+    fn GetForegroundWindow() -> Hwnd;
     #[cfg_attr(target_pointer_width = "32", link_name = "SetWindowLongW")]
     fn SetWindowLongPtrW(window: Hwnd, index: i32, value: isize) -> isize;
 }
@@ -112,6 +116,86 @@ fn disabled_owner_key() -> Id {
 
 fn presentation_key(context: &Context) -> Id {
     Id::unique(("sannygit.first_presentation", context.viewport_id()))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FocusSnapshot {
+    owner: isize,
+    keyboard: isize,
+    active: isize,
+    foreground: isize,
+    visible: bool,
+    enabled: bool,
+    presenting: bool,
+}
+
+impl FocusSnapshot {
+    fn needs_focus_repair(self) -> bool {
+        self.owner != 0
+            && self.foreground == self.owner
+            && self.active == self.owner
+            && self.keyboard == 0
+            && self.visible
+            && self.enabled
+            && !self.presenting
+    }
+}
+
+/// Repair the Win32 state seen after showing a hidden maximized window:
+/// activation succeeded, but no window on the UI thread has keyboard focus.
+pub(crate) fn repair_root_focus(context: &Context, modal_open: bool) {
+    if context.viewport_id() != egui::ViewportId::ROOT {
+        return;
+    }
+    let snapshot = root_focus_snapshot(context);
+    let attempt_key = Id::unique("sannygit.focus_repair_attempted");
+    let Some(snapshot) = snapshot.filter(|state| !modal_open && state.needs_focus_repair()) else {
+        context.data_mut(|data| data.remove::<bool>(attempt_key));
+        return;
+    };
+    if context.data(|data| data.get_temp::<bool>(attempt_key).unwrap_or(false)) {
+        return;
+    }
+    context.data_mut(|data| data.insert_temp(attempt_key, true));
+    // SAFETY: the live root HWND belongs to this UI thread. Recheck native
+    // activation immediately before SetFocus so another application or a
+    // child dialog keeps its focus. Do not activate or raise any window.
+    unsafe {
+        let window = snapshot.owner as Hwnd;
+        if GetForegroundWindow() != window
+            || GetActiveWindow() != window
+            || !GetFocus().is_null()
+            || IsWindowEnabled(window) == 0
+            || IsWindowVisible(window) == 0
+        {
+            return;
+        }
+        SetFocus(window);
+    }
+    // Let winit deliver the real WM_SETFOCUS event on the next frame instead
+    // of fabricating egui input or leaving menus enabled in inactive windows.
+    context.request_repaint();
+}
+
+fn root_focus_snapshot(context: &Context) -> Option<FocusSnapshot> {
+    let owner = context.data(|data| data.get_temp::<isize>(owner_key()))?;
+    let presenting = context.data(|data| {
+        data.get_temp::<FirstPresentation>(presentation_key(context))
+            .is_some()
+    });
+    // SAFETY: these queries run on the window's UI thread. The stored owner
+    // HWND belongs to the live root viewport; no window state is modified.
+    Some(unsafe {
+        FocusSnapshot {
+            owner,
+            keyboard: GetFocus() as isize,
+            active: GetActiveWindow() as isize,
+            foreground: GetForegroundWindow() as isize,
+            visible: IsWindowVisible(owner as Hwnd) != 0,
+            enabled: IsWindowEnabled(owner as Hwnd) != 0,
+            presenting,
+        }
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -385,6 +469,54 @@ mod tests {
             unsafe {
                 DestroyWindow(self.0);
             }
+        }
+    }
+
+    #[test]
+    fn logged_focus_gap_is_repaired_only_for_the_active_visible_root() {
+        // Regression snapshot from the failed 2026-11-26 launch: activation
+        // completed, but Win32 and winit never acquired keyboard focus.
+        let failed = FocusSnapshot {
+            owner: 21955348,
+            keyboard: 0,
+            active: 21955348,
+            foreground: 21955348,
+            visible: true,
+            enabled: true,
+            presenting: false,
+        };
+        assert!(failed.needs_focus_repair());
+        for protected in [
+            FocusSnapshot {
+                foreground: 9767476,
+                ..failed
+            }, // another application
+            FocusSnapshot {
+                active: 42,
+                ..failed
+            }, // native dialog
+            FocusSnapshot {
+                keyboard: 42,
+                ..failed
+            }, // child control
+            FocusSnapshot {
+                keyboard: failed.owner,
+                ..failed
+            }, // already focused
+            FocusSnapshot {
+                enabled: false,
+                ..failed
+            }, // disabled modal owner
+            FocusSnapshot {
+                visible: false,
+                ..failed
+            },
+            FocusSnapshot {
+                presenting: true,
+                ..failed
+            }, // still cloaked
+        ] {
+            assert!(!protected.needs_focus_repair(), "{protected:?}");
         }
     }
 
