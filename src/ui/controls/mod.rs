@@ -29,7 +29,7 @@ pub fn selectable_row(
     height: f32,
     contents: impl FnOnce(&mut Ui),
 ) -> Response {
-    selectable_row_with_outset(ui, selected, height, 0.0, contents)
+    selectable_row_with_outset(ui, selected, height, 0.0, Sense::click(), contents)
 }
 
 pub fn selectable_row_with_outset(
@@ -37,10 +37,10 @@ pub fn selectable_row_with_outset(
     selected: bool,
     height: f32,
     outset: f32,
+    sense: Sense,
     contents: impl FnOnce(&mut Ui),
 ) -> Response {
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), sense);
     let fill = if selected {
         ui.visuals().selection.bg_fill
     } else if response.hovered() {

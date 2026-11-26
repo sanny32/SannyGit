@@ -229,8 +229,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 })
                 .collect();
             let ungrouped_count = ungrouped_repositories.len();
-            for (position, (index, repository)) in ungrouped_repositories.into_iter().enumerate()
-            {
+            for (position, (index, repository)) in ungrouped_repositories.into_iter().enumerate() {
                 let draw_separator = modern && position + 1 < ungrouped_count;
                 let branch = shown_branch(
                     index,
@@ -297,6 +296,21 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     }
     if let Some((path, group)) = move_to {
         app.assign_group(&path, group);
+    }
+    let reorder = ui.data(|data| data.get_temp::<RepositoryReorder>(repository_reorder_id()));
+    ui.data_mut(|data| data.remove::<RepositoryReorder>(repository_reorder_id()));
+    if let Some(reorder) = reorder {
+        reorder_listed_repositories(
+            &mut app.repositories,
+            &app.manager.preferences,
+            &mut app.selected_repository,
+            &reorder.path,
+            &reorder.target,
+            reorder.before,
+        );
+    }
+    if ui.input(|input| input.pointer.any_released()) {
+        ui.data_mut(|data| data.remove::<RepositoryDrag>(repository_drag_id()));
     }
     if let Some(path) = requested {
         app.open_repository(path);
@@ -513,23 +527,25 @@ fn repository_row(
     let selected_row = highlighted
         .as_deref()
         .map_or(active, |path| path == repository.path);
-    let response =
-        super::controls::selectable_row_with_outset(ui, selected_row, height, 8.0, |ui| {
+    let icon_color = if active && branch_status.is_some_and(|(badge, _)| badge.contains(['↑', '↓']))
+    {
+        palette.accent
+    } else if active {
+        palette.text
+    } else {
+        inactive_repository_icon_color(palette)
+    };
+    let response = super::controls::selectable_row_with_outset(
+        ui,
+        selected_row,
+        height,
+        8.0,
+        eframe::egui::Sense::click_and_drag(),
+        |ui| {
             if modern {
                 ui.spacing_mut().item_spacing.y = MODERN_REPOSITORY_PATH_GAP;
             }
-            let icon_response = ui.add(icons::image(
-                icon,
-                if active && branch_status.is_some_and(|(badge, _)| badge.contains(['↑', '↓']))
-                {
-                    palette.accent
-                } else if active {
-                    palette.text
-                } else {
-                    inactive_repository_icon_color(palette)
-                },
-                16.0,
-            ));
+            let icon_response = ui.add(icons::image(icon, icon_color, 16.0));
             if active && conflicted {
                 let badge = eframe::egui::Rect::from_min_size(
                     icon_response.rect.right_bottom() - eframe::egui::Vec2::splat(10.0),
@@ -622,7 +638,8 @@ fn repository_row(
                         .sense(eframe::egui::Sense::hover()),
                 );
             }
-        });
+        },
+    );
     if modern && draw_separator {
         let (gap, _) = ui.allocate_exact_size(
             eframe::egui::Vec2::new(ui.available_width(), MODERN_REPOSITORY_SEPARATOR_GAP),
@@ -644,6 +661,16 @@ fn repository_row(
             repository.path.clone()
         })
     };
+    let response = repository_drag(
+        ui,
+        response,
+        &repository.path,
+        label,
+        icon,
+        icon_color,
+        preferences,
+        palette,
+    );
     let mut action = popup_menu::context(&response, palette, || {
         use popup_menu::Entry as E;
         let idle = enabled.contains(&MenuAction::NewWindow);
@@ -753,6 +780,234 @@ fn repository_row(
         *requested = Some(repository.path.clone());
     }
     action
+}
+
+/// Drag payload for one bookmark. The path is the bookmark identity.
+#[derive(Clone)]
+struct RepositoryDrag {
+    path: String,
+}
+
+#[derive(Clone)]
+struct RepositoryReorder {
+    path: String,
+    target: String,
+    before: bool,
+}
+
+fn repository_reorder_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("sannygit.repository-reorder")
+}
+
+fn repository_drag_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("sannygit.repository-drag")
+}
+
+/// `None` is the ungrouped section. Group membership follows bookmark paths.
+fn repository_section(preferences: &crate::repository::Preferences, path: &str) -> Option<String> {
+    preferences
+        .groups
+        .iter()
+        .find(|group| group.paths.iter().any(|candidate| candidate == path))
+        .map(|group| group.name.clone())
+}
+
+fn same_repository_section(
+    preferences: &crate::repository::Preferences,
+    left: &str,
+    right: &str,
+) -> bool {
+    repository_section(preferences, left) == repository_section(preferences, right)
+}
+
+/// Move `path` before or after `target` inside their shared section.
+///
+/// Rows are drawn in bookmark order, filtered by group. Swapping only the
+/// slots of that section keeps every other section where it is. The open
+/// repository stays selected by path.
+fn reorder_listed_repositories(
+    repositories: &mut [crate::models::Repository],
+    preferences: &crate::repository::Preferences,
+    selected: &mut usize,
+    path: &str,
+    target: &str,
+    before: bool,
+) -> bool {
+    if path == target || !same_repository_section(preferences, path, target) {
+        return false;
+    }
+    let slots: Vec<usize> = repositories
+        .iter()
+        .enumerate()
+        .filter(|(_, repository)| same_repository_section(preferences, &repository.path, path))
+        .map(|(index, _)| index)
+        .collect();
+    let Some(from) = slots
+        .iter()
+        .position(|&index| repositories[index].path == path)
+    else {
+        return false;
+    };
+    let Some(target_at) = slots
+        .iter()
+        .position(|&index| repositories[index].path == target)
+    else {
+        return false;
+    };
+    let mut dest = if before { target_at } else { target_at + 1 };
+    if from < dest {
+        dest -= 1;
+    }
+    if from == dest {
+        return false;
+    }
+    let selected_path = repositories
+        .get(*selected)
+        .map(|repository| repository.path.clone());
+    if from < dest {
+        for index in from..dest {
+            repositories.swap(slots[index], slots[index + 1]);
+        }
+    } else {
+        for index in (dest..from).rev() {
+            repositories.swap(slots[index], slots[index + 1]);
+        }
+    }
+    if let Some(selected_path) = selected_path {
+        if let Some(index) = repositories
+            .iter()
+            .position(|repository| repository.path == selected_path)
+        {
+            *selected = index;
+        }
+    }
+    true
+}
+
+fn repository_drop_line(
+    ui: &Ui,
+    rect: eframe::egui::Rect,
+    before: bool,
+    color: eframe::egui::Color32,
+) {
+    let y = if before {
+        rect.top() + 1.0
+    } else {
+        rect.bottom() - 1.0
+    };
+    let inset = MODERN_REPOSITORY_ROW_SEPARATOR_INSET;
+    let left = rect.left() + inset;
+    let right = rect.right() - inset;
+    if right <= left {
+        return;
+    }
+    ui.painter()
+        .hline(left..=right, y, eframe::egui::Stroke::new(2.0, color));
+}
+
+/// Click, double-click, and the context menu stay on the row. A drag past the
+/// click threshold reorders within the same group, or within the ungrouped list.
+///
+/// The pointer stays the arrow. A small copy of the row follows it, offset
+/// down and to the right, the way a Windows drag image does.
+fn repository_drag(
+    ui: &mut Ui,
+    response: eframe::egui::Response,
+    path: &str,
+    label: &str,
+    icon: Icon,
+    icon_color: eframe::egui::Color32,
+    preferences: &crate::repository::Preferences,
+    palette: crate::theme::Palette,
+) -> eframe::egui::Response {
+    if ui.input(|input| input.key_pressed(eframe::egui::Key::Escape)) {
+        ui.data_mut(|data| data.remove::<RepositoryDrag>(repository_drag_id()));
+        return response;
+    }
+    if response.dragged() {
+        ui.data_mut(|data| {
+            data.insert_temp(
+                repository_drag_id(),
+                RepositoryDrag {
+                    path: path.to_owned(),
+                },
+            );
+        });
+        if let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) {
+            paint_repository_drag_image(ui, pointer, icon, icon_color, label, palette);
+        }
+    }
+    if let Some(drag) = ui.data(|data| data.get_temp::<RepositoryDrag>(repository_drag_id())) {
+        if response.contains_pointer() && same_repository_section(preferences, &drag.path, path) {
+            if let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) {
+                let before = pointer.y < response.rect.center().y;
+                repository_drop_line(ui, response.rect, before, palette.accent);
+                if drag.path != path && ui.input(|input| input.pointer.any_released()) {
+                    ui.data_mut(|data| {
+                        data.insert_temp(
+                            repository_reorder_id(),
+                            RepositoryReorder {
+                                path: drag.path.clone(),
+                                target: path.to_owned(),
+                                before,
+                            },
+                        );
+                    });
+                }
+            }
+        }
+    }
+    response
+}
+
+/// Windows keeps the arrow and draws the dragged item just below and to the right of it.
+fn paint_repository_drag_image(
+    ui: &Ui,
+    pointer: eframe::egui::Pos2,
+    icon: Icon,
+    icon_color: eframe::egui::Color32,
+    label: &str,
+    palette: crate::theme::Palette,
+) {
+    let font = eframe::egui::FontId::proportional(crate::theme::ui_font_size());
+    let text_width = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font, palette.text)
+        .size()
+        .x
+        .min(200.0);
+    eframe::egui::Area::new(eframe::egui::Id::unique("sannygit.repository-drag-image"))
+        .order(eframe::egui::Order::Tooltip)
+        .fixed_pos(pointer + eframe::egui::vec2(12.0, 16.0))
+        .interactable(false)
+        .fade_in(false)
+        .show(ui.ctx(), |ui| {
+            ui.set_opacity(0.92);
+            eframe::egui::Frame::new()
+                .fill(palette.panel)
+                .stroke(eframe::egui::Stroke::new(1.0, palette.border))
+                .corner_radius(4)
+                .shadow(eframe::egui::Shadow {
+                    offset: [1, 2],
+                    blur: 8,
+                    spread: 0,
+                    color: eframe::egui::Color32::from_black_alpha(48),
+                })
+                .inner_margin(eframe::egui::Margin::symmetric(8, 4))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.horizontal(|ui| {
+                        ui.add(icons::image(icon, icon_color, 16.0));
+                        ui.add_sized(
+                            [text_width, 16.0],
+                            eframe::egui::Label::new(
+                                eframe::egui::RichText::new(label).color(palette.text),
+                            )
+                            .truncate(),
+                        );
+                    });
+                });
+        });
 }
 
 #[cfg(test)]
@@ -1342,5 +1597,200 @@ mod tests {
             }
             assert_eq!(requested.as_deref(), Some(repository.path.as_str()));
         }
+    }
+
+    fn bookmark(path: &str) -> crate::models::Repository {
+        crate::models::Repository {
+            name: path.to_owned(),
+            path: path.to_owned(),
+        }
+    }
+
+    #[test]
+    fn reorder_stays_inside_the_section_and_keeps_the_open_repository() {
+        let mut preferences = crate::repository::Preferences::default();
+        preferences.groups.push(crate::repository::RepositoryGroup {
+            name: "Work".into(),
+            paths: vec!["/a1".into(), "/a2".into()],
+        });
+        preferences.groups.push(crate::repository::RepositoryGroup {
+            name: "Other".into(),
+            paths: vec!["/b".into()],
+        });
+        let mut repositories = vec![
+            bookmark("/a1"),
+            bookmark("/b"),
+            bookmark("/a2"),
+            bookmark("/u"),
+        ];
+        let mut selected = 2;
+        assert!(reorder_listed_repositories(
+            &mut repositories,
+            &preferences,
+            &mut selected,
+            "/a2",
+            "/a1",
+            true,
+        ));
+        assert_eq!(
+            repositories
+                .iter()
+                .map(|repository| repository.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["/a2", "/b", "/a1", "/u"]
+        );
+        assert_eq!(selected, 0);
+
+        selected = 1;
+        assert!(!reorder_listed_repositories(
+            &mut repositories,
+            &preferences,
+            &mut selected,
+            "/u",
+            "/a2",
+            false,
+        ));
+        assert!(!reorder_listed_repositories(
+            &mut repositories,
+            &preferences,
+            &mut selected,
+            "/a1",
+            "/a2",
+            false,
+        ));
+        assert_eq!(selected, 1);
+        assert_eq!(repositories[1].path, "/b");
+        assert_eq!(repositories[2].path, "/a1");
+    }
+
+    #[test]
+    fn drag_reorders_a_repository_before_the_row_under_the_pointer() {
+        let ctx = Context::default();
+        crate::theme::install_fonts(&ctx);
+        let theme = crate::theme::ThemeChoice::Light;
+        theme.apply(&ctx);
+        let palette = theme.palette();
+        let first = bookmark("/first");
+        let second = bookmark("/second");
+        let mut highlighted = None;
+        let mut requested = None;
+        let mut move_to = None;
+        let height = 24.0;
+        let mut render = |events: Vec<Event>| {
+            let mut tops = [0.0_f32, 0.0];
+            let mut output = ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 200.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(260.0);
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    tops[0] = ui.next_widget_position().y;
+                    repository_row(
+                        ui,
+                        0,
+                        &first,
+                        None,
+                        Icon::Repository,
+                        usize::MAX,
+                        false,
+                        false,
+                        None,
+                        &mut highlighted,
+                        palette,
+                        &[],
+                        &crate::repository::Preferences::default(),
+                        &mut requested,
+                        &mut move_to,
+                        height,
+                        &[],
+                        false,
+                    );
+                    tops[1] = ui.next_widget_position().y;
+                    repository_row(
+                        ui,
+                        1,
+                        &second,
+                        None,
+                        Icon::Repository,
+                        usize::MAX,
+                        false,
+                        false,
+                        None,
+                        &mut highlighted,
+                        palette,
+                        &[],
+                        &crate::repository::Preferences::default(),
+                        &mut requested,
+                        &mut move_to,
+                        height,
+                        &[],
+                        false,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            (output, tops)
+        };
+        let mut tops = [0.0_f32, 0.0];
+        for _ in 0..3 {
+            tops = render(vec![]).1;
+        }
+        let start = Pos2::new(80.0, tops[1] + height * 0.5);
+        let end = Pos2::new(80.0, tops[0] + height * 0.25);
+        render(vec![
+            Event::PointerMoved(start),
+            Event::PointerButton {
+                pos: start,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        render(vec![Event::PointerMoved(end)]);
+        let (output, tops) = render(vec![Event::PointerMoved(end)]);
+        let line_y = tops[0] + 1.0;
+        let drop_line = output.shapes.iter().any(|shape| match &shape.shape {
+            eframe::egui::Shape::LineSegment { points, stroke } => {
+                stroke.color == palette.accent
+                    && stroke.width == 2.0
+                    && (points[0].y - line_y).abs() < 0.5
+                    && (points[1].y - line_y).abs() < 0.5
+            }
+            _ => false,
+        });
+        assert!(drop_line, "Expected an insertion line on the upper row");
+        assert_eq!(
+            output.platform_output.cursor_icon,
+            eframe::egui::CursorIcon::Default,
+            "The pointer stays the arrow during a drag"
+        );
+        let preview_labels = output
+            .shapes
+            .iter()
+            .filter(|shape| match &shape.shape {
+                eframe::egui::Shape::Text(text) => text.galley.job.text == "/second",
+                _ => false,
+            })
+            .count();
+        assert!(
+            preview_labels >= 2,
+            "The dragged name should follow the pointer"
+        );
+        render(vec![Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        }]);
+        let reorder = ctx
+            .data(|data| data.get_temp::<RepositoryReorder>(repository_reorder_id()))
+            .expect("drop");
+        assert_eq!(reorder.path, "/second");
+        assert_eq!(reorder.target, "/first");
+        assert!(reorder.before);
+        assert!(requested.is_none());
     }
 }

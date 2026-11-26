@@ -417,6 +417,7 @@ fn branch_group(
                     selected_group.is_none() && *selected == branch.full_name,
                     22.0,
                     8.0,
+                    eframe::egui::Sense::click(),
                     |ui| {
                         ui.add_space(ui.spacing().indent);
                         icons::paint(
