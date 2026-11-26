@@ -37,6 +37,11 @@ pub enum BranchShortcut {
     ResetAdvanced,
     Rename,
     Copy,
+    FastForward,
+    SetTracking,
+    StopTracking,
+    CopyMessage,
+    CopyId,
 }
 
 pub struct ShortcutCommand {
@@ -94,12 +99,68 @@ pub fn catalog() -> &'static [ShortcutCommand] {
             default: Some(KeyboardShortcut::new(CTRL_SHIFT, Key::O)),
         },
         ShortcutCommand {
+            id: "repository.add_group",
+            category: "Repository",
+            label: "Add Group…",
+            menu_action: Some(AddGroup),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
+            id: "repository.search",
+            category: "Repository",
+            label: "Search for Repositories…",
+            menu_action: Some(SearchRepositories),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
             id: "repository.close_repository",
             category: "Repository",
             label: "Close Repository",
             menu_action: Some(CloseRepository),
             branch: None,
             default: Some(KeyboardShortcut::new(Modifiers::CTRL, W)),
+        },
+        ShortcutCommand {
+            id: "repository.add_worktree",
+            category: "Repository",
+            label: "Add Worktree…",
+            menu_action: Some(AddWorktree),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
+            id: "repository.remove_worktree",
+            category: "Repository",
+            label: "Remove Worktree…",
+            menu_action: Some(RemoveWorktree),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
+            id: "repository.prune_worktrees",
+            category: "Repository",
+            label: "Prune Obsolete Worktrees…",
+            menu_action: Some(PruneWorktrees),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
+            id: "repository.edit_config",
+            category: "Repository",
+            label: "Edit Repository Config…",
+            menu_action: Some(EditRepositoryConfig),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
+            id: "repository.edit_user_config",
+            category: "Repository",
+            label: "Edit User Config…",
+            menu_action: Some(EditUserConfig),
+            branch: None,
+            default: None,
         },
         ShortcutCommand {
             id: "repository.settings",
@@ -134,12 +195,52 @@ pub fn catalog() -> &'static [ShortcutCommand] {
             default: Some(KeyboardShortcut::new(Modifiers::CTRL, Comma)),
         },
         ShortcutCommand {
+            id: "tools.light_theme",
+            category: "Tools",
+            label: "Light Theme",
+            menu_action: Some(LightTheme),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
+            id: "tools.dark_theme",
+            category: "Tools",
+            label: "Dark Theme",
+            menu_action: Some(DarkTheme),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
+            id: "help.about",
+            category: "Help",
+            label: "About SannyGit",
+            menu_action: Some(About),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
             id: "view.refresh",
             category: "View",
             label: "Refresh",
             menu_action: Some(Refresh),
             branch: None,
             default: Some(KeyboardShortcut::new(Modifiers::NONE, F5)),
+        },
+        ShortcutCommand {
+            id: "window.maximize",
+            category: "Window",
+            label: "Maximize",
+            menu_action: Some(MaximizeWindow),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
+            id: "window.minimize",
+            category: "Window",
+            label: "Minimize",
+            menu_action: Some(MinimizeWindow),
+            branch: None,
+            default: None,
         },
         ShortcutCommand {
             id: "window.full_screen",
@@ -174,6 +275,22 @@ pub fn catalog() -> &'static [ShortcutCommand] {
             default: Some(KeyboardShortcut::new(REMOTE_MODIFIERS, PageUp)),
         },
         ShortcutCommand {
+            id: "remote.push_tag",
+            category: "Remote",
+            label: "Push Selected Tag…",
+            menu_action: Some(PushTag),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
+            id: "remote.manage",
+            category: "Remote",
+            label: "Manage Remotes…",
+            menu_action: Some(ManageRemotes),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
             id: "local.stage",
             category: "Local",
             label: "Stage",
@@ -198,6 +315,14 @@ pub fn catalog() -> &'static [ShortcutCommand] {
             default: Some(KeyboardShortcut::new(Modifiers::CTRL, K)),
         },
         ShortcutCommand {
+            id: "local.discard",
+            category: "Local",
+            label: "Discard…",
+            menu_action: Some(Discard),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
             id: "local.stashes",
             category: "Local",
             label: "Stashes…",
@@ -212,6 +337,38 @@ pub fn catalog() -> &'static [ShortcutCommand] {
             menu_action: Some(CreateBranch),
             branch: None,
             default: Some(KeyboardShortcut::new(Modifiers::NONE, F7)),
+        },
+        ShortcutCommand {
+            id: "branch.switch",
+            category: "Branch",
+            label: "Switch",
+            menu_action: Some(SwitchBranch),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
+            id: "branch.delete",
+            category: "Branch",
+            label: "Delete…",
+            menu_action: Some(DeleteBranch),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
+            id: "branch.merge_picker",
+            category: "Branch",
+            label: "Merge…",
+            menu_action: Some(Merge),
+            branch: None,
+            default: None,
+        },
+        ShortcutCommand {
+            id: "branch.rebase_picker",
+            category: "Branch",
+            label: "Rebase…",
+            menu_action: Some(Rebase),
+            branch: None,
+            default: None,
         },
         ShortcutCommand {
             id: "query.reload_history",
@@ -232,7 +389,7 @@ pub fn catalog() -> &'static [ShortcutCommand] {
         ShortcutCommand {
             id: "branch.merge",
             category: "Branch",
-            label: "Merge…",
+            label: "Merge Branch…",
             menu_action: None,
             branch: Some(B::Merge),
             default: Some(KeyboardShortcut::new(PRIMARY_MODIFIERS, M)),
@@ -240,7 +397,7 @@ pub fn catalog() -> &'static [ShortcutCommand] {
         ShortcutCommand {
             id: "branch.rebase_head_to",
             category: "Branch",
-            label: "Rebase…",
+            label: "Rebase Branch…",
             menu_action: None,
             branch: Some(B::RebaseHeadTo),
             default: Some(KeyboardShortcut::new(PRIMARY_MODIFIERS, D)),
@@ -292,7 +449,7 @@ pub fn catalog() -> &'static [ShortcutCommand] {
             id: "branch.rename",
             category: "Branch",
             label: "Rename…",
-            menu_action: None,
+            menu_action: Some(RenameBranch),
             branch: Some(B::Rename),
             default: Some(KeyboardShortcut::new(Modifiers::NONE, F2)),
         },
@@ -303,6 +460,46 @@ pub fn catalog() -> &'static [ShortcutCommand] {
             menu_action: None,
             branch: Some(B::Copy),
             default: Some(KeyboardShortcut::new(PRIMARY_MODIFIERS, C)),
+        },
+        ShortcutCommand {
+            id: "branch.fast_forward",
+            category: "Branch",
+            label: "Fast-Forward Merge",
+            menu_action: None,
+            branch: Some(B::FastForward),
+            default: None,
+        },
+        ShortcutCommand {
+            id: "branch.set_tracking",
+            category: "Branch",
+            label: "Set Tracked Branch…",
+            menu_action: None,
+            branch: Some(B::SetTracking),
+            default: None,
+        },
+        ShortcutCommand {
+            id: "branch.stop_tracking",
+            category: "Branch",
+            label: "Stop Tracking…",
+            menu_action: None,
+            branch: Some(B::StopTracking),
+            default: None,
+        },
+        ShortcutCommand {
+            id: "branch.copy_message",
+            category: "Branch",
+            label: "Copy Message",
+            menu_action: None,
+            branch: Some(B::CopyMessage),
+            default: None,
+        },
+        ShortcutCommand {
+            id: "branch.copy_id",
+            category: "Branch",
+            label: "Copy ID",
+            menu_action: None,
+            branch: Some(B::CopyId),
+            default: None,
         },
     ];
     CATALOG
@@ -640,6 +837,67 @@ mod tests {
         let push = bindings.menu_action(Push).unwrap();
         let others = bindings.conflicts_for("remote.push", push);
         assert!(others.contains(&"branch.push"));
+    }
+
+    #[test]
+    fn catalog_lists_every_menu_action_even_without_a_shortcut() {
+        let actions = [
+            NewWindow,
+            MaximizeWindow,
+            MinimizeWindow,
+            FullScreen,
+            AddGroup,
+            Clone,
+            SearchRepositories,
+            CloseRepository,
+            AddWorktree,
+            RemoveWorktree,
+            PruneWorktrees,
+            RepositorySettings,
+            EditRepositoryConfig,
+            EditUserConfig,
+            Open,
+            Refresh,
+            Fetch,
+            Pull,
+            Push,
+            Stage,
+            Unstage,
+            Commit,
+            Stashes,
+            Merge,
+            Rebase,
+            Discard,
+            DeleteBranch,
+            PushTag,
+            ManageRemotes,
+            CreateBranch,
+            SwitchBranch,
+            RenameBranch,
+            ReloadHistory,
+            Preferences,
+            LightTheme,
+            DarkTheme,
+            Close,
+            Exit,
+            About,
+        ];
+        for action in actions {
+            assert!(
+                catalog()
+                    .iter()
+                    .any(|command| command.menu_action == Some(action)),
+                "{action:?} is missing from the shortcut list"
+            );
+        }
+        let bindings = ShortcutBindings::default();
+        assert!(bindings.effective("repository.add_group").is_none());
+        assert!(bindings.effective("local.discard").is_none());
+        assert!(bindings.effective("branch.fast_forward").is_none());
+        let mut bindings = bindings;
+        let shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::J);
+        bindings.assign("local.discard", Some(shortcut));
+        assert_eq!(bindings.menu_action(Discard), Some(shortcut));
     }
 
     #[test]

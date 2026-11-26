@@ -199,7 +199,6 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     navigation(ui, app, palette);
     let page_background = match app.settings_window.page {
         SettingsPage::Llm => palette.panel_alt,
-        SettingsPage::KeyboardShortcuts => palette.panel,
         _ => palette.header,
     };
     let page_margin = Margin::same(12);
@@ -778,19 +777,54 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     }
 }
 
-fn shortcut_column_widths(width: f32) -> [f32; 3] {
-    let shortcut = 108.0;
-    let default = 84.0;
-    if shortcut + default + 80.0 <= width {
-        [width - shortcut - default, shortcut, default]
-    } else {
-        let shortcut = width * 0.30;
-        let default = width * 0.22;
-        [width - shortcut - default, shortcut, default]
-    }
+const COMMAND_COLUMN_MIN: f32 = 80.0;
+const SHORTCUT_COLUMN_MIN: f32 = 72.0;
+const DEFAULT_COLUMN_MIN: f32 = 64.0;
+const SHORTCUT_COLUMN_MAX: f32 = 360.0;
+const DEFAULT_COLUMN_MAX: f32 = 280.0;
+
+fn shortcut_column_id() -> egui::Id {
+    egui::Id::unique("preferences.shortcuts.column_widths")
 }
 
-fn shortcut_header(ui: &mut Ui, palette: Palette, columns: [f32; 3]) {
+fn shortcut_column_widths(ui: &mut Ui, width: f32) -> [f32; 3] {
+    let stored = ui
+        .data_mut(|data| data.get_persisted::<[f32; 2]>(shortcut_column_id()))
+        .unwrap_or([108.0, 84.0]);
+    fit_shortcut_columns(width, stored)
+}
+
+fn fit_shortcut_columns(width: f32, stored: [f32; 2]) -> [f32; 3] {
+    let mut shortcut = stored[0].clamp(SHORTCUT_COLUMN_MIN, SHORTCUT_COLUMN_MAX);
+    let mut default = stored[1].clamp(DEFAULT_COLUMN_MIN, DEFAULT_COLUMN_MAX);
+    let max_pair = (width - COMMAND_COLUMN_MIN).max(SHORTCUT_COLUMN_MIN + DEFAULT_COLUMN_MIN);
+    if shortcut + default > max_pair {
+        let overflow = shortcut + default - max_pair;
+        let from_shortcut = overflow.min((shortcut - SHORTCUT_COLUMN_MIN).max(0.0));
+        shortcut -= from_shortcut;
+        default = (default - (overflow - from_shortcut)).max(DEFAULT_COLUMN_MIN);
+    }
+    [width - shortcut - default, shortcut, default]
+}
+
+fn drag_shortcut_columns(width: f32, stored: &mut [f32; 2], separator: usize, delta: f32) {
+    if separator == 0 {
+        let max_shortcut = (width - COMMAND_COLUMN_MIN - stored[1])
+            .max(SHORTCUT_COLUMN_MIN)
+            .min(SHORTCUT_COLUMN_MAX);
+        stored[0] = (stored[0] - delta).clamp(SHORTCUT_COLUMN_MIN, max_shortcut);
+        return;
+    }
+    let pair = stored[0] + stored[1];
+    let max_shortcut = (pair - DEFAULT_COLUMN_MIN)
+        .max(SHORTCUT_COLUMN_MIN)
+        .min(SHORTCUT_COLUMN_MAX);
+    let shortcut = (stored[0] + delta).clamp(SHORTCUT_COLUMN_MIN, max_shortcut);
+    stored[1] = pair - shortcut;
+    stored[0] = shortcut;
+}
+
+fn shortcut_header(ui: &mut Ui, palette: Palette, width: f32, columns: [f32; 3]) {
     // Same band as the file and journal tables: header fill and a bottom rule.
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
     ui.painter().rect_filled(rect, 0.0, palette.header);
@@ -803,14 +837,38 @@ fn shortcut_header(ui: &mut Ui, palette: Palette, columns: [f32; 3]) {
     shortcut_cell(&mut cells, columns[0], RichText::new("Command"));
     shortcut_cell(&mut cells, columns[1], RichText::new("Shortcut"));
     shortcut_cell(&mut cells, columns[2], RichText::new("Default"));
-    let stroke = (1.0, palette.border);
     let mut x = rect.left() + 6.0 + columns[0];
-    for _ in 0..2 {
+    let mut stored = [columns[1], columns[2]];
+    let mut changed = false;
+    for separator in 0..2 {
+        let hit = Rect::from_min_max(
+            Pos2::new(x - 5.0, rect.top()),
+            Pos2::new(x + 5.0, rect.bottom()),
+        );
+        let response = ui
+            .interact(
+                hit,
+                ui.make_persistent_id(("preferences.shortcuts.resize", separator)),
+                Sense::drag(),
+            )
+            .on_hover_cursor(egui::CursorIcon::ResizeColumn);
+        if response.dragged() {
+            drag_shortcut_columns(width, &mut stored, separator, response.drag_delta().x);
+            changed = true;
+        }
+        let color = if response.hovered() || response.dragged() {
+            palette.text
+        } else {
+            palette.border
+        };
         ui.painter().line_segment(
             [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
-            stroke,
+            (1.0, color),
         );
         x += columns[1];
+    }
+    if changed {
+        ui.data_mut(|data| data.insert_persisted(shortcut_column_id(), stored));
     }
 }
 
@@ -848,7 +906,8 @@ fn keyboard_shortcuts_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette)
     );
     ui.add_space(4.0);
     let filter = app.settings_window.shortcut_filter.trim().to_lowercase();
-    let columns = shortcut_column_widths((ui.available_width() - 12.0).max(120.0));
+    let column_width = (ui.available_width() - 12.0).max(120.0);
+    let columns = shortcut_column_widths(ui, column_width);
     let bar_height = ui.spacing().interact_size.y + 8.0;
     let conflict_height = if app.settings_window.shortcut_conflict.is_some() {
         56.0
@@ -858,13 +917,14 @@ fn keyboard_shortcuts_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette)
     // Keep the command list in its own box so the last row cannot cover the editor.
     let table_height = (ui.available_height() - bar_height - conflict_height - 6.0).max(80.0);
     Frame::new()
+        .fill(palette.panel)
         .stroke((1.0, palette.border))
         .inner_margin(0)
         .show(ui, |ui| {
             ui.set_min_height(table_height);
             ui.set_max_height(table_height);
             ui.spacing_mut().item_spacing.y = 0.0;
-            shortcut_header(ui, palette, columns);
+            shortcut_header(ui, palette, column_width, columns);
             let list_height = ui.available_height().max(40.0);
             ScrollArea::vertical()
                 .id_salt("preferences.shortcuts.list")

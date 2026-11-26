@@ -165,6 +165,11 @@ backed up when practical.
   Defaults and user overrides live in `src/shortcuts.rs`; the Preferences
   Keyboard Shortcuts page edits overrides. When adding or changing a default,
   compare it with SmartGit.
+- Every action in the application menu must appear in that Keyboard Shortcuts
+  list, including actions that have no default shortcut. Add the command to the
+  `src/shortcuts.rs` catalog in the same change that adds the menu item. Leave
+  unimplemented placeholders out until they become real actions. The catalog
+  test `catalog_lists_every_menu_action_even_without_a_shortcut` checks this.
 
 ## Git Backend
 

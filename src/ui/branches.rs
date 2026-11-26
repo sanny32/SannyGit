@@ -614,7 +614,8 @@ fn branch_menu(
                 requested.tag_merge_allowed && other_branch,
                 BranchRequest::FastForward(target()),
             )
-            .help("Select another branch while a current HEAD is available"),
+            .help("Select another branch while a current HEAD is available")
+            .maybe_shortcut(bind(BranchShortcut::FastForward)),
         );
     }
     entries.push(E::Separator);
@@ -701,13 +702,15 @@ fn branch_menu(
                 requested.rename_allowed && requested.has_remote_refs,
                 BranchRequest::SetTracking(target()),
             )
-            .help("Fetch remote branches and refresh the repository"),
+            .help("Fetch remote branches and refresh the repository")
+            .maybe_shortcut(bind(BranchShortcut::SetTracking)),
             E::item(
                 "Stop Tracking…",
                 requested.rename_allowed && branch.upstream.is_some(),
                 BranchRequest::StopTracking(target()),
             )
-            .help("The selected branch must have a tracked branch"),
+            .help("The selected branch must have a tracked branch")
+            .maybe_shortcut(bind(BranchShortcut::StopTracking)),
         ]);
     }
     entries.extend([
@@ -727,13 +730,15 @@ fn branch_menu(
                 id_ready,
                 BranchRequest::CopyCommitMessage(branch.hash.clone()),
             )
-            .help("Refresh branches to load the full commit id"),
+            .help("Refresh branches to load the full commit id")
+            .maybe_shortcut(bind(BranchShortcut::CopyMessage)),
             E::item(
                 "Copy ID",
                 id_ready,
                 BranchRequest::CopyCommitId(branch.hash.clone()),
             )
-            .help("Refresh branches to load the full commit id"),
+            .help("Refresh branches to load the full commit id")
+            .maybe_shortcut(bind(BranchShortcut::CopyId)),
         ]);
     }
     entries

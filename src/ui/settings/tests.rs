@@ -1320,6 +1320,50 @@ fn text_rect(shapes: &[ClippedShape], expected: &str) -> Option<Rect> {
 }
 
 #[test]
+fn shortcut_page_uses_the_same_gray_as_other_pages() {
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        let context = egui::Context::default();
+        crate::theme::install_fonts(&context);
+        theme.apply(&context);
+        let mut app = SannyGitApp::with_theme(theme);
+        let palette = app.palette();
+        app.settings_window.page = SettingsPage::KeyboardShortcuts;
+        let mut output = context.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), PREFERENCES_SIZE)),
+                ..Default::default()
+            },
+            |ui| window_contents(ui, &mut app),
+        );
+        output.textures_delta.clear();
+        let wide = |shape: &egui::epaint::ClippedShape, fill: egui::Color32, min_height: f32| {
+            matches!(
+                &shape.shape,
+                egui::Shape::Rect(rect)
+                    if rect.fill == fill
+                        && rect.rect.width() > 400.0
+                        && rect.rect.height() > min_height
+                        && rect.rect.left() > 180.0
+            )
+        };
+        assert!(
+            output
+                .shapes
+                .iter()
+                .any(|shape| wide(shape, palette.header, 200.0)),
+            "Keyboard Shortcuts page is not the shared gray ({theme:?})"
+        );
+        assert!(
+            output
+                .shapes
+                .iter()
+                .any(|shape| wide(shape, palette.panel, 80.0)),
+            "Shortcut table is not the theme panel color ({theme:?})"
+        );
+    }
+}
+
+#[test]
 fn shortcut_editor_sits_above_the_footer() {
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
         let context = egui::Context::default();
@@ -1366,5 +1410,107 @@ fn shortcut_editor_sits_above_the_footer() {
                 "Shortcut editor is too low ({theme:?}, {size:?}): label {label:?}, footer {footer_top}"
             );
         }
+    }
+}
+
+#[test]
+fn shortcut_columns_resize_and_keep_their_widths() {
+    use eframe::egui::{Event, Modifiers, PointerButton};
+    let context = egui::Context::default();
+    crate::theme::install_fonts(&context);
+    ThemeChoice::Light.apply(&context);
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.settings_window.page = SettingsPage::KeyboardShortcuts;
+    let render = |app: &mut SannyGitApp, events| {
+        let mut output = context.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), PREFERENCES_SIZE)),
+                events,
+                ..Default::default()
+            },
+            |ui| window_contents(ui, app),
+        );
+        let header = |label: &str| {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == label => Some(text.pos.x),
+                _ => None,
+            })
+        };
+        let shortcut = header("Shortcut").expect("Shortcut header");
+        let default = header("Default").expect("Default header");
+        let separator = |left_of: f32| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::LineSegment { points, .. }
+                        if (points[0].x - points[1].x).abs() < 0.1
+                            && points[0].x < left_of
+                            && left_of - points[0].x < 24.0 =>
+                    {
+                        Some((points[0] + points[1].to_vec2()) * 0.5)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("Missing column separator left of {left_of}"))
+        };
+        let shortcut_separator = separator(shortcut);
+        let default_separator = separator(default);
+        output.textures_delta.clear();
+        (shortcut, default, shortcut_separator, default_separator)
+    };
+    let drag = |app: &mut SannyGitApp, from: egui::Pos2, delta: f32| {
+        render(app, vec![Event::PointerMoved(from)]);
+        render(
+            app,
+            vec![Event::PointerButton {
+                pos: from,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        let moved = from + egui::vec2(delta, 0.0);
+        for _ in 0..3 {
+            render(app, vec![Event::PointerMoved(moved)]);
+        }
+        render(
+            app,
+            vec![Event::PointerButton {
+                pos: moved,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+    };
+    for _ in 0..3 {
+        render(&mut app, vec![]);
+    }
+    let (shortcut_before, default_before, shortcut_separator, _) = render(&mut app, vec![]);
+    drag(&mut app, shortcut_separator, 20.0);
+    let (shortcut_after, default_after, _, default_separator) = render(&mut app, vec![]);
+    assert!(
+        shortcut_after > shortcut_before + 12.0,
+        "Command column did not grow: {shortcut_before} -> {shortcut_after}"
+    );
+    assert!(
+        (default_after - default_before).abs() < 1.0,
+        "Default column moved when resizing Command: {default_before} -> {default_after}"
+    );
+    drag(&mut app, default_separator, 16.0);
+    let (shortcut_kept, default_moved, _, _) = render(&mut app, vec![]);
+    assert!(
+        (shortcut_kept - shortcut_after).abs() < 1.0,
+        "Shortcut header moved when resizing its right edge: {shortcut_after} -> {shortcut_kept}"
+    );
+    assert!(
+        default_moved > default_after + 10.0,
+        "Default column did not move: {default_after} -> {default_moved}"
+    );
+    for _ in 0..4 {
+        let (shortcut, default, _, _) = render(&mut app, vec![]);
+        assert_eq!(shortcut, shortcut_kept);
+        assert_eq!(default, default_moved);
     }
 }
