@@ -679,6 +679,7 @@ fn clicking_tree_labels_and_row_backgrounds_selects_the_page() {
                 (SettingsPage::Remote, "Remote"),
                 (SettingsPage::DateTime, "Date & Time"),
                 (SettingsPage::Logging, "Logging"),
+                (SettingsPage::KeyboardShortcuts, "Keyboard Shortcuts"),
                 (SettingsPage::Llm, "AI"),
                 (SettingsPage::CommitMessages, "Commit messages"),
                 (SettingsPage::CommitContext, "Context"),
@@ -1058,6 +1059,7 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
             (SettingsPage::Llm, "Endpoint:"),
             (SettingsPage::CommitMessages, "Generation instructions:"),
             (SettingsPage::CommitContext, "Patch size:"),
+            (SettingsPage::KeyboardShortcuts, "Assign"),
         ] {
             app.settings_window.page = page;
             let mut output = context.run_ui(
@@ -1303,6 +1305,65 @@ fn opening_and_applying_llm_settings_never_reads_saved_credentials() {
             assert_eq!(
                 crate::llm::CREDENTIAL_READS.with(|reads| reads.get()),
                 reads_before
+            );
+        }
+    }
+}
+
+fn text_rect(shapes: &[ClippedShape], expected: &str) -> Option<Rect> {
+    shapes.iter().find_map(|shape| {
+        let egui::Shape::Text(text) = &shape.shape else {
+            return None;
+        };
+        (text.galley.job.text == expected).then_some(text.galley.rect.translate(text.pos.to_vec2()))
+    })
+}
+
+#[test]
+fn shortcut_editor_sits_above_the_footer() {
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        let context = egui::Context::default();
+        crate::theme::install_fonts(&context);
+        theme.apply(&context);
+        for size in [PREFERENCES_SIZE, Vec2::new(680.0, 380.0)] {
+            let mut app = SannyGitApp::with_theme(theme);
+            app.settings_window.page = SettingsPage::KeyboardShortcuts;
+            let mut output = context.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                    ..Default::default()
+                },
+                |ui| window_contents(ui, &mut app),
+            );
+            output.textures_delta.clear();
+            let label = text_rect(&output.shapes, "Shortcut:").expect("Shortcut label");
+            let assign = text_rect(&output.shapes, "Assign").expect("Assign");
+            let table_bottom = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect)
+                        if rect.stroke.width > 0.0
+                            && rect.rect.width() > 300.0
+                            && rect.rect.height() > 80.0 =>
+                    {
+                        Some(rect.rect.bottom())
+                    }
+                    _ => None,
+                })
+                .fold(0.0_f32, f32::max);
+            let footer_top = size.y - 46.0;
+            assert!(
+                label.top() >= table_bottom + 6.0,
+                "Shortcut editor overlaps the command table ({theme:?}, {size:?}): label {label:?}, table bottom {table_bottom}"
+            );
+            assert!(
+                (label.top() - assign.top()).abs() < 1.0,
+                "Shortcut label and Assign are not on one row"
+            );
+            assert!(
+                label.bottom() + 10.0 <= footer_top,
+                "Shortcut editor is too low ({theme:?}, {size:?}): label {label:?}, footer {footer_top}"
             );
         }
     }

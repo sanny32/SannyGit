@@ -35,3 +35,24 @@ call sites of `eframe::viewport_winit_window` (`src/native_window_linux.rs`,
 `src/ui/branches.rs`).
 
 **Status:** Not started
+
+## UI — Changes list
+
+### Grouped file path draws too far to the right
+
+**Problem:** With directory grouping on, a file row under its folder header
+paints the path far to the right of the File column. The file icon stays on the
+left, then a wide gap, then truncated text such as `assets/icons/fo` while the
+header above reads `assets/icons` in the normal place (screenshot from
+2026-11-26, Files list, `assets/icons` group). The path is clipped instead of
+starting next to the icon.
+
+**Goal:** Keep the file icon and path left-aligned in the File column, on the
+same inset as other file rows. Truncate only when the column is actually too
+narrow, and show the full path in the tooltip.
+
+**Likely touch points:** `src/ui/changes.rs` — file row in the changes table
+(`row.col` for the path) and `paint_directory_header` (row-layer text that is
+not clipped to the File cell).
+
+**Status:** Not started

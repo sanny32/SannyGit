@@ -27,6 +27,18 @@ pub enum Icon {
     TextFile,
     Folder,
     ImageFile,
+    BmpFile,
+    JpgFile,
+    PdfFile,
+    PngFile,
+    SvgFile,
+    DocFile,
+    DocxFile,
+    RustFile,
+    TomlFile,
+    JsonFile,
+    MarkdownFile,
+    XmlFile,
     Settings,
     Globe,
     Chevron,
@@ -62,18 +74,27 @@ impl Icon {
             .rsplit_once('.')
             .map(|(_, ext)| ext.to_ascii_lowercase());
         match extension.as_deref() {
+            Some("rs") => Self::RustFile,
+            Some("toml") => Self::TomlFile,
+            Some("json") => Self::JsonFile,
+            Some("md" | "mdx") => Self::MarkdownFile,
+            Some("xml") => Self::XmlFile,
+            Some("bmp") => Self::BmpFile,
+            Some("jpg" | "jpeg") => Self::JpgFile,
+            Some("pdf") => Self::PdfFile,
+            Some("png") => Self::PngFile,
+            Some("svg") => Self::SvgFile,
+            Some("doc") => Self::DocFile,
+            Some("docx") => Self::DocxFile,
+            Some("gif" | "webp" | "ico" | "tif" | "tiff" | "avif") => Self::ImageFile,
             Some(
-                "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg" | "ico" | "tif" | "tiff"
-                | "avif",
-            ) => Self::ImageFile,
-            Some(
-                "rs" | "c" | "h" | "cpp" | "hpp" | "cc" | "cs" | "go" | "py" | "js" | "jsx" | "ts"
-                | "tsx" | "java" | "kt" | "swift" | "rb" | "php" | "sh" | "bash" | "zsh" | "ps1"
-                | "html" | "css" | "scss" | "sql",
+                "c" | "h" | "cpp" | "hpp" | "cc" | "cs" | "go" | "py" | "js" | "jsx" | "ts" | "tsx"
+                | "java" | "kt" | "swift" | "rb" | "php" | "sh" | "bash" | "zsh" | "ps1" | "html"
+                | "css" | "scss" | "sql",
             ) => Self::CodeFile,
             Some(
-                "md" | "mdx" | "txt" | "rst" | "adoc" | "toml" | "yaml" | "yml" | "json" | "xml"
-                | "ini" | "cfg" | "conf" | "csv" | "log" | "lock",
+                "txt" | "rst" | "adoc" | "yaml" | "yml" | "ini" | "cfg" | "conf" | "csv" | "log"
+                | "lock",
             ) => Self::TextFile,
             _ => Self::File,
         }
@@ -113,6 +134,18 @@ impl Icon {
             Self::TextFile => svg!("text-file"),
             Self::Folder => svg!("folder"),
             Self::ImageFile => svg!("image-file"),
+            Self::RustFile => svg!("file-type-rs"),
+            Self::TomlFile => svg!("toml"),
+            Self::JsonFile => svg!("json"),
+            Self::MarkdownFile => svg!("markdown"),
+            Self::XmlFile => svg!("file-type-xml"),
+            Self::DocxFile => svg!("file-type-docx"),
+            Self::DocFile => svg!("file-type-doc"),
+            Self::SvgFile => svg!("file-type-svg"),
+            Self::PngFile => svg!("file-type-png"),
+            Self::PdfFile => svg!("file-type-pdf"),
+            Self::JpgFile => svg!("file-type-jpg"),
+            Self::BmpFile => svg!("file-type-bmp"),
             Self::Settings => svg!("settings"),
             Self::Globe => svg!("globe"),
             Self::Chevron => svg!("chevron"),
@@ -157,7 +190,18 @@ pub fn paint_at(
     rect: Rect,
     angle: f32,
 ) {
-    let image = image(icon, color, rect.width());
+    // Keep the icon square. Rounding each edge on its own can make one side
+    // longer and stretch the glyph.
+    let pixels_per_point = ui.pixels_per_point();
+    let pixels = (rect.size().min_elem() * pixels_per_point).round().max(1.0);
+    let side = pixels / pixels_per_point;
+    let origin = rect.center().to_vec2() - Vec2::splat(side * 0.5);
+    let min = eframe::egui::pos2(
+        (origin.x * pixels_per_point).round() / pixels_per_point,
+        (origin.y * pixels_per_point).round() / pixels_per_point,
+    );
+    let rect = Rect::from_min_size(min, Vec2::splat(side));
+    let image = image(icon, Color32::WHITE, side);
     let Ok(poll) = image.load_for_size(ui.ctx(), rect.size()) else {
         return;
     };
@@ -358,12 +402,29 @@ mod tests {
     #[test]
     fn file_icons_handle_case_paths_and_unknown_extensions() {
         for (path, expected) in [
-            ("src/main.rs", Icon::CodeFile),
+            ("src/main.rs", Icon::RustFile),
+            (r"src\MAIN.RS", Icon::RustFile),
+            ("config/settings.JSON", Icon::JsonFile),
+            (r"config\settings.json", Icon::JsonFile),
+            ("config/CARGO.TOML", Icon::TomlFile),
             ("web/app.TSX", Icon::CodeFile),
-            ("assets/logo.svg", Icon::ImageFile),
-            (r"assets\photo.JPEG", Icon::ImageFile),
-            ("README.md", Icon::TextFile),
-            ("Cargo.toml", Icon::TextFile),
+            ("assets/logo.svg", Icon::SvgFile),
+            (r"assets\photo.JPEG", Icon::JpgFile),
+            ("image.BMP", Icon::BmpFile),
+            ("image.jpg", Icon::JpgFile),
+            ("image.png", Icon::PngFile),
+            ("image.gif", Icon::ImageFile),
+            ("document.PDF", Icon::PdfFile),
+            ("document.doc", Icon::DocFile),
+            ("document.DOCX", Icon::DocxFile),
+            ("README.md", Icon::MarkdownFile),
+            (r"docs\README.MD", Icon::MarkdownFile),
+            ("docs/page.mdx", Icon::MarkdownFile),
+            ("config/settings.XML", Icon::XmlFile),
+            (r"config\settings.xml", Icon::XmlFile),
+            ("config/settings.yaml", Icon::TextFile),
+            (r"config\settings.YML", Icon::TextFile),
+            ("Cargo.toml", Icon::TomlFile),
             ("folder.png/data", Icon::File),
             (r"folder.rs\data", Icon::File),
             ("archive.unknown", Icon::File),

@@ -197,13 +197,14 @@ fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
     footer(ui, app, palette, false);
     navigation(ui, app, palette);
-    let page_background = if app.settings_window.page == SettingsPage::Llm {
-        palette.panel_alt
-    } else {
-        palette.header
+    let page_background = match app.settings_window.page {
+        SettingsPage::Llm => palette.panel_alt,
+        SettingsPage::KeyboardShortcuts => palette.panel,
+        _ => palette.header,
     };
+    let page_margin = Margin::same(12);
     CentralPanel::default()
-        .frame(Frame::new().fill(page_background).inner_margin(12))
+        .frame(Frame::new().fill(page_background).inner_margin(page_margin))
         .show(ui, |ui| {
             let page_height = ui.available_height();
             if app.settings_window.page == SettingsPage::Llm && page_height < 350.0 {
@@ -426,13 +427,13 @@ fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                                     entry(ui, app, SettingsPage::Appearance, "Appearance");
                                     entry(ui, app, SettingsPage::DateTime, "Date & Time");
                                     entry(ui, app, SettingsPage::Logging, "Logging");
-                                    entry(
-                                        ui,
-                                        app,
-                                        SettingsPage::KeyboardShortcuts,
-                                        "Keyboard Shortcuts",
-                                    );
                                 },
+                            );
+                            leaf(
+                                ui,
+                                app,
+                                SettingsPage::KeyboardShortcuts,
+                                "Keyboard Shortcuts",
                             );
                             section(ui, app, SettingsPage::Git, "Git", |ui, app| {
                                 entry(ui, app, SettingsPage::Remote, "Remote");
@@ -464,6 +465,18 @@ fn section(
         app.settings_window.page = page;
     }
     state.show_body_unindented(ui, |ui| contents(ui, app));
+}
+
+fn leaf(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
+    let selected = app.settings_window.page == page;
+    let response = selectable_row(ui, selected, 23.0, |ui| {
+        ui.add_space(18.0);
+        ui.label(label);
+    });
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
+    if response.clicked() {
+        app.settings_window.page = page;
+    }
 }
 
 fn entry(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
@@ -765,6 +778,52 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     }
 }
 
+fn shortcut_column_widths(width: f32) -> [f32; 3] {
+    let shortcut = 108.0;
+    let default = 84.0;
+    if shortcut + default + 80.0 <= width {
+        [width - shortcut - default, shortcut, default]
+    } else {
+        let shortcut = width * 0.30;
+        let default = width * 0.22;
+        [width - shortcut - default, shortcut, default]
+    }
+}
+
+fn shortcut_header(ui: &mut Ui, palette: Palette, columns: [f32; 3]) {
+    // Same band as the file and journal tables: header fill and a bottom rule.
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, palette.header);
+    super::header_separator(ui, rect, palette);
+    let mut cells = ui.new_child(
+        UiBuilder::new()
+            .max_rect(rect.shrink2(Vec2::new(6.0, 1.0)))
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    shortcut_cell(&mut cells, columns[0], RichText::new("Command"));
+    shortcut_cell(&mut cells, columns[1], RichText::new("Shortcut"));
+    shortcut_cell(&mut cells, columns[2], RichText::new("Default"));
+    let stroke = (1.0, palette.border);
+    let mut x = rect.left() + 6.0 + columns[0];
+    for _ in 0..2 {
+        ui.painter().line_segment(
+            [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
+            stroke,
+        );
+        x += columns[1];
+    }
+}
+
+fn shortcut_cell(ui: &mut Ui, width: f32, text: RichText) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, ui.available_height()), Sense::hover());
+    let mut cell = ui.new_child(
+        UiBuilder::new()
+            .max_rect(rect.shrink2(Vec2::new(4.0, 0.0)))
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    cell.add(Label::new(text).truncate());
+}
+
 fn remember_shortcut(
     app: &mut SannyGitApp,
     ui: &Ui,
@@ -782,174 +841,78 @@ fn keyboard_shortcuts_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette)
 
     let assign_id = ui.scope_id().with("preferences.shortcuts.assign");
     heading(ui, "Keyboard Shortcuts");
-    ui.horizontal(|ui| {
-        ui.label("Filter:");
-        ui.add(
-            singleline(&mut app.settings_window.shortcut_filter).hint_text("Command or category"),
-        );
-    });
+    ui.add(
+        singleline(&mut app.settings_window.shortcut_filter)
+            .hint_text("Filter")
+            .desired_width(ui.available_width()),
+    );
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.add_sized([300.0, 20.0], Label::new(RichText::new("Command").strong()));
-        ui.add_sized(
-            [120.0, 20.0],
-            Label::new(RichText::new("Shortcut").strong()),
-        );
-        ui.label(RichText::new("Default").strong());
-    });
-    ui.separator();
     let filter = app.settings_window.shortcut_filter.trim().to_lowercase();
-    let conflict_reserve = if app.settings_window.shortcut_conflict.is_some() {
-        92.0
+    let columns = shortcut_column_widths((ui.available_width() - 12.0).max(120.0));
+    let bar_height = ui.spacing().interact_size.y + 8.0;
+    let conflict_height = if app.settings_window.shortcut_conflict.is_some() {
+        56.0
     } else {
-        58.0
+        0.0
     };
-    let list_height = (ui.available_height() - conflict_reserve).max(80.0);
-    ScrollArea::vertical()
-        .id_salt("preferences.shortcuts.list")
-        .auto_shrink([false, false])
-        .max_height(list_height)
+    // Keep the command list in its own box so the last row cannot cover the editor.
+    let table_height = (ui.available_height() - bar_height - conflict_height - 6.0).max(80.0);
+    Frame::new()
+        .stroke((1.0, palette.border))
+        .inner_margin(0)
         .show(ui, |ui| {
-            for command in shortcuts::catalog() {
-                if !filter.is_empty()
-                    && !command.label.to_lowercase().contains(&filter)
-                    && !command.category.to_lowercase().contains(&filter)
-                {
-                    continue;
-                }
-                let selected = app.settings_window.shortcut_selected.as_deref() == Some(command.id);
-                let shortcuts = &app.settings_window.preferences.shortcuts;
-                let effective = shortcuts.effective(command.id);
-                let response = selectable_row(ui, selected, 22.0, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(300.0, ui.spacing().interact_size.y),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                ui.label(format!("{} — {}", command.category, command.label));
-                            },
-                        );
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(120.0, ui.spacing().interact_size.y),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                if let Some(shortcut) = effective {
-                                    ui.label(format_shortcut_text(ui.ctx(), shortcut));
-                                }
-                            },
-                        );
-                        if shortcuts.is_customized(command.id) {
-                            if let Some(default) = command.default {
-                                ui.label(
-                                    RichText::new(format_shortcut_text(ui.ctx(), default))
-                                        .color(palette.muted),
-                                );
-                            }
+            ui.set_min_height(table_height);
+            ui.set_max_height(table_height);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            shortcut_header(ui, palette, columns);
+            let list_height = ui.available_height().max(40.0);
+            ScrollArea::vertical()
+                .id_salt("preferences.shortcuts.list")
+                .auto_shrink([false, false])
+                .max_height(list_height)
+                .show(ui, |ui| {
+                    for command in shortcuts::catalog() {
+                        if !filter.is_empty()
+                            && !command.label.to_lowercase().contains(&filter)
+                            && !command.category.to_lowercase().contains(&filter)
+                        {
+                            continue;
                         }
-                    });
-                });
-                if response.double_clicked() {
-                    ui.memory_mut(|memory| memory.request_focus(assign_id));
-                }
-                if response.clicked() {
-                    app.settings_window.shortcut_conflict = None;
-                    app.settings_window.shortcut_selected = Some(command.id.to_owned());
-                    remember_shortcut(app, ui, effective);
-                }
-            }
-        });
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.label("Shortcut:");
-        let assign = ui.add(
-            singleline(&mut app.settings_window.shortcut_assign_text)
-                .desired_width(160.0)
-                .id(assign_id),
-        );
-        if assign.has_focus() {
-            let captured = ui.input_mut(|input| {
-                let mut captured = None;
-                input.events.retain(|event| {
-                    let Event::Key {
-                        key,
-                        modifiers,
-                        pressed: true,
-                        repeat: false,
-                        ..
-                    } = event
-                    else {
-                        return true;
-                    };
-                    if *key == Key::Escape {
-                        return true;
+                        let selected =
+                            app.settings_window.shortcut_selected.as_deref() == Some(command.id);
+                        let shortcuts = &app.settings_window.preferences.shortcuts;
+                        let effective = shortcuts.effective(command.id);
+                        let shortcut_text = effective
+                            .map(|shortcut| format_shortcut_text(ui.ctx(), shortcut))
+                            .unwrap_or_default();
+                        let default_text = if shortcuts.is_customized(command.id) {
+                            command
+                                .default
+                                .map(|shortcut| format_shortcut_text(ui.ctx(), shortcut))
+                                .unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
+                        let response = selectable_row(ui, selected, 22.0, |ui| {
+                            shortcut_cell(ui, columns[0], RichText::new(command.label));
+                            shortcut_cell(ui, columns[1], RichText::new(shortcut_text));
+                            shortcut_cell(
+                                ui,
+                                columns[2],
+                                RichText::new(default_text).color(palette.muted),
+                            );
+                        });
+                        if response.double_clicked() {
+                            ui.memory_mut(|memory| memory.request_focus(assign_id));
+                        }
+                        if response.clicked() {
+                            app.settings_window.shortcut_conflict = None;
+                            app.settings_window.shortcut_selected = Some(command.id.to_owned());
+                            remember_shortcut(app, ui, effective);
+                        }
                     }
-                    captured = shortcut_from_input(*key, *modifiers);
-                    false
                 });
-                captured
-            });
-            if let Some(shortcut) = captured {
-                app.settings_window.shortcut_conflict = None;
-                remember_shortcut(app, ui, Some(shortcut));
-            }
-        }
-        let selected = app.settings_window.shortcut_selected.is_some();
-        if ui
-            .add_enabled(
-                selected && app.settings_window.shortcut_pending.is_some(),
-                egui::Button::new("Assign"),
-            )
-            .clicked()
-        {
-            if let (Some(id), Some(shortcut)) = (
-                app.settings_window.shortcut_selected.clone(),
-                app.settings_window.shortcut_pending,
-            ) {
-                let others = app
-                    .settings_window
-                    .preferences
-                    .shortcuts
-                    .conflicts_for(&id, shortcut)
-                    .into_iter()
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>();
-                if others.is_empty() {
-                    app.settings_window
-                        .preferences
-                        .shortcuts
-                        .assign(&id, Some(shortcut));
-                    app.settings_window.shortcut_conflict = None;
-                } else {
-                    app.settings_window.shortcut_conflict = Some(ShortcutConflict {
-                        command_id: id,
-                        shortcut,
-                        others,
-                    });
-                }
-            }
-        }
-        if ui
-            .add_enabled(selected, egui::Button::new("Clear"))
-            .clicked()
-        {
-            if let Some(id) = app.settings_window.shortcut_selected.clone() {
-                app.settings_window.preferences.shortcuts.assign(&id, None);
-                app.settings_window.shortcut_conflict = None;
-                remember_shortcut(app, ui, None);
-            }
-        }
-        if ui
-            .add_enabled(selected, egui::Button::new("Reset"))
-            .clicked()
-        {
-            if let Some(id) = app.settings_window.shortcut_selected.clone() {
-                app.settings_window.preferences.shortcuts.reset(&id);
-                app.settings_window.shortcut_conflict = None;
-                let shortcut = app.settings_window.preferences.shortcuts.effective(&id);
-                remember_shortcut(app, ui, shortcut);
-            }
-        }
-    });
+        });
     let conflict = app
         .settings_window
         .shortcut_conflict
@@ -957,7 +920,8 @@ fn keyboard_shortcuts_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette)
         .filter(|conflict| {
             app.settings_window.shortcut_selected.as_deref() == Some(conflict.command_id.as_str())
         });
-    if let Some(conflict) = conflict {
+    if let Some(conflict) = conflict.as_ref() {
+        ui.add_space(4.0);
         let names = conflict
             .others
             .iter()
@@ -992,6 +956,103 @@ fn keyboard_shortcuts_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette)
             }
         });
     }
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label("Shortcut:");
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let selected = app.settings_window.shortcut_selected.is_some();
+            let button = |ui: &mut Ui, enabled: bool, label: &str| {
+                ui.add_enabled_ui(enabled, |ui| {
+                    ui.add_sized(
+                        Vec2::new(80.0, ui.spacing().interact_size.y),
+                        egui::Button::new(label),
+                    )
+                })
+                .inner
+            };
+            let reset = button(ui, selected, "Reset");
+            let clear = button(ui, selected, "Clear");
+            let assign_button = button(
+                ui,
+                selected && app.settings_window.shortcut_pending.is_some(),
+                "Assign",
+            );
+            let assign = ui.add_sized(
+                Vec2::new(ui.available_width(), ui.spacing().interact_size.y),
+                singleline(&mut app.settings_window.shortcut_assign_text).id(assign_id),
+            );
+            if assign.has_focus() {
+                let captured = ui.input_mut(|input| {
+                    let mut captured = None;
+                    input.events.retain(|event| {
+                        let Event::Key {
+                            key,
+                            modifiers,
+                            pressed: true,
+                            repeat: false,
+                            ..
+                        } = event
+                        else {
+                            return true;
+                        };
+                        if *key == Key::Escape {
+                            return true;
+                        }
+                        captured = shortcut_from_input(*key, *modifiers);
+                        false
+                    });
+                    captured
+                });
+                if let Some(shortcut) = captured {
+                    app.settings_window.shortcut_conflict = None;
+                    remember_shortcut(app, ui, Some(shortcut));
+                }
+            }
+            if assign_button.clicked() {
+                if let (Some(id), Some(shortcut)) = (
+                    app.settings_window.shortcut_selected.clone(),
+                    app.settings_window.shortcut_pending,
+                ) {
+                    let others = app
+                        .settings_window
+                        .preferences
+                        .shortcuts
+                        .conflicts_for(&id, shortcut)
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>();
+                    if others.is_empty() {
+                        app.settings_window
+                            .preferences
+                            .shortcuts
+                            .assign(&id, Some(shortcut));
+                        app.settings_window.shortcut_conflict = None;
+                    } else {
+                        app.settings_window.shortcut_conflict = Some(ShortcutConflict {
+                            command_id: id,
+                            shortcut,
+                            others,
+                        });
+                    }
+                }
+            }
+            if clear.clicked() {
+                if let Some(id) = app.settings_window.shortcut_selected.clone() {
+                    app.settings_window.preferences.shortcuts.assign(&id, None);
+                    app.settings_window.shortcut_conflict = None;
+                    remember_shortcut(app, ui, None);
+                }
+            }
+            if reset.clicked() {
+                if let Some(id) = app.settings_window.shortcut_selected.clone() {
+                    app.settings_window.preferences.shortcuts.reset(&id);
+                    app.settings_window.shortcut_conflict = None;
+                    let shortcut = app.settings_window.preferences.shortcuts.effective(&id);
+                    remember_shortcut(app, ui, shortcut);
+                }
+            }
+        });
+    });
 }
 
 #[derive(Debug)]
