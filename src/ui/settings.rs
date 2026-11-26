@@ -1363,14 +1363,21 @@ fn ai_page(
             }
         }
         ui.add_space(section_gap);
-        let instructions = match app.settings_window.llm.config.subscription_provider {
-            SubscriptionProvider::ChatGpt => branding::SIGN_IN_CHATGPT,
-            SubscriptionProvider::Copilot if crate::llm::copilot::can_sign_in() => {
-                branding::SIGN_IN_COPILOT
-            }
-            SubscriptionProvider::Copilot => "GitHub Copilot sign-in is unavailable in this build.",
-        };
-        ai_sign_in_banner(ui, palette, instructions);
+        if matches!(
+            status,
+            AiConnectionStatus::SignedOut | AiConnectionStatus::Failed
+        ) {
+            let instructions = match app.settings_window.llm.config.subscription_provider {
+                SubscriptionProvider::ChatGpt => branding::SIGN_IN_CHATGPT,
+                SubscriptionProvider::Copilot if crate::llm::copilot::can_sign_in() => {
+                    branding::SIGN_IN_COPILOT
+                }
+                SubscriptionProvider::Copilot => {
+                    "GitHub Copilot sign-in is unavailable in this build."
+                }
+            };
+            ai_sign_in_banner(ui, palette, instructions);
+        }
         if let Some(path) = repository {
             use crate::llm::SubscriptionProvider;
             if provider == SubscriptionProvider::ChatGpt {
@@ -1674,11 +1681,12 @@ fn generation_settings_field(
         )
     };
     let effort = effort_summary(settings, selected, models);
+    let corner = ui.style().visuals.widgets.inactive.corner_radius;
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
     ui.painter().rect(
         rect,
-        4,
-        palette.editor,
+        corner,
+        palette.panel_alt,
         egui::Stroke::NONE,
         StrokeKind::Inside,
     );
@@ -1737,7 +1745,7 @@ fn generation_settings_field(
         palette.border
     };
     ui.painter()
-        .rect_stroke(rect, 4, (1.0, border), StrokeKind::Inside);
+        .rect_stroke(rect, corner, (1.0, border), StrokeKind::Inside);
 
     let mut anchor = response.rect;
     if let Some(to_global) = ui.ctx().layer_transform_to_global(response.layer_id) {
@@ -1790,7 +1798,7 @@ fn effort_summary(
     } else {
         settings.reasoning_effort.as_str()
     };
-    Some(format!("effort: {}", reasoning_label(effort)))
+    Some(format!("Effort: {}", reasoning_label(effort)))
 }
 
 fn generation_settings_menu(

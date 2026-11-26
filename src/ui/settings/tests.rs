@@ -1030,10 +1030,13 @@ fn copilot_sign_in_controls_fit_in_both_themes() {
                 assert!(!visible_text(&output.shapes, "Provider default"));
                 assert!(!visible_text(&output.shapes, hidden_action));
                 assert!(visible_text(&output.shapes, "OK"));
-                assert!(
-                    filled_rect_count(&output.shapes, app.palette().selection.gamma_multiply(0.4))
-                        > 0
-                );
+                let banner_count =
+                    filled_rect_count(&output.shapes, app.palette().selection.gamma_multiply(0.4));
+                if status == AiConnectionStatus::SignedOut {
+                    assert!(banner_count > 0);
+                } else {
+                    assert_eq!(banner_count, 0);
+                }
             }
         }
     }
@@ -1149,7 +1152,7 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
                     provider.textures_delta.clear();
                     assert!(visible_text(&provider.shapes, action));
                     assert!(visible_text(&provider.shapes, "Model:"));
-                    assert!(visible_text(&provider.shapes, "effort: Low"));
+                    assert!(visible_text(&provider.shapes, "Effort: Low"));
                     for label in [
                         hidden_action,
                         "Status:",
