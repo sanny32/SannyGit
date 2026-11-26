@@ -2882,6 +2882,10 @@ impl eframe::App for SannyGitApp {
         if let Err(error) = crate::native_window::finish_first_presentation(ui.ctx()) {
             self.error = Some(error.to_string());
         }
+        crate::branding::sync_main_window_title(
+            ui.ctx(),
+            self.repositories.get(self.selected_repository),
+        );
         self.llm_models.update();
         if self.preferences.follow_system_theme {
             self.theme = ThemeChoice::from_system(ui.ctx(), self.theme);

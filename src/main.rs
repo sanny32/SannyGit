@@ -54,7 +54,7 @@ fn main() -> eframe::Result<()> {
         .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     let window_size = egui::vec2(1536.0, 1024.0);
     let viewport = theme::native_viewport()
-        .with_title("SannyGit")
+        .with_title(branding::main_window_title(None))
         .with_app_id("io.github.sanny32.SannyGit")
         .with_icon(std::sync::Arc::new(icon))
         .with_decorations(true)
