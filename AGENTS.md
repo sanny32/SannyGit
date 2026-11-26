@@ -21,6 +21,7 @@ Windows, Linux, and macOS. The UI language is English. The license is MIT.
   service or local server. Preserve this existing feature; credentials use
   system credential storage.
 - `README.md` documents running the application and verification commands.
+  `docs/BACKLOG.md` holds small polish and UX items outside `docs/ROADMAP.md`.
   `SannyGit-Project.txt`, when available locally, contains detailed requirements.
   It and `reference-1.png` / `reference-2.png` are excluded from Git; do not assume
   they are available in another clone.
@@ -98,6 +99,11 @@ or mix Git logic with panel rendering.
   setup, build and run instructions, major capabilities, and significant
   limitations. Do not document minor behavior changes, routine fixes, or
   implementation details there; README is not a changelog.
+- When a task implements or fully resolves an item in `docs/BACKLOG.md`, remove
+  that entry from the backlog in the same change set. Do not leave completed
+  items marked “Not started” or add a done history inside the backlog file; the
+  backlog lists only open work. Add new backlog items there when the user asks
+  or when follow-up polish is explicitly deferred.
 - Do not change `.gitignore` rules or the `Cargo.lock` tracking policy without
   a task-related reason. Do not add `target/` or other build artifacts.
 - Perform all local reviews in the `.review` folder. Keep all review-related
