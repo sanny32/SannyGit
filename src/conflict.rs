@@ -1424,7 +1424,9 @@ mod tests {
                                 let rect = text.galley.rect.translate(text.pos.to_vec2());
                                 (bounds.intersect(shape.clip_rect).contains_rect(rect)
                                     && toolbar_y.is_none_or(|y| (rect.center().y - y).abs() < 2.0)
-                                    && (label != "All" || shape.clip_rect == toolbar_clip))
+                                    && (label != "All" || shape.clip_rect == toolbar_clip)
+                                    // Exclude the macOS workspace title behind the solver.
+                                    && (label != "Working Tree" || rect.center().y > toolbar_clip.top()))
                                     .then(|| rect.center())
                             }
                             _ => None,

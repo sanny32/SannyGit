@@ -1519,7 +1519,7 @@ mod tests {
     }
 
     #[test]
-    fn local_branch_push_claims_alt_page_up_and_a_remote_branch_does_not() {
+    fn local_branch_push_claims_configured_shortcut_and_a_remote_branch_does_not() {
         let mut app = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
         app.state_current = true;
         app.branches.current = true;
@@ -1533,18 +1533,23 @@ mod tests {
             kind: RefKind::Local,
         }];
         app.branches.selected_branch = "refs/heads/main".into();
+        let shortcut = app
+            .preferences
+            .shortcuts
+            .branch(crate::shortcuts::BranchShortcut::Push)
+            .unwrap();
         assert!(super::branch_shortcut_handles(
             &app,
-            egui::Key::PageUp,
-            Modifiers::ALT
+            shortcut.logical_key,
+            shortcut.modifiers
         ));
         app.branches.entries[0].kind = RefKind::Remote;
         app.branches.entries[0].full_name = "refs/remotes/origin/main".into();
         app.branches.selected_branch = app.branches.entries[0].full_name.clone();
         assert!(!super::branch_shortcut_handles(
             &app,
-            egui::Key::PageUp,
-            Modifiers::ALT
+            shortcut.logical_key,
+            shortcut.modifiers
         ));
     }
 

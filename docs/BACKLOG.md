@@ -56,3 +56,55 @@ narrow, and show the full path in the tooltip.
 not clipped to the File cell).
 
 **Status:** Not started
+
+## UI — Branch delete
+
+### Delete preview failure leaves misleading dialog state
+
+**Problem:** Opening **Delete Local Branch** on a branch that is not merged into
+HEAD shows the correct modal message (“not fully merged… Force deletion is not
+available”), but the dialog underneath still reads **Loading details…**,
+**Branch object: Checking…**, and **Current HEAD: Checking…**. The branch ref
+(`refs/heads/…`) sits on its own line without a clear label, so it can be read
+as the repository path (screenshot from 2026-11-26).
+
+**Goal:** When `preview_delete` fails, update the delete dialog in place: clear
+the loading status, show the refusal reason on the status line (and/or disable
+the confirm checkbox with that text), stop showing perpetual “Checking…”, and
+label branch vs repository fields clearly. Dismissing the error modal must not
+leave stale `dialog.error` that immediately reopens the same modal.
+
+**Likely touch points:** `src/branches.rs` (`preview_delete`), `src/app/ref_management.rs`
+(`apply_ref_details` for `Kind::Delete`), `src/ui/ref_management.rs` (delete
+dialog body and status line), `src/app/errors.rs` (`collect_errors` /
+`dismiss_error` for `refs` source).
+
+**Status:** Not started
+
+## UI — Branches panel
+
+### Local branch rows: folder groups and inline tracking (SmartGit-style)
+
+**Problem:** Local branches are listed flat under **Local Branches** with only the
+short ref name. Upstream/tracking data (`BranchRef::upstream`, ahead/behind) is
+not shown on the row — only in tooltips or the status bar for the current
+branch. SmartGit groups slash-prefixed locals (e.g. **Features (1)**) and paints
+rows such as `server-node-icons ? origin`: branch name in body text, the remote
+name (**origin**) in accent/muted color, and a **red ?** only when the
+configured upstream ref on that remote no longer exists (deleted remote branch)
+(screenshot from 2026-11-26).
+
+**Goal:** Match that presentation for local branches: optional nested groups by
+path segment (`feature/foo` → group **Features**), count in the header, remote
+name on the row when an upstream is configured, and **only** the red **?**
+suffix for the “upstream gone on origin” case — not for unknown ahead/behind,
+not for in-sync branches, and not a general status badge on every local branch.
+Truncate with tooltip on elision; keep selection, double-click checkout, and
+context menus working.
+
+**Likely touch points:** `src/ui/branches.rs` (`branch_group`, branch row
+layout), `src/branches.rs` / `src/models.rs` (upstream fields), detection of
+missing remote upstream (fetch/ls-remote or existing ref loads), layout tests
+under `src/ui/branches.rs`.
+
+**Status:** Not started
