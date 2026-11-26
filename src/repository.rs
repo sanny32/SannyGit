@@ -69,6 +69,9 @@ pub struct Preferences {
     /// Last known list icon for each bookmark. Loaded before hosting is read from Git.
     #[serde(default)]
     pub icons: std::collections::BTreeMap<String, RepositoryIcon>,
+    /// Last known checked-out branch for each bookmark. Loaded on startup so the list does not ask Git.
+    #[serde(default)]
+    pub branches: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

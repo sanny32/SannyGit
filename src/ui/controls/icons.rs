@@ -54,6 +54,9 @@ impl Icon {
     }
 
     pub fn for_file(path: &str) -> Self {
+        if path.ends_with(['/', '\\']) {
+            return Self::Folder;
+        }
         let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
         let extension = name
             .rsplit_once('.')

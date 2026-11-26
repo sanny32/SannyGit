@@ -1129,6 +1129,9 @@ fn ignored_paths(
         "--others",
         "--ignored",
         "--exclude-standard",
+        // A wholly ignored directory (target/, node_modules/) is one row.
+        // Listing every file inside it overflows the display limit.
+        "--directory",
     ];
     if !paths.is_empty() {
         args.push("--");

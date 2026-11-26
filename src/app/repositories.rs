@@ -410,20 +410,29 @@ impl SannyGitApp {
             .get(self.selected_repository)
             .map(|repository| repository.path.as_str());
         if active == Some(update.path.as_str()) && !self.branches.current_branch.is_empty() {
-            self.manager
-                .repository_branches
-                .insert(update.path, self.branches.current_branch.clone());
+            let branch = self.branches.current_branch.clone();
+            self.store_repository_branch(&update.path, &branch);
             return;
         }
         match update.branch {
-            Ok(branch) if !branch.is_empty() => {
-                self.manager.repository_branches.insert(update.path, branch);
-            }
-            Ok(_) => {
-                self.manager.repository_branches.remove(&update.path);
-            }
+            Ok(branch) => self.store_repository_branch(&update.path, &branch),
             Err(_) => {}
         }
+    }
+
+    fn store_repository_branch(&mut self, path: &str, branch: &str) {
+        if branch.is_empty() {
+            self.manager.repository_branches.remove(path);
+            self.manager.preferences.branches.remove(path);
+            return;
+        }
+        self.manager
+            .repository_branches
+            .insert(path.to_owned(), branch.to_owned());
+        self.manager
+            .preferences
+            .branches
+            .insert(path.to_owned(), branch.to_owned());
     }
 
     pub(super) fn remember_repository_branch(&mut self, path: &str, branch: &str) {
@@ -444,9 +453,29 @@ impl SannyGitApp {
                 .or_insert(0);
             *generation = generation.wrapping_add(1);
         }
-        self.manager
-            .repository_branches
-            .insert(path.to_owned(), branch.to_owned());
+        self.store_repository_branch(path, branch);
+    }
+
+    /// Shows saved branches on the first frame and skips the startup Git read.
+    pub(super) fn restore_repository_branches(&mut self) {
+        let now = Instant::now();
+        for repository in &self.repositories {
+            let Some(branch) = self
+                .manager
+                .preferences
+                .branches
+                .get(&repository.path)
+                .filter(|branch| !branch.is_empty())
+            else {
+                continue;
+            };
+            self.manager
+                .repository_branches
+                .insert(repository.path.clone(), branch.clone());
+            self.manager
+                .repository_branches_checked
+                .insert(repository.path.clone(), now);
+        }
     }
 
     /// Shows saved icons on the first frame, before Git reports the remote host.
@@ -1119,6 +1148,7 @@ impl SannyGitApp {
         self.manager.repository_branches.remove(&path);
         self.manager.repository_branch_generation.remove(&path);
         self.manager.repository_branches_checked.remove(&path);
+        self.manager.preferences.branches.remove(&path);
         self.manager.preferences.icons.remove(&path);
         if self.manager.highlighted_repository.as_deref() == Some(&path) {
             self.manager.highlighted_repository = None;
@@ -1321,6 +1351,14 @@ mod tests {
                 .map(String::as_str),
             Some("feature")
         );
+        assert_eq!(
+            app.manager
+                .preferences
+                .branches
+                .get(&path)
+                .map(String::as_str),
+            Some("feature")
+        );
 
         app.remember_repository_branch(&path, "release");
         app.selected_repository = 0;
@@ -1338,6 +1376,14 @@ mod tests {
         assert_eq!(
             app.manager
                 .repository_branches
+                .get(&path)
+                .map(String::as_str),
+            Some("release")
+        );
+        assert_eq!(
+            app.manager
+                .preferences
+                .branches
                 .get(&path)
                 .map(String::as_str),
             Some("release")
@@ -1402,6 +1448,69 @@ mod tests {
         assert_eq!(
             app.manager.preferences.icons.get("/missing").copied(),
             Some(crate::repository::RepositoryIcon::GitLab)
+        );
+    }
+
+    #[test]
+    fn saved_repository_branches_restore_without_reading_git() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.repositories.push(crate::models::Repository {
+            name: "SannyGit".into(),
+            path: "/repo".into(),
+        });
+        app.manager
+            .preferences
+            .branches
+            .insert("/repo".into(), "main".into());
+        app.manager
+            .preferences
+            .branches
+            .insert("/missing".into(), "dev".into());
+        app.restore_repository_branches();
+        assert_eq!(
+            app.manager
+                .repository_branches
+                .get("/repo")
+                .map(String::as_str),
+            Some("main")
+        );
+        assert!(!app.manager.repository_branches.contains_key("/missing"));
+        let context = eframe::egui::Context::default();
+        app.update_repository_branches(&context);
+        assert!(app.manager.repository_branches_receiver.is_none());
+
+        app.remember_repository_branch("/repo", "release");
+        assert_eq!(
+            app.manager
+                .preferences
+                .branches
+                .get("/repo")
+                .map(String::as_str),
+            Some("release")
+        );
+
+        let mut storage = Storage::default();
+        eframe::App::save(&mut app, &mut storage);
+        let prefs: Preferences =
+            eframe::get_value(&storage, "sannygit.repository_preferences").unwrap();
+        assert_eq!(
+            prefs.branches.get("/repo").map(String::as_str),
+            Some("release")
+        );
+        let legacy: Preferences = serde_json::from_str(r#"{"groups":[]}"#).unwrap();
+        assert!(legacy.branches.is_empty());
+
+        app.request_remove_repository("/repo".into());
+        app.confirm_remove_repository();
+        assert!(!app.manager.preferences.branches.contains_key("/repo"));
+        assert!(!app.manager.repository_branches.contains_key("/repo"));
+        assert_eq!(
+            app.manager
+                .preferences
+                .branches
+                .get("/missing")
+                .map(String::as_str),
+            Some("dev")
         );
     }
 

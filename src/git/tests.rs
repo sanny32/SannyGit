@@ -1313,6 +1313,33 @@ fn stages_deletion_and_unstages_both_sides_of_rename() {
 }
 
 #[test]
+fn ignored_directories_are_one_row_and_can_be_staged() {
+    let repo = TempRepo::new();
+    repo.write(".gitignore", "build/\n*.log\n");
+    repo.git(&["add", ".gitignore"]);
+    repo.git(&["commit", "-m", "ignore"]);
+    std::fs::create_dir_all(repo.0.join("build/nested")).unwrap();
+    for index in 0..30 {
+        repo.write(&format!("build/nested/file{index}.txt"), "x");
+    }
+    repo.write("notes.log", "log");
+    repo.write("kept.txt", "visible");
+
+    let ignored = ignored_changes(&SYSTEM_GIT, &repo.0).unwrap();
+    let paths: BTreeSet<_> = ignored.iter().map(|change| change.path.as_str()).collect();
+    assert_eq!(paths, BTreeSet::from(["build/", "notes.log"]));
+    assert!(ignored
+        .iter()
+        .all(|change| change.kind == ChangeKind::Ignored && !change.staged && change.unstaged));
+
+    set_staged(&SYSTEM_GIT, &repo.0, "build/", true).unwrap();
+    let staged = repo.git(&["diff", "--cached", "--name-only"]);
+    assert!(staged.lines().any(|path| path == "build/nested/file0.txt"));
+    assert!(!staged.lines().any(|path| path == "notes.log"));
+    assert!(!staged.lines().any(|path| path == "kept.txt"));
+}
+
+#[test]
 fn scoped_staging_rejects_a_rename_source_and_checks_literal_ignored_paths() {
     let repo = TempRepo::new();
     repo.write("old", "rename contents\n");
