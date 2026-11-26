@@ -338,7 +338,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     (Icon::Pull, "Pull"),
                     (Icon::Fetch, "Sync"),
                     (Icon::Push, "Push"),
-                    (Icon::Check, "Stage"),
+                    (Icon::FileCheck, "Stage"),
                     (Icon::File, "Unstage"),
                     (Icon::Discard, "Discard"),
                     (Icon::Stash, "Save Stash"),

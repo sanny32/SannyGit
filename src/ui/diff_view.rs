@@ -70,7 +70,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     let noun = if hunk { "hunk" } else { "lines" };
                     let actions = [
                         (
-                            Icon::Check,
+                            Icon::FileCheck,
                             "Stage",
                             format!("Stage the selected {noun}"),
                             &stage_reason,

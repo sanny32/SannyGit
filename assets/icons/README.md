@@ -10,6 +10,7 @@ Distributed under MIT; see [LICENSE-Tabler.txt](LICENSE-Tabler.txt).
 Stroke color is white for theme tinting; stroke width is adjusted to 1.65 to match the application icons.
 
 - file.svg: file
+- file-check.svg: file-check
 - code-file.svg: file-code
 - text-file.svg: file-text
 - image-file.svg: photo
