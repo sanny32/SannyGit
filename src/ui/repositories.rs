@@ -408,6 +408,19 @@ fn repository_name_line(
 /// Gap between the repository name and the path line in the Modern list.
 const MODERN_REPOSITORY_PATH_GAP: f32 = 1.0;
 
+/// Inactive repository icons are a step paler than other muted ink.
+fn inactive_repository_icon_color(palette: crate::theme::Palette) -> eframe::egui::Color32 {
+    let toward = palette.panel;
+    let mix = |from: u8, to: u8| -> u8 {
+        (f32::from(from) + (f32::from(to) - f32::from(from)) * 0.5).round() as u8
+    };
+    eframe::egui::Color32::from_rgb(
+        mix(palette.muted.r(), toward.r()),
+        mix(palette.muted.g(), toward.g()),
+        mix(palette.muted.b(), toward.b()),
+    )
+}
+
 /// Classic rows are a single line. Modern rows stack the path under the name
 /// and stay only as tall as those two lines, plus the row inset.
 fn repository_row_height(ui: &Ui, modern: bool) -> f32 {
@@ -470,7 +483,7 @@ fn repository_row(
                 } else if active {
                     palette.text
                 } else {
-                    palette.muted
+                    inactive_repository_icon_color(palette)
                 },
                 16.0,
             ));
@@ -489,11 +502,7 @@ fn repository_row(
                 );
                 icon_response.help_text("Unresolved conflicts");
             }
-            let name = RichText::new(label).color(if active || modern {
-                palette.text
-            } else {
-                palette.muted
-            });
+            let name = RichText::new(label).color(palette.text);
             let (badge, _) = if active {
                 branch_status.unwrap_or(("", ""))
             } else {
@@ -824,6 +833,124 @@ mod tests {
                 assert!(requested.is_none());
             }
         }
+    }
+
+    #[test]
+    fn inactive_repository_icons_are_paler_than_muted_text() {
+        use crate::theme::{InterfaceStyle, ThemeChoice};
+
+        for (theme, lighter) in [(ThemeChoice::Light, true), (ThemeChoice::Dark, false)] {
+            let palette = InterfaceStyle::Classic.palette(theme);
+            let icon = inactive_repository_icon_color(palette);
+            let icon_luma = u16::from(icon.r()) + u16::from(icon.g()) + u16::from(icon.b());
+            let muted_luma = u16::from(palette.muted.r())
+                + u16::from(palette.muted.g())
+                + u16::from(palette.muted.b());
+            let panel_luma = u16::from(palette.panel.r())
+                + u16::from(palette.panel.g())
+                + u16::from(palette.panel.b());
+            if lighter {
+                assert!(icon_luma > muted_luma);
+            } else {
+                assert!(icon_luma < muted_luma);
+            }
+            let icon_gap = (i32::from(icon_luma) - i32::from(panel_luma)).abs();
+            let muted_gap = (i32::from(muted_luma) - i32::from(panel_luma)).abs();
+            assert!(icon_gap < muted_gap);
+        }
+    }
+
+    #[test]
+    fn classic_unopened_repository_uses_regular_text_color() {
+        use crate::theme::{InterfaceStyle, ThemeChoice};
+
+        let ctx = Context::default();
+        crate::theme::install_fonts(&ctx);
+        let theme = ThemeChoice::Light;
+        let interface = InterfaceStyle::Classic;
+        theme.apply_style(&ctx, interface);
+        let palette = interface.palette(theme);
+        let open = crate::models::Repository {
+            name: "OpenRepo".into(),
+            path: "/open".into(),
+        };
+        let closed = crate::models::Repository {
+            name: "ClosedRepo".into(),
+            path: "/closed".into(),
+        };
+        let mut highlighted = None;
+        let mut requested = None;
+        let mut move_to = None;
+        let mut output = ctx.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 120.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let height = repository_row_height(ui, false);
+                let preferences = crate::repository::Preferences::default();
+                repository_row(
+                    ui,
+                    0,
+                    &open,
+                    Some("main"),
+                    Icon::Repository,
+                    0,
+                    false,
+                    false,
+                    None,
+                    &mut highlighted,
+                    palette,
+                    &[],
+                    &preferences,
+                    &mut requested,
+                    &mut move_to,
+                    height,
+                    &[],
+                );
+                repository_row(
+                    ui,
+                    1,
+                    &closed,
+                    Some("dev"),
+                    Icon::Repository,
+                    0,
+                    false,
+                    false,
+                    None,
+                    &mut highlighted,
+                    palette,
+                    &[],
+                    &preferences,
+                    &mut requested,
+                    &mut move_to,
+                    height,
+                    &[],
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let text = |label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    eframe::egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.galley.job.sections[0].format.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("Missing {label}"))
+        };
+        let open_name = text("OpenRepo");
+        let closed_name = text("ClosedRepo");
+        assert_eq!(open_name.color, palette.text);
+        assert_eq!(closed_name.color, palette.text);
+        assert_eq!(open_name.font_id.family, semibold_family());
+        assert_eq!(
+            closed_name.font_id.family,
+            eframe::egui::FontFamily::Proportional
+        );
     }
 
     #[test]
