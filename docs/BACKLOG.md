@@ -3,67 +3,6 @@
 Ideas and polish items that are not yet ordered in `ROADMAP.md`. Each entry
 should be small enough to pick up without re-scoping the roadmap.
 
-## UI — Diff viewer
-
-### Show file path on the diff tab, not in the toolbar
-
-**Problem:** The diff toolbar repeats the repository-relative path
-(`src/remotes.rs`) on the left, next to `+added`/`-removed` counts and view
-controls. The header tab above shows only the file name (`remotes.rs`); the full
-path appears only in a tooltip. That duplicates information and crowds the
-toolbar row (screenshot from 2026-11-25).
-
-**Goal:** Remove the path label from the diff action toolbar. Show the
-repository-relative path in the active file tab (truncate with tooltip on
-elision). Keep `+`/`-` stats and Unified / Side by Side / whitespace / Stage /
-Unstage / Discard on the second row.
-
-**Likely touch points:** `src/ui/diff_view.rs` — `file_header` (tab label) and
-the path `Label` in the toolbar layout around the line actions.
-
-**Status:** Not started
-
-## UI — Status bar
-
-### Space between operation message and cancel control
-
-**Problem:** While a background operation is running, the status text (e.g.
-«Pull in progress…») sits flush against the cancel disc on the right side of the
-status bar. There is no visual gap between the message and the control.
-
-**Goal:** Add comfortable horizontal spacing between the truncated operation
-label and the cancel button so the two controls read as separate affordances.
-
-**Likely touch points:** `src/ui/status_bar.rs` — layout around
-`show_operation_cancel` and `item_spacing`; layout test
-`operation_cancel_follows_the_message_in_the_status_bar`.
-
-**Status:** Not started
-
-### Hide AI provider icon when signed out
-
-**Problem:** After signing out of a subscription provider (e.g. GitHub
-Copilot), the status bar can still show the provider icon (GitHub / OpenAI) to
-the left of the repository path. The indicator follows saved “subscription”
-settings in `connection_indicator`, not whether a session is still valid
-(screenshot from 2026-11-26).
-
-**Goal:** Show the clickable provider icon only while the user is signed in for
-that provider. After logout (or expired session with no usable token), remove the
-icon and separator so the status bar matches the disconnected state. Clicking
-Settings should still offer sign-in; do not imply an active session when there is
-none.
-
-**Constraints:** Preserve the rule that painting the status bar must not
-trigger heavy credential reads on every frame; use existing connection/session
-state updated at login, logout, and generation time.
-
-**Likely touch points:** `src/ui/status_bar.rs` (`connection_indicator`,
-`show`), `src/app` AI connection status, settings sign-out flows,
-`indicator_follows_the_saved_provider_for_the_open_repository` and related tests.
-
-**Status:** Not started
-
 ## Dependencies
 
 ### Drop the egui and winit git patches

@@ -1,6 +1,6 @@
 use super::controls::icons::{self, Icon};
 use super::controls::tooltips::TooltipResponse;
-use crate::app::{SannyGitApp, SettingsPage};
+use crate::app::{AiConnectionStatus, SannyGitApp, SettingsPage};
 use crate::llm::{Config, SubscriptionProvider};
 use eframe::egui::{
     Align, CursorIcon, Frame, Id, Label, Layout, Margin, Panel, RichText, Sense, Ui, Vec2,
@@ -13,6 +13,8 @@ const CANCEL_EDGE_GAP: f32 = 4.0;
 /// Two pixels under the largest disc that still keeps `CANCEL_EDGE_GAP`.
 const CANCEL_DIAMETER: f32 = HEIGHT - 2.0 * BORDER_WIDTH - 2.0 * CANCEL_EDGE_GAP - 2.0;
 const CANCEL_SIZE: Vec2 = Vec2::splat(CANCEL_DIAMETER);
+/// Clear space between the operation label and the cancel disc.
+const CANCEL_MESSAGE_GAP: f32 = 12.0;
 
 pub(crate) fn operation_cancel_id() -> Id {
     Id::unique("status.operation.cancel")
@@ -76,13 +78,28 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         icons::paint(ui, Icon::Folder, palette.text, 14.0);
                     }
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        ui.add(
-                            Label::new(RichText::new(status.clone()).color(palette.muted))
-                                .truncate()
-                                .show_tooltip_when_elided(false),
-                        )
-                        .help_text(&status);
-                        show_operation_cancel(ui, app);
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        let show_cancel =
+                            app.background_progress_only && app.manager.cancel.is_some();
+                        let reserve = if show_cancel {
+                            CANCEL_MESSAGE_GAP + CANCEL_SIZE.x
+                        } else {
+                            0.0
+                        };
+                        let text_width = (ui.available_width() - reserve).max(0.0);
+                        ui.scope(|ui| {
+                            ui.set_max_width(text_width);
+                            ui.add(
+                                Label::new(RichText::new(status.clone()).color(palette.muted))
+                                    .truncate()
+                                    .show_tooltip_when_elided(false),
+                            )
+                            .help_text(&status);
+                        });
+                        if show_cancel {
+                            ui.add_space(CANCEL_MESSAGE_GAP);
+                            show_operation_cancel(ui, app);
+                        }
                     });
                 });
             });
@@ -129,8 +146,23 @@ fn connection_indicator(app: &SannyGitApp) -> Option<(Icon, String)> {
     let path = &app.repositories.get(app.selected_repository)?.path;
     // The chosen provider is already in the saved settings. Startup must not
     // read the API key or the provider session to decide which icon to show.
-    let config = app.effective_generation_config(path);
+    // An open settings dialog may already have copied its draft into the live
+    // config. The icon stays on the connection that was applied with OK.
+    let mut config = app.effective_generation_config(path);
+    if let Some((subscription, provider)) = app.applied_ai_connection() {
+        config.chatgpt_subscription = subscription;
+        config.subscription_provider = provider;
+    }
     if config.chatgpt_subscription {
+        // Login, logout, and the one-shot session check own this state.
+        // Painting must not read the credential store to decide the icon.
+        let signed_in = match config.subscription_provider {
+            SubscriptionProvider::ChatGpt => app.settings_window.chatgpt_status,
+            SubscriptionProvider::Copilot => app.settings_window.copilot_status,
+        } == AiConnectionStatus::Connected;
+        if !signed_in {
+            return None;
+        }
         return Some(match config.subscription_provider {
             SubscriptionProvider::ChatGpt => (Icon::OpenAi, "OpenAI (ChatGPT)".into()),
             SubscriptionProvider::Copilot => (Icon::GitHub, "GitHub Copilot".into()),
@@ -204,7 +236,32 @@ mod tests {
                 app.settings_window.copilot_status,
                 AiConnectionStatus::Unknown
             ));
+            assert!(connection_indicator(&app).is_none());
         }
+    }
+
+    #[test]
+    fn signed_out_provider_is_absent_from_the_status_bar() {
+        let context = Context::default();
+        crate::theme::install_fonts(&context);
+        egui_extras::install_image_loaders(&context);
+        ThemeChoice::Light.apply(&context);
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        open_repository(&mut app, r"D:\repositories\example");
+        app.llm_config.chatgpt_subscription = true;
+        app.llm_config.subscription_provider = SubscriptionProvider::Copilot;
+        app.settings_window.copilot_status = AiConnectionStatus::SignedOut;
+        let mut output = context.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(980.0, 220.0))),
+                ..Default::default()
+            },
+            |ui| show(ui, &mut app),
+        );
+        output.textures_delta.clear();
+        assert!(context
+            .read_response(egui::Id::unique("status.provider"))
+            .is_none());
     }
 
     #[test]
@@ -223,12 +280,13 @@ mod tests {
             AiConnectionStatus::SignedOut,
             AiConnectionStatus::ChangingSession,
             AiConnectionStatus::Failed,
-            AiConnectionStatus::Connected,
         ] {
             app.settings_window.copilot_status = status;
-            app.settings_window.chatgpt_status = status;
-            assert_eq!(connection_indicator(&app), copilot);
+            app.settings_window.chatgpt_status = AiConnectionStatus::Connected;
+            assert_eq!(connection_indicator(&app), None);
         }
+        app.settings_window.copilot_status = AiConnectionStatus::Connected;
+        assert_eq!(connection_indicator(&app), copilot);
         assert_eq!(
             crate::llm::CREDENTIAL_READS.with(|reads| reads.get()),
             reads
@@ -236,6 +294,9 @@ mod tests {
 
         app.llm_config.subscription_provider = SubscriptionProvider::ChatGpt;
         app.settings_window.chatgpt_status = AiConnectionStatus::SignedOut;
+        app.settings_window.copilot_status = AiConnectionStatus::Connected;
+        assert_eq!(connection_indicator(&app), None);
+        app.settings_window.chatgpt_status = AiConnectionStatus::Connected;
         assert_eq!(
             connection_indicator(&app),
             Some((Icon::OpenAi, "OpenAI (ChatGPT)".into()))
@@ -253,6 +314,76 @@ mod tests {
         assert_eq!(
             connection_indicator(&app),
             Some((Icon::OpenAi, "OpenAI (ChatGPT)".into()))
+        );
+    }
+
+    #[test]
+    fn indicator_keeps_the_applied_connection_until_settings_are_saved() {
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        open_repository(&mut app, "/project");
+        app.llm_config.chatgpt_subscription = true;
+        app.llm_config.subscription_provider = SubscriptionProvider::Copilot;
+        app.settings_window.copilot_status = AiConnectionStatus::Connected;
+        let applied = Some((Icon::GitHub, "GitHub Copilot".into()));
+        assert_eq!(connection_indicator(&app), applied);
+
+        app.open_repository_llm_settings();
+        app.settings_window.llm.config.chatgpt_subscription = false;
+        app.settings_window.llm.config.endpoint =
+            "http://localhost:1234/v1/chat/completions".into();
+        app.settings_window.llm.config.model = "google/gemma-4-e2b".into();
+        app.sync_global_ai_connection_from_draft();
+        app.settings_window.llm_repositories.insert(
+            "/project".into(),
+            crate::app::LlmSettings {
+                config: Config {
+                    endpoint: "http://localhost:1234/v1/chat/completions".into(),
+                    model: "google/gemma-4-e2b".into(),
+                    ..Config::default()
+                },
+                ..Default::default()
+            },
+        );
+        assert!(!app.llm_config.chatgpt_subscription);
+        assert_eq!(connection_indicator(&app), applied);
+
+        app.settings_window.llm.config.chatgpt_subscription = true;
+        app.settings_window.llm.config.subscription_provider = SubscriptionProvider::ChatGpt;
+        app.settings_window.chatgpt_status = AiConnectionStatus::Connected;
+        app.sync_global_ai_connection_from_draft();
+        assert_eq!(
+            app.llm_config.subscription_provider,
+            SubscriptionProvider::ChatGpt
+        );
+        assert_eq!(connection_indicator(&app), applied);
+
+        app.discard_unsaved_global_ai_connection();
+        assert!(app.llm_config.chatgpt_subscription);
+        assert_eq!(
+            app.llm_config.subscription_provider,
+            SubscriptionProvider::Copilot
+        );
+        assert_eq!(connection_indicator(&app), applied);
+
+        app.open_repository_llm_settings();
+        app.settings_window.llm.config.chatgpt_subscription = false;
+        app.sync_global_ai_connection_from_draft();
+        app.repository_llm_configs.insert(
+            "/project".into(),
+            Config {
+                endpoint: "http://localhost:1234/v1/chat/completions".into(),
+                model: "google/gemma-4-e2b".into(),
+                ..Config::default()
+            },
+        );
+        assert_eq!(connection_indicator(&app), applied);
+        app.commit_global_ai_connection_session();
+        assert_eq!(
+            connection_indicator(&app),
+            Some((
+                Icon::Code,
+                "LM Studio (local) (google/gemma-4-e2b)".into()
+            ))
         );
     }
 
@@ -351,7 +482,7 @@ mod tests {
             open_repository(&mut app, &path);
             app.llm_config.chatgpt_subscription = true;
             app.llm_config.subscription_provider = SubscriptionProvider::Copilot;
-            app.settings_window.copilot_status = AiConnectionStatus::Unknown;
+            app.settings_window.copilot_status = AiConnectionStatus::Connected;
             let size = Vec2::new(980.0, 220.0);
             let mut output = context.run_ui(
                 RawInput {
@@ -422,6 +553,7 @@ mod tests {
         open_repository(&mut app, r"D:\repositories\example");
         app.llm_config.chatgpt_subscription = true;
         app.llm_config.subscription_provider = SubscriptionProvider::Copilot;
+        app.settings_window.copilot_status = AiConnectionStatus::Connected;
         let size = Vec2::new(980.0, 220.0);
         let render = |app: &mut SannyGitApp, events| {
             let mut output = context.run_ui(
@@ -530,10 +662,10 @@ mod tests {
                         window.contains_rect(cancel),
                         "Cancel cross {cancel:?} leaves the {size:?} window"
                     );
+                    let gap = cancel.left() - status_message.right();
                     assert!(
-                        status_message.right() <= cancel.left() + 1.0
-                            && cancel.left() - status_message.right() < 16.0,
-                        "Cross is not immediately after the message in {theme:?} {style:?} at {size:?}: message {status_message:?} cancel {cancel:?}"
+                        (CANCEL_MESSAGE_GAP - 2.0..CANCEL_MESSAGE_GAP + 6.0).contains(&gap),
+                        "Expected about {CANCEL_MESSAGE_GAP}px between the message and cancel in {theme:?} {style:?} at {size:?}: message {status_message:?} cancel {cancel:?} gap {gap}"
                     );
                     assert!(
                         (cancel.center().y - status_message.center().y).abs() < 6.0,
@@ -603,6 +735,23 @@ mod tests {
                         "Clicking the cross did not cancel"
                     );
                     assert_eq!(app.status, "Cancelling operation…");
+
+                    app.manager.cancel = Some(Arc::new(AtomicBool::new(false)));
+                    app.background_progress_only = true;
+                    app.status = "Pull in progress…".repeat(12);
+                    let output = render(&mut app, vec![]);
+                    let messages = text_rects(&output.shapes, &app.status);
+                    assert_eq!(messages.len(), 1);
+                    let cancel = ctx
+                        .data(|data| data.get_temp::<Rect>(super::operation_cancel_id()))
+                        .expect("Cancel stays after a long status");
+                    let gap = cancel.left() - messages[0].right();
+                    assert!(
+                        (CANCEL_MESSAGE_GAP - 2.0..CANCEL_MESSAGE_GAP + 6.0).contains(&gap),
+                        "Long status lost the gap before cancel: message {:?} cancel {cancel:?} gap {gap}",
+                        messages[0]
+                    );
+                    assert!(window.contains_rect(cancel));
 
                     app.manager.cancel = None;
                     app.background_progress_only = false;

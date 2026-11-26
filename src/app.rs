@@ -125,7 +125,10 @@ enum WorkerResult {
         sign_in: bool,
         result: Result<String, String>,
     },
-    CopilotConnection(Result<String, String>),
+    CopilotConnection {
+        sign_in: bool,
+        result: Result<String, String>,
+    },
     AmendMessage(Result<(String, String), String>),
     Repository(Result<crate::git::Snapshot, String>),
     Operation {
@@ -1164,6 +1167,20 @@ impl SannyGitApp {
         self.settings_window.global_ai_connection_snapshot = None;
     }
 
+    /// Subscription mode captured when settings opened. While this is set, the
+    /// live config may already follow the dialog draft.
+    pub(crate) fn applied_ai_connection(&self) -> Option<(bool, crate::llm::SubscriptionProvider)> {
+        self.settings_window
+            .global_ai_connection_snapshot
+            .as_ref()
+            .map(|snapshot| {
+                (
+                    snapshot.chatgpt_subscription,
+                    snapshot.subscription_provider,
+                )
+            })
+    }
+
     pub fn open_repository_llm_settings(&mut self) {
         let Some(path) = self
             .repositories
@@ -2187,7 +2204,7 @@ impl SannyGitApp {
                 crate::llm::copilot::sign_out()
             };
             ctx.request_repaint();
-            WorkerResult::CopilotConnection(result)
+            WorkerResult::CopilotConnection { sign_in, result }
         }) {
             self.sync_global_ai_connection_from_draft();
             self.settings_window.copilot_status_reader = None;
@@ -2230,6 +2247,15 @@ impl SannyGitApp {
             self.settings_window.resume_after_ai_action = true;
             self.status = status.into();
         }
+    }
+
+    /// Start one background session check when the saved subscription mode has
+    /// not been confirmed yet. Later frames only collect that result.
+    fn refresh_visible_subscription_session(&mut self, ctx: &eframe::egui::Context) {
+        if !self.llm_config.chatgpt_subscription {
+            return;
+        }
+        self.update_ai_connection_status(ctx, self.llm_config.subscription_provider);
     }
 
     pub fn update_ai_connection_status(
@@ -2576,19 +2602,22 @@ impl SannyGitApp {
                     self.status = "AI connection failed".into();
                 }
             },
-            WorkerResult::CopilotConnection(result) => {
-                self.settings_window.copilot_status = AiConnectionStatus::Unknown;
-                match result {
-                    Ok(status) => {
-                        self.sync_global_ai_connection_from_draft();
-                        self.status = status;
-                    }
-                    Err(error) => {
-                        self.error = Some(error);
-                        self.status = "GitHub Copilot connection failed".into();
-                    }
+            WorkerResult::CopilotConnection { sign_in, result } => match result {
+                Ok(status) => {
+                    self.settings_window.copilot_status = if sign_in {
+                        AiConnectionStatus::Connected
+                    } else {
+                        AiConnectionStatus::SignedOut
+                    };
+                    self.sync_global_ai_connection_from_draft();
+                    self.status = status;
                 }
-            }
+                Err(error) => {
+                    self.settings_window.copilot_status = AiConnectionStatus::Unknown;
+                    self.error = Some(error);
+                    self.status = "GitHub Copilot connection failed".into();
+                }
+            },
             WorkerResult::Repository(Ok(snapshot)) => {
                 logging::record(logging::Level::Info, format_args!("Repository opened"));
                 self.apply_snapshot(snapshot);
@@ -2898,6 +2927,7 @@ impl eframe::App for SannyGitApp {
             .select(ui.ctx(), self.preferences.follow_system_theme);
         ui.set_style(ui.ctx().global_style());
         self.poll_worker();
+        self.refresh_visible_subscription_session(ui.ctx());
         self.poll_refs();
         self.poll_tag_message(ui.ctx());
         self.poll_tag_patch();

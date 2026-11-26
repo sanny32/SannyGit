@@ -2888,3 +2888,42 @@ fn readers_capture_the_git_executable_at_launch() {
         matches!(configured.recv().unwrap(), WorkerResult::Repository(Err(error)) if error.contains(&missing))
     );
 }
+
+#[test]
+fn subscription_sign_in_and_sign_out_record_the_session_state() {
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.settings_window.copilot_status = AiConnectionStatus::ChangingSession;
+    app.apply_worker_result(WorkerResult::CopilotConnection {
+        sign_in: false,
+        result: Ok("GitHub Copilot disconnected".into()),
+    });
+    assert!(matches!(
+        app.settings_window.copilot_status,
+        AiConnectionStatus::SignedOut
+    ));
+    assert_eq!(app.status, "GitHub Copilot disconnected");
+
+    app.settings_window.copilot_status = AiConnectionStatus::ChangingSession;
+    app.apply_worker_result(WorkerResult::CopilotConnection {
+        sign_in: true,
+        result: Ok("GitHub Copilot connected".into()),
+    });
+    assert!(matches!(
+        app.settings_window.copilot_status,
+        AiConnectionStatus::Connected
+    ));
+
+    app.settings_window.chatgpt_status = AiConnectionStatus::ChangingSession;
+    app.apply_worker_result(WorkerResult::AiConnection {
+        sign_in: false,
+        result: Ok("ChatGPT disconnected".into()),
+    });
+    assert!(matches!(
+        app.settings_window.chatgpt_status,
+        AiConnectionStatus::SignedOut
+    ));
+    assert!(matches!(
+        app.settings_window.copilot_status,
+        AiConnectionStatus::Connected
+    ));
+}
