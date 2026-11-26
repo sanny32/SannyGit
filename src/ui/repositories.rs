@@ -120,7 +120,15 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .changes
         .iter()
         .any(|change| change.kind == crate::models::ChangeKind::Conflicted);
-    let height = repository_row_height(ui, palette.panel_radius > 0);
+    let modern = palette.panel_radius > 0;
+    let height = repository_row_height(ui, modern);
+    let ungrouped_exists = app.repositories.iter().any(|repository| {
+        !app.manager
+            .preferences
+            .groups
+            .iter()
+            .any(|group| group.paths.contains(&repository.path))
+    });
     let mut requested = None;
     let mut move_to = None;
     let mut context_action = None;
@@ -154,12 +162,19 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     .id_salt(("repository.group", &group.name))
                     .default_open(true)
                     .show(ui, |ui| {
-                        for (index, repository) in app
+                        let group_repositories: Vec<_> = app
                             .repositories
                             .iter()
                             .enumerate()
                             .filter(|(_, r)| group.paths.contains(&r.path))
+                            .collect();
+                        let group_count = group_repositories.len();
+                        for (position, (index, repository)) in
+                            group_repositories.into_iter().enumerate()
                         {
+                            let draw_separator = modern
+                                && (position + 1 < group_count
+                                    || (position + 1 == group_count && ungrouped_exists));
                             let branch = shown_branch(
                                 index,
                                 app.selected_repository,
@@ -191,6 +206,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 &mut move_to,
                                 height,
                                 &enabled_actions,
+                                draw_separator,
                             ) {
                                 context_action = Some((repository.path.clone(), action));
                             }
@@ -200,13 +216,22 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     app.manager.preferences.selected_group = Some(group.name);
                 }
             }
-            for (index, repository) in app.repositories.iter().enumerate().filter(|(_, r)| {
-                !app.manager
-                    .preferences
-                    .groups
-                    .iter()
-                    .any(|g| g.paths.contains(&r.path))
-            }) {
+            let ungrouped_repositories: Vec<_> = app
+                .repositories
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| {
+                    !app.manager
+                        .preferences
+                        .groups
+                        .iter()
+                        .any(|g| g.paths.contains(&r.path))
+                })
+                .collect();
+            let ungrouped_count = ungrouped_repositories.len();
+            for (position, (index, repository)) in ungrouped_repositories.into_iter().enumerate()
+            {
+                let draw_separator = modern && position + 1 < ungrouped_count;
                 let branch = shown_branch(
                     index,
                     app.selected_repository,
@@ -238,6 +263,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     &mut move_to,
                     height,
                     &enabled_actions,
+                    draw_separator,
                 ) {
                     context_action = Some((repository.path.clone(), action));
                 }
@@ -408,6 +434,22 @@ fn repository_name_line(
 /// Gap between the repository name and the path line in the Modern list.
 const MODERN_REPOSITORY_PATH_GAP: f32 = 1.0;
 
+/// Horizontal inset for Modern list row separators (matches row outset).
+const MODERN_REPOSITORY_ROW_SEPARATOR_INSET: f32 = 8.0;
+/// Vertical gap between rows; the separator sits on its center line.
+const MODERN_REPOSITORY_SEPARATOR_GAP: f32 = 9.0;
+
+fn repository_row_separator(ui: &Ui, gap: eframe::egui::Rect, palette: crate::theme::Palette) {
+    let y = gap.center().y;
+    ui.painter().line_segment(
+        [
+            eframe::egui::pos2(gap.left() + MODERN_REPOSITORY_ROW_SEPARATOR_INSET, y),
+            eframe::egui::pos2(gap.right() - MODERN_REPOSITORY_ROW_SEPARATOR_INSET, y),
+        ],
+        (1.0, palette.border.gamma_multiply(0.6)),
+    );
+}
+
 /// Inactive repository icons are a step paler than other muted ink.
 fn inactive_repository_icon_color(palette: crate::theme::Palette) -> eframe::egui::Color32 {
     let toward = palette.panel;
@@ -455,6 +497,7 @@ fn repository_row(
     move_to: &mut Option<(String, Option<String>)>,
     height: f32,
     enabled: &[MenuAction],
+    draw_separator: bool,
 ) -> Option<RepositoryAction> {
     let active = selected == index;
     let favorite = preferences
@@ -580,6 +623,13 @@ fn repository_row(
                 );
             }
         });
+    if modern && draw_separator {
+        let (gap, _) = ui.allocate_exact_size(
+            eframe::egui::Vec2::new(ui.available_width(), MODERN_REPOSITORY_SEPARATOR_GAP),
+            eframe::egui::Sense::hover(),
+        );
+        repository_row_separator(ui, gap, palette);
+    }
     let response = if palette.panel_radius > 0 {
         // Modern rows already display the path below the repository name.
         response
@@ -758,6 +808,7 @@ mod tests {
                                 &mut move_to,
                                 24.0,
                                 &[MenuAction::NewWindow, MenuAction::Push],
+                                false,
                             );
                         },
                     );
@@ -907,6 +958,7 @@ mod tests {
                     &mut move_to,
                     height,
                     &[],
+                    false,
                 );
                 repository_row(
                     ui,
@@ -926,6 +978,7 @@ mod tests {
                     &mut move_to,
                     height,
                     &[],
+                    false,
                 );
             },
         );
@@ -1011,6 +1064,7 @@ mod tests {
                                 &mut move_to,
                                 row_height,
                                 &[],
+                                false,
                             );
                         },
                     );
@@ -1124,6 +1178,102 @@ mod tests {
     }
 
     #[test]
+    fn modern_rows_draw_inset_separators_between_repositories() {
+        use crate::theme::{InterfaceStyle, ThemeChoice};
+
+        let ctx = Context::default();
+        crate::theme::install_fonts(&ctx);
+        let theme = ThemeChoice::Light;
+        let interface = InterfaceStyle::Modern;
+        theme.apply_style(&ctx, interface);
+        let palette = interface.palette(theme);
+        let first = crate::models::Repository {
+            name: "First".into(),
+            path: "/first".into(),
+        };
+        let second = crate::models::Repository {
+            name: "Second".into(),
+            path: "/second".into(),
+        };
+        let mut highlighted = None;
+        let mut requested = None;
+        let mut move_to = None;
+        let preferences = crate::repository::Preferences::default();
+        let border = palette.border.gamma_multiply(0.6);
+        let mut output = ctx.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 160.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let height = repository_row_height(ui, true);
+                repository_row(
+                    ui,
+                    0,
+                    &first,
+                    Some("main"),
+                    Icon::Repository,
+                    0,
+                    false,
+                    false,
+                    None,
+                    &mut highlighted,
+                    palette,
+                    &[],
+                    &preferences,
+                    &mut requested,
+                    &mut move_to,
+                    height,
+                    &[],
+                    true,
+                );
+                repository_row(
+                    ui,
+                    1,
+                    &second,
+                    Some("dev"),
+                    Icon::Repository,
+                    usize::MAX,
+                    false,
+                    false,
+                    None,
+                    &mut highlighted,
+                    palette,
+                    &[],
+                    &preferences,
+                    &mut requested,
+                    &mut move_to,
+                    height,
+                    &[],
+                    false,
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let separators: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                eframe::egui::Shape::LineSegment { points, stroke }
+                    if stroke.color == border && stroke.width == 1.0 =>
+                {
+                    Some((points[0], points[1]))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            separators.len(),
+            1,
+            "Expected one separator between two modern rows"
+        );
+        let (start, end) = separators[0];
+        assert!((start.y - end.y).abs() < 0.01);
+        assert!(start.x >= MODERN_REPOSITORY_ROW_SEPARATOR_INSET - 0.5);
+        assert!((end.x - start.x) > 200.0);
+    }
+
+    #[test]
     fn single_click_selects_and_double_click_requests_activation() {
         for theme in [
             crate::theme::ThemeChoice::Light,
@@ -1180,6 +1330,7 @@ mod tests {
                             &mut move_to,
                             24.0,
                             &[],
+                            false,
                         );
                     },
                 );
