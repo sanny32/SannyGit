@@ -108,3 +108,41 @@ missing remote upstream (fetch/ls-remote or existing ref loads), layout tests
 under `src/ui/branches.rs`.
 
 **Status:** Not started
+
+## UI — Settings (dark theme)
+
+### Keyboard Shortcuts table matches text field background
+
+**Problem:** In dark theme, **Settings → Keyboard Shortcuts** paints the command
+table inside a frame filled with `palette.panel` (lighter gray), while the
+**Filter** field and **Shortcut** assign field use the standard text-edit
+background (darker, same as other single-line inputs). The mismatch is obvious in
+the scrollable list area (screenshot from 2026-11-26).
+
+**Goal:** In dark theme (and keep light theme consistent), use the same fill as
+`TextEdit` / `singleline` for the shortcuts table frame and row area — or
+otherwise align table and edit backgrounds. Header row and borders can stay as
+now if needed for column separation.
+
+**Likely touch points:** `src/ui/settings.rs` (`keyboard_shortcuts_page`,
+`Frame::fill(palette.panel)` around the list), `src/ui/settings/tests.rs`
+(`shortcut_page_uses_the_same_gray_as_other_pages`).
+
+**Status:** Not started
+
+### About dialog body uses text-edit black in dark theme
+
+**Problem:** In the **About SannyGit** window, the main content background reads as
+the light “card” surface (white in light theme). In dark theme it stays on
+`palette.panel` / header grays, so it looks lighter than single-line **TextEdit**
+fields elsewhere (screenshot from 2026-11-26).
+
+**Goal:** In dark theme, paint that body background with the same fill as text
+inputs (`text_edit_bg_color` or the palette token used by edits). Keep light
+theme as today (white/light panel). Footer bar, links, and branding layout stay
+unchanged.
+
+**Likely touch points:** `src/ui/about.rs` (`CentralPanel` / `contents` frames,
+`body` columns), `src/theme.rs` if a shared token is preferable.
+
+**Status:** Not started
