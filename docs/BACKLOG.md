@@ -3,46 +3,7 @@
 Ideas and polish items that are not yet ordered in `ROADMAP.md`. Each entry
 should be small enough to pick up without re-scoping the roadmap.
 
-## UI — Modern theme
-
-### Denser repository list (Modern)
-
-**Problem:** In Modern interface style the Repositories panel uses tall rows
-(name and local path on two lines, 44 px row height, generous spacing). With
-several open repositories the list feels loose compared to Classic (24 px,
-single line).
-
-**Goal:** Tighten vertical rhythm in Modern only — less padding between rows,
-and/or slightly smaller row height, without clipping names, paths, sync badges,
-or the merge/conflict affordances.
-
-**Reference:** Screenshot from 2026-11-25 (RustRover / local build, light Modern
-theme, six repositories in one group).
-
-**Likely touch points:** `src/ui/repositories.rs` (`repository_row`, row
-`height` when `palette.panel_radius > 0`), layout tests around
-`name_stays_next_to_icon_with_tracking_counts`.
-
-**Status:** Done. Modern rows size to the name and path (1px between them, plus
-the row inset) instead of a fixed 44px. Classic stays 24px.
-
 ## UI — Diff viewer
-
-### Line selection must not shift layout
-
-**Problem:** Selecting a diff line adds a 1 px accent stroke around the row
-frame. The extra border grows the row box, so following lines jump down by a
-few pixels. The effect is visible in Unified view when toggling selection on
-added/removed/context lines (screenshot from 2026-11-25, `remotes.rs` diff).
-
-**Goal:** Keep every line at a fixed vertical position whether it is selected or
-not — draw the highlight inside the same footprint (inset stroke, overlay, or
-always-reserved border width).
-
-**Likely touch point:** `src/ui/diff_view.rs`, `show_line` (`Frame::stroke` when
-`selected`).
-
-**Status:** Not started
 
 ### Show file path on the diff tab, not in the toolbar
 

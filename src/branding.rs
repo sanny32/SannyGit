@@ -47,9 +47,6 @@ mod tests {
 
     #[test]
     fn main_window_title_without_repository() {
-        assert_eq!(
-            main_window_title(None),
-            format!("{APP_NAME} {APP_VERSION}")
-        );
+        assert_eq!(main_window_title(None), format!("{APP_NAME} {APP_VERSION}"));
     }
 }

@@ -582,17 +582,15 @@ fn show_line(
         );
     let selected = selectable && click.as_ref().is_some_and(|click| click.selected);
     let line_index = click.as_ref().map(|click| click.index);
-    let mut frame = Frame::new()
+    // Stroke stays inside the row. `Frame::stroke` grows the outer rect and
+    // pushes every following line down when selection toggles.
+    let response = Frame::new()
         .fill(if selected {
             palette.accent.gamma_multiply(0.16)
         } else {
             fill
         })
-        .inner_margin(Margin::symmetric(4, 0));
-    if selected {
-        frame = frame.stroke(eframe::egui::Stroke::new(1.0, palette.accent));
-    }
-    let response = frame
+        .inner_margin(Margin::symmetric(4, 0))
         .show(ui, |ui| {
             ui.set_min_width(width - 8.0);
             ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -655,6 +653,14 @@ fn show_line(
             });
         })
         .response;
+    if selected {
+        ui.painter().rect_stroke(
+            response.rect,
+            0.0,
+            eframe::egui::Stroke::new(1.0, palette.accent),
+            eframe::egui::StrokeKind::Inside,
+        );
+    }
     let response = if selectable {
         ui.interact(
             response.rect,
@@ -1137,6 +1143,101 @@ mod tests {
                 unstage.center(),
                 "Select staged lines to unstage.",
             );
+        }
+    }
+
+    #[test]
+    fn selecting_a_line_keeps_following_lines_in_place() {
+        use std::collections::BTreeSet;
+
+        use crate::models::{DiffLineKind, DiffPreview};
+        use crate::theme::{install_fonts, ThemeChoice};
+        use eframe::egui::{Context, Pos2, RawInput, Rect, Shape, Vec2};
+
+        let preview = DiffPreview::new("@@ -1,4 +1,4 @@\n context\n-removed\n+added\n tail\n");
+        let added = preview
+            .lines
+            .iter()
+            .position(|line| line.kind == DiffLineKind::Added)
+            .expect("added line");
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let ctx = Context::default();
+            install_fonts(&ctx);
+            theme.apply(&ctx);
+            let palette = theme.palette();
+            let tops = |selected: bool| {
+                let selection = selected.then(|| BTreeSet::from([added]));
+                let mut output = None;
+                for _ in 0..2 {
+                    let mut frame = ctx.run_ui(
+                        RawInput {
+                            screen_rect: Some(Rect::from_min_size(
+                                Pos2::ZERO,
+                                Vec2::new(800.0, 400.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            let _ = render_preview_with(
+                                ui,
+                                &preview,
+                                palette,
+                                "line-selection-layout",
+                                selection.as_ref(),
+                            );
+                        },
+                    );
+                    frame.textures_delta.clear();
+                    output = Some(frame);
+                }
+                let output = output.unwrap();
+                let top = |label: &str| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            Shape::Text(text) if text.galley.job.text == label => Some(text.pos.y),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| panic!("missing {label} in {theme:?}"))
+                };
+                let stroke = output.shapes.iter().find_map(|shape| match &shape.shape {
+                    Shape::Rect(rect)
+                        if rect.stroke.width == 1.0 && rect.stroke.color == palette.accent =>
+                    {
+                        Some(rect.rect)
+                    }
+                    _ => None,
+                });
+                (
+                    top("context"),
+                    top("removed"),
+                    top("added"),
+                    top("tail"),
+                    stroke,
+                )
+            };
+            let plain = tops(false);
+            let picked = tops(true);
+            for (label, before, after) in [
+                ("context", plain.0, picked.0),
+                ("removed", plain.1, picked.1),
+                ("added", plain.2, picked.2),
+                ("tail", plain.3, picked.3),
+            ] {
+                assert!(
+                    (before - after).abs() < 0.1,
+                    "{label} moved when selected in {theme:?}: {before} -> {after}"
+                );
+            }
+            let stroke = picked.4.expect("selection stroke");
+            assert!(
+                stroke.top() >= picked.2 - 4.0 && stroke.bottom() <= picked.3 + 0.5,
+                "Selection stroke leaves the added row in {theme:?}: {stroke:?} added={} tail={}",
+                picked.2,
+                picked.3
+            );
+            assert!(plain.4.is_none(), "Unselected diff draws an accent stroke");
         }
     }
 }
