@@ -183,7 +183,7 @@ impl SannyGitApp {
 
     /// Same entry point as branch Log: opens the history window on the current branch.
     pub fn open_current_branch_log(&mut self) {
-        if self.busy() || self.repositories.get(self.selected_repository).is_none() {
+        if self.blocks_reads() || self.repositories.get(self.selected_repository).is_none() {
             return;
         }
         let Some(current) = self
@@ -200,7 +200,7 @@ impl SannyGitApp {
     }
 
     pub fn open_head_log(&mut self) {
-        if self.busy()
+        if self.blocks_reads()
             || self.repositories.get(self.selected_repository).is_none()
             || self.history.commits.is_empty()
         {
@@ -227,7 +227,7 @@ impl SannyGitApp {
 
     /// Open current-branch history on a journal commit, replacing a ref-scoped log.
     pub fn open_commit_history(&mut self, hash: &str) -> bool {
-        if self.busy()
+        if self.blocks_reads()
             || self.repositories.get(self.selected_repository).is_none()
             || !self
                 .history
@@ -250,7 +250,7 @@ impl SannyGitApp {
     }
 
     pub fn open_ref_log(&mut self, tag: String) {
-        if self.busy()
+        if self.blocks_reads()
             || self.repositories.get(self.selected_repository).is_none()
             || !self
                 .branches
@@ -321,7 +321,7 @@ impl SannyGitApp {
     }
 
     pub fn reload_history(&mut self) {
-        if self.busy() || self.repositories.get(self.selected_repository).is_none() {
+        if self.blocks_reads() || self.repositories.get(self.selected_repository).is_none() {
             return;
         }
         self.queue_history_reload();
@@ -335,7 +335,7 @@ impl SannyGitApp {
     }
 
     pub fn history_can_load_more(&self) -> bool {
-        !self.busy()
+        !self.blocks_reads()
             && !self.history.history_loading
             && !self.history.history_pending
             && self.repositories.get(self.selected_repository).is_some()
@@ -399,7 +399,10 @@ impl SannyGitApp {
     }
 
     pub(super) fn load_history(&mut self) {
-        if self.busy() || self.history.history_worker.is_some() || !self.history.history_pending {
+        if self.blocks_reads()
+            || self.history.history_worker.is_some()
+            || !self.history.history_pending
+        {
             return;
         }
         let Some(repository) = self.repositories.get(self.selected_repository) else {

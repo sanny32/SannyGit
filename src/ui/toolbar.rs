@@ -391,7 +391,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                     app.set_selected_staged(staged);
                                 }
                             } else if label == "Log" {
-                                let enabled = !app.busy()
+                                let enabled = !app.blocks_reads()
                                     && app.repositories.get(app.selected_repository).is_some()
                                     && !app.history.commits.is_empty();
                                 if action_button(ui, icon, label, enabled, palette, action_width)

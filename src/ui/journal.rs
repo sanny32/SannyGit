@@ -56,7 +56,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
             ui.add_sized([110.0, search.rect.height()], Label::new(&scope).truncate())
                 .help_text(scope);
         } else {
-            ui.add_enabled_ui(!app.busy(), |ui| {
+            ui.add_enabled_ui(!app.blocks_reads(), |ui| {
                 ComboBox::from_id_salt("journal.scope")
                     .width(100.0)
                     .selected_text(if all {
@@ -76,7 +76,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
         }
         if ui
             .add_enabled(
-                !app.busy() && app.repositories.get(app.selected_repository).is_some(),
+                !app.blocks_reads() && app.repositories.get(app.selected_repository).is_some(),
                 Button::new("Reload"),
             )
             .clicked()
@@ -372,6 +372,8 @@ fn commit_menu(app: &SannyGitApp, index: usize) -> Vec<Entry<CommitAction>> {
     let head = !hash.is_empty() && app.branches.head_commit == hash;
     let repository_open = app.repositories.get(app.selected_repository).is_some();
     let refs_ready = !app.busy() && app.state_current && app.branches.current && repository_open;
+    let views_ready =
+        !app.blocks_reads() && app.state_current && app.branches.current && repository_open;
     let operation_ready = app.merge_allowed() && commit_id && !head;
     let reset_ready = app.ref_reset_allowed() && commit_id;
     let tracked_branch = app
@@ -402,7 +404,7 @@ fn commit_menu(app: &SannyGitApp, index: usize) -> Vec<Entry<CommitAction>> {
     vec![
         Entry::item(
             "Log",
-            !app.busy() && repository_open,
+            !app.blocks_reads() && repository_open,
             CommitAction::Log(hash.clone()),
         )
         .help("Open a repository and wait for the current operation"),
@@ -448,19 +450,19 @@ fn commit_menu(app: &SannyGitApp, index: usize) -> Vec<Entry<CommitAction>> {
         Entry::Separator,
         Entry::item(
             "Compare with HEAD",
-            refs_ready && commit_id && hash != app.branches.head_commit,
+            views_ready && commit_id && hash != app.branches.head_commit,
             CommitAction::CompareWithHead,
         )
         .help("Show a diff against the current branch tip"),
         Entry::item(
             "Set as Comparison Commit",
-            refs_ready && commit_id,
+            views_ready && commit_id,
             CommitAction::SetComparison(hash.clone()),
         )
         .help("Remember this commit for a two-commit comparison"),
         Entry::item(
             "Compare with Comparison Commit",
-            refs_ready
+            views_ready
                 && commit_id
                 && app
                     .history
@@ -943,7 +945,7 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
         );
         retry = ui
             .add_enabled(
-                app.history.commit_preview_error.is_some() && !app.busy(),
+                app.history.commit_preview_error.is_some() && !app.blocks_reads(),
                 Button::new("Retry"),
             )
             .clicked();

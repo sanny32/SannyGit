@@ -558,12 +558,12 @@ fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<F
             vec![
                 E::item(
                     "Open File",
-                    !app.busy() && change.kind != ChangeKind::Deleted,
+                    !app.blocks_reads() && change.kind != ChangeKind::Deleted,
                     FileAction::Open(path.clone()),
                 )
-                .help("The file must exist in the working tree and no operation can be running"),
-                E::item(reveal, !app.busy(), FileAction::Reveal(path))
-                    .help("Wait for the current operation to finish"),
+                .help("The file must exist in the working tree and no file-changing operation can be running"),
+                E::item(reveal, !app.blocks_reads(), FileAction::Reveal(path))
+                    .help("Show this file in its folder"),
             ],
         ));
     }
@@ -571,7 +571,7 @@ fn file_context_menu(app: &SannyGitApp, index: usize) -> Vec<popup_menu::Entry<F
         E::item("Show Changes", true, FileAction::ShowChanges),
         E::item(
             "Log",
-            !app.busy() && repository.is_some(),
+            !app.blocks_reads() && repository.is_some(),
             FileAction::LogFile(change.path.clone()),
         )
         .help("Open the history of this file"),

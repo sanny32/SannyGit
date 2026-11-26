@@ -490,6 +490,10 @@ impl SannyGitApp {
     }
 
     pub fn run_repository_job(&mut self, job: Job) {
+        if self.view_job_during_generation(&job) {
+            self.start_view_job(job);
+            return;
+        }
         if self.busy() {
             return;
         }
@@ -660,7 +664,56 @@ impl SannyGitApp {
         }
     }
 
+    fn view_job_during_generation(&self, job: &Job) -> bool {
+        self.commit.generating_message
+            && self.worker.is_none()
+            && matches!(
+                job,
+                Job::NewWindow
+                    | Job::NewRepositoryWindow(_)
+                    | Job::Reveal(_)
+                    | Job::OpenFile(_)
+                    | Job::RevealFile(_)
+            )
+    }
+
+    fn start_view_job(&mut self, job: Job) {
+        self.error = None;
+        self.status = match &job {
+            Job::NewWindow | Job::NewRepositoryWindow(_) => "Opening new window…",
+            Job::Reveal(_) => "Opening repository folder…",
+            Job::OpenFile(_) => "Opening file…",
+            Job::RevealFile(_) => "Opening containing folder…",
+            _ => return,
+        }
+        .into();
+        match self.spawn_reader(None, move |_git| {
+            let result = match job {
+                Job::NewWindow => ResultMessage::Window(repository::new_window()),
+                Job::NewRepositoryWindow(path) => {
+                    ResultMessage::Window(repository::new_repository_window(&PathBuf::from(path)))
+                }
+                Job::Reveal(path) => {
+                    ResultMessage::Editor(repository::reveal(&PathBuf::from(path)))
+                }
+                Job::OpenFile(path) => ResultMessage::Editor(repository::open_file(&path)),
+                Job::RevealFile(path) => ResultMessage::Editor(repository::reveal_file(&path)),
+                _ => unreachable!("only read-only external jobs use this path"),
+            };
+            WorkerResult::RepositoryTask(Box::new(result))
+        }) {
+            Ok(receiver) => self.external_reader = Some(receiver),
+            Err(error) => {
+                self.error = Some(error);
+                if self.commit.generating_message {
+                    self.status = "Generating commit message…".into();
+                }
+            }
+        }
+    }
+
     pub(super) fn apply_repository_result(&mut self, message: ResultMessage) {
+        let keep_generation_status = self.commit.generating_message;
         self.manager.cancel = None;
         self.status = "Ready".into();
         let outcome = match message {
@@ -766,6 +819,9 @@ impl SannyGitApp {
         if let Err(error) = outcome {
             self.error = Some(error);
             self.status = "Operation failed; inspect the current state before retrying".into();
+        }
+        if keep_generation_status && self.commit.generating_message {
+            self.status = "Generating commit message…".into();
         }
     }
 

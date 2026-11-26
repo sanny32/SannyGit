@@ -76,13 +76,14 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 heading.help_text("Reload branches to retry.");
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_enabled_ui(!app.busy(), |ui| {
+                    if icons::button(ui, Icon::Plus, "Create local branch from HEAD").clicked() {
+                        app.branches.branch_dialog_open = true;
+                    }
+                });
                 ui.add_enabled_ui(
-                    !app.busy() && app.repositories.get(app.selected_repository).is_some(),
+                    !app.blocks_reads() && app.repositories.get(app.selected_repository).is_some(),
                     |ui| {
-                        if icons::button(ui, Icon::Plus, "Create local branch from HEAD").clicked()
-                        {
-                            app.branches.branch_dialog_open = true;
-                        }
                         if icons::button(ui, Icon::Fetch, "Reload branches and tags").clicked() {
                             app.reload_refs();
                         }
@@ -146,7 +147,8 @@ fn branch_requests(app: &SannyGitApp) -> BranchRequests {
         tag_add_allowed: !app.busy(),
         tag_actions_allowed,
         tag_merge_allowed: app.merge_allowed(),
-        tag_log_allowed: !app.busy() && app.repositories.get(app.selected_repository).is_some(),
+        tag_log_allowed: !app.blocks_reads()
+            && app.repositories.get(app.selected_repository).is_some(),
         tag_patch_allowed: tag_actions_allowed && !app.tag_patch_pending(),
         ref_reset_allowed: app.ref_reset_allowed(),
         has_remote_refs: app

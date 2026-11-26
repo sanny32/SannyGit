@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 impl SannyGitApp {
     pub fn open_file_log(&mut self, file: String) {
-        if self.busy()
+        if self.blocks_reads()
             || self.repositories.get(self.selected_repository).is_none()
             || file.is_empty()
         {

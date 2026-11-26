@@ -353,7 +353,7 @@ fn cancelling_generation_preserves_draft_and_discards_late_results() {
     app.commit.generation_cancel = Some(cancel.clone());
     app.commit.generating_message = true;
     let (sender, receiver) = mpsc::channel();
-    app.worker = Some(receiver);
+    app.generation_worker = Some(receiver);
     sender
         .send(commit_message_result(Ok("Already queued response".into())))
         .unwrap();
@@ -2668,6 +2668,65 @@ fn check_generation_request(stage_first: bool) {
             "reviewed contents\n"
         }
     );
+}
+
+#[test]
+fn generation_keeps_reads_available_and_blocks_file_changes() {
+    use crate::menu::MenuAction;
+
+    let repo = crate::test_support::TempRepo::new();
+    repo.write("a.txt", "alpha\n");
+    repo.write("b.txt", "beta\n");
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+    app.llm_config.endpoint = "http://127.0.0.1:1/v1".into();
+    app.llm_config.store_api_key = false;
+    let ctx = egui::Context::default();
+    let first = app
+        .changes
+        .iter()
+        .position(|change| change.path == "a.txt")
+        .unwrap();
+    app.selection.active = first;
+    app.load_selected_diff(&ctx);
+    assert!(app.diff_worker.is_some());
+    app.generate_commit_message();
+    assert!(app.commit.generating_message);
+    assert!(app.busy());
+    assert!(!app.blocks_reads());
+    assert!(
+        app.diff_worker.is_some(),
+        "generation must not cancel an in-flight diff"
+    );
+    assert!(!app.staging_allowed(first, true));
+    assert!(app.commit_blocker().is_some());
+    assert!(!app.menu_action_enabled(MenuAction::Stage));
+    assert!(!app.menu_action_enabled(MenuAction::Commit));
+    assert!(!app.menu_action_enabled(MenuAction::Discard));
+    assert!(app.menu_action_enabled(MenuAction::Refresh));
+    assert!(app.menu_action_enabled(MenuAction::ReloadHistory));
+
+    let second = app
+        .changes
+        .iter()
+        .position(|change| change.path == "b.txt")
+        .unwrap();
+    app.selection.active = second;
+    app.load_selected_diff(&ctx);
+    assert!(
+        app.diff_worker.is_some(),
+        "selecting another file must load its diff during generation"
+    );
+    app.reload_history();
+    assert!(app.history.history_pending);
+    app.load_history();
+    assert!(app.history.history_worker.is_some());
+    app.reload_refs();
+    assert!(app.branches.pending);
+    app.cancel_commit_message_generation();
+    assert!(!app.commit.generating_message);
+    assert!(app.diff_worker.is_some());
+    assert!(app.history.history_worker.is_some());
 }
 
 #[test]

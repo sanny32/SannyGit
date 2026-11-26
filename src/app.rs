@@ -363,6 +363,11 @@ pub struct SannyGitApp {
     pub error_dialogs: errors::ErrorDialogs,
     pub status: String,
     worker: Option<Receiver<WorkerResult>>,
+    /// Commit-message generation. It reads a patch and calls the model, so it
+    /// must not take the mutation worker or cancel diff and history reads.
+    generation_worker: Option<Receiver<WorkerResult>>,
+    /// Open and reveal requests started while a commit message is generating.
+    external_reader: Option<Receiver<WorkerResult>>,
     index_repaint: Option<eframe::egui::Context>,
     diff_worker: Option<Receiver<WorkerResult>>,
     diff_refresh_pending: bool,
@@ -593,6 +598,8 @@ impl SannyGitApp {
             error_dialogs: Default::default(),
             status: "Ready".into(),
             worker: None,
+            generation_worker: None,
+            external_reader: None,
             index_repaint: None,
             diff_worker: None,
             diff_refresh_pending: false,
@@ -638,6 +645,12 @@ impl SannyGitApp {
     }
 
     pub fn busy(&self) -> bool {
+        self.worker.is_some() || self.commit.generating_message
+    }
+
+    /// A mutation owns the main worker. Commit-message generation does not
+    /// block actions that only read files, diffs, or history.
+    pub fn blocks_reads(&self) -> bool {
         self.worker.is_some()
     }
 
@@ -776,6 +789,12 @@ impl SannyGitApp {
                 Err(error) => self.error = Some(error),
             }
         }
+        if let Some(result) = Self::poll_reader(&mut self.external_reader) {
+            match result {
+                Ok(result) => self.apply_worker_result(result),
+                Err(error) => self.error = Some(error),
+            }
+        }
     }
 
     fn poll_history_reads(&mut self) {
@@ -849,7 +868,7 @@ impl SannyGitApp {
             | MenuAction::Exit
             | MenuAction::About => true,
             MenuAction::Refresh | MenuAction::ReloadHistory => {
-                !self.busy() && self.repositories.get(self.selected_repository).is_some()
+                !self.blocks_reads() && self.repositories.get(self.selected_repository).is_some()
             }
             MenuAction::Stage => self.selected_staging_allowed(true),
             MenuAction::Unstage => self.selected_staging_allowed(false),
@@ -1333,7 +1352,7 @@ impl SannyGitApp {
         }
     }
     pub fn reload_refs(&mut self) {
-        if self.busy() || self.repositories.get(self.selected_repository).is_none() {
+        if self.blocks_reads() || self.repositories.get(self.selected_repository).is_none() {
             return;
         }
         // Keep the last successful snapshot usable during this read-only refresh.
@@ -1343,7 +1362,7 @@ impl SannyGitApp {
     }
 
     fn load_refs(&mut self) {
-        if self.busy()
+        if self.blocks_reads()
             || self.history.history_pending
             || self.branches.worker.is_some()
             || !self.branches.pending
@@ -1806,7 +1825,7 @@ impl SannyGitApp {
     }
 
     pub(crate) fn load_commit_preview(&mut self) {
-        if self.busy()
+        if self.blocks_reads()
             || self.history.commit_preview_worker.is_some()
             || !self.history.commit_details_open
             || self.history.comparing_with.is_some()
@@ -1847,7 +1866,7 @@ impl SannyGitApp {
     }
 
     pub fn retry_commit_preview(&mut self) {
-        if self.busy() {
+        if self.blocks_reads() {
             return;
         }
         self.history.commit_preview_worker = None;
@@ -2114,7 +2133,7 @@ impl SannyGitApp {
         self.status = "Generating commit message…".into();
         let cancel = Arc::new(AtomicBool::new(false));
         self.commit.generation_cancel = Some(cancel.clone());
-        self.commit.generating_message = self.start_worker(move |git| {
+        match self.spawn_reader(None, move |git| {
             let branch = if include_branch {
                 git::run(git, &root, &["branch", "--show-current"])
                     .ok()
@@ -2143,9 +2162,16 @@ impl SannyGitApp {
                 config,
                 repository: repository_scope,
             }
-        });
-        if !self.commit.generating_message {
-            self.commit.generation_cancel = None;
+        }) {
+            Ok(receiver) => {
+                self.generation_worker = Some(receiver);
+                self.commit.generating_message = true;
+            }
+            Err(error) => {
+                self.commit.generation_cancel = None;
+                self.error = Some(error);
+                self.status = "Could not generate commit message".into();
+            }
         }
     }
 
@@ -2303,12 +2329,23 @@ impl SannyGitApp {
         }
         // Discard the receiver as well: a completed or late response from this
         // generation must never overwrite the draft or a subsequent operation.
-        self.worker = None;
+        self.generation_worker = None;
         self.commit.generating_message = false;
         self.status = "Commit message generation cancelled".into();
     }
 
     fn poll_worker(&mut self) {
+        if let Some(result) = Self::poll_reader(&mut self.generation_worker) {
+            match result {
+                Ok(result) => self.apply_worker_result(result),
+                Err(error) => {
+                    self.commit.generating_message = false;
+                    self.commit.generation_cancel = None;
+                    self.error = Some(error);
+                    self.status = "Could not generate commit message".into();
+                }
+            }
+        }
         let Some(receiver) = &self.worker else {
             return;
         };
@@ -2749,7 +2786,7 @@ impl SannyGitApp {
     }
 
     fn load_selected_diff(&mut self, context: &eframe::egui::Context) {
-        if self.busy()
+        if self.blocks_reads()
             || (!self.diff_refresh_pending && self.loaded_diff == Some(self.selection.active))
         {
             return;
@@ -2777,6 +2814,7 @@ impl SannyGitApp {
         self.diff_worker = None;
         if !retain_preview
             && self.error.is_none()
+            && !self.commit.generating_message
             && !self.status.starts_with("Push ")
             && !self.status.starts_with("Stash ")
             && !matches!(
@@ -2945,6 +2983,7 @@ impl eframe::App for SannyGitApp {
             menu.update_enabled(|action| self.menu_action_enabled(action));
         }
         if self.busy()
+            || self.external_reader.is_some()
             || self.branches.worker.is_some()
             || self.history.history_worker.is_some()
             || self.diff_worker.is_some()

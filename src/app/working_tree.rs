@@ -203,14 +203,16 @@ impl SannyGitApp {
                 }
                 Err(error) => {
                     self.error = Some(error);
-                    self.status = "Could not load diff".into();
+                    if !self.commit.generating_message {
+                        self.status = "Could not load diff".into();
+                    }
                 }
             }
         }
     }
 
     pub(super) fn refresh_working_tree(&mut self) {
-        if self.busy() || self.repositories.get(self.selected_repository).is_none() {
+        if self.blocks_reads() || self.repositories.get(self.selected_repository).is_none() {
             return;
         }
         self.working_tree.invalidate();
@@ -220,7 +222,7 @@ impl SannyGitApp {
     }
 
     pub(super) fn check_working_tree(&mut self, context: &eframe::egui::Context) {
-        if self.busy()
+        if self.blocks_reads()
             || (!self.state_current && !self.working_tree.refresh_requested)
             || self.working_tree.receiver.is_some()
             || Instant::now() < self.working_tree.next_read
@@ -278,7 +280,7 @@ impl SannyGitApp {
     }
 
     pub(super) fn poll_working_tree(&mut self) {
-        if self.busy() {
+        if self.blocks_reads() {
             return;
         }
         let Some(receiver) = &self.working_tree.receiver else {
