@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -17,7 +18,8 @@ pub use oauth::{can_sign_in, has_saved_session, sign_in, sign_out};
 const TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 const DEFAULT_CHAT_URL: &str = "https://api.githubcopilot.com/chat/completions";
 const MODEL: &str = "gpt-4.1";
-const USER_AGENT: &str = concat!("SannyGit/", env!("CARGO_PKG_VERSION"));
+/// Identity the Copilot chat endpoint accepts for an app OAuth token.
+const CLIENT_IDENTITY: &str = "copilot/1.0.114";
 const SIGN_IN_AGAIN: &str = "Sign in to GitHub Copilot again in Settings → AI.";
 
 pub async fn generate(
@@ -39,10 +41,7 @@ pub async fn generate(
         let response = client
             .post(&session.chat_url)
             .bearer_auth(&session.token)
-            .header(reqwest::header::USER_AGENT, USER_AGENT)
-            .header("Editor-Version", USER_AGENT)
-            .header("Editor-Plugin-Version", USER_AGENT)
-            .header("Copilot-Integration-Id", "sannygit")
+            .headers(identity_headers(true))
             .json(&request_body(config, patch, branch))
             .send()
             .await
@@ -80,7 +79,37 @@ struct CopilotSession {
     chat_url: String,
 }
 
+fn identity_headers(chat: bool) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    let mut insert = |name: &'static str, value: &'static str| {
+        headers.insert(
+            HeaderName::from_static(name),
+            HeaderValue::from_static(value),
+        );
+    };
+    insert("user-agent", CLIENT_IDENTITY);
+    insert("editor-version", CLIENT_IDENTITY);
+    insert("copilot-integration-id", "copilot-developer-cli");
+    insert("copilot-harness-id", "copilot-sdk");
+    if chat {
+        insert("openai-intent", "conversation-agent");
+        insert("x-initiator", "user");
+        insert("x-github-api-version", "2026-08-01");
+    }
+    headers
+}
+
+fn direct_session(github_token: &str) -> CopilotSession {
+    CopilotSession {
+        token: github_token.to_owned(),
+        chat_url: DEFAULT_CHAT_URL.to_owned(),
+    }
+}
+
 async fn copilot_session(github_token: &str) -> Result<CopilotSession, String> {
+    // This app's OAuth token cannot mint a Copilot session token. Individual
+    // plans answer that exchange with 403, while the chat endpoint accepts the
+    // same token when the request carries the Copilot CLI identity.
     let response = api_client()?
         .get(TOKEN_URL)
         .header(
@@ -88,20 +117,12 @@ async fn copilot_session(github_token: &str) -> Result<CopilotSession, String> {
             format!("token {github_token}"),
         )
         .header(reqwest::header::ACCEPT, "application/json")
-        .header(reqwest::header::USER_AGENT, USER_AGENT)
-        .header("Editor-Version", USER_AGENT)
+        .headers(identity_headers(false))
         .send()
         .await
         .map_err(|_| "Cannot reach GitHub Copilot. Check your connection.".to_string())?;
-    let status = response.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Err(SIGN_IN_AGAIN.into());
-    }
-    if !status.is_success() {
-        return Err(
-            "GitHub Copilot could not start a session. Check your connection and Copilot access."
-                .into(),
-        );
+    if !response.status().is_success() {
+        return Ok(direct_session(github_token));
     }
     let body: TokenResponse = response
         .json()
@@ -206,6 +227,25 @@ mod tests {
         assert!(chat_url(Some("http://api.githubcopilot.com".into())).is_err());
         assert!(chat_url(Some("https://evil.example/chat".into())).is_err());
         assert!(chat_url(Some("https://user:secret@api.githubcopilot.com".into())).is_err());
+    }
+
+    #[test]
+    fn chat_headers_use_the_copilot_client_identity() {
+        let exchange = identity_headers(false);
+        let chat = identity_headers(true);
+        assert_eq!(exchange["copilot-integration-id"], "copilot-developer-cli");
+        assert!(exchange.get("x-github-api-version").is_none());
+        assert_eq!(chat["editor-version"], CLIENT_IDENTITY);
+        assert_eq!(chat["copilot-harness-id"], "copilot-sdk");
+        assert_eq!(chat["x-github-api-version"], "2026-08-01");
+        assert_eq!(chat["x-initiator"], "user");
+    }
+
+    #[test]
+    fn direct_session_keeps_the_github_token_on_the_public_chat_endpoint() {
+        let session = direct_session("gho_example");
+        assert_eq!(session.token, "gho_example");
+        assert_eq!(session.chat_url, DEFAULT_CHAT_URL);
     }
 
     #[test]

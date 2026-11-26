@@ -120,7 +120,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .changes
         .iter()
         .any(|change| change.kind == crate::models::ChangeKind::Conflicted);
-    let height = if palette.panel_radius > 0 { 44.0 } else { 24.0 };
+    let height = repository_row_height(ui, palette.panel_radius > 0);
     let mut requested = None;
     let mut move_to = None;
     let mut context_action = None;
@@ -160,10 +160,20 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             .enumerate()
                             .filter(|(_, r)| group.paths.contains(&r.path))
                         {
+                            let branch = shown_branch(
+                                index,
+                                app.selected_repository,
+                                &app.branches.current_branch,
+                                app.manager
+                                    .repository_branches
+                                    .get(&repository.path)
+                                    .map(String::as_str),
+                            );
                             if let Some(action) = repository_row(
                                 ui,
                                 index,
                                 repository,
+                                branch.as_deref(),
                                 app.manager
                                     .hosting
                                     .get(&repository.path)
@@ -197,10 +207,20 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     .iter()
                     .any(|g| g.paths.contains(&r.path))
             }) {
+                let branch = shown_branch(
+                    index,
+                    app.selected_repository,
+                    &app.branches.current_branch,
+                    app.manager
+                        .repository_branches
+                        .get(&repository.path)
+                        .map(String::as_str),
+                );
                 if let Some(action) = repository_row(
                     ui,
                     index,
                     repository,
+                    branch.as_deref(),
                     app.manager
                         .hosting
                         .get(&repository.path)
@@ -278,11 +298,137 @@ enum RepositoryAction {
     Rename,
 }
 
+fn shown_branch(
+    index: usize,
+    selected: usize,
+    current: &str,
+    cached: Option<&str>,
+) -> Option<String> {
+    if index == selected && !current.is_empty() {
+        Some(current.to_owned())
+    } else {
+        cached
+            .filter(|branch| !branch.is_empty())
+            .map(ToOwned::to_owned)
+    }
+}
+
+fn repository_name_line(
+    ui: &mut Ui,
+    name: eframe::egui::Label,
+    branch: Option<&str>,
+    favorite: bool,
+    merging: bool,
+    palette: crate::theme::Palette,
+    line_height: f32,
+) {
+    let spacing = ui.spacing().item_spacing.x;
+    let branch_text = branch
+        .filter(|branch| !branch.is_empty())
+        .map(|branch| format!("({branch})"));
+    let measure = |ui: &Ui, text: &str| {
+        ui.painter()
+            .layout_no_wrap(
+                text.to_owned(),
+                eframe::egui::FontId::proportional(crate::theme::ui_font_size()),
+                palette.muted,
+            )
+            .size()
+            .x
+    };
+    let full_branch = branch_text
+        .as_deref()
+        .map(|text| measure(ui, text))
+        .unwrap_or(0.0);
+    let star = if favorite { measure(ui, "★") } else { 0.0 };
+    let marker = merging.then(|| {
+        ui.painter().layout_no_wrap(
+            "<merging>".into(),
+            eframe::egui::FontId::proportional(crate::theme::ui_font_size()),
+            palette.outgoing,
+        )
+    });
+    let marker_width = marker.as_ref().map(|galley| galley.size().x).unwrap_or(0.0);
+    let mut gaps = 0.0;
+    if full_branch > 0.0 {
+        gaps += spacing;
+    }
+    if favorite {
+        gaps += spacing;
+    }
+    if marker.is_some() {
+        gaps += spacing;
+    }
+    ui.allocate_ui_with_layout(
+        eframe::egui::vec2(ui.available_width(), line_height),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            let available = ui.available_width();
+            let mut branch_width = full_branch;
+            let fixed = star + marker_width + gaps;
+            let mut name_width = available - branch_width - fixed;
+            if name_width < 32.0 && branch_width > 0.0 {
+                let give = (32.0 - name_width).min(branch_width);
+                branch_width -= give;
+                name_width += give;
+            }
+            let show_branch = branch_text.is_some() && branch_width >= 12.0;
+            if !show_branch && branch_width > 0.0 {
+                name_width += branch_width + spacing;
+                branch_width = 0.0;
+            }
+            ui.scope(|ui| {
+                ui.set_max_width(name_width.max(0.0));
+                ui.add(name);
+            });
+            if show_branch {
+                ui.scope(|ui| {
+                    ui.set_max_width(branch_width.max(0.0));
+                    ui.add(
+                        eframe::egui::Label::new(
+                            RichText::new(branch_text.clone().unwrap_or_default())
+                                .color(palette.muted),
+                        )
+                        .truncate()
+                        .show_tooltip_when_elided(true),
+                    );
+                });
+            }
+            if favorite {
+                ui.label(RichText::new("★").color(palette.warning));
+            }
+            if let Some(marker) = marker {
+                ui.add(eframe::egui::Label::new(marker))
+                    .help_text("Merge in progress");
+            }
+        },
+    );
+}
+
+/// Gap between the repository name and the path line in the Modern list.
+const MODERN_REPOSITORY_PATH_GAP: f32 = 1.0;
+
+/// Classic rows are a single line. Modern rows stack the path under the name
+/// and stay only as tall as those two lines, plus the row inset.
+fn repository_row_height(ui: &Ui, modern: bool) -> f32 {
+    if !modern {
+        return 24.0;
+    }
+    let name_height = ui.text_style_height(&TextStyle::Body);
+    let mut path_font = TextStyle::Body.resolve(ui.style());
+    path_font.size = (path_font.size - 2.0).max(1.0);
+    let path_height = ui.fonts_mut(|fonts| fonts.row_height(&path_font));
+    // `selectable_row_with_outset` insets the content by 1px on each side.
+    // One more pixel above and below keeps the glyphs off the selection edge.
+    (name_height + MODERN_REPOSITORY_PATH_GAP + path_height + 4.0).ceil()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn repository_row(
     ui: &mut Ui,
     index: usize,
     repository: &crate::models::Repository,
+    branch: Option<&str>,
     icon: Icon,
     selected: usize,
     merging: bool,
@@ -313,6 +459,9 @@ fn repository_row(
         .map_or(active, |path| path == repository.path);
     let response =
         super::controls::selectable_row_with_outset(ui, selected_row, height, 8.0, |ui| {
+            if modern {
+                ui.spacing_mut().item_spacing.y = MODERN_REPOSITORY_PATH_GAP;
+            }
             let icon_response = ui.add(icons::image(
                 icon,
                 if active && branch_status.is_some_and(|(badge, _)| badge.contains(['↑', '↓']))
@@ -389,40 +538,19 @@ fn repository_row(
                     .truncate()
                     .show_tooltip_when_elided(false)
                     .sense(eframe::egui::Sense::hover());
-                    if active && merging {
-                        let marker = ui.painter().layout_no_wrap(
-                            "<merging>".into(),
-                            eframe::egui::FontId::proportional(crate::theme::ui_font_size()),
-                            palette.outgoing,
-                        );
-                        let height = if modern {
+                    repository_name_line(
+                        ui,
+                        name,
+                        branch,
+                        favorite && !(active && merging),
+                        active && merging,
+                        palette,
+                        if modern {
                             name_height
                         } else {
                             ui.available_height()
-                        };
-                        ui.allocate_ui_with_layout(
-                            eframe::egui::vec2(ui.available_width(), height),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                let name_width = ui.available_width()
-                                    - marker.size().x
-                                    - ui.spacing().item_spacing.x;
-                                ui.scope(|ui| {
-                                    ui.set_max_width(name_width.max(0.0));
-                                    ui.add(name);
-                                });
-                                ui.add(eframe::egui::Label::new(marker))
-                                    .help_text("Merge in progress");
-                            },
-                        );
-                    } else if favorite {
-                        ui.horizontal(|ui| {
-                            ui.add(name);
-                            ui.label(RichText::new("★").color(palette.warning));
-                        });
-                    } else {
-                        ui.add(name);
-                    }
+                        },
+                    );
                     if modern {
                         ui.add(
                             eframe::egui::Label::new(
@@ -607,6 +735,7 @@ mod tests {
                                 ui,
                                 0,
                                 &repository,
+                                None,
                                 Icon::Repository,
                                 if active { 0 } else { usize::MAX },
                                 false,
@@ -722,6 +851,8 @@ mod tests {
                 let mut move_to = None;
                 for _ in 0..3 {
                     let mut left = 0.0;
+                    let mut row_top = 0.0;
+                    let mut row_height = 0.0;
                     let mut output = ctx.run_ui(
                         RawInput {
                             screen_rect: Some(Rect::from_min_size(
@@ -733,10 +864,13 @@ mod tests {
                         |ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
                             left = ui.next_widget_position().x;
+                            row_top = ui.next_widget_position().y;
+                            row_height = repository_row_height(ui, modern);
                             repository_row(
                                 ui,
                                 0,
                                 &repository,
+                                Some("main"),
                                 Icon::Repository,
                                 0,
                                 true,
@@ -748,7 +882,7 @@ mod tests {
                                 &crate::repository::Preferences::default(),
                                 &mut requested,
                                 &mut move_to,
-                                if modern { 44.0 } else { 24.0 },
+                                row_height,
                                 &[],
                             );
                         },
@@ -777,8 +911,9 @@ mod tests {
                         .iter()
                         .find(|t| t.galley.job.text == "<merging>")
                         .unwrap();
-                    assert!(marker.pos.x > name.pos.x && marker.pos.x < name.pos.x + 85.0);
+                    assert!(marker.pos.x > name.pos.x);
                     assert!((marker.pos.y - name.pos.y).abs() < 2.0);
+                    assert_eq!(name.galley.job.text, "SannyGit");
                     let tracking = text.iter().find(|t| t.galley.job.text == "↑1 ↓1").unwrap();
                     let text_center = if modern {
                         let path = text
@@ -797,14 +932,64 @@ mod tests {
                     };
                     let tracking_center = tracking.pos.y + tracking.galley.size().y / 2.0;
                     assert!((text_center - tracking_center).abs() < 2.0);
+                    let row_bottom = row_top + row_height;
+                    let name_bottom = name.pos.y + name.galley.size().y;
+                    let path_bottom = text
+                        .iter()
+                        .find(|t| t.galley.job.text == repository.path)
+                        .map(|path| path.pos.y + path.galley.size().y)
+                        .unwrap_or(name_bottom);
+                    assert!(
+                        name.pos.y >= row_top - 0.5 && path_bottom <= row_bottom + 0.5,
+                        "Text leaves the row at width {width}: {row_top}..{row_bottom}, text {}..{path_bottom}",
+                        name.pos.y
+                    );
+                    assert!(
+                        tracking.pos.y >= row_top - 0.5
+                            && tracking.pos.y + tracking.galley.size().y <= row_bottom + 0.5,
+                        "Sync badge leaves the row at width {width}"
+                    );
+                    if modern {
+                        assert!(row_height < 44.0, "Modern row stayed tall: {row_height}");
+                        let path = text
+                            .iter()
+                            .find(|t| t.galley.job.text == repository.path)
+                            .unwrap();
+                        let gap = path.pos.y - name_bottom;
+                        assert!(
+                            (0.0..3.0).contains(&gap),
+                            "Path gap is {gap} at width {width}"
+                        );
+                    }
                     let conflict = text.iter().find(|t| t.galley.job.text == "!").unwrap();
                     assert!(conflict.pos.x < name.pos.x);
                     assert!(output.shapes.iter().any(|shape| {
                         matches!(&shape.shape, eframe::egui::Shape::Rect(rect)
                             if rect.fill == palette.removed_text
-                                && rect.rect.size() == Vec2::splat(10.0))
+                                && rect.rect.size() == Vec2::splat(10.0)
+                                && rect.rect.top() >= row_top - 0.5
+                                && rect.rect.bottom() <= row_bottom + 0.5)
                     }));
-                    assert!(!text.iter().any(|t| t.galley.job.text.contains("(main)")));
+                    let branch_label = text.iter().find(|t| t.galley.job.text == "(main)");
+                    if width >= 260.0 {
+                        let branch_label = branch_label.expect("branch label");
+                        assert!((branch_label.pos.y - name.pos.y).abs() < 2.0);
+                        assert!(branch_label.pos.x > name.pos.x);
+                        assert!(marker.pos.x > branch_label.pos.x);
+                        assert!(
+                            branch_label.pos.x + branch_label.galley.size().x
+                                <= tracking.pos.x + 1.0
+                        );
+                        let branch_color = branch_label.galley.job.sections[0].format.color;
+                        assert_eq!(branch_color, palette.muted);
+                    } else if let Some(branch_label) = branch_label {
+                        assert!((branch_label.pos.y - name.pos.y).abs() < 2.0);
+                        assert!(branch_label.pos.x > name.pos.x);
+                        assert!(
+                            branch_label.pos.x + branch_label.galley.size().x
+                                <= tracking.pos.x + 1.0
+                        );
+                    }
                     output.textures_delta.clear();
                 }
             }
@@ -854,6 +1039,7 @@ mod tests {
                             ui,
                             0,
                             &repository,
+                            None,
                             Icon::Repository,
                             usize::MAX,
                             false,

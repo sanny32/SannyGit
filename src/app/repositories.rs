@@ -19,6 +19,15 @@ struct HostingUpdate {
     provider: Result<Option<crate::clone_source::Provider>, String>,
 }
 
+struct BranchRead {
+    path: String,
+    generation: u64,
+    branch: Result<String, String>,
+}
+
+/// How long a listed repository keeps its branch label before Git is asked again.
+const REPOSITORY_BRANCH_REFRESH: Duration = Duration::from_secs(20);
+
 struct WorktreeAvailability {
     path: String,
     result: Result<(bool, bool), String>,
@@ -47,6 +56,11 @@ pub struct RepositoryManager {
     pub hosting: HashMap<String, crate::clone_source::Provider>,
     hosting_checked: HashMap<String, Instant>,
     hosting_receiver: Option<Receiver<HostingUpdate>>,
+    /// Last known checked-out branch for each listed repository.
+    pub repository_branches: HashMap<String, String>,
+    repository_branch_generation: HashMap<String, u64>,
+    repository_branches_checked: HashMap<String, Instant>,
+    repository_branches_receiver: Option<Receiver<Vec<BranchRead>>>,
     pub preferences: Preferences,
     pub dialog: Option<Dialog>,
     pub highlighted_repository: Option<String>,
@@ -86,6 +100,10 @@ impl Default for RepositoryManager {
             hosting: HashMap::new(),
             hosting_checked: HashMap::new(),
             hosting_receiver: None,
+            repository_branches: HashMap::new(),
+            repository_branch_generation: HashMap::new(),
+            repository_branches_checked: HashMap::new(),
+            repository_branches_receiver: None,
             preferences: Preferences::default(),
             dialog: None,
             highlighted_repository: None,
@@ -303,6 +321,132 @@ impl SannyGitApp {
         {
             self.manager.hosting_receiver = Some(receiver);
         }
+    }
+
+    pub(super) fn update_repository_branches(&mut self, context: &eframe::egui::Context) {
+        if let Some(receiver) = &self.manager.repository_branches_receiver {
+            match receiver.try_recv() {
+                Ok(updates) => {
+                    for update in updates {
+                        self.apply_repository_branch(update);
+                    }
+                    self.manager.repository_branches_receiver = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.manager.repository_branches_receiver = None;
+                }
+            }
+        }
+        let now = Instant::now();
+        let stale: Vec<(String, u64)> = self
+            .repositories
+            .iter()
+            .filter(|repository| {
+                self.manager
+                    .repository_branches_checked
+                    .get(&repository.path)
+                    .is_none_or(|checked| checked.elapsed() >= REPOSITORY_BRANCH_REFRESH)
+            })
+            .map(|repository| {
+                (
+                    repository.path.clone(),
+                    self.manager
+                        .repository_branch_generation
+                        .get(&repository.path)
+                        .copied()
+                        .unwrap_or(0),
+                )
+            })
+            .collect();
+        if stale.is_empty() {
+            return;
+        }
+        for (path, _) in &stale {
+            self.manager
+                .repository_branches_checked
+                .insert(path.clone(), now);
+        }
+        let context = context.clone();
+        let (sender, receiver) = mpsc::channel();
+        let git_context = crate::git::GitContext::new(self.preferences.git_executable.clone());
+        if std::thread::Builder::new()
+            .name("sannygit-repository-branches".into())
+            .spawn(move || {
+                let git = &git_context;
+                let updates = stale
+                    .into_iter()
+                    .map(|(path, generation)| BranchRead {
+                        branch: crate::git::head_branch(git, std::path::Path::new(&path)),
+                        path,
+                        generation,
+                    })
+                    .collect();
+                let _ = sender.send(updates);
+                context.request_repaint();
+            })
+            .is_ok()
+        {
+            self.manager.repository_branches_receiver = Some(receiver);
+        }
+    }
+
+    fn apply_repository_branch(&mut self, update: BranchRead) {
+        if !self.repositories.iter().any(|r| r.path == update.path) {
+            return;
+        }
+        if self
+            .manager
+            .repository_branch_generation
+            .get(&update.path)
+            .copied()
+            .unwrap_or(0)
+            != update.generation
+        {
+            return;
+        }
+        let active = self
+            .repositories
+            .get(self.selected_repository)
+            .map(|repository| repository.path.as_str());
+        if active == Some(update.path.as_str()) && !self.branches.current_branch.is_empty() {
+            self.manager
+                .repository_branches
+                .insert(update.path, self.branches.current_branch.clone());
+            return;
+        }
+        match update.branch {
+            Ok(branch) if !branch.is_empty() => {
+                self.manager.repository_branches.insert(update.path, branch);
+            }
+            Ok(_) => {
+                self.manager.repository_branches.remove(&update.path);
+            }
+            Err(_) => {}
+        }
+    }
+
+    pub(super) fn remember_repository_branch(&mut self, path: &str, branch: &str) {
+        if branch.is_empty() {
+            return;
+        }
+        if self
+            .manager
+            .repository_branches
+            .get(path)
+            .map(String::as_str)
+            != Some(branch)
+        {
+            let generation = self
+                .manager
+                .repository_branch_generation
+                .entry(path.to_owned())
+                .or_insert(0);
+            *generation = generation.wrapping_add(1);
+        }
+        self.manager
+            .repository_branches
+            .insert(path.to_owned(), branch.to_owned());
     }
 
     /// Shows saved icons on the first frame, before Git reports the remote host.
@@ -916,6 +1060,9 @@ impl SannyGitApp {
         self.commit.commit_drafts.remove(&path);
         self.manager.hosting.remove(&path);
         self.manager.hosting_checked.remove(&path);
+        self.manager.repository_branches.remove(&path);
+        self.manager.repository_branch_generation.remove(&path);
+        self.manager.repository_branches_checked.remove(&path);
         self.manager.preferences.icons.remove(&path);
         if self.manager.highlighted_repository.as_deref() == Some(&path) {
             self.manager.highlighted_repository = None;
@@ -1088,6 +1235,75 @@ mod tests {
             );
         }
         assert_eq!(app.selected_repository, usize::MAX);
+    }
+
+    #[test]
+    fn repository_branches_refresh_in_the_background_without_clobbering_a_newer_checkout() {
+        let repo = crate::test_support::TempRepo::new();
+        repo.git(&["commit", "--allow-empty", "-m", "start"]);
+        repo.git(&["checkout", "-b", "feature"]);
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        let path = repo.0.to_string_lossy().into_owned();
+        app.repositories = vec![crate::models::Repository {
+            name: "Test".into(),
+            path: path.clone(),
+        }];
+        app.selected_repository = usize::MAX;
+        let context = eframe::egui::Context::default();
+        app.update_repository_branches(&context);
+        assert!(app.manager.repository_branches_receiver.is_some());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app.manager.repository_branches_receiver.is_some() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+            app.update_repository_branches(&context);
+        }
+        assert_eq!(
+            app.manager
+                .repository_branches
+                .get(&path)
+                .map(String::as_str),
+            Some("feature")
+        );
+
+        app.remember_repository_branch(&path, "release");
+        app.selected_repository = 0;
+        app.branches.current_branch = "release".into();
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send(vec![BranchRead {
+                path: path.clone(),
+                generation: 0,
+                branch: Ok("feature".into()),
+            }])
+            .unwrap();
+        app.manager.repository_branches_receiver = Some(receiver);
+        app.update_repository_branches(&context);
+        assert_eq!(
+            app.manager
+                .repository_branches
+                .get(&path)
+                .map(String::as_str),
+            Some("release")
+        );
+
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send(vec![BranchRead {
+                path: path.clone(),
+                generation: app.manager.repository_branch_generation[&path],
+                branch: Ok("stale".into()),
+            }])
+            .unwrap();
+        app.manager.repository_branches_receiver = Some(receiver);
+        app.update_repository_branches(&context);
+        assert_eq!(
+            app.manager
+                .repository_branches
+                .get(&path)
+                .map(String::as_str),
+            Some("release")
+        );
     }
 
     #[test]

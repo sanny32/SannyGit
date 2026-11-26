@@ -3,6 +3,18 @@ use crate::test_support::TempRepo;
 use crate::test_support::SYSTEM_GIT;
 
 #[test]
+fn head_branch_reads_the_checked_out_name_and_a_detached_head() {
+    let repo = TempRepo::new();
+    assert_eq!(head_branch(&SYSTEM_GIT, &repo.0).unwrap(), "main");
+    repo.git(&["commit", "--allow-empty", "-m", "start"]);
+    repo.git(&["checkout", "--detach", "HEAD"]);
+    let detached = head_branch(&SYSTEM_GIT, &repo.0).unwrap();
+    let short = repo.git(&["rev-parse", "--short", "HEAD"]);
+    assert_eq!(detached, format!("Detached at {}", short.trim()));
+    assert_eq!(load(&SYSTEM_GIT, &repo.0).unwrap().branch, detached);
+}
+
+#[test]
 fn ignore_selection_appends_literal_root_rules_without_staging() {
     let repo = TempRepo::new();
     std::fs::create_dir(repo.0.join("nested")).unwrap();

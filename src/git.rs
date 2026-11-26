@@ -1600,14 +1600,11 @@ pub(crate) fn text(bytes: Vec<u8>) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "Non-UTF-8 Git output is not supported yet".into())
 }
 
-pub fn load(git: &GitContext, path: &Path) -> Result<Snapshot, String> {
-    let root = text(run(git, path, &["rev-parse", "--show-toplevel"])?)?;
-    // Git appends exactly one line ending; preserve whitespace in directory names.
-    let root = root.strip_suffix('\n').unwrap_or(&root);
-    let path = PathBuf::from(root);
-    let branch = match execute(
+/// Checked-out branch name, or `Detached at <short>` when HEAD is not a branch.
+pub(crate) fn head_branch(git: &GitContext, path: &Path) -> Result<String, String> {
+    match execute(
         git,
-        &path,
+        path,
         &["symbolic-ref", "--quiet", "HEAD"],
         None,
         TIMEOUT,
@@ -1616,17 +1613,26 @@ pub fn load(git: &GitContext, path: &Path) -> Result<Snapshot, String> {
     ) {
         Ok(output) => {
             let name = text(output.stdout)?;
-            name.trim_end_matches('\n')
+            Ok(name
+                .trim_end_matches('\n')
                 .strip_prefix("refs/heads/")
                 .ok_or("Unexpected HEAD reference")?
-                .to_owned()
+                .to_owned())
         }
-        Err(error) if error.kind == FailureKind::Exit && error.exit_code == Some(1) => format!(
+        Err(error) if error.kind == FailureKind::Exit && error.exit_code == Some(1) => Ok(format!(
             "Detached at {}",
-            text(run(git, &path, &["rev-parse", "--short", "HEAD"])?)?.trim()
-        ),
-        Err(error) => return Err(error.to_string()),
-    };
+            text(run(git, path, &["rev-parse", "--short", "HEAD"])?)?.trim()
+        )),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+pub fn load(git: &GitContext, path: &Path) -> Result<Snapshot, String> {
+    let root = text(run(git, path, &["rev-parse", "--show-toplevel"])?)?;
+    // Git appends exactly one line ending; preserve whitespace in directory names.
+    let root = root.strip_suffix('\n').unwrap_or(&root);
+    let path = PathBuf::from(root);
+    let branch = head_branch(git, &path)?;
     // The branch name does not change when another program commits on this branch.
     let head = text(run(git, &path, &["rev-parse", "--revs-only", "HEAD"])?)?
         .trim()

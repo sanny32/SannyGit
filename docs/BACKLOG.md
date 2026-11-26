@@ -23,7 +23,8 @@ theme, six repositories in one group).
 `height` when `palette.panel_radius > 0`), layout tests around
 `name_stays_next_to_icon_with_tracking_counts`.
 
-**Status:** Not started
+**Status:** Done. Modern rows size to the name and path (1px between them, plus
+the row inset) instead of a fixed 44px. Classic stays 24px.
 
 ## UI — Diff viewer
 
@@ -96,6 +97,30 @@ label and the cancel button so the two controls read as separate affordances.
 **Likely touch points:** `src/ui/status_bar.rs` — layout around
 `show_operation_cancel` and `item_spacing`; layout test
 `operation_cancel_follows_the_message_in_the_status_bar`.
+
+**Status:** Not started
+
+### Hide AI provider icon when signed out
+
+**Problem:** After signing out of a subscription provider (e.g. GitHub
+Copilot), the status bar can still show the provider icon (GitHub / OpenAI) to
+the left of the repository path. The indicator follows saved “subscription”
+settings in `connection_indicator`, not whether a session is still valid
+(screenshot from 2026-11-26).
+
+**Goal:** Show the clickable provider icon only while the user is signed in for
+that provider. After logout (or expired session with no usable token), remove the
+icon and separator so the status bar matches the disconnected state. Clicking
+Settings should still offer sign-in; do not imply an active session when there is
+none.
+
+**Constraints:** Preserve the rule that painting the status bar must not
+trigger heavy credential reads on every frame; use existing connection/session
+state updated at login, logout, and generation time.
+
+**Likely touch points:** `src/ui/status_bar.rs` (`connection_indicator`,
+`show`), `src/app` AI connection status, settings sign-out flows,
+`indicator_follows_the_saved_provider_for_the_open_repository` and related tests.
 
 **Status:** Not started
 

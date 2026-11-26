@@ -1200,6 +1200,8 @@ impl SannyGitApp {
             let path = self.repositories[index].path.clone();
             self.assign_group(&path, self.manager.preferences.selected_group.clone());
         }
+        let branch_path = self.repositories[index].path.clone();
+        self.remember_repository_branch(&branch_path, &snapshot.branch);
         self.branches.current_branch = snapshot.branch;
         self.branches.head_commit = snapshot.head;
         let retained_diff = if same_repository && same_branch && self.selected_diff().is_some() {
@@ -2861,6 +2863,7 @@ impl eframe::App for SannyGitApp {
         self.finish_startup();
         self.poll_working_tree();
         self.update_repository_hosting(ui.ctx());
+        self.update_repository_branches(ui.ctx());
         self.update_worktree_availability(ui.ctx());
         let root = self
             .repositories
