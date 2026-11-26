@@ -731,6 +731,8 @@ fn interface_style_dropdown_updates_the_draft_in_both_themes() {
         crate::theme::install_fonts(&context);
         theme.apply(&context);
         let mut app = SannyGitApp::with_theme(theme);
+        app.open_settings();
+        app.settings_window.page = SettingsPage::Appearance;
         let render = |app: &mut SannyGitApp, events| {
             let mut output = context.run_ui(
                 RawInput {
@@ -743,18 +745,7 @@ fn interface_style_dropdown_updates_the_draft_in_both_themes() {
             output.textures_delta.clear();
             output
         };
-        let click = |app: &mut SannyGitApp, label| {
-            let output = render(app, vec![]);
-            let position = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) if text.galley.job.text == label => {
-                        Some(text.pos + text.galley.size() / 2.0)
-                    }
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("Missing {label}"));
+        let click = |app: &mut SannyGitApp, position| {
             for pressed in [true, false] {
                 render(
                     app,
@@ -770,14 +761,37 @@ fn interface_style_dropdown_updates_the_draft_in_both_themes() {
                 );
             }
         };
+        let text_center = |shapes: &[ClippedShape], label: &str| {
+            shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("Missing {label}"))
+        };
+        let select_style = |app: &mut SannyGitApp, label: &str| {
+            let output = render(app, vec![]);
+            click(
+                app,
+                text_center(
+                    &output.shapes,
+                    app.settings_window.interface_style.label(),
+                ),
+            );
+            let output = render(app, vec![]);
+            click(app, text_center(&output.shapes, label));
+        };
 
-        click(&mut app, "Classic");
-        click(&mut app, "Modern");
-        assert_eq!(app.settings_window.interface_style, InterfaceStyle::Modern);
-        click(&mut app, "Modern");
-        click(&mut app, "Classic");
+        select_style(&mut app, "Classic");
         assert_eq!(app.settings_window.interface_style, InterfaceStyle::Classic);
-        assert_eq!(app.interface_style, InterfaceStyle::Classic);
+        select_style(&mut app, "Modern");
+        assert_eq!(app.settings_window.interface_style, InterfaceStyle::Modern);
+        select_style(&mut app, "Classic");
+        assert_eq!(app.settings_window.interface_style, InterfaceStyle::Classic);
+        assert_eq!(app.interface_style, InterfaceStyle::Modern);
     }
 }
 
@@ -789,6 +803,8 @@ fn preferences_changes_apply_on_ok_and_cancel_discards_them() {
         egui_extras::install_image_loaders(&context);
         ThemeChoice::Light.apply(&context);
         let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.interface_style = InterfaceStyle::Classic;
+        app.theme = ThemeChoice::Light;
         app.open_settings();
         app.settings_window.interface_style = InterfaceStyle::Modern;
         app.settings_window.theme = ThemeChoice::Dark;

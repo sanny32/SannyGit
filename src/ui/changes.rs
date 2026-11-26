@@ -1474,8 +1474,9 @@ mod tests {
         for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
             let ctx = Context::default();
             install_fonts(&ctx);
-            theme.apply(&ctx);
+            theme.apply_style(&ctx, crate::theme::InterfaceStyle::Classic);
             let mut app = SannyGitApp::with_theme(theme);
+            app.interface_style = crate::theme::InterfaceStyle::Classic;
             app.changes = crate::mock_data::changes();
             app.selection.active = 2;
             for _ in 0..3 {
@@ -1487,7 +1488,7 @@ mod tests {
                     |ui| show(ui, &mut app),
                 );
                 output.textures_delta.clear();
-                let palette = theme.palette();
+                let palette = app.palette();
                 let stripes: Vec<_> = output
                     .shapes
                     .iter()

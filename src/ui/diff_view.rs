@@ -1069,7 +1069,7 @@ mod tests {
                     "{label} left the path row in {theme:?}"
                 );
             }
-            let palette = theme.palette();
+            let palette = app.palette();
             let header = output
                 .shapes
                 .iter()

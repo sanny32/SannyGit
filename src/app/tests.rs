@@ -2091,8 +2091,9 @@ fn all_changed_files_fit_at_reference_and_small_window_sizes() {
             let context = egui::Context::default();
             crate::theme::install_fonts(&context);
             egui_extras::install_image_loaders(&context);
-            theme.apply(&context);
+            theme.apply_style(&context, crate::theme::InterfaceStyle::Classic);
             let mut app = SannyGitApp::with_theme(theme);
+            app.interface_style = crate::theme::InterfaceStyle::Classic;
             app.repositories = crate::mock_data::repositories();
             app.changes = crate::mock_data::changes();
             let history = crate::history::prepare(crate::mock_data::commits(), false);
