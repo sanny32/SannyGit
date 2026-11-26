@@ -142,7 +142,7 @@ fn commit_shortcut_works_from_message_editor_without_repeating() {
     shortcut_frame(
         &mut app,
         &context,
-        egui::Key::Enter,
+        egui::Key::K,
         egui::Modifiers::CTRL,
         true,
     );
@@ -150,7 +150,7 @@ fn commit_shortcut_works_from_message_editor_without_repeating() {
     shortcut_frame(
         &mut app,
         &context,
-        egui::Key::Enter,
+        egui::Key::K,
         egui::Modifiers::CTRL,
         false,
     );

@@ -59,6 +59,15 @@ impl<T> Entry<T> {
         }
         self
     }
+    pub(crate) fn maybe_shortcut(
+        mut self,
+        shortcut: Option<eframe::egui::KeyboardShortcut>,
+    ) -> Self {
+        if let Some(shortcut) = shortcut {
+            self = self.shortcut(shortcut);
+        }
+        self
+    }
     pub(crate) fn submenu(label: impl Into<String>, entries: Vec<Self>) -> Self {
         Self::Submenu {
             label: label.into(),

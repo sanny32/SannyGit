@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RepositoryGroup {
     pub name: String,
     pub paths: Vec<String>,
@@ -54,7 +54,7 @@ impl RepositoryIcon {
     }
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Preferences {
     pub groups: Vec<RepositoryGroup>,
     pub selected_group: Option<String>,
@@ -74,7 +74,7 @@ pub struct Preferences {
     pub branches: std::collections::BTreeMap<String, String>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PullDefaults {
     pub remote: String,
     pub update_tags: bool,

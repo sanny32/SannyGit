@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 /// Only user-authored text and the expected amend target belong in draft storage.
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
-pub(super) struct CommitDraft {
+pub(crate) struct CommitDraft {
     pub(super) message: String,
     pub(super) amend_head: Option<String>,
     pub(super) normal_message: Option<String>,

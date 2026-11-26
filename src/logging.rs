@@ -48,7 +48,7 @@ struct Logger {
 }
 
 pub fn path() -> Option<PathBuf> {
-    eframe::storage_dir("SannyGit").map(|dir| dir.join("sannygit.log"))
+    crate::persistence::data_dir().map(|dir| dir.join("sannygit.log"))
 }
 
 pub fn configure(level: Level) -> Result<(), String> {

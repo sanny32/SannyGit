@@ -29,12 +29,14 @@ mod native_window;
 mod native_window;
 #[cfg(target_os = "windows")]
 mod native_window;
+mod persistence;
 mod preferences;
 mod rebase;
 mod remote_config;
 mod remotes;
 mod repository;
 mod revert;
+mod shortcuts;
 mod stash;
 #[cfg(test)]
 mod test_support;
@@ -45,6 +47,13 @@ mod ui;
 use app::SannyGitApp;
 use eframe::egui;
 
+/// Default client size for a new main window (logical points).
+const DEFAULT_WINDOW_SIZE: egui::Vec2 = egui::Vec2::new(1536.0, 900.0);
+const MIN_WINDOW_SIZE: egui::Vec2 = egui::Vec2::new(1100.0, 700.0);
+/// Native frame around the egui viewport (`inner_size` is the client area only).
+const WINDOW_VERTICAL_CHROME: f32 = 48.0;
+const WINDOW_HORIZONTAL_CHROME: f32 = 16.0;
+
 fn main() -> eframe::Result<()> {
     #[cfg(target_os = "windows")]
     let icon_bytes = include_bytes!("../assets/app/sannygit-windows.png").as_slice();
@@ -52,14 +61,14 @@ fn main() -> eframe::Result<()> {
     let icon_bytes = include_bytes!("../assets/app/sannygit.png").as_slice();
     let icon = eframe::icon_data::from_png_bytes(icon_bytes)
         .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
-    let window_size = egui::vec2(1536.0, 1024.0);
+    let window_size = DEFAULT_WINDOW_SIZE;
     let viewport = theme::native_viewport()
         .with_title(branding::main_window_title(None))
         .with_app_id("io.github.sanny32.SannyGit")
         .with_icon(std::sync::Arc::new(icon))
         .with_decorations(true)
         .with_inner_size(window_size)
-        .with_min_inner_size([1100.0, 700.0])
+        .with_min_inner_size([MIN_WINDOW_SIZE.x, MIN_WINDOW_SIZE.y])
         .with_clamp_size_to_monitor_size(true);
 
     let options = eframe::NativeOptions {
@@ -80,7 +89,7 @@ fn main() -> eframe::Result<()> {
             )))
         } else {
             // Keep existing preferences when changing the native application ID.
-            eframe::storage_dir("SannyGit").map(|directory| directory.join("app.ron"))
+            crate::persistence::frame_storage_path()
         },
         // The event loop has initialized native DPI handling by this point.
         // Place the window before eframe renders and reveals its first frame.
@@ -126,9 +135,9 @@ fn initial_window_viewport(
     if viewport.position.is_some() {
         return viewport;
     }
-    if let Some((position, monitor_size)) = cursor_monitor_window_geometry(window_size) {
+    if let Some((position, fitted_size)) = cursor_monitor_window_geometry(window_size) {
         viewport
-            .with_inner_size(window_size.min(monitor_size))
+            .with_inner_size(fitted_size)
             .with_position(position)
     } else {
         viewport
@@ -165,21 +174,106 @@ fn cursor_monitor_window_geometry(window_size: egui::Vec2) -> Option<(egui::Pos2
     #[cfg(not(target_os = "windows"))]
     let scale = 1.0;
     let scale = if scale > 0.0 { scale } else { 1.0 };
+    let (area_x, area_y, area_width, area_height) = usable_display_area(&display);
     // Viewport positions, including the monitor origin, are in logical points.
-    let display_x = display.x as f32 / scale;
-    let display_y = display.y as f32 / scale;
-    let display_width = display.width as f32 / scale;
-    let display_height = display.height as f32 / scale;
-    let width = window_size.x.min(display_width);
-    let height = window_size.y.min(display_height);
+    let area_x = area_x as f32 / scale;
+    let area_y = area_y as f32 / scale;
+    let area_width = area_width as f32 / scale;
+    let area_height = area_height as f32 / scale;
+    let min_size = MIN_WINDOW_SIZE;
+    let (position, size) = centered_window_geometry(
+        window_size,
+        area_x,
+        area_y,
+        area_width,
+        area_height,
+        min_size,
+    );
 
-    Some((
+    Some((position, size))
+}
+
+fn centered_window_geometry(
+    window_size: egui::Vec2,
+    area_x: f32,
+    area_y: f32,
+    area_width: f32,
+    area_height: f32,
+    min_size: egui::Vec2,
+) -> (egui::Pos2, egui::Vec2) {
+    let available_width = (area_width - WINDOW_HORIZONTAL_CHROME).max(0.0);
+    let available_height = (area_height - WINDOW_VERTICAL_CHROME).max(0.0);
+    let width = window_size.x.min(available_width).max(min_size.x);
+    let height = window_size.y.min(available_height).max(min_size.y);
+    let outer_width = width + WINDOW_HORIZONTAL_CHROME;
+    let outer_height = height + WINDOW_VERTICAL_CHROME;
+    (
         egui::pos2(
-            display_x + (display_width - width) / 2.0,
-            display_y + (display_height - height) / 2.0,
+            area_x + (area_width - outer_width) / 2.0,
+            area_y + (area_height - outer_height) / 2.0,
         ),
-        egui::vec2(display_width, display_height),
-    ))
+        egui::vec2(width, height),
+    )
+}
+
+fn usable_display_area(display: &display_info::DisplayInfo) -> (i32, i32, u32, u32) {
+    #[cfg(target_os = "windows")]
+    {
+        windows_work_area(display)
+            .unwrap_or_else(|| (display.x, display.y, display.width, display.height))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        (display.x, display.y, display.width, display.height)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_work_area(display: &display_info::DisplayInfo) -> Option<(i32, i32, u32, u32)> {
+    let mut info = MonitorInfo {
+        size: std::mem::size_of::<MonitorInfo>() as u32,
+        monitor: Rect::default(),
+        work: Rect::default(),
+        flags: 0,
+    };
+    let monitor = display.raw_handle.0 as isize;
+    let ok = unsafe { GetMonitorInfoW(monitor, &raw mut info) };
+    if ok == 0 {
+        return None;
+    }
+    let work = info.work;
+    let width = work.right.saturating_sub(work.left) as u32;
+    let height = work.bottom.saturating_sub(work.top) as u32;
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some((work.left, work.top, width, height))
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct Rect {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct MonitorInfo {
+    size: u32,
+    monitor: Rect,
+    work: Rect,
+    flags: u32,
+}
+
+#[cfg(target_os = "windows")]
+#[allow(clashing_extern_declarations)]
+#[link(name = "user32")]
+extern "system" {
+    fn GetMonitorInfoW(monitor: isize, info: *mut MonitorInfo) -> i32;
 }
 
 #[cfg(target_os = "windows")]
@@ -214,6 +308,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn window_stays_inside_work_area_without_taskbar() {
+        let (position, size) = centered_window_geometry(
+            DEFAULT_WINDOW_SIZE,
+            0.0,
+            0.0,
+            1920.0,
+            1040.0,
+            MIN_WINDOW_SIZE,
+        );
+        assert_eq!(size, DEFAULT_WINDOW_SIZE);
+        let outer_bottom = position.y + size.y + WINDOW_VERTICAL_CHROME;
+        assert!(outer_bottom <= 1040.0 + f32::EPSILON);
+    }
+
+    #[test]
     fn restored_window_geometry_is_not_recentered() {
         let position = egui::pos2(120.0, 80.0);
         let size = egui::vec2(1280.0, 800.0);
@@ -222,7 +331,7 @@ mod tests {
             .with_inner_size(size)
             .with_maximized(true);
 
-        let restored = initial_window_viewport(viewport, egui::vec2(1536.0, 1024.0));
+        let restored = initial_window_viewport(viewport, DEFAULT_WINDOW_SIZE);
 
         assert_eq!(restored.position, Some(position));
         assert_eq!(restored.inner_size, Some(size));

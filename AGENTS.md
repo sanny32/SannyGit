@@ -69,7 +69,7 @@ Windows, Linux, and macOS. The UI language is English. The license is MIT.
 | `src/history.rs`, `src/app/history.rs` | Snapshot-based history pages, graph preparation and background read coordination |
 | `src/remotes.rs`, `src/tracking.rs` | Fetch/pull/push, selected-tag push and upstream tracking |
 | `src/remote_config.rs`, `src/app/ref_management.rs`, `src/ui/ref_management.rs` | Local remote configuration, reviewed branch deletion and tag-push dialogs |
-| `src/preferences.rs`, `src/llm.rs` | Persisted preferences, commit-message generation and credential access |
+| `src/preferences.rs`, `src/persistence.rs`, `src/llm.rs` | User settings (JSON on disk), commit-message generation and credential access |
 | `src/diff.rs` | Unified diff parser and its unit tests |
 | `src/theme.rs` | Light and dark themes, palettes, typography, theme storage key |
 | `src/ui/mod.rs` | Panel layout and sizing |
@@ -106,6 +106,18 @@ or mix Git logic with panel rendering.
   or when follow-up polish is explicitly deferred.
 - Do not change `.gitignore` rules or the `Cargo.lock` tracking policy without
   a task-related reason. Do not add `target/` or other build artifacts.
+
+## Persistence and migrations
+
+SannyGit has not shipped a release yet. Until after the **first public release**,
+do **not** add one-off migrations from older on-disk layouts (for example the
+monolithic eframe `app.ron` store). Pre-release builds may assume fresh JSON
+config under OS-appropriate paths only (`src/persistence.rs`).
+
+After the first release, when changing persisted shapes, paths, or file formats,
+add explicit migrations so users upgrading from a released version keep their
+settings. Document what each migration reads and writes; keep them reversible or
+backed up when practical.
 - Perform all local reviews in the `.review` folder. Keep all review-related
   files (notes, drafts, findings) there; do not scatter them across the
   repository.
@@ -149,6 +161,10 @@ or mix Git logic with panel rendering.
   action from the application user. Never commit automatically.
 - Check the layout in both themes at the normal window size and the minimum
   size of 1100 x 700. Do not display the compiler version in the status bar.
+- All keyboard shortcuts must match SmartGit (Working Tree) for the same action.
+  Defaults and user overrides live in `src/shortcuts.rs`; the Preferences
+  Keyboard Shortcuts page edits overrides. When adding or changing a default,
+  compare it with SmartGit.
 
 ## Git Backend
 

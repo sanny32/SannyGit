@@ -34,7 +34,7 @@ struct Access {
 }
 
 fn lock_session() -> Result<File, String> {
-    let directory = eframe::storage_dir("SannyGit").ok_or("Cannot locate SannyGit settings")?;
+    let directory = crate::persistence::data_dir().ok_or("Cannot locate SannyGit settings")?;
     fs::create_dir_all(&directory).map_err(|_| "Cannot prepare the ChatGPT session directory")?;
     let file = OpenOptions::new()
         .write(true)

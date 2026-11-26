@@ -1,4 +1,5 @@
 use super::controls::dialog_style::DialogResponse;
+use super::controls::icons;
 use super::controls::tooltips::TooltipResponse;
 use crate::{app::SannyGitApp, remotes::Operation};
 use eframe::egui::{self, Align, ComboBox, Layout, RichText};
@@ -125,6 +126,7 @@ fn pull_confirmation(
             let options = egui::CollapsingHeader::new("Options")
                 .id_salt("pull.options")
                 .open(Some(dialog.pull.more_options))
+                .icon(icons::collapsing_icon)
                 .show(ui, |ui| {
                     ui.radio_value(
                         &mut dialog.pull.rebase,
@@ -284,7 +286,9 @@ fn branch_confirmation(
                         .help_text(message);
                 });
                 ui.add_enabled_ui(!busy && loaded, |ui| {
-                    egui::CollapsingHeader::new("Options").show(ui, |ui| {
+                    egui::CollapsingHeader::new("Options")
+                        .icon(icons::collapsing_icon)
+                        .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 8.0;
                         egui::Grid::new("push.options")
                             .num_columns(2)

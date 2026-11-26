@@ -19,7 +19,7 @@ enum ModelLoad {
     SavedKey(ApiKeyLoader),
 }
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ModelCatalog {
     entries: BTreeMap<String, ModelList>,
@@ -35,6 +35,17 @@ pub struct ModelList {
     pub attempted: bool,
     #[serde(skip)]
     receiver: Option<Receiver<Result<Vec<String>, String>>>,
+}
+
+impl Clone for ModelList {
+    fn clone(&self) -> Self {
+        Self {
+            options: self.options.clone(),
+            error: self.error.clone(),
+            attempted: self.attempted,
+            receiver: None,
+        }
+    }
 }
 
 impl ModelCatalog {

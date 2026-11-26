@@ -414,9 +414,8 @@ impl SannyGitApp {
             self.store_repository_branch(&update.path, &branch);
             return;
         }
-        match update.branch {
-            Ok(branch) => self.store_repository_branch(&update.path, &branch),
-            Err(_) => {}
+        if let Ok(branch) = update.branch {
+            self.store_repository_branch(&update.path, &branch);
         }
     }
 
@@ -1433,7 +1432,7 @@ mod tests {
         let mut storage = Storage::default();
         eframe::App::save(&mut app, &mut storage);
         let prefs: Preferences =
-            eframe::get_value(&storage, "sannygit.repository_preferences").unwrap();
+            crate::persistence::get_value(&storage, "sannygit.repository_preferences").unwrap();
         assert_eq!(
             prefs.icons.get("/repo").copied(),
             Some(crate::repository::RepositoryIcon::GitHub)
@@ -1492,7 +1491,7 @@ mod tests {
         let mut storage = Storage::default();
         eframe::App::save(&mut app, &mut storage);
         let prefs: Preferences =
-            eframe::get_value(&storage, "sannygit.repository_preferences").unwrap();
+            crate::persistence::get_value(&storage, "sannygit.repository_preferences").unwrap();
         assert_eq!(
             prefs.branches.get("/repo").map(String::as_str),
             Some("release")
@@ -1610,7 +1609,8 @@ mod tests {
             .insert("/second".into(), "Independent prompt".into());
         eframe::App::save(&mut app, &mut storage);
         let saved_instructions: std::collections::BTreeMap<String, String> =
-            eframe::get_value(&storage, "sannygit.repository_llm_instructions").unwrap();
+            crate::persistence::get_value(&storage, "sannygit.repository_llm_instructions")
+                .unwrap();
         assert_eq!(saved_instructions["/second"], "Independent prompt");
         let mut restored = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
         restored.repository_llm_instructions = saved_instructions;
@@ -1618,9 +1618,9 @@ mod tests {
             restored.effective_generation_config("/second").instructions,
             "Independent prompt"
         );
-        restored.llm_config = eframe::get_value(&storage, "sannygit.llm").unwrap();
+        restored.llm_config = crate::persistence::get_value(&storage, "sannygit.llm").unwrap();
         restored.repository_llm_configs =
-            eframe::get_value(&storage, "sannygit.repository_llm").unwrap();
+            crate::persistence::get_value(&storage, "sannygit.repository_llm").unwrap();
         let config = restored.effective_llm_config("/first");
         assert_eq!(config.endpoint, custom.endpoint);
         assert_eq!(config.model, custom.model);
@@ -1658,12 +1658,16 @@ mod tests {
         let mut storage = Storage::default();
         eframe::App::save(&mut app, &mut storage);
         let saved: Option<String> =
-            eframe::get_value(&storage, "sannygit.active_repository").unwrap();
+            crate::persistence::get_value(&storage, "sannygit.active_repository").unwrap();
         assert_eq!(saved.as_deref(), Some(path.as_str()));
         let mut restored = SannyGitApp::with_theme(ThemeChoice::Light);
         restored.repositories = app.repositories;
         restored.repositories.reverse();
-        restored.restore_active_repository(&storage);
+        if let Some(Some(path)) =
+            crate::persistence::get_value::<Option<String>>(&storage, "sannygit.active_repository")
+        {
+            restored.restore_active_repository(path);
+        }
         assert!(restored.busy());
         finish_restore(&mut restored);
         assert!(restored.error.is_none());
@@ -1678,9 +1682,8 @@ mod tests {
         restored.close_repository(true);
         eframe::App::save(&mut restored, &mut storage);
         let saved: Option<String> =
-            eframe::get_value(&storage, "sannygit.active_repository").unwrap();
+            crate::persistence::get_value(&storage, "sannygit.active_repository").unwrap();
         assert_eq!(saved, None);
-        restored.restore_active_repository(&storage);
         assert!(!restored.busy());
         assert_eq!(restored.selected_repository, usize::MAX);
     }
@@ -1724,23 +1727,22 @@ mod tests {
         let repo = crate::test_support::TempRepo::new();
         let path = repo.0.join("missing").to_str().unwrap().to_owned();
         let mut storage = Storage::default();
-        eframe::set_value(&mut storage, "sannygit.active_repository", &Some(&path));
+        crate::persistence::set_value(&mut storage, "sannygit.active_repository", &Some(&path));
         let mut app = SannyGitApp::with_theme(ThemeChoice::Dark);
         app.repositories.push(crate::models::Repository {
             name: "Missing".into(),
             path: path.clone(),
         });
-        app.restore_active_repository(&storage);
+        app.restore_active_repository(path.clone());
         finish_restore(&mut app);
         assert!(app.error.is_some());
         assert_eq!(app.selected_repository, usize::MAX);
         assert_eq!(app.repositories[0].path, path);
-        eframe::set_value(
+        crate::persistence::set_value(
             &mut storage,
             "sannygit.active_repository",
             &Some("/not-bookmarked"),
         );
-        app.restore_active_repository(&storage);
         assert!(!app.busy());
     }
 
@@ -1807,7 +1809,7 @@ mod tests {
         let mut storage = Storage::default();
         eframe::App::save(&mut app, &mut storage);
         let prefs: Preferences =
-            eframe::get_value(&storage, "sannygit.repository_preferences").unwrap();
+            crate::persistence::get_value(&storage, "sannygit.repository_preferences").unwrap();
         assert_eq!(prefs.favorites, ["/repo"]);
         assert_eq!(
             prefs.names.get("/repo").map(String::as_str),
@@ -1840,7 +1842,7 @@ mod tests {
         let mut storage = Storage::default();
         eframe::App::save(&mut app, &mut storage);
         let prefs: Preferences =
-            eframe::get_value(&storage, "sannygit.repository_preferences").unwrap();
+            crate::persistence::get_value(&storage, "sannygit.repository_preferences").unwrap();
         assert_eq!(prefs.groups[1].paths, vec!["/repo"]);
         assert_eq!(prefs.selected_group.as_deref(), Some("Personal"));
         app.assign_group("/repo", None);
@@ -1887,8 +1889,11 @@ mod tests {
         eframe::App::save(&mut app, &mut storage);
         let mut restored = SannyGitApp::with_theme(ThemeChoice::Dark);
         restored.repositories = app.repositories;
-        restored.restore_commit_drafts(&storage);
-        restored.restore_active_repository(&storage);
+        let saved = crate::persistence::load(Some(&storage));
+        restored.commit.commit_drafts = saved.commit_drafts;
+        if let Some(path) = saved.active_repository {
+            restored.restore_active_repository(path);
+        }
         finish_restore(&mut restored);
         assert!(restored.commit.amend);
         assert_eq!(restored.commit.amend_head.as_deref(), Some(head.as_str()));
@@ -1939,8 +1944,11 @@ mod tests {
         repo.write("file", "keep unstaged\n");
         let mut restored = SannyGitApp::with_theme(ThemeChoice::Dark);
         restored.repositories = app.repositories;
-        restored.restore_commit_drafts(&storage);
-        restored.restore_active_repository(&storage);
+        let saved = crate::persistence::load(Some(&storage));
+        restored.commit.commit_drafts = saved.commit_drafts;
+        if let Some(path) = saved.active_repository {
+            restored.restore_active_repository(path);
+        }
         finish_restore(&mut restored);
         restored.create_commit();
         finish_restore(&mut restored);
@@ -1960,7 +1968,8 @@ mod tests {
         assert!(restored.error.is_none());
         assert!(restored.commit.message.is_empty());
         eframe::App::save(&mut restored, &mut storage);
-        restored.restore_commit_drafts(&storage);
+        let saved = crate::persistence::load(Some(&storage));
+        restored.commit.commit_drafts = saved.commit_drafts;
         restored.load_commit_draft();
         assert!(restored.commit.message.is_empty());
         assert!(restored.commit.commit_drafts.is_empty());
@@ -2012,12 +2021,12 @@ mod tests {
         let mut storage = Storage::default();
         eframe::App::save(&mut app, &mut storage);
         assert!(
-            eframe::get_value::<Vec<String>>(&storage, "sannygit.repositories")
+            crate::persistence::get_value::<Vec<String>>(&storage, "sannygit.repositories")
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(
-            eframe::get_value::<Option<String>>(&storage, "sannygit.active_repository"),
+            crate::persistence::get_value::<Option<String>>(&storage, "sannygit.active_repository"),
             Some(None)
         );
     }
@@ -2033,7 +2042,7 @@ mod tests {
             let path = app.repositories[1].path.clone();
             app.commit.commit_drafts.insert(
                 path.clone(),
-                super::super::CommitDraft {
+                crate::app::PersistedCommitDraft {
                     message: "Inactive draft".into(),
                     ..Default::default()
                 },

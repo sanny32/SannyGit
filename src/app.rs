@@ -3,8 +3,6 @@ mod commit;
 mod commit_ops;
 mod compare;
 mod sequencer;
-#[cfg(test)]
-use commit::CommitDraft;
 use commit::CommitState;
 pub mod conflict;
 pub mod discard;
@@ -23,6 +21,8 @@ mod repositories;
 mod tracking;
 mod working_tree;
 pub use llm_models::ModelCatalog;
+pub(crate) use llm_models::STORAGE_KEY as LLM_MODELS_STORAGE_KEY;
+pub(crate) type PersistedCommitDraft = commit::CommitDraft;
 pub use repositories::{Dialog as RepositoryDialog, Job as RepositoryJob, RepositoryManager};
 
 use std::{
@@ -154,7 +154,7 @@ enum WorkerResult {
 use crate::{
     git, logging,
     models::{ChangeFile, Repository},
-    theme::{InterfaceStyle, Palette, ThemeChoice, INTERFACE_STYLE_STORAGE_KEY, THEME_STORAGE_KEY},
+    theme::{InterfaceStyle, Palette, ThemeChoice},
     ui,
 };
 
@@ -178,6 +178,7 @@ pub enum SettingsPage {
     Llm,
     CommitMessages,
     CommitContext,
+    KeyboardShortcuts,
 }
 
 #[derive(Clone, Default)]
@@ -264,6 +265,18 @@ pub struct SettingsWindow {
     pub chatgpt_models: Vec<crate::llm::chatgpt::Model>,
     chatgpt_models_reader: Option<Receiver<Result<Vec<crate::llm::chatgpt::Model>, String>>>,
     pub chatgpt_models_attempted: bool,
+    pub shortcut_filter: String,
+    pub shortcut_selected: Option<String>,
+    pub shortcut_assign_text: String,
+    pub shortcut_pending: Option<eframe::egui::KeyboardShortcut>,
+    pub shortcut_conflict: Option<ShortcutConflict>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShortcutConflict {
+    pub command_id: String,
+    pub shortcut: eframe::egui::KeyboardShortcut,
+    pub others: Vec<String>,
 }
 
 impl SettingsWindow {
@@ -296,6 +309,11 @@ impl SettingsWindow {
             chatgpt_models: Vec::new(),
             chatgpt_models_reader: None,
             chatgpt_models_attempted: false,
+            shortcut_filter: String::new(),
+            shortcut_selected: None,
+            shortcut_assign_text: String::new(),
+            shortcut_pending: None,
+            shortcut_conflict: None,
         }
     }
 }
@@ -414,25 +432,15 @@ impl SannyGitApp {
         } else {
             ThemeChoice::Light
         };
-        let saved_theme = creation_context
-            .storage
-            .and_then(|storage| eframe::get_value(storage, THEME_STORAGE_KEY));
-        let preferences: crate::preferences::Preferences = creation_context
-            .storage
-            .and_then(|storage| eframe::get_value(storage, crate::preferences::STORAGE_KEY))
-            .unwrap_or_else(|| crate::preferences::Preferences {
-                follow_system_theme: saved_theme.is_none(),
-                ..Default::default()
-            });
+        let saved = crate::persistence::load(creation_context.storage);
+        let saved_theme = saved.saved_theme;
+        let preferences = saved.preferences;
         let theme = if preferences.follow_system_theme {
             system_theme
         } else {
             saved_theme.unwrap_or(system_theme)
         };
-        let interface_style: InterfaceStyle = creation_context
-            .storage
-            .and_then(|storage| eframe::get_value(storage, INTERFACE_STYLE_STORAGE_KEY))
-            .unwrap_or_default();
+        let interface_style = saved.interface_style;
         interface_style.apply(&creation_context.egui_ctx);
         theme.select(&creation_context.egui_ctx, preferences.follow_system_theme);
 
@@ -449,47 +457,22 @@ impl SannyGitApp {
         app.welcome_pending = app.preferences.show_welcome;
         app.interface_style = interface_style;
         app.applied_interface_style = interface_style;
-        app.skip_push_confirmation = creation_context
-            .storage
-            .and_then(|storage| eframe::get_value(storage, "sannygit.skip_push_confirmation"))
-            .unwrap_or(false);
-        app.branches.last_reset_strategy = creation_context
-            .storage
-            .and_then(|storage| eframe::get_value(storage, "sannygit.reset_strategy"))
-            .unwrap_or_default();
-        app.tracking.auto_fetch = creation_context
-            .storage
-            .and_then(|storage| eframe::get_value(storage, "sannygit.auto_fetch"))
-            .unwrap_or(true);
-        app.llm_config = creation_context
-            .storage
-            .and_then(|storage| eframe::get_value(storage, "sannygit.llm"))
-            .unwrap_or_default();
-        app.repository_llm_configs = creation_context
-            .storage
-            .and_then(|storage| eframe::get_value(storage, "sannygit.repository_llm"))
-            .unwrap_or_default();
-        app.repository_llm_instructions = creation_context
-            .storage
-            .and_then(|storage| eframe::get_value(storage, "sannygit.repository_llm_instructions"))
-            .unwrap_or_default();
-        app.llm_models = creation_context
-            .storage
-            .and_then(|storage| eframe::get_value(storage, llm_models::STORAGE_KEY))
-            .unwrap_or_default();
-        if let Some(storage) = creation_context.storage {
-            app.restore_commit_drafts(storage);
-        }
+        app.skip_push_confirmation = saved.skip_push_confirmation;
+        app.branches.last_reset_strategy = saved.reset_strategy;
+        app.tracking.auto_fetch = saved.auto_fetch;
+        app.llm_config = saved.llm_config;
+        app.repository_llm_configs = saved.repository_llm_configs;
+        app.repository_llm_instructions = saved.repository_llm_instructions;
+        app.llm_models = saved.llm_models;
+        app.commit.commit_drafts = saved.commit_drafts;
         app.refresh_llm_models(&creation_context.egui_ctx);
         #[cfg(target_os = "macos")]
         {
             app.native_menu = crate::native_menu::NativeMenu::new(&creation_context.egui_ctx);
         }
-        if let Some(paths) = creation_context
-            .storage
-            .and_then(|storage| eframe::get_value::<Vec<String>>(storage, "sannygit.repositories"))
-        {
-            app.repositories = paths
+        if !saved.repository_paths.is_empty() {
+            app.repositories = saved
+                .repository_paths
                 .into_iter()
                 .map(|path| Repository {
                     name: PathBuf::from(&path)
@@ -500,26 +483,18 @@ impl SannyGitApp {
                 })
                 .collect();
         }
-        if let Some(preferences) = creation_context
-            .storage
-            .and_then(|storage| eframe::get_value(storage, "sannygit.repository_preferences"))
-        {
-            app.manager.preferences = preferences;
+        if saved.repository_preferences != crate::repository::Preferences::default() {
+            app.manager.preferences = saved.repository_preferences;
             app.apply_bookmark_names();
             app.restore_repository_icons();
             app.restore_repository_branches();
         }
         if let Some(path) = std::env::var_os("SANNYGIT_OPEN_REPOSITORY") {
             app.open_repository(PathBuf::from(path).to_string_lossy().into_owned());
-        } else if let Some(storage) = creation_context.storage {
-            app.restore_active_repository(storage);
+        } else if let Some(path) = saved.active_repository {
+            app.restore_active_repository(path);
         }
         app
-    }
-
-    fn restore_commit_drafts(&mut self, storage: &dyn eframe::Storage) {
-        self.commit.commit_drafts =
-            eframe::get_value(storage, "sannygit.commit_drafts").unwrap_or_default();
     }
 
     fn remember_commit_draft(&mut self) {
@@ -536,12 +511,7 @@ impl SannyGitApp {
         self.commit.load(path);
     }
 
-    fn restore_active_repository(&mut self, storage: &dyn eframe::Storage) {
-        let Some(Some(path)) =
-            eframe::get_value::<Option<String>>(storage, "sannygit.active_repository")
-        else {
-            return;
-        };
+    fn restore_active_repository(&mut self, path: String) {
         if self
             .repositories
             .iter()
@@ -989,7 +959,8 @@ impl SannyGitApp {
 
     #[cfg(not(target_os = "macos"))]
     fn handle_shortcuts(&mut self, context: &eframe::egui::Context) {
-        use crate::menu::{MenuAction, SHORTCUTS};
+        use crate::menu::MenuAction;
+        use crate::shortcuts::ShortcutBindings;
         use eframe::egui::Event;
 
         if self.modal_dialog_open()
@@ -1015,19 +986,25 @@ impl SannyGitApp {
                 else {
                     return true;
                 };
-                let Some((action, _)) = SHORTCUTS.iter().find(|(_, shortcut)| {
-                    shortcut.logical_key == *key && modifiers.matches_exact(shortcut.modifiers)
+                let bindings: &ShortcutBindings = &self.preferences.shortcuts;
+                if !editing && crate::ui::branch_shortcut_handles(self, *key, *modifiers) {
+                    return true;
+                }
+                let Some(action) = ShortcutBindings::menu_actions_with_shortcuts().find(|action| {
+                    bindings.menu_action(*action).is_some_and(|shortcut| {
+                        shortcut.logical_key == *key && modifiers.matches_exact(shortcut.modifiers)
+                    })
                 }) else {
                     return true;
                 };
                 if editing
-                    && *action != MenuAction::FullScreen
-                    && !(*action == MenuAction::Commit && commit_editor)
+                    && action != MenuAction::FullScreen
+                    && !(action == MenuAction::Commit && commit_editor)
                 {
                     return true;
                 }
-                if !repeat && selected.is_none() && self.menu_action_enabled(*action) {
-                    selected = Some(*action);
+                if !repeat && selected.is_none() && self.menu_action_enabled(action) {
+                    selected = Some(action);
                 }
                 false
             });
@@ -1064,6 +1041,11 @@ impl SannyGitApp {
     }
 
     fn load_settings_draft(&mut self) {
+        self.settings_window.shortcut_filter.clear();
+        self.settings_window.shortcut_selected = None;
+        self.settings_window.shortcut_assign_text.clear();
+        self.settings_window.shortcut_pending = None;
+        self.settings_window.shortcut_conflict = None;
         self.settings_window.preferences = self.preferences.clone();
         if self.settings_window.preferences.git_executable.is_empty() {
             if let Some(path) = git::find_executable() {
@@ -3056,50 +3038,38 @@ impl eframe::App for SannyGitApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.remember_commit_draft();
-        eframe::set_value(
-            storage,
-            "sannygit.commit_drafts",
-            &self.commit.commit_drafts,
-        );
         self.llm_models.update();
-        eframe::set_value(storage, llm_models::STORAGE_KEY, &self.llm_models);
-        eframe::set_value(
-            storage,
-            "sannygit.skip_push_confirmation",
-            &self.skip_push_confirmation,
-        );
-        eframe::set_value(storage, "sannygit.auto_fetch", &self.tracking.auto_fetch);
-        eframe::set_value(
-            storage,
-            "sannygit.reset_strategy",
-            &self.branches.last_reset_strategy,
-        );
-        eframe::set_value(storage, "sannygit.llm", &self.llm_config);
-        eframe::set_value(
-            storage,
-            "sannygit.repository_llm_instructions",
-            &self.repository_llm_instructions,
-        );
-        eframe::set_value(
-            storage,
-            "sannygit.repository_llm",
-            &self.repository_llm_configs,
-        );
-        eframe::set_value(storage, THEME_STORAGE_KEY, &self.theme);
-        eframe::set_value(storage, crate::preferences::STORAGE_KEY, &self.preferences);
-        eframe::set_value(storage, INTERFACE_STYLE_STORAGE_KEY, &self.interface_style);
-        let paths: Vec<_> = self.repositories.iter().map(|r| &r.path).collect();
-        eframe::set_value(storage, "sannygit.repositories", &paths);
+        crate::persistence::save(self, storage);
+    }
+}
+
+impl SannyGitApp {
+    pub(crate) fn persistable_state(&self) -> crate::persistence::Loaded {
+        let paths: Vec<String> = self
+            .repositories
+            .iter()
+            .map(|repo| repo.path.clone())
+            .collect();
         let active = self
             .repositories
             .get(self.selected_repository)
-            .map(|r| &r.path);
-        eframe::set_value(storage, "sannygit.active_repository", &active);
-        eframe::set_value(
-            storage,
-            "sannygit.repository_preferences",
-            &self.manager.preferences,
-        );
+            .map(|repo| repo.path.clone());
+        crate::persistence::Loaded {
+            preferences: self.preferences.clone(),
+            saved_theme: Some(self.theme),
+            interface_style: self.interface_style,
+            skip_push_confirmation: self.skip_push_confirmation,
+            auto_fetch: self.tracking.auto_fetch,
+            reset_strategy: self.branches.last_reset_strategy,
+            llm_config: self.llm_config.clone(),
+            repository_llm_configs: self.repository_llm_configs.clone(),
+            repository_llm_instructions: self.repository_llm_instructions.clone(),
+            llm_models: self.llm_models.clone(),
+            repository_paths: paths,
+            repository_preferences: self.manager.preferences.clone(),
+            active_repository: active,
+            commit_drafts: self.commit.commit_drafts.clone(),
+        }
     }
 }
 

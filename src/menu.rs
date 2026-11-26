@@ -43,38 +43,12 @@ pub enum MenuAction {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub const SHORTCUTS: &[(MenuAction, eframe::egui::KeyboardShortcut)] = {
-    use eframe::egui::{Key, KeyboardShortcut as Shortcut, Modifiers};
-    use MenuAction::*;
-    const CTRL_SHIFT: Modifiers = Modifiers::CTRL.plus(Modifiers::SHIFT);
-    &[
-        (NewWindow, Shortcut::new(CTRL_SHIFT, Key::N)),
-        (FullScreen, Shortcut::new(Modifiers::NONE, Key::F11)),
-        (Open, Shortcut::new(Modifiers::CTRL, Key::O)),
-        (Clone, Shortcut::new(CTRL_SHIFT, Key::O)),
-        (CloseRepository, Shortcut::new(Modifiers::CTRL, Key::W)),
-        (Close, Shortcut::new(Modifiers::CTRL, Key::F4)),
-        (Exit, Shortcut::new(Modifiers::ALT, Key::X)),
-        (Refresh, Shortcut::new(Modifiers::NONE, Key::F5)),
-        (ReloadHistory, Shortcut::new(CTRL_SHIFT, Key::F5)),
-        (Preferences, Shortcut::new(Modifiers::CTRL, Key::Comma)),
-        (Fetch, Shortcut::new(CTRL_SHIFT, Key::F)),
-        (Pull, Shortcut::new(CTRL_SHIFT, Key::L)),
-        (Push, Shortcut::new(CTRL_SHIFT, Key::P)),
-        (Stage, Shortcut::new(Modifiers::CTRL, Key::T)),
-        (Unstage, Shortcut::new(CTRL_SHIFT, Key::T)),
-        (Commit, Shortcut::new(Modifiers::CTRL, Key::Enter)),
-        (Stashes, Shortcut::new(CTRL_SHIFT, Key::S)),
-        (CreateBranch, Shortcut::new(Modifiers::CTRL, Key::B)),
-    ]
-};
-
-#[cfg(not(target_os = "macos"))]
 impl MenuAction {
-    pub fn shortcut(self) -> Option<eframe::egui::KeyboardShortcut> {
-        SHORTCUTS
-            .iter()
-            .find_map(|(action, shortcut)| (*action == self).then_some(*shortcut))
+    pub fn shortcut(
+        self,
+        bindings: &crate::shortcuts::ShortcutBindings,
+    ) -> Option<eframe::egui::KeyboardShortcut> {
+        crate::shortcuts::menu_action_shortcut(bindings, self)
     }
 }
 

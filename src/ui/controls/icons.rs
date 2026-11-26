@@ -140,6 +140,42 @@ pub fn paint(ui: &mut Ui, icon: Icon, color: Color32, size: f32) {
     ui.add(image(icon, color, size));
 }
 
+/// Same disclosure mark as the changes tree: down when open, right when closed.
+pub fn collapsing_icon(ui: &mut Ui, openness: f32, response: &Response) {
+    let color = ui.style().interact(response).fg_stroke.color;
+    let rect = Rect::from_center_size(response.rect.center(), Vec2::splat(14.0));
+    let angle = (openness - 1.0) * std::f32::consts::FRAC_PI_2;
+    let painter = ui.painter().clone();
+    paint_at(ui, &painter, Icon::Chevron, color, rect, angle);
+}
+
+pub fn paint_at(
+    ui: &Ui,
+    painter: &eframe::egui::Painter,
+    icon: Icon,
+    color: Color32,
+    rect: Rect,
+    angle: f32,
+) {
+    let image = image(icon, color, rect.width());
+    let Ok(poll) = image.load_for_size(ui.ctx(), rect.size()) else {
+        return;
+    };
+    let eframe::egui::load::TexturePoll::Ready { texture } = poll else {
+        ui.ctx().request_repaint();
+        return;
+    };
+    let uv = Rect::from_min_max(eframe::egui::pos2(0.0, 0.0), eframe::egui::pos2(1.0, 1.0));
+    if angle == 0.0 {
+        painter.image(texture.id, rect, uv, color);
+        return;
+    }
+    let mut mesh = eframe::egui::Mesh::with_texture(texture.id);
+    mesh.add_rect_with_uv(rect, uv, color);
+    mesh.rotate(eframe::egui::emath::Rot2::from_angle(angle), rect.center());
+    painter.add(eframe::egui::Shape::mesh(mesh));
+}
+
 // All icon-only actions use this geometry, including menu triggers and disabled
 // controls. Local dialog padding must not change their hit area or hover frame.
 pub const BUTTON_SIZE: f32 = 26.0;

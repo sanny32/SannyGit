@@ -44,8 +44,8 @@ pub fn paint_native_background(ui: &egui::Ui, palette: Palette) {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InterfaceStyle {
-    #[default]
     Classic,
+    #[default]
     Modern,
 }
 

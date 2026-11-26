@@ -162,7 +162,23 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .data(|data| data.get_temp::<bool>(focus_id))
         .unwrap_or(false);
     let reveal = keyboard_selection(ui, app, &visible, focused && !ui.ctx().text_edit_focused());
-    let table_rows = change_rows(app, &visible);
+    let collapsed_id =
+        ui.make_persistent_id((app.selected_repository, "files.collapsed_directories"));
+    let mut collapsed: Vec<String> = ui
+        .data_mut(|data| data.get_persisted(collapsed_id))
+        .unwrap_or_default();
+    if app.preferences.changes_group_directories {
+        if let Some(position) = reveal {
+            if let Some(&index) = visible.get(position) {
+                let key = directory_key(&app.changes[index].path);
+                if collapsed.iter().any(|item| item == &key) {
+                    collapsed.retain(|item| item != &key);
+                    ui.data_mut(|data| data.insert_persisted(collapsed_id, collapsed.clone()));
+                }
+            }
+        }
+    }
+    let table_rows = change_rows(app, &visible, &collapsed);
     if (focused || ui.rect_contains_pointer(ui.max_rect()))
         && !ui.ctx().text_edit_focused()
         && ui.input_mut(|input| {
@@ -256,42 +272,59 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .body(|mut body| {
             body.ui_mut().style_mut().interaction.selectable_labels = false;
             body.rows(row_height, table_rows.len(), |mut row| {
-                if let ChangeRow::Directory { label, files } = &table_rows[row.index()] {
+                if let ChangeRow::Directory { key, label, files } = &table_rows[row.index()] {
                     let files = files.clone();
                     let label = label.clone();
+                    let key = key.clone();
+                    let expanded = !collapsed.iter().any(|item| item == &key);
                     row.set_selected(false);
                     let mut row_rect = Rect::NOTHING;
+                    let mut file_right = 0.0;
                     row.col(|ui| {
                         row_rect = ui.max_rect();
-                        ui.add_space(INDEX_COLUMN_GUTTER);
                     });
                     row.col(|ui| {
-                        icons::paint(ui, Icon::Folder, palette.muted, 16.0);
-                        ui.add_space(4.0);
-                        ui.add(
-                            eframe::egui::Label::new(
-                                RichText::new(label).family(semibold_family()).color(palette.text),
-                            )
-                            .truncate(),
-                        );
+                        file_right = ui.max_rect().right();
+                        row_rect = row_rect.union(ui.max_rect());
                     });
+                    let mut chevron = Rect::NOTHING;
                     row.col(|ui| {
                         row_rect = row_rect.union(ui.max_rect());
+                        chevron = paint_directory_header(
+                            ui,
+                            row_rect,
+                            file_right,
+                            table_clip,
+                            &label,
+                            expanded,
+                            palette,
+                        );
                     });
                     let response = row.response();
                     ui_line(&response, row_rect, table_clip, palette);
+                    let chevron_hit = Rect::from_min_max(
+                        row_rect.left_top(),
+                        eframe::egui::pos2(chevron.right() + 4.0, row_rect.bottom()),
+                    );
                     if response.clicked() && !click_handled {
-                        app.selection.paths = files
-                            .iter()
-                            .map(|&index| app.changes[index].path.clone())
-                            .collect();
-                        app.selection.active = files.first().copied().unwrap_or(usize::MAX);
-                        app.selection.anchor = app
-                            .changes
-                            .get(app.selection.active)
-                            .map(|change| change.path.clone());
-                        app.diff_line_selection.clear();
-                        response.ctx.data_mut(|data| data.insert_temp(focus_id, true));
+                        let toggle = response
+                            .interact_pointer_pos()
+                            .is_some_and(|pos| chevron_hit.contains(pos));
+                        if toggle {
+                            toggle_collapsed(&response.ctx, collapsed_id, &key);
+                        } else {
+                            app.selection.paths = files
+                                .iter()
+                                .map(|&index| app.changes[index].path.clone())
+                                .collect();
+                            app.selection.active = files.first().copied().unwrap_or(usize::MAX);
+                            app.selection.anchor = app
+                                .changes
+                                .get(app.selection.active)
+                                .map(|change| change.path.clone());
+                            app.diff_line_selection.clear();
+                            response.ctx.data_mut(|data| data.insert_temp(focus_id, true));
+                        }
                         response
                             .ctx
                             .data_mut(|data| data.insert_temp(click_id, frame));
@@ -877,7 +910,11 @@ enum ViewAction {
 
 #[derive(Clone)]
 enum ChangeRow {
-    Directory { label: String, files: Vec<usize> },
+    Directory {
+        key: String,
+        label: String,
+        files: Vec<usize>,
+    },
     File(usize),
 }
 
@@ -1020,7 +1057,7 @@ fn sync_display_order(ui: &mut Ui, app: &SannyGitApp) -> Vec<String> {
     order
 }
 
-fn change_rows(app: &SannyGitApp, visible: &[usize]) -> Vec<ChangeRow> {
+fn change_rows(app: &SannyGitApp, visible: &[usize], collapsed: &[String]) -> Vec<ChangeRow> {
     if !app.preferences.changes_group_directories {
         return visible.iter().copied().map(ChangeRow::File).collect();
     }
@@ -1035,15 +1072,91 @@ fn change_rows(app: &SannyGitApp, visible: &[usize]) -> Vec<ChangeRow> {
         let label = if key.is_empty() {
             "Repository root".to_owned()
         } else {
-            key
+            key.clone()
         };
+        let expanded = !collapsed.iter().any(|item| item == &key);
         rows.push(ChangeRow::Directory {
+            key,
             label,
             files: files.clone(),
         });
-        rows.extend(files.into_iter().map(ChangeRow::File));
+        if expanded {
+            rows.extend(files.into_iter().map(ChangeRow::File));
+        }
     }
     rows
+}
+
+fn toggle_collapsed(ctx: &eframe::egui::Context, id: eframe::egui::Id, key: &str) {
+    ctx.data_mut(|data| {
+        let mut collapsed: Vec<String> = data.get_persisted(id).unwrap_or_default();
+        if let Some(index) = collapsed.iter().position(|item| item == key) {
+            collapsed.remove(index);
+        } else {
+            collapsed.push(key.to_owned());
+        }
+        data.insert_persisted(id, collapsed);
+    });
+}
+
+/// Folder headers start at the left of the row, ahead of the file names.
+///
+/// Table cells clip to their own column, so this paints on the row layer instead.
+fn paint_directory_header(
+    ui: &Ui,
+    row: Rect,
+    file_right: f32,
+    clip: Rect,
+    label: &str,
+    expanded: bool,
+    palette: Palette,
+) -> Rect {
+    let painter = ui.ctx().layer_painter(ui.layer_id()).with_clip_rect(clip);
+    let icon = 14.0;
+    let center_y = row.center().y;
+    let left = row.left() + 2.0;
+    let chevron = Rect::from_center_size(
+        eframe::egui::pos2(left + icon * 0.5, center_y),
+        Vec2::splat(icon),
+    );
+    if ui.input(|input| {
+        input
+            .pointer
+            .hover_pos()
+            .is_some_and(|pos| chevron.expand(2.0).contains(pos))
+    }) {
+        painter.rect_filled(chevron.expand(2.0), 3.0, palette.hover);
+    }
+    let angle = if expanded {
+        0.0
+    } else {
+        -std::f32::consts::FRAC_PI_2
+    };
+    icons::paint_at(ui, &painter, Icon::Chevron, palette.text, chevron, angle);
+    let folder = Rect::from_center_size(
+        eframe::egui::pos2(chevron.right() + 4.0 + 8.0, center_y),
+        Vec2::splat(16.0),
+    );
+    icons::paint_at(ui, &painter, Icon::Folder, palette.muted, folder, 0.0);
+    let text_x = folder.right() + 4.0;
+    let mut job = eframe::egui::text::LayoutJob::default();
+    job.wrap = eframe::egui::text::TextWrapping::truncate_at_width((file_right - text_x).max(1.0));
+    job.append(
+        label,
+        0.0,
+        eframe::egui::TextFormat {
+            font_id: FontId::new(crate::theme::ui_font_size(), semibold_family()),
+            color: palette.text,
+            ..Default::default()
+        },
+    );
+    let galley = painter.layout_job(job);
+    painter.galley(
+        eframe::egui::pos2(text_x, center_y - galley.size().y * 0.5),
+        galley,
+        palette.text,
+    );
+    chevron
 }
 
 fn filter_matches(filter: ChangeFilter, kind: ChangeKind) -> bool {
@@ -1736,5 +1849,109 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn directory_groups_start_left_of_files_and_collapse() {
+        use eframe::egui::{Event, Modifiers, PointerButton};
+        let ctx = Context::default();
+        install_fonts(&ctx);
+        egui_extras::install_image_loaders(&ctx);
+        ThemeChoice::Light.apply(&ctx);
+        let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+        app.preferences.changes_group_directories = true;
+        app.changes = crate::mock_data::changes();
+        let folder = "crates/sannygit/src";
+        let file = "crates/sannygit/src/main.rs";
+        let nested = "crates/sannygit/src/ui/diff_view.rs";
+        let render = |app: &mut SannyGitApp, events| {
+            let mut output = ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1100.0, 700.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(ui, app),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let text_anchor = |output: &eframe::egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    eframe::egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some((text.pos.x, text.pos.y + text.galley.size().y * 0.5))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("Missing label: {label}"))
+        };
+        let click = |app: &mut SannyGitApp, pos| {
+            for pressed in [true, false] {
+                render(
+                    app,
+                    vec![
+                        Event::PointerMoved(pos),
+                        Event::PointerButton {
+                            pos,
+                            button: PointerButton::Primary,
+                            pressed,
+                            modifiers: Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            render(app, vec![])
+        };
+        for _ in 0..2 {
+            render(&mut app, vec![]);
+        }
+        let output = render(&mut app, vec![]);
+        let folder_clip = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                eframe::egui::Shape::Text(text) if text.galley.job.text == folder => {
+                    Some(shape.clip_rect)
+                }
+                _ => None,
+            })
+            .expect("folder label");
+        assert!(
+            folder_clip.width() > 400.0,
+            "Folder label is clipped to a column: {folder_clip:?}"
+        );
+        let (folder_x, folder_y) = text_anchor(&output, folder);
+        let (file_x, _) = text_anchor(&output, file);
+        assert!(folder_clip.contains(Pos2::new(folder_x, folder_y)));
+        assert!(
+            folder_x + 12.0 < file_x,
+            "Folder header should start left of its files: {folder_x} vs {file_x}"
+        );
+        let output = click(&mut app, Pos2::new(folder_x - 30.0, folder_y));
+        assert!(text_anchor(&output, folder).0 > 0.0);
+        assert!(
+            output.shapes.iter().all(|shape| {
+                !matches!(&shape.shape, eframe::egui::Shape::Text(text) if text.galley.job.text == file)
+            }),
+            "Collapsing a folder should hide its files"
+        );
+        assert!(output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, eframe::egui::Shape::Text(text) if text.galley.job.text == nested)
+        }));
+        let (folder_x, folder_y) = text_anchor(&output, folder);
+        let output = click(&mut app, Pos2::new(folder_x - 30.0, folder_y));
+        let (file_x, file_y) = text_anchor(&output, file);
+        click(&mut app, Pos2::new(file_x + 8.0, file_y));
+        assert!(app.selection.paths.contains(file));
+        assert!(!app.selection.paths.contains(folder));
+        let output = render(&mut app, vec![]);
+        let (folder_x, folder_y) = text_anchor(&output, folder);
+        click(&mut app, Pos2::new(folder_x + 8.0, folder_y));
+        assert!(app.selection.paths.contains(file));
+        assert!(app.selection.paths.contains("crates/sannygit/src/app.rs"));
+        assert!(!app.selection.paths.contains(nested));
     }
 }

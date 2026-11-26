@@ -3,7 +3,7 @@ use self::controls::dialog_style::DialogResponse;
 pub(crate) use controls::popup_menu::Entry as PopupMenuEntry;
 mod about;
 mod branches;
-pub(crate) use branches::handle_branch_shortcuts;
+pub(crate) use branches::{branch_shortcut_handles, handle_branch_shortcuts};
 mod changes;
 mod clone_dialog;
 mod commit_panel;
@@ -35,6 +35,8 @@ use eframe::egui::{
 };
 
 const PANEL_GAP: i8 = 2;
+/// Default branches panel height as a fraction of the left sidebar (`repositories` uses the rest).
+const SIDEBAR_BRANCHES_SHARE: f32 = 1.0 / 3.0;
 const WORKSPACE_HEADER_HEIGHT: f32 = 34.0;
 
 fn sync_badge(text: &str, palette: Palette) -> eframe::egui::text::LayoutJob {
@@ -121,14 +123,7 @@ fn sidebar_contents(ui: &mut Ui, app: &mut SannyGitApp) -> eframe::egui::Rect {
     let branches = Panel::bottom("working_tree.v3.branches")
         .resizable(true)
         .show_separator_line(false)
-        .default_size(
-            ui.available_height()
-                * if app.interface_style == crate::theme::InterfaceStyle::Modern {
-                    0.65
-                } else {
-                    0.36
-                },
-        )
+        .default_size(ui.available_height() * SIDEBAR_BRANCHES_SHARE)
         .size_range(130.0..=(ui.available_height() - 120.0).max(130.0))
         .frame(
             panel_frame(palette)

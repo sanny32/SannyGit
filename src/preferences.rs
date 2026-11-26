@@ -1,6 +1,8 @@
 use chrono::{DateTime, Local, TimeZone};
 use serde::{Deserialize, Serialize};
 
+use crate::shortcuts::ShortcutBindings;
+
 pub const STORAGE_KEY: &str = "sannygit.preferences";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +104,7 @@ pub struct Preferences {
     pub diff_side_by_side: bool,
     pub diff_ignore_whitespace: bool,
     pub show_commit_token_usage: bool,
+    pub shortcuts: crate::shortcuts::ShortcutBindings,
 }
 
 impl Default for Preferences {
@@ -124,6 +127,7 @@ impl Default for Preferences {
             diff_side_by_side: false,
             diff_ignore_whitespace: false,
             show_commit_token_usage: true,
+            shortcuts: ShortcutBindings::default(),
         }
     }
 }

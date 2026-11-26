@@ -1,6 +1,6 @@
 use super::controls::{
     dialog_style::{self, DialogResponse},
-    icons::Icon,
+    icons::{self, Icon},
     tooltips::TooltipResponse,
 };
 use crate::{
@@ -712,6 +712,7 @@ fn branches(ctx: &egui::Context, dialog: &mut Dialog, palette: Palette) {
                             egui::CollapsingHeader::new("Local Branches")
                                 .id_salt((dialog.operation.id(), "local"))
                                 .default_open(true)
+                                .icon(icons::collapsing_icon)
                                 .show(ui, |ui| {
                                     for entry in snapshot
                                         .refs
@@ -747,6 +748,7 @@ fn branches(ctx: &egui::Context, dialog: &mut Dialog, palette: Palette) {
                             for remote in remotes {
                                 egui::CollapsingHeader::new(remote)
                                     .id_salt((dialog.operation.id(), "remote", remote))
+                                    .icon(icons::collapsing_icon)
                                     .show(ui, |ui| {
                                         for entry in snapshot.refs.iter().filter(|entry| {
                                             entry.kind == RefKind::Remote

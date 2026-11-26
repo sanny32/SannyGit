@@ -125,6 +125,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         kind,
                         palette,
                         &mut requested,
+                        &app.preferences.shortcuts,
                     );
                 }
             });
@@ -290,6 +291,31 @@ pub(super) fn pick_pending_tag_patch(ctx: &egui::Context, app: &mut SannyGitApp)
     }
 }
 
+pub(crate) fn branch_shortcut_handles(
+    app: &SannyGitApp,
+    key: egui::Key,
+    modifiers: egui::Modifiers,
+) -> bool {
+    if app.branches.selected_ref_group.is_some() {
+        return false;
+    }
+    let Some(branch) = app.branches.entries.iter().find(|branch| {
+        branch.kind != RefKind::Tag && branch.full_name == app.branches.selected_branch
+    }) else {
+        return false;
+    };
+    branch_menu(branch, &branch_requests(app), &app.preferences.shortcuts)
+        .iter()
+        .any(|entry| match entry {
+            popup_menu::Entry::Item {
+                enabled: true,
+                shortcut: Some(shortcut),
+                ..
+            } => shortcut.logical_key == key && modifiers.matches_exact(shortcut.modifiers),
+            _ => false,
+        })
+}
+
 pub(crate) fn handle_branch_shortcuts(ctx: &egui::Context, app: &mut SannyGitApp) {
     if app.branches.selected_ref_group.is_some()
         || app.modal_dialog_open()
@@ -315,7 +341,7 @@ pub(crate) fn handle_branch_shortcuts(ctx: &egui::Context, app: &mut SannyGitApp
             return None;
         }
         let mut request = None;
-        let entries = branch_menu(branch, &branch_requests(app));
+        let entries = branch_menu(branch, &branch_requests(app), &app.preferences.shortcuts);
         input.events.retain(|event| {
             let Some((action, enabled)) = entries.iter().find_map(|entry| {
                 let popup_menu::Entry::Item {
@@ -336,7 +362,13 @@ pub(crate) fn handle_branch_shortcuts(ctx: &egui::Context, app: &mut SannyGitApp
                     } => {
                         shortcut.logical_key == *key && modifiers.matches_exact(shortcut.modifiers)
                     }
-                    egui::Event::Copy => matches!(action, BranchRequest::CopyRefName(_)),
+                    egui::Event::Copy => {
+                        matches!(action, BranchRequest::CopyRefName(_))
+                            && crate::shortcuts::chords_equivalent(
+                                *shortcut,
+                                egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::C),
+                            )
+                    }
                     _ => false,
                 };
                 matches.then_some((action, *enabled))
@@ -358,6 +390,7 @@ pub(crate) fn handle_branch_shortcuts(ctx: &egui::Context, app: &mut SannyGitApp
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn branch_group(
     ui: &mut Ui,
     refs: &[BranchRef],
@@ -366,6 +399,7 @@ fn branch_group(
     kind: RefKind,
     palette: Palette,
     requested: &mut BranchRequests,
+    shortcuts: &crate::shortcuts::ShortcutBindings,
 ) -> bool {
     let title = match kind {
         RefKind::Local => "Local Branches",
@@ -401,6 +435,7 @@ fn branch_group(
     )
     .id_salt(title)
     .default_open(kind == RefKind::Local)
+    .icon(icons::collapsing_icon)
     .show_unindented(ui, |ui| {
         *ui.visuals_mut() = body_visuals;
         for branch in matching {
@@ -510,7 +545,7 @@ fn branch_group(
                 }
                 if let Some(action) = popup_menu::context(&response, palette, || match kind {
                     RefKind::Tag => tag_menu(branch, requested),
-                    RefKind::Local | RefKind::Remote => branch_menu(branch, requested),
+                    RefKind::Local | RefKind::Remote => branch_menu(branch, requested, shortcuts),
                 }) {
                     requested.action = Some(action);
                 }
@@ -537,13 +572,13 @@ fn branch_group(
 fn branch_menu(
     branch: &BranchRef,
     requested: &BranchRequests,
+    shortcuts: &crate::shortcuts::ShortcutBindings,
 ) -> Vec<popup_menu::Entry<BranchRequest>> {
-    use egui::{Key, KeyboardShortcut, Modifiers};
+    use crate::shortcuts::BranchShortcut;
     use popup_menu::Entry as E;
 
     let target = || branch.full_name.clone();
-    let cmd = |key| KeyboardShortcut::new(Modifiers::COMMAND, key);
-    let shift_cmd = |key| KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), key);
+    let bind = |kind: BranchShortcut| shortcuts.branch(kind);
     let refresh = "Refresh the repository and wait for the current operation";
     let needs_head = "An existing HEAD and fresh repository data are required";
     let local = branch.kind == RefKind::Local;
@@ -555,21 +590,22 @@ fn branch_menu(
             BranchRequest::Switch(target()),
         )
         .help("Select a branch that is not checked out and refresh the repository")
-        .shortcut(cmd(Key::G)),
+        .maybe_shortcut(bind(BranchShortcut::CheckOut)),
         E::Separator,
         E::item(
             "Merge…",
             requested.tag_merge_allowed && other_branch,
             BranchRequest::MergeBranch(target()),
         )
-        .help(needs_head),
+        .help(needs_head)
+        .maybe_shortcut(bind(BranchShortcut::Merge)),
         E::item(
             "Rebase…",
             requested.tag_merge_allowed && other_branch,
             BranchRequest::RebaseBranch(target()),
         )
         .help(needs_head)
-        .shortcut(cmd(Key::D)),
+        .maybe_shortcut(bind(BranchShortcut::RebaseHeadTo)),
     ];
     if local {
         entries.push(
@@ -597,7 +633,7 @@ fn branch_menu(
         } else {
             "Direct push is available for local branches"
         })
-        .shortcut(cmd(Key::ArrowUp)),
+        .maybe_shortcut(bind(BranchShortcut::Push)),
         E::item(
             "Push To…",
             requested.rename_allowed,
@@ -608,7 +644,7 @@ fn branch_menu(
             },
         )
         .help(refresh)
-        .shortcut(shift_cmd(Key::ArrowUp)),
+        .maybe_shortcut(bind(BranchShortcut::PushTo)),
         E::Separator,
         E::item(
             "Log",
@@ -616,7 +652,7 @@ fn branch_menu(
             BranchRequest::LogRef(target()),
         )
         .help("Wait for the current operation to finish")
-        .shortcut(cmd(Key::L)),
+        .maybe_shortcut(bind(BranchShortcut::Log)),
         E::Separator,
         E::item(
             "Reset…",
@@ -624,14 +660,14 @@ fn branch_menu(
             BranchRequest::ResetRef(target()),
         )
         .help(needs_head)
-        .shortcut(cmd(Key::R)),
+        .maybe_shortcut(bind(BranchShortcut::Reset)),
         E::item(
             "Reset Advanced…",
             requested.ref_reset_allowed,
             BranchRequest::ResetRefAdvanced(target()),
         )
         .help(needs_head)
-        .shortcut(shift_cmd(Key::R)),
+        .maybe_shortcut(bind(BranchShortcut::ResetAdvanced)),
     ]);
     entries.push(E::Separator);
     if local {
@@ -642,7 +678,7 @@ fn branch_menu(
                 BranchRequest::Rename(target()),
             )
             .help(refresh)
-            .shortcut(KeyboardShortcut::new(Modifiers::NONE, Key::F2)),
+            .maybe_shortcut(bind(BranchShortcut::Rename)),
         );
     }
     entries.push(
@@ -681,7 +717,7 @@ fn branch_menu(
             true,
             BranchRequest::CopyRefName(branch.name.clone()),
         )
-        .shortcut(cmd(Key::C)),
+        .maybe_shortcut(bind(BranchShortcut::Copy)),
     ]);
     if local {
         let id_ready = crate::branches::is_commit_id(&branch.hash);
@@ -1458,6 +1494,7 @@ mod tests {
                             RefKind::Local,
                             theme.palette(),
                             &mut requested,
+                            &crate::shortcuts::ShortcutBindings::default(),
                         );
                     },
                 );
@@ -1473,6 +1510,36 @@ mod tests {
                 Some(BranchRequest::Switch("refs/heads/feature".into()))
             );
         }
+    }
+
+    #[test]
+    fn local_branch_push_claims_alt_page_up_and_a_remote_branch_does_not() {
+        let mut app = SannyGitApp::with_theme(crate::theme::ThemeChoice::Light);
+        app.state_current = true;
+        app.branches.current = true;
+        app.branches.entries = vec![BranchRef {
+            name: "main".into(),
+            full_name: "refs/heads/main".into(),
+            hash: "b".repeat(40),
+            tag_subject: None,
+            upstream: None,
+            current: true,
+            kind: RefKind::Local,
+        }];
+        app.branches.selected_branch = "refs/heads/main".into();
+        assert!(super::branch_shortcut_handles(
+            &app,
+            egui::Key::PageUp,
+            Modifiers::ALT
+        ));
+        app.branches.entries[0].kind = RefKind::Remote;
+        app.branches.entries[0].full_name = "refs/remotes/origin/main".into();
+        app.branches.selected_branch = app.branches.entries[0].full_name.clone();
+        assert!(!super::branch_shortcut_handles(
+            &app,
+            egui::Key::PageUp,
+            Modifiers::ALT
+        ));
     }
 
     #[test]
@@ -1593,6 +1660,7 @@ mod tests {
                                 kind,
                                 theme.palette(),
                                 &mut requested,
+                                &crate::shortcuts::ShortcutBindings::default(),
                             );
                         },
                     );
@@ -1710,6 +1778,7 @@ mod tests {
                             RefKind::Local,
                             crate::theme::ThemeChoice::Light.palette(),
                             &mut requested,
+                            &crate::shortcuts::ShortcutBindings::default(),
                         );
                     },
                 );
@@ -1729,6 +1798,7 @@ mod tests {
         ] {
             let ctx = Context::default();
             crate::theme::install_fonts(&ctx);
+            egui_extras::install_image_loaders(&ctx);
             theme.apply(&ctx);
             let refs = vec![BranchRef {
                 name: "feature".into(),
@@ -1764,6 +1834,7 @@ mod tests {
                                     RefKind::Local,
                                     theme.palette(),
                                     &mut requested,
+                                    &crate::shortcuts::ShortcutBindings::default(),
                                 );
                             } else {
                                 let _ = CollapsingHeader::new(
@@ -1772,6 +1843,7 @@ mod tests {
                                 )
                                 .id_salt("Local Branches")
                                 .default_open(true)
+                                .icon(icons::collapsing_icon)
                                 .show_unindented(ui, |ui| {
                                     let _ = crate::ui::controls::selectable_row(
                                         ui,
@@ -1804,8 +1876,8 @@ mod tests {
                         eframe::egui::Shape::Text(text) if text.galley.job.text == "feature" => {
                             branch_y = Some(text.pos.y);
                         }
-                        eframe::egui::Shape::Path(path) if path.points.len() == 3 => {
-                            arrow = Some(path.points.clone());
+                        eframe::egui::Shape::Mesh(mesh) => {
+                            arrow = Some(mesh.calc_bounds());
                         }
                         _ => {}
                     }

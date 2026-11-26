@@ -199,7 +199,7 @@ fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem
         crate::menu::EditAction::from_label(item.label).is_some()
             || item
                 .action
-                .is_some_and(|action| action.shortcut().is_some())
+                .is_some_and(|action| action.shortcut(&app.preferences.shortcuts).is_some())
     });
     if has_shortcut {
         ui.set_min_width(280.0);
@@ -241,7 +241,10 @@ fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem
                 .action
                 .is_some_and(|action| app.menu_action_enabled(action));
             let mut button = Button::new(item.label);
-            if let Some(shortcut) = item.action.and_then(|action| action.shortcut()) {
+            if let Some(shortcut) = item
+                .action
+                .and_then(|action| action.shortcut(&app.preferences.shortcuts))
+            {
                 button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
             }
             let response = ui.add_enabled(enabled, button);

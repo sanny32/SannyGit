@@ -161,6 +161,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 let response = CollapsingHeader::new(&group.name)
                     .id_salt(("repository.group", &group.name))
                     .default_open(true)
+                    .icon(icons::collapsing_icon)
                     .show(ui, |ui| {
                         let group_repositories: Vec<_> = app
                             .repositories
@@ -910,6 +911,7 @@ fn repository_drop_line(
 ///
 /// The pointer stays the arrow. A small copy of the row follows it, offset
 /// down and to the right, the way a Windows drag image does.
+#[allow(clippy::too_many_arguments)]
 fn repository_drag(
     ui: &mut Ui,
     response: eframe::egui::Response,
