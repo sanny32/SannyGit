@@ -127,8 +127,12 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
         };
         // One clipped status in the header keeps controls, rows and scroll IDs
         // stationary during loading, errors and retries, including narrow panels.
-        super::controls::dialog_style::text_line(ui, RichText::new(status).small().color(color), 20.0)
-            .help_text(help);
+        super::controls::dialog_style::text_line(
+            ui,
+            RichText::new(status).small().color(color),
+            20.0,
+        )
+        .help_text(help);
     });
     let restore = if history_window {
         None

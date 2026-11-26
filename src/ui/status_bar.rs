@@ -380,10 +380,7 @@ mod tests {
         app.commit_global_ai_connection_session();
         assert_eq!(
             connection_indicator(&app),
-            Some((
-                Icon::Code,
-                "LM Studio (local) (google/gemma-4-e2b)".into()
-            ))
+            Some((Icon::Code, "LM Studio (local) (google/gemma-4-e2b)".into()))
         );
     }
 
