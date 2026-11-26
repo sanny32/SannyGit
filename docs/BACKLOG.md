@@ -23,27 +23,6 @@ the path `Label` in the toolbar layout around the line actions.
 
 **Status:** Not started
 
-## Commit — AI message generation
-
-### Preference to show token usage in the commit panel
-
-**Problem:** After “Generate commit message”, input/output token counts appear
-as a small badge overlay on the message field (`↑… ↓…`). There is no user
-setting to turn this on or off. `CommitState` also accumulates
-`session_generation_tokens`, but nothing in the commit UI exposes session
-totals.
-
-**Goal:** Add a persisted preference (application or commit/AI settings) that
-controls whether token statistics are shown in the commit window — at minimum
-the last-generation input/output badge; optionally whether to include a session
-running total. When disabled, hide the badge and keep layout unchanged.
-
-**Likely touch points:** `src/preferences.rs` (new field + serde), `src/ui/settings.rs`
-(AI / commit message section), `src/ui/commit_panel.rs` (`draw_token_usage_badge`,
-`last_generation_tokens`), `src/app/commit.rs` (`session_generation_tokens`).
-
-**Status:** Not started
-
 ## UI — Status bar
 
 ### Space between operation message and cancel control

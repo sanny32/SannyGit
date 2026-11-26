@@ -731,6 +731,14 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         }
         SettingsPage::CommitMessages => {
             heading(ui, "Commit messages");
+            ui.checkbox(
+                &mut app.settings_window.preferences.show_commit_token_usage,
+                "Show token counts after generation",
+            )
+            .help_text(
+                "On the commit message, show input and output tokens for the last generation and the total for this session.",
+            );
+            ui.add_space(6.0);
             instructions_form(ui, &mut app.settings_window.llm, palette, true);
         }
         SettingsPage::CommitContext => {

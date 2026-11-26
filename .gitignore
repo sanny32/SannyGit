@@ -1,7 +1,8 @@
 /target
 Cargo.lock
-.review/
-.vscode/
-.idea/
-/.DS_Store
-/.cursor
+.DS_Store
+/.review/
+/.vscode/
+/.idea/
+/.cursor/
+/.gigacode/

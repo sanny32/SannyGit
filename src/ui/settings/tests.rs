@@ -1156,6 +1156,10 @@ fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
                 assert!(visible_text(&output.shapes, "English"));
                 assert!(visible_text(
                     &output.shapes,
+                    "Show token counts after generation"
+                ));
+                assert!(visible_text(
+                    &output.shapes,
                     &app.settings_window.llm.config.instructions
                 ));
             }

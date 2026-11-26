@@ -169,8 +169,16 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 if app.commit.generating_message {
                     let time = ui.input(|input| input.time);
                     draw_generation_animation(ui, editor.response.rect, time, palette);
-                } else if let Some(usage) = app.commit.last_generation_tokens {
-                    draw_token_usage_badge(ui, editor.response.rect, usage, palette);
+                } else if app.preferences.show_commit_token_usage {
+                    if let Some(usage) = app.commit.last_generation_tokens {
+                        draw_token_usage_badge(
+                            ui,
+                            editor.response.rect,
+                            usage,
+                            app.commit.session_generation_tokens,
+                            palette,
+                        );
+                    }
                 }
             });
             ui.add_space(10.0);
@@ -246,7 +254,13 @@ fn token_badge_rect(editor: Rect, badge_size: Vec2) -> Rect {
     )
 }
 
-fn draw_token_usage_badge(ui: &Ui, rect: Rect, usage: crate::llm::TokenUsage, palette: Palette) {
+fn draw_token_usage_badge(
+    ui: &Ui,
+    rect: Rect,
+    usage: crate::llm::TokenUsage,
+    session_tokens: u64,
+    palette: Palette,
+) {
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -261,7 +275,7 @@ fn draw_token_usage_badge(ui: &Ui, rect: Rect, usage: crate::llm::TokenUsage, pa
             Sense::hover(),
         )
         .on_hover_cursor(CursorIcon::Default)
-        .help_text(token_usage_tooltip(usage));
+        .help_text(token_usage_tooltip(usage, session_tokens));
     // Opaque scrub: long unbreakable lines can still scroll under the corner.
     ui.painter()
         .rect_filled(badge, 3.0, ui.visuals().text_edit_bg_color());
@@ -274,12 +288,21 @@ fn draw_token_usage_badge(ui: &Ui, rect: Rect, usage: crate::llm::TokenUsage, pa
     );
 }
 
-fn token_usage_tooltip(usage: crate::llm::TokenUsage) -> String {
+fn token_usage_tooltip(usage: crate::llm::TokenUsage, session_tokens: u64) -> String {
     format!(
-        "↑ {} input tokens\n↓ {} output tokens",
+        "↑ {} input tokens\n↓ {} output tokens\nSession: {} tokens",
         crate::llm::format_token_count(usage.input),
         crate::llm::format_token_count(usage.output),
+        format_session_tokens(session_tokens),
     )
+}
+
+fn format_session_tokens(tokens: u64) -> String {
+    if tokens <= u64::from(u32::MAX) {
+        crate::llm::format_token_count(tokens as u32)
+    } else {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    }
 }
 
 fn draw_generation_animation(ui: &Ui, rect: Rect, time: f64, palette: Palette) {
@@ -384,9 +407,83 @@ mod tests {
         };
         assert_eq!(token_badge_label(usage), "↑2.0k ↓35");
         assert_eq!(
-            token_usage_tooltip(usage),
-            "↑ 2.0k input tokens\n↓ 35 output tokens"
+            token_usage_tooltip(usage, 5_000),
+            "↑ 2.0k input tokens\n↓ 35 output tokens\nSession: 5k tokens"
         );
+        assert_eq!(format_session_tokens(u64::from(u32::MAX) + 1), "4295.0M");
+    }
+
+    #[test]
+    fn token_counts_hide_without_moving_the_message() {
+        use eframe::egui::{Context, RawInput, Shape};
+
+        let usage = crate::llm::TokenUsage {
+            input: 2_048,
+            output: 35,
+            total: 2_083,
+        };
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let context = Context::default();
+            crate::theme::install_fonts(&context);
+            theme.apply(&context);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.commit.message = "Keep this draft in place.".into();
+            app.commit.last_generation_tokens = Some(usage);
+            app.commit.session_generation_tokens = 5_000;
+            let render = |app: &mut SannyGitApp| {
+                let mut output = context.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(420.0, 280.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.set_width(420.0);
+                        ui.set_height(280.0);
+                        show(ui, app);
+                    },
+                );
+                output.textures_delta.clear();
+                output
+            };
+            let message_pos = |output: &eframe::egui::FullOutput| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        Shape::Text(text)
+                            if text.galley.job.text == "Keep this draft in place." =>
+                        {
+                            Some(text.pos)
+                        }
+                        _ => None,
+                    })
+                    .expect("commit message")
+            };
+            let badge_visible = |output: &eframe::egui::FullOutput| {
+                output.shapes.iter().any(|shape| {
+                    matches!(
+                        &shape.shape,
+                        Shape::Text(text) if text.galley.job.text == "↑2.0k ↓35"
+                    )
+                })
+            };
+            app.preferences.show_commit_token_usage = true;
+            let shown = render(&mut app);
+            app.preferences.show_commit_token_usage = false;
+            let hidden = render(&mut app);
+            assert!(badge_visible(&shown), "token badge missing in {theme:?}");
+            assert!(
+                !badge_visible(&hidden),
+                "token badge stays visible when disabled in {theme:?}"
+            );
+            assert_eq!(
+                message_pos(&shown),
+                message_pos(&hidden),
+                "hiding token counts moved the message in {theme:?}"
+            );
+            assert_eq!(app.commit.last_generation_tokens, Some(usage));
+            assert_eq!(app.commit.session_generation_tokens, 5_000);
+        }
     }
 
     #[test]

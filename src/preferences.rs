@@ -101,6 +101,7 @@ pub struct Preferences {
     pub show_ignored_files: bool,
     pub diff_side_by_side: bool,
     pub diff_ignore_whitespace: bool,
+    pub show_commit_token_usage: bool,
 }
 
 impl Default for Preferences {
@@ -122,6 +123,7 @@ impl Default for Preferences {
             show_ignored_files: false,
             diff_side_by_side: false,
             diff_ignore_whitespace: false,
+            show_commit_token_usage: true,
         }
     }
 }
@@ -210,6 +212,7 @@ mod tests {
             skip_sync_confirmation: true,
             log_level: crate::logging::Level::Debug,
             git_executable: "/Applications/Git Tools/git".into(),
+            show_commit_token_usage: false,
             ..Default::default()
         };
         let json = serde_json::to_string(&preferences).unwrap();
