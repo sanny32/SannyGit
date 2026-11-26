@@ -291,6 +291,7 @@ pub(super) fn pick_pending_tag_patch(ctx: &egui::Context, app: &mut SannyGitApp)
     }
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 pub(crate) fn branch_shortcut_handles(
     app: &SannyGitApp,
     key: egui::Key,

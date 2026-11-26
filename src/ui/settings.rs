@@ -810,15 +810,12 @@ fn fit_shortcut_columns(width: f32, stored: [f32; 2]) -> [f32; 3] {
 fn drag_shortcut_columns(width: f32, stored: &mut [f32; 2], separator: usize, delta: f32) {
     if separator == 0 {
         let max_shortcut = (width - COMMAND_COLUMN_MIN - stored[1])
-            .max(SHORTCUT_COLUMN_MIN)
-            .min(SHORTCUT_COLUMN_MAX);
+            .clamp(SHORTCUT_COLUMN_MIN, SHORTCUT_COLUMN_MAX);
         stored[0] = (stored[0] - delta).clamp(SHORTCUT_COLUMN_MIN, max_shortcut);
         return;
     }
     let pair = stored[0] + stored[1];
-    let max_shortcut = (pair - DEFAULT_COLUMN_MIN)
-        .max(SHORTCUT_COLUMN_MIN)
-        .min(SHORTCUT_COLUMN_MAX);
+    let max_shortcut = (pair - DEFAULT_COLUMN_MIN).clamp(SHORTCUT_COLUMN_MIN, SHORTCUT_COLUMN_MAX);
     let shortcut = (stored[0] + delta).clamp(SHORTCUT_COLUMN_MIN, max_shortcut);
     stored[1] = pair - shortcut;
     stored[0] = shortcut;

@@ -48,6 +48,7 @@ pub struct ShortcutCommand {
     pub id: &'static str,
     pub category: &'static str,
     pub label: &'static str,
+    #[cfg_attr(all(target_os = "macos", not(test)), allow(dead_code))]
     pub menu_action: Option<MenuAction>,
     pub branch: Option<BranchShortcut>,
     pub default: Option<KeyboardShortcut>,
@@ -514,6 +515,7 @@ impl ShortcutBindings {
         }
     }
 
+    #[cfg(any(not(target_os = "macos"), test))]
     pub fn menu_action(&self, action: MenuAction) -> Option<KeyboardShortcut> {
         let id = catalog()
             .iter()
@@ -578,6 +580,7 @@ impl ShortcutBindings {
         self.assign(id, Some(shortcut));
     }
 
+    #[cfg(any(not(target_os = "macos"), test))]
     pub fn menu_actions_with_shortcuts() -> impl Iterator<Item = MenuAction> + 'static {
         catalog().iter().filter_map(|entry| entry.menu_action)
     }

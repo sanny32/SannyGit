@@ -219,8 +219,7 @@ fn centered_window_geometry(
 fn usable_display_area(display: &display_info::DisplayInfo) -> (i32, i32, u32, u32) {
     #[cfg(target_os = "windows")]
     {
-        windows_work_area(display)
-            .unwrap_or_else(|| (display.x, display.y, display.width, display.height))
+        windows_work_area(display).unwrap_or((display.x, display.y, display.width, display.height))
     }
     #[cfg(not(target_os = "windows"))]
     {

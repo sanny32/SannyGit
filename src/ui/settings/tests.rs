@@ -776,10 +776,7 @@ fn interface_style_dropdown_updates_the_draft_in_both_themes() {
             let output = render(app, vec![]);
             click(
                 app,
-                text_center(
-                    &output.shapes,
-                    app.settings_window.interface_style.label(),
-                ),
+                text_center(&output.shapes, app.settings_window.interface_style.label()),
             );
             let output = render(app, vec![]);
             click(app, text_center(&output.shapes, label));

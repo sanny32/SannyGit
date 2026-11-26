@@ -3,7 +3,9 @@ use self::controls::dialog_style::DialogResponse;
 pub(crate) use controls::popup_menu::Entry as PopupMenuEntry;
 mod about;
 mod branches;
-pub(crate) use branches::{branch_shortcut_handles, handle_branch_shortcuts};
+#[cfg(not(target_os = "macos"))]
+pub(crate) use branches::branch_shortcut_handles;
+pub(crate) use branches::handle_branch_shortcuts;
 mod changes;
 mod clone_dialog;
 mod commit_panel;

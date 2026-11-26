@@ -1139,8 +1139,10 @@ fn paint_directory_header(
     );
     icons::paint_at(ui, &painter, Icon::Folder, palette.muted, folder, 0.0);
     let text_x = folder.right() + 4.0;
-    let mut job = eframe::egui::text::LayoutJob::default();
-    job.wrap = eframe::egui::text::TextWrapping::truncate_at_width((file_right - text_x).max(1.0));
+    let mut job = eframe::egui::text::LayoutJob {
+        wrap: eframe::egui::text::TextWrapping::truncate_at_width((file_right - text_x).max(1.0)),
+        ..Default::default()
+    };
     job.append(
         label,
         0.0,
