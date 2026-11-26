@@ -15,7 +15,6 @@ Stroke color is white for theme tinting; stroke width is adjusted to 1.65 to mat
 - text-file.svg: file-text
 - image-file.svg: photo
 - folder.svg: folder
-- merge.svg: git-merge
 - rebase.svg: git-pull-request
 - file-type-bmp.svg: file-type-bmp
 - file-type-jpg.svg: file-type-jpg
