@@ -4,68 +4,48 @@ Phase D is in progress. This is an evidence log and repeatable checklist, not a
 release approval. Publishing, tags, distribution signing and notarization require
 separate explicit actions.
 
-## Candidate and local evidence
+Last updated on November 27, 2026, for version `1.0.0` at commit `8d64837`. No
+native package build, installer run or GUI smoke test has been recorded for this
+candidate.
 
-Checked on November 11, 2026, from commit `4cbcac6` (version `0.1.0`). The pending
-changes fix the Windows installer workflow's outdated NSIS input path and add
-existing build-script/entitlement tests to macOS CI. No Rust source changed.
+## Current candidate
 
-Environment: macOS arm64, Rust/Cargo 1.99.1, Apple Git 2.54.0. This was an existing
-development machine, not a clean installation or a Rust 1.95 compatibility test.
+- Revision: `8d64837` (Enable deleting unmerged local branches after confirmation).
+- Version: `1.0.0`.
+- Native build, install and GUI checks for this revision: not performed.
+- Required Git version: 2.36 or newer on `PATH`.
 
-| Check | Result |
-| --- | --- |
-| Release build using `./build.sh --install=<temporary directory>` | Passed; prefix contains spaces |
-| Bundle identifier, version, executable, icon and both licenses | Passed: `io.github.sanny32.SannyGit`, `0.1.0`, arm64 Mach-O |
-| `plutil -lint` and `codesign --verify --deep --strict` | Passed for staged bundle and bundle inside mounted DMG |
-| Dynamic dependencies | `otool -L` lists only Apple system frameworks/libraries; no development-machine library paths |
-| DMG creation and `hdiutil verify` | Passed; image mounted read-only, contents compared with staging, then detached |
-| Packaged application's native launch | Passed; the installed temporary bundle was accessible through computer-use tools |
-| GUI init → edit → stage → commit → push → clone → pull | Passed in Modern style with system theme resolving to light, using disposable local repositories |
-| Paths with spaces and Unicode | Passed for repository directories and `пример file.txt` |
-| Git verification after GUI operations | HEAD matched the local bare remote and clone; expected file bytes and clean index/worktree after pull |
-| Dark theme, normal window | Visually inspected main panels, diff and error modal; separate Fetch and retry exercised |
-| Locked index | Stage failed with modal error; draft, file bytes and index preserved |
-| Unavailable local transport | Fetch against a missing local remote failed with modal error; same dialog allowed retry after remote restoration |
-| Build/install script tests | 8 passed; Linux behavior is simulated on macOS, not a native Linux test |
-| macOS entitlement derivation tests | 6 passed; no real credential or provisioning-profile round trip |
-| Build script syntax, modified workflow YAML, `git diff --check` | Passed |
+The checks marked as outstanding apply to this revision until a later entry records
+actual evidence.
 
-The GUI created the first commit and pushed/cloned it. A second commit was then
-prepared and pushed by the test fixture in its temporary working repository;
-the GUI fetched and fast-forwarded the clone to that exact commit. No test commit,
-staging, Git configuration change or push targeted the SannyGit working repository
-or a real server. The error checks used an owned temporary lock and missing local
-path, not a real network outage.
+## Scope requiring verification
 
-The smoke fixture is under a disposable `/private/tmp/SannyGit smoke Юникод ...`
-directory. The app retains its two test repository bookmarks because bookmark
-removal is currently disabled. The original repository selection and automatic
-theme are restored after inspection. Keep the fixture while those bookmarks are
-needed; do not remove unrelated temporary directories.
+These areas are part of this candidate and have no native verification recorded:
 
-## Local artifact
-
-Generated file (ignored build output):
-`target/phase-d/sannygit-0.1.0-macos-arm64.dmg`.
-Its sibling `SHA256SUMS` contains:
-
-```text
-2de4ed8ce713ea885ab4f39ba33098db6a6672826a38044ad317b39bfb7d0d2e  sannygit-0.1.0-macos-arm64.dmg
-```
-
-This is an ad-hoc signed local test artifact. It is not notarized, distribution
-signed, uploaded, or verified on a clean Mac. Without a matching provisioning
-profile it uses login Keychain storage rather than Touch ID storage. Git must
-already be available on the destination machine.
-
-To reproduce the build, use a fresh temporary staging directory and the same
-`build.sh --install=<stage>` invocation as the macOS packaging workflow. Verify
-the bundle, add an `Applications` symlink in the staging directory, then create
-and verify a DMG as described in
-[the macOS workflow](../.github/workflows/build-installer-macos.yaml).
-Record the source commit, architecture, tool versions, checksum and any local
-changes with each new artifact; a rebuilt image may have a different checksum.
+- Git operations: merge (create-commit, fast-forward, squash, merge to working
+  tree, abort), rebase with Continue/Skip/Abort and the text conflict solver,
+  cherry-pick and revert with Continue/Skip, reset (soft, mixed, hard), pull with
+  merge or rebase, push up to a tracked branch, and deletion of an unmerged local
+  branch after an explicit confirmation.
+- Working tree: hunk and line staging/unstaging/discard, side-by-side diff,
+  ignore-whitespace, ignored files, move or rename inside the repository, staged
+  or unstaged scope, directory grouping, stash of the selection, and stash rename.
+- Commit message generation: OpenAI-compatible endpoints, local servers
+  (Ollama, LM Studio), ChatGPT subscription sign-in, GitHub Copilot sign-in,
+  provider and connection state, configurable context, token usage display,
+  cancellation, and deferred credential loading. Provider calls use direct API
+  requests; the ChatGPT callback is served as a local page.
+- Settings and persistence: JSON files under platform data directories replacing
+  the monolithic eframe store, per-repository last branch, repository favorites
+  and rename, confirmation toggles, appearance dropdowns, and shortcut overrides.
+  Pre-release builds intentionally do not migrate settings from older on-disk
+  layouts.
+- Native integration: modal child windows on Windows and Linux, the patched
+  winit mixed-DPI drag fix, Metal rendering on macOS, system theme following,
+  dynamic window title, and the native macOS menu.
+- Packaging and CI: a shared `project-version` action with tag/version checking,
+  Cargo caching, silent Windows install/uninstall verification, macOS bundle and
+  DMG verification, and DEB/RPM/AppImage content checks.
 
 ## Platform and release gates
 
@@ -75,22 +55,28 @@ these gates.
 
 | Target | Format | Current evidence | Remaining gate |
 | --- | --- | --- | --- |
-| macOS arm64 | DMG | Local build, signature/integrity/content checks; partial native GUI smoke above | Clean-Mac install/launch and full theme/size/credential coverage |
-| macOS Intel | DMG if supported | None from this session | Decide architecture support and verify on an Intel Mac; current workflow uses runner architecture |
-| Windows x64 | NSIS installer | Outdated script path fixed locally | Hosted build, install/uninstall and native workflow checks |
-| Linux Debian/Ubuntu x86_64 | DEB | Workflow and metadata inspected | Native package build, dependency installation and X11/Wayland GUI checks |
-| Linux Fedora x86_64 | RPM | Workflow and metadata inspected | Native package build/install and GUI checks |
-| Linux x86_64 | AppImage | Workflow inspected | Extraction and launch on a clean system, with and without FUSE where supported |
+| macOS arm64 | DMG | No evidence for this revision. Workflow builds, lints the plist, verifies signature and licenses, and creates/verifies a DMG; it does not launch the app. | Run the workflow for `8d64837`; clean-Mac install/launch; full theme/style/size/credential coverage |
+| macOS Intel | DMG if supported | No evidence. The workflow uses the runner architecture (`macos-latest` is arm64). | Decide architecture support and verify on an Intel Mac |
+| Windows x64 | NSIS installer | No evidence for this revision. Workflow stages with `build.ps1`, validates the installed file set, and checks that silent uninstall keeps an unrelated user file. | Hosted run for the candidate, native install/uninstall, GUI workflow checks |
+| Linux Debian/Ubuntu x86_64 | DEB | No evidence for this revision. Workflow derives dependencies with `dpkg-shlibdeps`, validates the desktop file and verifies extracted contents and licenses. | Native package build/install, dependency resolution and X11/Wayland GUI checks |
+| Linux Fedora x86_64 | RPM | No evidence for this revision. Workflow builds in a Fedora container, validates the desktop file, and checks package name and version while reporting the file list and requirements. | Native package build/install and GUI checks |
+| Linux x86_64 | AppImage | No evidence for this revision. Workflow builds with linuxdeploy, bundles the winit runtime libraries, then extracts with `--appimage-extract` and verifies the binary and licenses. | Launch on a clean system, with and without FUSE where supported |
 
 ### Native workflow, for each supported OS
 
 - [ ] Use disposable repositories and a local bare remote to repeat init/clone,
   edit, stage/unstage, commit/amend, push, fetch and fast-forward pull. Verify refs,
   index and working-file bytes after each operation.
+- [ ] Exercise merge, rebase, cherry-pick, revert and reset, including conflicts,
+  Continue/Skip/Abort, the text conflict solver, and abort leaving the worktree
+  clean. Exercise pull with merge and rebase, push up to a tracked commit, and
+  deletion of an unmerged local branch; confirm Cancel keeps the branch and that
+  the current and worktree branches stay protected.
+- [ ] Stage, unstage and discard a hunk and a selected line; move or rename a file;
+  filter staged/unstaged/ignored files; verify diff inspection, review dialogs and
+  cancellation preserve drafts, rows, scroll position and selection.
 - [ ] Repeat the complete workflow in light/dark themes and Classic/Modern styles,
-  at the normal window size and minimum content size of 1100 × 700. The current
-  GUI tool did not resize the native macOS window when its corner was dragged;
-  exact minimum-size native verification remains open.
+  at the normal window size and minimum content size of 1100 × 700.
 - [ ] Verify error/retry/cancel preserves rows, scroll position, selection, draft
   text and dialog geometry through progress, failure and recovery.
 - [ ] Check hooks and commit signing with disposable identities, including failure;
@@ -99,14 +85,30 @@ these gates.
   authorized test remote, including authentication failure and cancellation.
 - [ ] Check system credential storage across restart/update with the intended
   signing identity. Verify Touch ID separately with an authorized profile.
+- [ ] Configure commit message generation for an API key, ChatGPT subscription,
+  GitHub Copilot and a local server. Verify browser sign-in and the local callback
+  page, denied/cancelled/expired authorization, provider availability, cancelled
+  generation, restored credentials after restart, the token-count setting, and
+  that no credential or token reaches logs or the working tree.
+- [ ] Check settings persistence in a fresh profile: JSON files under the platform
+  data directory, sane file permissions, missing/corrupt/read-only file handling,
+  restore to defaults, and behavior across restart. Do not expect migration from
+  older pre-release development layouts.
+- [ ] Check worktree add/remove/prune and the guards for branches checked out in
+  another worktree.
 - [ ] Check keyboard-only operation, focus, window size/position restoration,
-  DPI changes, multiple monitors and OS-native title-bar controls.
-- [ ] On Linux, check both Wayland and X11; record distribution and library versions.
+  DPI changes, multiple monitors and OS-native title-bar controls. Verify the
+  patched mixed-DPI window drag on Windows and modal child windows on Windows and
+  Linux.
+- [ ] On Linux, check both Wayland and X11; record distribution and library
+  versions. On macOS, confirm Metal rendering and the native menu.
 
 ### Distribution
 
 - [ ] Run checks and packaging workflows for the exact candidate revision; record
   run URLs and per-platform results. Do not substitute an earlier successful run.
+  A release tag must match the Cargo version (`v1.0.0`); the shared
+  `project-version` action fails the package job on a mismatch.
 - [ ] Download each artifact and verify its published SHA-256 checksum.
 - [ ] On clean systems, verify install/launch, application identity, icons, licenses,
   Git availability and runtime dependencies. Check Windows uninstall preserves
@@ -118,9 +120,12 @@ these gates.
   establish the minimum OS version.
 - [ ] Obtain explicit authorization before publishing or creating release tags.
 
-Outstanding checks are not release-ready. This session did not verify native
-Windows/Linux, clean systems, real HTTPS/SSH authentication, native Keychain/Touch
-ID, distribution signing, exact native minimum-size layout, DPI/multiple monitors,
-or full keyboard/restart coverage. Existing commit-content, history and diff
-limits remain documented in the main project documentation; merge/rebase and
-partial staging remain outside this preview's implemented workflow.
+Outstanding checks are not release-ready. No native verification exists for `1.0.0`
+on any platform. Native Windows/Linux, clean systems, real HTTPS/SSH
+authentication, native Keychain/Touch ID, distribution signing, exact native
+minimum-size layout, DPI/multiple monitors, AI provider round trips and full
+keyboard/restart coverage remain unverified. Existing limits still apply: history
+search covers loaded commits only with a 10,000 commit cap; discard reviews one
+file up to 2 MiB; interactive rebase, annotated tags and force push are absent;
+submodule, LFS and hosting-provider features are not implemented; the interface is
+English only.
