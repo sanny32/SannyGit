@@ -1,13 +1,14 @@
 use super::controls::dialog_style::DialogResponse;
 use super::controls::icons::{self, Icon};
 use super::controls::popup_menu;
+use super::controls::section_header;
 use super::controls::tooltips::TooltipResponse;
 use crate::{
     app::{RepositoryJob, SannyGitApp},
     menu::MenuAction,
     theme::semibold_family,
 };
-use eframe::egui::{Align, CollapsingHeader, Layout, RichText, ScrollArea, TextStyle, Ui};
+use eframe::egui::{Align, Layout, RichText, ScrollArea, TextStyle, Ui};
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
@@ -158,10 +159,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 .map(|g| g.name.clone())
                 .collect();
             for group in app.manager.preferences.groups.clone() {
-                let response = CollapsingHeader::new(&group.name)
+                let response = section_header(group.name.as_str())
                     .id_salt(("repository.group", &group.name))
                     .default_open(true)
-                    .icon(icons::collapsing_icon)
                     .show(ui, |ui| {
                         let group_repositories: Vec<_> = app
                             .repositories

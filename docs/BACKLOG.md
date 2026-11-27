@@ -38,28 +38,6 @@ call sites of `eframe::viewport_winit_window` (`src/native_window_linux.rs`,
 
 ## UI — Branches panel
 
-### Collapsing group rows: gap between chevron and title
-
-**Problem:** Section headers that use the shared disclosure chevron (**Local Branches**,
-**Remote Branches**, **Tags**, and the same pattern elsewhere) place the title
-text too close to the chevron on the right. At a narrow panel width the labels
-even read as clipped prefixes (**Lo**, **Re**, **Ta**) with almost no air between
-glyph and copy (screenshot from 2026-11-26, Branches panel).
-
-**Goal:** Add a modest horizontal gap between the chevron and the following title
-text on collapsing headers so labels read clearly and match SmartGit spacing.
-Apply consistently wherever `icons::collapsing_icon` is used; avoid changing tree
-indent or row height unless needed for alignment.
-
-**Likely touch points:** `CollapsingHeader` layout and custom
-`icons::collapsing_icon` (`src/ui/controls/icons.rs`), call sites such as
-`src/ui/branches.rs` (`branch_group`), `src/ui/repositories.rs`,
-`src/ui/changes.rs` (directory header chevron + path), `src/ui/settings.rs`,
-`src/ui/merge.rs`, `src/ui/remote_dialog.rs`; egui header internals if the gap
-must be fixed in the fork.
-
-**Status:** Not started
-
 ### Deleting a branch on origin fails with an error
 
 **Problem:** Removing a branch on **origin** through the Branches UI (for example

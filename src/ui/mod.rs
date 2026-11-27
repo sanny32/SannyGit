@@ -345,8 +345,7 @@ fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
                 })
                 .response
                 .on_disabled_hover_text("No previously used repositories. Open or clone a repository first.");
-                ui.visuals_mut().indent_has_left_vline = false;
-                ui.indent("welcome.repositories.indent", |ui| {
+                controls::tree_indent(ui, "welcome.repositories.indent", |ui| {
                     Frame::new()
                         .fill(palette.editor)
                         .stroke((1.0, palette.border))

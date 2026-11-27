@@ -1,15 +1,17 @@
 use super::controls::dialog_style::DialogResponse;
 use super::controls::icons::{self, Icon};
 use super::controls::popup_menu;
+use super::controls::section_header;
 use super::controls::tooltips::TooltipResponse;
+use super::controls::tree_indent;
+use super::controls::tree_step;
 use crate::{
     app::{ref_management::BranchAction, SannyGitApp},
     models::{BranchRef, RefKind},
     theme::{semibold_family, Palette},
 };
 use eframe::egui::{
-    self, text::LayoutJob, Align, CollapsingHeader, FontSelection, Layout, RichText, ScrollArea,
-    TextEdit, Ui, Vec2,
+    self, text::LayoutJob, Align, FontSelection, Layout, RichText, ScrollArea, TextEdit, Ui, Vec2,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -448,14 +450,14 @@ fn branch_group(
         visuals.corner_radius = eframe::egui::CornerRadius::same(0);
     }
     let body_visuals = previous_visuals.clone();
-    let group = CollapsingHeader::new(
+    let group = section_header(
         RichText::new(format!("{title} ({shown})")).text_style(eframe::egui::TextStyle::Body),
     )
     .id_salt(title)
     .default_open(kind == RefKind::Local)
-    .icon(icons::collapsing_icon)
     .show_unindented(ui, |ui| {
         *ui.visuals_mut() = body_visuals;
+        let indent = tree_step(ui);
         if let Some(tree) = &tree {
             for branch in &tree.leaves {
                 branch_row(
@@ -463,6 +465,7 @@ fn branch_group(
                     branch,
                     &branch.name,
                     RefKind::Local,
+                    indent,
                     palette,
                     selected,
                     selected_group,
@@ -477,6 +480,7 @@ fn branch_group(
                     branch,
                     &branch.name,
                     kind,
+                    indent,
                     palette,
                     selected,
                     selected_group,
@@ -610,6 +614,7 @@ fn local_folder_groups(
             segment,
             child,
             segment,
+            1,
             palette,
             selected,
             selected_group,
@@ -624,6 +629,7 @@ fn local_tree(
     ui: &mut Ui,
     tree: &LocalTree<'_>,
     path: &str,
+    depth: usize,
     palette: Palette,
     selected: &mut String,
     selected_group: &mut Option<RefKind>,
@@ -637,6 +643,7 @@ fn local_tree(
             branch,
             name,
             RefKind::Local,
+            depth as f32 * tree_step(ui),
             palette,
             selected,
             selected_group,
@@ -650,12 +657,13 @@ fn local_tree(
         } else {
             format!("{path}/{segment}")
         };
-        ui.indent(("local-branch-group", &path), |ui| {
+        tree_indent(ui, ("local-branch-group", &path), |ui| {
             local_group(
                 ui,
                 segment,
                 child,
                 &path,
+                depth + 1,
                 palette,
                 selected,
                 selected_group,
@@ -672,24 +680,25 @@ fn local_group(
     segment: &str,
     child: &LocalTree<'_>,
     path: &str,
+    depth: usize,
     palette: Palette,
     selected: &mut String,
     selected_group: &mut Option<RefKind>,
     requested: &mut BranchRequests,
     shortcuts: &crate::shortcuts::ShortcutBindings,
 ) {
-    CollapsingHeader::new(
+    section_header(
         RichText::new(format!("{} ({})", group_title(segment), child.count()))
             .text_style(egui::TextStyle::Body),
     )
     .id_salt(("local-branch-group", path))
     .default_open(true)
-    .icon(icons::collapsing_icon)
     .show_unindented(ui, |ui| {
         local_tree(
             ui,
             child,
             path,
+            depth,
             palette,
             selected,
             selected_group,
@@ -705,6 +714,7 @@ fn branch_row(
     branch: &BranchRef,
     display_name: &str,
     kind: RefKind,
+    indent: f32,
     palette: Palette,
     selected: &mut String,
     selected_group: &mut Option<RefKind>,
@@ -725,7 +735,7 @@ fn branch_row(
             22.0,
             8.0,
             eframe::egui::Sense::click(),
-            |ui| branch_row_contents(ui, branch, display_name, kind, palette),
+            |ui| branch_row_contents(ui, branch, display_name, kind, indent, palette),
         )
         .help_text(branch_tooltip(branch, kind));
         if response.clicked() || response.secondary_clicked() {
@@ -757,9 +767,10 @@ fn branch_row_contents(
     branch: &BranchRef,
     display_name: &str,
     kind: RefKind,
+    indent: f32,
     palette: Palette,
 ) {
-    ui.add_space(ui.spacing().indent);
+    ui.add_space(ui.spacing().indent + indent);
     icons::paint(
         ui,
         if kind == RefKind::Tag {
@@ -2146,13 +2157,12 @@ mod tests {
                                     &crate::shortcuts::ShortcutBindings::default(),
                                 );
                             } else {
-                                let _ = CollapsingHeader::new(
+                                let _ = section_header(
                                     RichText::new("Local Branches (1)")
                                         .text_style(eframe::egui::TextStyle::Body),
                                 )
                                 .id_salt("Local Branches")
                                 .default_open(true)
-                                .icon(icons::collapsing_icon)
                                 .show_unindented(ui, |ui| {
                                     let _ = crate::ui::controls::selectable_row(
                                         ui,
@@ -2407,6 +2417,8 @@ mod tests {
                 branch_ref("release/1.x", RefKind::Local),
                 branch_ref("feature/login", RefKind::Local),
                 branch_ref("feature/signup", RefKind::Local),
+                branch_ref("origin/main", RefKind::Remote),
+                branch_ref("v1", RefKind::Tag),
             ];
             refs[0].upstream = Some("origin/main".into());
             refs[0].upstream_remote = Some("origin".into());
@@ -2430,6 +2442,8 @@ mod tests {
             for label in [
                 "Features (2)",
                 "Local Branches (2)",
+                "Remote Branches (1)",
+                "Tags (1)",
                 "main origin",
                 "release/1.x origin",
                 "login ? origin",
@@ -2462,10 +2476,22 @@ mod tests {
                 features_x, locals_x,
                 "Folder groups are siblings of Local Branches"
             );
+            assert_eq!(
+                login_x, flat_x,
+                "Section children and folder children share one indent level"
+            );
             assert!(
                 login_x > features_x,
                 "Branches inside a group indent past its header: header={features_x}, login={login_x}"
             );
+
+            panel.click("Remote Branches (1)");
+            panel.click("Tags (1)");
+            let expanded = panel.settle();
+            let remote_x = text_rect(&expanded, "origin/main").unwrap().left();
+            let tag_x = text_rect(&expanded, "v1").unwrap().left();
+            assert_eq!(remote_x, flat_x, "Remote rows share the section indent");
+            assert_eq!(tag_x, flat_x, "Tag rows share the section indent");
             let remote_color = |label: &str| {
                 output
                     .shapes

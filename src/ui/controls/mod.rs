@@ -11,6 +11,44 @@ use eframe::egui::{Align, Layout, Response, Sense, Ui, UiBuilder, Vec2};
 /// Shared left inset for table header labels and the cells below them.
 pub const TABLE_CELL_PADDING: f32 = 6.0;
 
+/// Extra air between the disclosure chevron and the section title. egui starts
+/// the title at `indent`, which leaves only a couple of pixels next to the
+/// icon; this spacer widens the gap without moving tree indents.
+pub const SECTION_HEADER_GAP: f32 = 2.0;
+
+/// Section header with the application disclosure chevron and a readable gap
+/// before its title. Use it for every collapsing header that uses
+/// [`icons::collapsing_icon`] so the spacing stays consistent.
+pub fn section_header(
+    text: impl Into<eframe::egui::WidgetText>,
+) -> eframe::egui::CollapsingHeader<'static> {
+    use eframe::egui::{Atom, AtomExt as _, Atoms, CollapsingHeader};
+    let mut atoms = Atoms::new(Atom::from(text.into()));
+    atoms.push_left(Atom::default().atom_size(Vec2::new(SECTION_HEADER_GAP, 0.0)));
+    CollapsingHeader::new(atoms).icon(icons::collapsing_icon)
+}
+
+/// One nesting step for tree rows. Shared by every indented tree so settings
+/// navigation and the Branches panel line up at the same depth.
+pub fn tree_step(ui: &Ui) -> f32 {
+    ui.spacing().indent
+}
+
+/// Indent nested tree content by one step without egui's vertical guide line.
+/// Branch groups and other trees use plain indentation, matching the flat,
+/// line-free look of the rest of the application.
+pub fn tree_indent<R>(
+    ui: &mut Ui,
+    id: impl eframe::egui::AsIdSalt,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> eframe::egui::InnerResponse<R> {
+    let vline = ui.visuals().indent_has_left_vline;
+    ui.visuals_mut().indent_has_left_vline = false;
+    let result = ui.indent(id, contents);
+    ui.visuals_mut().indent_has_left_vline = vline;
+    result
+}
+
 /// Hide the table's own column separators. Dividers are drawn only in the
 /// header row with [`table_header_separator`], and hovering a resize handle
 /// must not paint a full-height line through the rows.
@@ -164,6 +202,107 @@ mod tests {
             })
             .expect("field text missing");
         (field, text)
+    }
+
+    #[test]
+    fn tree_indent_matches_plain_indent_without_the_guide_line() {
+        let ctx = Context::default();
+        install_fonts(&ctx);
+        let mut output = ctx.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(480.0, 120.0))),
+                ..Default::default()
+            },
+            |ui| {
+                ui.indent("plain-indent", |ui| {
+                    ui.label("Plain child");
+                });
+                super::tree_indent(ui, "shared-indent", |ui| {
+                    ui.label("Tree child");
+                });
+            },
+        );
+        output.textures_delta.set.clear();
+        output.textures_delta.free.clear();
+        let text_left = |label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.galley.rect.translate(text.pos.to_vec2()).left())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing {label}"))
+        };
+        assert_eq!(
+            text_left("Plain child"),
+            text_left("Tree child"),
+            "The shared control keeps the regular indent step"
+        );
+        let vertical_lines = output
+            .shapes
+            .iter()
+            .filter(|shape| {
+                matches!(
+                    &shape.shape,
+                    Shape::LineSegment { points, .. }
+                        if (points[0].x - points[1].x).abs() < 0.1
+                )
+            })
+            .count();
+        assert_eq!(
+            vertical_lines, 1,
+            "Only the plain indent paints egui's vertical guide line"
+        );
+    }
+
+    #[test]
+    fn section_header_keeps_air_between_chevron_and_title() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let ctx = Context::default();
+            install_fonts(&ctx);
+            theme.apply(&ctx);
+            let mut icon_spacing = 0.0;
+            let mut output = ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(480.0, 120.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    icon_spacing = ui.spacing().icon_spacing;
+                    eframe::egui::CollapsingHeader::new("Plain")
+                        .icon(crate::ui::controls::icons::collapsing_icon)
+                        .show_unindented(ui, |_| {});
+                    super::section_header("Spaced").show_unindented(ui, |_| {});
+                },
+            );
+            output.textures_delta.set.clear();
+            output.textures_delta.free.clear();
+            let text_left = |label: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        Shape::Text(text) if text.galley.job.text == label => {
+                            Some(text.galley.rect.translate(text.pos.to_vec2()).left())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("missing {label}"))
+            };
+            let extra = text_left("Spaced") - text_left("Plain");
+            let expected = super::SECTION_HEADER_GAP + icon_spacing;
+            assert!(
+                (extra - expected).abs() <= 0.5,
+                "{theme:?}: title shifted by {extra}, expected {expected}"
+            );
+            assert!(
+                extra >= 5.0,
+                "{theme:?}: chevron and title are still crowded: {extra}"
+            );
+        }
     }
 
     #[test]

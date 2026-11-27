@@ -725,6 +725,48 @@ fn clicking_tree_labels_and_row_backgrounds_selects_the_page() {
 }
 
 #[test]
+fn settings_navigation_indents_children_and_aligns_chevronless_rows() {
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        let context = egui::Context::default();
+        crate::theme::install_fonts(&context);
+        egui_extras::install_image_loaders(&context);
+        theme.apply(&context);
+        let mut app = SannyGitApp::with_theme(theme);
+        let mut output = context.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(740.0, 420.0))),
+                ..Default::default()
+            },
+            |ui| window_contents(ui, &mut app),
+        );
+        output.textures_delta.clear();
+        let left = |label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.galley.rect.translate(text.pos.to_vec2()).left())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing {label}"))
+        };
+        let section = left("User Interface");
+        let leaf = left("Keyboard Shortcuts");
+        let child = left("Appearance");
+        assert!(
+            (leaf - section).abs() <= 0.5,
+            "{theme:?}: chevronless row starts at {leaf}, expandable title at {section}"
+        );
+        assert!(
+            child - section >= 12.0,
+            "{theme:?}: child starts at {child}, section title at {section}"
+        );
+    }
+}
+
+#[test]
 fn interface_style_dropdown_updates_the_draft_in_both_themes() {
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
         let context = egui::Context::default();

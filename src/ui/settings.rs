@@ -4,6 +4,7 @@ use super::controls::{
     icons::{self, Icon},
     selectable_row, singleline,
     tooltips::TooltipResponse,
+    tree_step,
 };
 use crate::{
     app::{AiConnectionStatus, SannyGitApp, SettingsPage, ShortcutConflict},
@@ -446,6 +447,12 @@ fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         });
 }
 
+/// Text offset of an expandable navigation row: the space reserved for the
+/// disclosure chevron plus the gap before its label.
+fn nav_title_offset(ui: &Ui) -> f32 {
+    ui.spacing().indent + ui.spacing().item_spacing.x
+}
+
 fn section(
     ui: &mut Ui,
     app: &mut SannyGitApp,
@@ -468,8 +475,9 @@ fn section(
 
 fn leaf(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
     let selected = app.settings_window.page == page;
+    let offset = nav_title_offset(ui);
     let response = selectable_row(ui, selected, 23.0, |ui| {
-        ui.add_space(18.0);
+        ui.add_space(offset);
         ui.label(label);
     });
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
@@ -480,8 +488,9 @@ fn leaf(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
 
 fn entry(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
     let selected = app.settings_window.page == page;
+    let offset = nav_title_offset(ui) + tree_step(ui);
     let response = selectable_row(ui, selected, 23.0, |ui| {
-        ui.add_space(24.0);
+        ui.add_space(offset);
         ui.label(label);
     });
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
