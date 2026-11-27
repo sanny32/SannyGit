@@ -760,7 +760,7 @@ fn settings_navigation_indents_children_and_aligns_chevronless_rows() {
             "{theme:?}: chevronless row starts at {leaf}, expandable title at {section}"
         );
         assert!(
-            child - section >= 12.0,
+            child - section >= 7.0 && child - section <= 9.0,
             "{theme:?}: child starts at {child}, section title at {section}"
         );
     }

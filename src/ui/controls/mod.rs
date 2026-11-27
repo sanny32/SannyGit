@@ -31,7 +31,7 @@ pub fn section_header(
 /// One nesting step for tree rows. Shared by every indented tree so settings
 /// navigation and the Branches panel line up at the same depth.
 pub fn tree_step(ui: &Ui) -> f32 {
-    ui.spacing().indent
+    (ui.spacing().indent - 6.0).max(0.0)
 }
 
 /// Indent nested tree content by one step without egui's vertical guide line.
@@ -43,8 +43,14 @@ pub fn tree_indent<R>(
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> eframe::egui::InnerResponse<R> {
     let vline = ui.visuals().indent_has_left_vline;
+    let original_indent = ui.spacing().indent;
+    ui.spacing_mut().indent = tree_step(ui);
     ui.visuals_mut().indent_has_left_vline = false;
-    let result = ui.indent(id, contents);
+    let result = ui.indent(id, |ui| {
+        ui.spacing_mut().indent = original_indent;
+        contents(ui)
+    });
+    ui.spacing_mut().indent = original_indent;
     ui.visuals_mut().indent_has_left_vline = vline;
     result
 }
@@ -205,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_indent_matches_plain_indent_without_the_guide_line() {
+    fn tree_indent_is_compact_and_has_no_guide_line() {
         let ctx = Context::default();
         install_fonts(&ctx);
         let mut output = ctx.run_ui(
@@ -237,9 +243,9 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {label}"))
         };
         assert_eq!(
-            text_left("Plain child"),
-            text_left("Tree child"),
-            "The shared control keeps the regular indent step"
+            text_left("Plain child") - text_left("Tree child"),
+            6.0,
+            "The shared control uses the compact indent step"
         );
         let vertical_lines = output
             .shapes

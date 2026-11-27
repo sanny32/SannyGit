@@ -162,56 +162,62 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 let response = section_header(group.name.as_str())
                     .id_salt(("repository.group", &group.name))
                     .default_open(true)
-                    .show(ui, |ui| {
-                        let group_repositories: Vec<_> = app
-                            .repositories
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, r)| group.paths.contains(&r.path))
-                            .collect();
-                        let group_count = group_repositories.len();
-                        for (position, (index, repository)) in
-                            group_repositories.into_iter().enumerate()
-                        {
-                            let draw_separator = modern
-                                && (position + 1 < group_count
-                                    || (position + 1 == group_count && ungrouped_exists));
-                            let branch = shown_branch(
-                                index,
-                                app.selected_repository,
-                                &app.branches.current_branch,
-                                app.manager
-                                    .repository_branches
-                                    .get(&repository.path)
-                                    .map(String::as_str),
-                            );
-                            if let Some(action) = repository_row(
-                                ui,
-                                index,
-                                repository,
-                                branch.as_deref(),
-                                app.manager
-                                    .hosting
-                                    .get(&repository.path)
-                                    .copied()
-                                    .map_or(Icon::Repository, Icon::for_provider),
-                                app.selected_repository,
-                                app.merging,
-                                conflicted,
-                                branch_status,
-                                &mut app.manager.highlighted_repository,
-                                palette,
-                                &group_names,
-                                &app.manager.preferences,
-                                &mut requested,
-                                &mut move_to,
-                                height,
-                                &enabled_actions,
-                                draw_separator,
-                            ) {
-                                context_action = Some((repository.path.clone(), action));
-                            }
-                        }
+                    .show_unindented(ui, |ui| {
+                        super::controls::tree_indent(
+                            ui,
+                            ("repository.group.body", &group.name),
+                            |ui| {
+                                let group_repositories: Vec<_> = app
+                                    .repositories
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, r)| group.paths.contains(&r.path))
+                                    .collect();
+                                let group_count = group_repositories.len();
+                                for (position, (index, repository)) in
+                                    group_repositories.into_iter().enumerate()
+                                {
+                                    let draw_separator = modern
+                                        && (position + 1 < group_count
+                                            || (position + 1 == group_count && ungrouped_exists));
+                                    let branch = shown_branch(
+                                        index,
+                                        app.selected_repository,
+                                        &app.branches.current_branch,
+                                        app.manager
+                                            .repository_branches
+                                            .get(&repository.path)
+                                            .map(String::as_str),
+                                    );
+                                    if let Some(action) = repository_row(
+                                        ui,
+                                        index,
+                                        repository,
+                                        branch.as_deref(),
+                                        app.manager
+                                            .hosting
+                                            .get(&repository.path)
+                                            .copied()
+                                            .map_or(Icon::Repository, Icon::for_provider),
+                                        app.selected_repository,
+                                        app.merging,
+                                        conflicted,
+                                        branch_status,
+                                        &mut app.manager.highlighted_repository,
+                                        palette,
+                                        &group_names,
+                                        &app.manager.preferences,
+                                        &mut requested,
+                                        &mut move_to,
+                                        height,
+                                        &enabled_actions,
+                                        draw_separator,
+                                    ) {
+                                        context_action = Some((repository.path.clone(), action));
+                                    }
+                                }
+                            },
+                        )
                     });
                 if response.header_response.clicked() {
                     app.manager.preferences.selected_group = Some(group.name);

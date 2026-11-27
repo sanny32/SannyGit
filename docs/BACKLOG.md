@@ -64,23 +64,22 @@ building on `src/tracking.rs` (`read`, `git rev-list --left-right --count`),
 
 **Status:** Not started
 
-### Branch rows under a section: reduce left indent
+## UI — Changes (files list)
 
-**Problem:** Branch rows inside **Local Branches**, **Remote Branches**, and
-**Tags** sit noticeably farther right than SmartGit: the branch icon and label
-start well past the section chevron, leaving a wide empty band on the left
-(screenshot from 2026-11-27, **main origin** under **Local Branches (1)**).
+### Files header shows literal `{count}` instead of file count
 
-**Goal:** Nudge child branch (and tag) rows slightly left so they align closer to
-the section header chevron while keeping a clear hierarchy and matching nested
-local groups (`tree_indent`). Remote rows should use the same offset as local
-flat rows. Update layout tests that pin header vs row X positions.
+**Problem:** The Changes panel title line reads **Files ({count} files)** with the
+placeholder text visible instead of the number of listed files (screenshot from
+2026-11-27).
 
-**Likely touch points:** `src/ui/branches.rs` (`branch_row_contents` —
-`ui.spacing().indent + indent`, `branch_group` / `tree_step`), optional shared
-tweak in `src/ui/controls/mod.rs` (`tree_step`) if all trees should shift
-together; `src/ui/branches.rs` tests (`Section children and folder children share
-one indent level`, remote/tag flat rows).
+**Goal:** Show the real count, e.g. **Files (3 files)** (or localized equivalent).
+Use the same `%{count}` interpolation style as other UI strings (`tr_args` replaces
+`%{name}` only). Audit similar keys so counts are not left as `{count}` in the
+source or locale files.
+
+**Likely touch points:** `src/ui/changes.rs` (`changes_title` — key
+`({count} files)`), `src/i18n.rs` (`tr_args`), locale YAML if the string is
+overridden there; same pattern in `src/ui/ignore.rs` (`{count} files selected`).
 
 **Status:** Not started
 

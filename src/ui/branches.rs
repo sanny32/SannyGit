@@ -623,7 +623,6 @@ fn local_folder_groups(
             segment,
             child,
             segment,
-            1,
             palette,
             selected,
             selected_group,
@@ -638,7 +637,6 @@ fn local_tree(
     ui: &mut Ui,
     tree: &LocalTree<'_>,
     path: &str,
-    depth: usize,
     palette: Palette,
     selected: &mut String,
     selected_group: &mut Option<RefKind>,
@@ -652,7 +650,7 @@ fn local_tree(
             branch,
             name,
             RefKind::Local,
-            depth as f32 * tree_step(ui),
+            tree_step(ui),
             palette,
             selected,
             selected_group,
@@ -672,7 +670,6 @@ fn local_tree(
                 segment,
                 child,
                 &path,
-                depth + 1,
                 palette,
                 selected,
                 selected_group,
@@ -689,7 +686,6 @@ fn local_group(
     segment: &str,
     child: &LocalTree<'_>,
     path: &str,
-    depth: usize,
     palette: Palette,
     selected: &mut String,
     selected_group: &mut Option<RefKind>,
@@ -707,7 +703,6 @@ fn local_group(
             ui,
             child,
             path,
-            depth,
             palette,
             selected,
             selected_group,
@@ -2507,6 +2502,24 @@ mod tests {
             let features_x = text_rect(&output, "Features (2)").unwrap().left();
             let locals_x = text_rect(&output, "Local Branches (2)").unwrap().left();
             assert_eq!(flat_x, main_x, "Slash-prefixed locals stay flat rows");
+            assert!(
+                (flat_x
+                    - 18.0
+                    - locals_x
+                    - panel
+                        .ctx
+                        .style_of(if theme == crate::theme::ThemeChoice::Dark {
+                            egui::Theme::Dark
+                        } else {
+                            egui::Theme::Light
+                        })
+                        .spacing
+                        .indent
+                    + 6.0)
+                    .abs()
+                    < 0.5,
+                "Branch rows should use the shared tree step: header={locals_x}, row={flat_x}"
+            );
             assert_eq!(
                 features_x, locals_x,
                 "Folder groups are siblings of Local Branches"
@@ -2561,6 +2574,38 @@ mod tests {
                 "refs/heads/feature/login"
             );
             assert_eq!(panel.app.branches.selected_ref_group, None);
+        }
+    }
+
+    #[test]
+    fn nested_branch_groups_use_one_tree_step_per_level() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            let mut panel = BranchPanel::with_refs(
+                theme,
+                vec![
+                    branch_ref("main", RefKind::Local),
+                    branch_ref("feature/login", RefKind::Local),
+                    branch_ref("feature/mobile/payments", RefKind::Local),
+                ],
+            );
+            let output = panel.settle();
+            let x = |label| text_rect(&output, label).unwrap().left();
+            let step = panel
+                .ctx
+                .style_of(if theme == crate::theme::ThemeChoice::Dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                })
+                .spacing
+                .indent
+                - 6.0;
+            assert!((x("Mobiles (1)") - x("Features (2)") - step).abs() < 0.5);
+            assert!((x("payments") - 18.0 - x("Mobiles (1)") - step).abs() < 0.5);
+            assert!((x("payments") - x("login") - step).abs() < 0.5);
         }
     }
     #[test]
