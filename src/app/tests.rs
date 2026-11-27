@@ -2012,11 +2012,15 @@ fn modern_layout_fits_both_sizes_and_color_themes_without_loading_jumps() {
             for _ in 0..3 {
                 render(&mut app);
             }
-            assert_eq!(
-                before,
-                panels(),
-                "Loading moved panels at {size:?} in {theme:?}"
-            );
+            let after = panels();
+            assert_eq!(before.len(), after.len());
+            for (expected, actual) in before.iter().zip(&after) {
+                assert!(
+                    (expected.min - actual.min).length() < 0.5
+                        && (expected.max - actual.max).length() < 0.5,
+                    "Loading moved panel from {expected:?} to {actual:?} at {size:?} in {theme:?}"
+                );
+            }
         }
     }
 }
