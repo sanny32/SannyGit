@@ -473,7 +473,7 @@ Reload list: 'Перезагрузить список'
 Reload to retry; displayed rows are from the previous load.: 'Перезагрузите данные для повторной попытки; показаны строки предыдущей загрузки.'
 Remember as default for repository: 'Использовать по умолчанию для репозитория'
 Remember this commit for a two-commit comparison: 'Запомнить этот коммит для сравнения двух коммитов'
-Remote: Удалённый репозиторий
+Remote:  Репозиторий
 Remote Branches: 'Удалённые ветки'
 'Remote branch:': 'Удалённая ветка:'
 'Remote:': 'Удалённый репозиторий:'
@@ -696,7 +696,7 @@ Use Staged only when opening or staging files: 'Использовать тол�
 ? Use only staged changes for commits and message generation when opening a repository with staged files or after staging a file. Switch back to All changes when the index is empty.
 : 'Использовать только индексированные изменения для коммитов и генерации сообщений при открытии репозитория с индексированными файлами или после индексирования файла. Вернуться ко всем изменениям, когда индекс пуст.'
 Used only when generating a commit message.: 'Используется только при генерации сообщения коммита.'
-User Interface: 'Интерфейс пользователя'
+User Interface: 'Интерфейс'
 Wait for the current operation or refresh the repository: 'Дождитесь завершения текущей операции или обновите репозиторий'
 Wait for the current operation or refresh the working tree: 'Дождитесь завершения текущей операции или обновите рабочую копию'
 Wait for the current operation to finish: 'Дождитесь завершения текущей операции'
