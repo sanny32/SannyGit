@@ -1225,6 +1225,38 @@ fn remote_branch_push_and_delete_touch_only_the_reviewed_refs() {
 }
 
 #[test]
+fn delete_remote_branch_with_file_url() {
+    let repo = TempRepo::new();
+    repo.git(&["commit", "--allow-empty", "-m", "base"]);
+    let origin = repo.0.join("origin.git");
+    repo.git(&["init", "--bare", origin.to_str().unwrap()]);
+    let url = reqwest::Url::from_file_path(&origin).unwrap().to_string();
+    repo.git(&["remote", "add", "origin", &url]);
+    repo.git(&["push", "origin", "HEAD:refs/heads/topic"]);
+    let preview = preview_branch(&SYSTEM_GIT, &repo.0, "refs/remotes/origin/topic").unwrap();
+    delete_branch(
+        &SYSTEM_GIT,
+        &repo.0,
+        &preview,
+        true,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(git::run(
+        &SYSTEM_GIT,
+        &repo.0,
+        &["rev-parse", "--verify", "refs/remotes/origin/topic"]
+    )
+    .is_err());
+    assert!(git::run(
+        &SYSTEM_GIT,
+        &origin,
+        &["rev-parse", "--verify", "refs/heads/topic"]
+    )
+    .is_err());
+}
+
+#[test]
 fn local_branch_push_and_tracking_target_the_selected_branch() {
     let repo = TempRepo::new();
     repo.git(&["commit", "--allow-empty", "-m", "base"]);

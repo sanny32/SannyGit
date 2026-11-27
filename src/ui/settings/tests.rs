@@ -1378,7 +1378,7 @@ fn text_rect(shapes: &[ClippedShape], expected: &str) -> Option<Rect> {
 }
 
 #[test]
-fn shortcut_page_uses_the_same_gray_as_other_pages() {
+fn shortcut_table_uses_text_edit_background() {
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
         let context = egui::Context::default();
         crate::theme::install_fonts(&context);
@@ -1386,12 +1386,16 @@ fn shortcut_page_uses_the_same_gray_as_other_pages() {
         let mut app = SannyGitApp::with_theme(theme);
         let palette = app.palette();
         app.settings_window.page = SettingsPage::KeyboardShortcuts;
+        let mut edit_background = egui::Color32::TRANSPARENT;
         let mut output = context.run_ui(
             RawInput {
                 screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), PREFERENCES_SIZE)),
                 ..Default::default()
             },
-            |ui| window_contents(ui, &mut app),
+            |ui| {
+                edit_background = ui.visuals().text_edit_bg_color();
+                window_contents(ui, &mut app);
+            },
         );
         output.textures_delta.clear();
         let wide = |shape: &egui::epaint::ClippedShape, fill: egui::Color32, min_height: f32| {
@@ -1415,8 +1419,8 @@ fn shortcut_page_uses_the_same_gray_as_other_pages() {
             output
                 .shapes
                 .iter()
-                .any(|shape| wide(shape, palette.panel, 80.0)),
-            "Shortcut table is not the theme panel color ({theme:?})"
+                .any(|shape| wide(shape, edit_background, 80.0)),
+            "Shortcut table does not match text fields ({theme:?})"
         );
     }
 }

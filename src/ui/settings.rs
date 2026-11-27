@@ -1015,7 +1015,7 @@ fn keyboard_shortcuts_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette)
     // Keep the command list in its own box so the last row cannot cover the editor.
     let table_height = (ui.available_height() - bar_height - conflict_height - 6.0).max(80.0);
     Frame::new()
-        .fill(palette.panel)
+        .fill(ui.visuals().text_edit_bg_color())
         .stroke((1.0, palette.border))
         .inner_margin(0)
         .show(ui, |ui| {

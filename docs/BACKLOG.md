@@ -38,47 +38,53 @@ call sites of `eframe::viewport_winit_window` (`src/native_window_linux.rs`,
 
 ## UI — Branches panel
 
-### Deleting a branch on origin fails with an error
+### Local branches: upstream comparison sign and commit delta
 
-**Problem:** Removing a branch on **origin** through the Branches UI (for example
-**Delete…** on a local branch with **Delete from remote repository 'origin'**, or
-the equivalent reviewed delete flow) ends in an **Attention required** modal
-instead of completing the push delete and refresh.
+**Problem:** Local branch rows show the branch name and, when set, the remote
+label inline (`dev origin`), but not how the branch relates to that upstream.
+SmartGit paints an operator between name and remote — **`=`** when even, **`<`**
+when behind, **`>`** when ahead — and a compact count pill on the right (e.g.
+**main < origin** with **-46** when 46 commits behind) (screenshot from
+2026-11-27, **Local Branches**). Today only the current branch gets ahead/behind
+via the status bar (**↑n ↓m**); other locals with tracking show no row-level
+delta.
 
-**Goal:** Remote deletion on the configured remote should succeed when Git and
-permissions allow it (`git push origin :branch` / force-with-lease path in
-`remotes::delete_branch`). If the user only deletes a **remote-tracking** ref
-under **Remote Branches**, behavior must match SmartGit expectations (server
-delete vs local ref only) and must not surface spurious errors. Reproduce,
-capture the exact Git diagnostic, fix root cause, and add regression coverage.
+**Goal:** For each local branch with a configured upstream, show the SmartGit-style
+comparison sign after the branch name (before or with the remote short name) and
+the numeric difference on the trailing edge of the row (**-n** behind, **+n**
+ahead, omitted or **0** when in sync). Keep the red **?** for missing upstream on
+the remote; use muted/accent colors consistent with the status bar. Unknown counts
+may show **?** until refreshed. Truncate with tooltip including full upstream and
+counts.
 
-**Likely touch points:** `src/remotes.rs` (`delete_branch`, `preview_branch`,
-push `--force-with-lease`), `src/app/ref_management.rs` (`BranchAction::Delete`,
-`run_ref_action`), `src/ui/ref_management.rs` / `src/ui/branches.rs`
-(`DeleteRemoteBranch`, confirm dialog), `src/remotes/tests.rs`.
+**Likely touch points:** `src/ui/branches.rs` (`branch_row_contents` / row layout),
+`src/models.rs` (`BranchRef` — optional ahead/behind per ref), batch or cached reads
+building on `src/tracking.rs` (`read`, `git rev-list --left-right --count`),
+`src/branches.rs` (ref load after fetch), layout tests under `src/ui/branches.rs`.
+
+**Status:** Not started
+
+### Branch rows under a section: reduce left indent
+
+**Problem:** Branch rows inside **Local Branches**, **Remote Branches**, and
+**Tags** sit noticeably farther right than SmartGit: the branch icon and label
+start well past the section chevron, leaving a wide empty band on the left
+(screenshot from 2026-11-27, **main origin** under **Local Branches (1)**).
+
+**Goal:** Nudge child branch (and tag) rows slightly left so they align closer to
+the section header chevron while keeping a clear hierarchy and matching nested
+local groups (`tree_indent`). Remote rows should use the same offset as local
+flat rows. Update layout tests that pin header vs row X positions.
+
+**Likely touch points:** `src/ui/branches.rs` (`branch_row_contents` —
+`ui.spacing().indent + indent`, `branch_group` / `tree_step`), optional shared
+tweak in `src/ui/controls/mod.rs` (`tree_step`) if all trees should shift
+together; `src/ui/branches.rs` tests (`Section children and folder children share
+one indent level`, remote/tag flat rows).
 
 **Status:** Not started
 
 ## UI — Settings (dark theme)
-
-### Keyboard Shortcuts table matches text field background
-
-**Problem:** In dark theme, **Settings → Keyboard Shortcuts** paints the command
-table inside a frame filled with `palette.panel` (lighter gray), while the
-**Filter** field and **Shortcut** assign field use the standard text-edit
-background (darker, same as other single-line inputs). The mismatch is obvious in
-the scrollable list area (screenshot from 2026-11-26).
-
-**Goal:** In dark theme (and keep light theme consistent), use the same fill as
-`TextEdit` / `singleline` for the shortcuts table frame and row area — or
-otherwise align table and edit backgrounds. Header row and borders can stay as
-now if needed for column separation.
-
-**Likely touch points:** `src/ui/settings.rs` (`keyboard_shortcuts_page`,
-`Frame::fill(palette.panel)` around the list), `src/ui/settings/tests.rs`
-(`shortcut_page_uses_the_same_gray_as_other_pages`).
-
-**Status:** Not started
 
 ### Menu shortcut labels: spacing between modifier glyphs and keys
 
