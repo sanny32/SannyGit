@@ -655,6 +655,8 @@ mod tests {
             full_name: "refs/heads/main".into(),
             hash: head.clone(),
             upstream: None,
+            upstream_remote: None,
+            upstream_gone: false,
             tag_subject: None,
             current: true,
             kind: crate::models::RefKind::Local,

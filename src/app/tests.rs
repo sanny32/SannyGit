@@ -1130,6 +1130,8 @@ fn remote_checkout_uses_current_tracking_branch_or_shows_choices() {
         name: "origin/new-topic".into(),
         hash: "a".repeat(40),
         upstream: None,
+        upstream_remote: None,
+        upstream_gone: false,
         kind: crate::models::RefKind::Remote,
         current: false,
     });

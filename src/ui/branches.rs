@@ -116,6 +116,15 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             // id include the repository path, so each repository keeps its own
             // expanded and collapsed groups across switches and restarts.
             ui.push_id(&repository, |ui| {
+                local_folder_groups(
+                    ui,
+                    &app.branches.entries,
+                    palette,
+                    &mut app.branches.selected_branch,
+                    &mut app.branches.selected_ref_group,
+                    &mut requested,
+                    &app.preferences.shortcuts,
+                );
                 for kind in [RefKind::Local, RefKind::Remote, RefKind::Tag] {
                     add_tag_requested |= branch_group(
                         ui,
@@ -411,6 +420,15 @@ fn branch_group(
     if matching.is_empty() && kind != RefKind::Tag {
         return false;
     }
+    // Folder groups are top-level sections, so this header keeps only the
+    // branches that sit directly under refs/heads.
+    let tree = (kind == RefKind::Local).then(|| LocalTree::build(matching.iter().copied()));
+    let shown = tree
+        .as_ref()
+        .map_or(matching.len(), |tree| tree.leaves.len());
+    if kind == RefKind::Local && shown == 0 {
+        return false;
+    }
     let mut add_tag_requested = false;
     let previous_visuals = ui.visuals().clone();
     let fill = if *selected_group == Some(kind) {
@@ -431,126 +449,41 @@ fn branch_group(
     }
     let body_visuals = previous_visuals.clone();
     let group = CollapsingHeader::new(
-        RichText::new(format!("{title} ({})", matching.len()))
-            .text_style(eframe::egui::TextStyle::Body),
+        RichText::new(format!("{title} ({shown})")).text_style(eframe::egui::TextStyle::Body),
     )
     .id_salt(title)
     .default_open(kind == RefKind::Local)
     .icon(icons::collapsing_icon)
     .show_unindented(ui, |ui| {
         *ui.visuals_mut() = body_visuals;
-        for branch in matching {
-            // Avoid text layout for rows outside the viewport in large ref lists.
-            let size = Vec2::new(ui.available_width(), 22.0);
-            let rect = eframe::egui::Rect::from_min_size(ui.next_widget_position(), size);
-            if !ui.is_rect_visible(rect) {
-                ui.allocate_space(size);
-                continue;
-            }
-            ui.push_id(&branch.full_name, |ui| {
-                let response = super::controls::selectable_row_with_outset(
+        if let Some(tree) = &tree {
+            for branch in &tree.leaves {
+                branch_row(
                     ui,
-                    selected_group.is_none() && *selected == branch.full_name,
-                    22.0,
-                    8.0,
-                    eframe::egui::Sense::click(),
-                    |ui| {
-                        ui.add_space(ui.spacing().indent);
-                        icons::paint(
-                            ui,
-                            if kind == RefKind::Tag {
-                                Icon::Tag
-                            } else {
-                                Icon::Branch
-                            },
-                            palette.text,
-                            14.0,
-                        );
-                        let name = RichText::new(&branch.name).text_style(egui::TextStyle::Body);
-                        let name = if branch.current {
-                            name.family(semibold_family())
-                        } else {
-                            name
-                        };
-                        let text = if let Some(subject) = &branch.tag_subject {
-                            let mut text = LayoutJob::default();
-                            name.append_to(
-                                &mut text,
-                                ui.style(),
-                                FontSelection::Default,
-                                Align::Center,
-                            );
-                            RichText::new(format!(" - {subject}"))
-                                .text_style(egui::TextStyle::Body)
-                                .color(palette.muted.lerp_to_gamma(palette.text, 0.25))
-                                .append_to(
-                                    &mut text,
-                                    ui.style(),
-                                    FontSelection::Default,
-                                    Align::Center,
-                                );
-                            egui::WidgetText::from(text)
-                        } else {
-                            egui::WidgetText::from(name)
-                        };
-                        let label = egui::Label::new(text)
-                            .show_tooltip_when_elided(false)
-                            .sense(egui::Sense::hover());
-                        ui.add(if kind == RefKind::Tag {
-                            label.truncate()
-                        } else {
-                            label
-                        });
-                        if branch.current {
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                icons::paint(ui, Icon::Star, palette.accent, 14.0)
-                            });
-                        }
-                    },
-                )
-                .help_text(format!(
-                    "{}\nObject: {}{}{}{}",
-                    branch.full_name,
-                    branch.hash,
-                    branch
-                        .upstream
-                        .as_ref()
-                        .map(|s| format!("\nUpstream: {s}"))
-                        .unwrap_or_default(),
-                    branch
-                        .tag_subject
-                        .as_ref()
-                        .map(|subject| format!("\n{subject}"))
-                        .unwrap_or_default(),
-                    match kind {
-                        RefKind::Local => "\nDouble-click to switch",
-                        RefKind::Remote =>
-                            "\nDouble-click to switch to a local branch or choose checkout options",
-                        RefKind::Tag => "\nDouble-click to check out a detached HEAD",
-                    }
-                ));
-                if response.clicked() || response.secondary_clicked() {
-                    *selected_group = None;
-                    *selected = branch.full_name.clone();
-                }
-                response.widget_info(|| {
-                    eframe::egui::WidgetInfo::selected(
-                        eframe::egui::Role::Button,
-                        true,
-                        selected_group.is_none() && *selected == branch.full_name,
-                        &branch.name,
-                    )
-                });
-                if response.double_clicked() {
-                    requested.action = Some(BranchRequest::Switch(branch.full_name.clone()));
-                }
-                if let Some(action) = popup_menu::context(&response, palette, || match kind {
-                    RefKind::Tag => tag_menu(branch, requested),
-                    RefKind::Local | RefKind::Remote => branch_menu(branch, requested, shortcuts),
-                }) {
-                    requested.action = Some(action);
-                }
-            });
+                    branch,
+                    &branch.name,
+                    RefKind::Local,
+                    palette,
+                    selected,
+                    selected_group,
+                    requested,
+                    shortcuts,
+                );
+            }
+        } else {
+            for branch in matching {
+                branch_row(
+                    ui,
+                    branch,
+                    &branch.name,
+                    kind,
+                    palette,
+                    selected,
+                    selected_group,
+                    requested,
+                    shortcuts,
+                );
+            }
         }
     });
     *ui.visuals_mut() = previous_visuals;
@@ -568,6 +501,357 @@ fn branch_group(
         .is_some();
     }
     add_tag_requested
+}
+
+/// Slash-separated local feature branches, nested by path segment.
+#[derive(Default)]
+struct LocalTree<'a> {
+    leaves: Vec<&'a BranchRef>,
+    children: Vec<(String, LocalTree<'a>)>,
+}
+
+/// Only feature folders form their own sections; SmartGit keeps other
+/// slash-prefixed locals such as `release/1.x` under **Local Branches**.
+fn is_group_folder(segment: &str) -> bool {
+    segment.eq_ignore_ascii_case("feature") || segment.eq_ignore_ascii_case("features")
+}
+
+impl<'a> LocalTree<'a> {
+    fn build(branches: impl IntoIterator<Item = &'a BranchRef>) -> Self {
+        let mut tree = Self::default();
+        for branch in branches {
+            let segments: Vec<_> = branch.name.split('/').collect();
+            // The last segment is the branch name; earlier ones are folders.
+            let Some((_, folders)) = segments.split_last() else {
+                continue;
+            };
+            if !folders
+                .first()
+                .is_some_and(|folder| is_group_folder(folder))
+            {
+                tree.leaves.push(branch);
+                continue;
+            }
+            tree.insert(folders, branch);
+        }
+        tree
+    }
+
+    fn insert(&mut self, path: &[&str], branch: &'a BranchRef) {
+        let Some((segment, rest)) = path.split_first() else {
+            self.leaves.push(branch);
+            return;
+        };
+        let index = match self
+            .children
+            .binary_search_by(|(name, _)| name.as_str().cmp(segment))
+        {
+            Ok(index) => index,
+            Err(index) => {
+                self.children
+                    .insert(index, ((*segment).to_owned(), Self::default()));
+                index
+            }
+        };
+        self.children[index].1.insert(rest, branch);
+    }
+
+    fn count(&self) -> usize {
+        self.leaves.len()
+            + self
+                .children
+                .iter()
+                .map(|(_, child)| child.count())
+                .sum::<usize>()
+    }
+}
+
+/// Turn a path segment into a SmartGit-style group title: `feature` → `Features`.
+fn group_title(segment: &str) -> String {
+    let mut chars = segment.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let mut title: String = first.to_uppercase().chain(chars).collect();
+    let lower = segment.to_ascii_lowercase();
+    let Some(last) = lower.chars().last() else {
+        return title;
+    };
+    if !last.is_ascii_alphabetic() || lower.ends_with('s') {
+        return title;
+    }
+    if lower.ends_with('x')
+        || lower.ends_with('z')
+        || lower.ends_with("ch")
+        || lower.ends_with("sh")
+    {
+        title.push_str("es");
+    } else {
+        title.push('s');
+    }
+    title
+}
+
+/// Top-level folder groups such as `Features`, siblings of **Local Branches**.
+#[allow(clippy::too_many_arguments)]
+fn local_folder_groups(
+    ui: &mut Ui,
+    refs: &[BranchRef],
+    palette: Palette,
+    selected: &mut String,
+    selected_group: &mut Option<RefKind>,
+    requested: &mut BranchRequests,
+    shortcuts: &crate::shortcuts::ShortcutBindings,
+) {
+    let tree = LocalTree::build(refs.iter().filter(|entry| entry.kind == RefKind::Local));
+    for (segment, child) in &tree.children {
+        local_group(
+            ui,
+            segment,
+            child,
+            segment,
+            palette,
+            selected,
+            selected_group,
+            requested,
+            shortcuts,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn local_tree(
+    ui: &mut Ui,
+    tree: &LocalTree<'_>,
+    path: &str,
+    palette: Palette,
+    selected: &mut String,
+    selected_group: &mut Option<RefKind>,
+    requested: &mut BranchRequests,
+    shortcuts: &crate::shortcuts::ShortcutBindings,
+) {
+    for branch in &tree.leaves {
+        let name = branch.name.rsplit('/').next().unwrap_or(&branch.name);
+        branch_row(
+            ui,
+            branch,
+            name,
+            RefKind::Local,
+            palette,
+            selected,
+            selected_group,
+            requested,
+            shortcuts,
+        );
+    }
+    for (segment, child) in &tree.children {
+        let path = if path.is_empty() {
+            segment.clone()
+        } else {
+            format!("{path}/{segment}")
+        };
+        ui.indent(("local-branch-group", &path), |ui| {
+            local_group(
+                ui,
+                segment,
+                child,
+                &path,
+                palette,
+                selected,
+                selected_group,
+                requested,
+                shortcuts,
+            );
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn local_group(
+    ui: &mut Ui,
+    segment: &str,
+    child: &LocalTree<'_>,
+    path: &str,
+    palette: Palette,
+    selected: &mut String,
+    selected_group: &mut Option<RefKind>,
+    requested: &mut BranchRequests,
+    shortcuts: &crate::shortcuts::ShortcutBindings,
+) {
+    CollapsingHeader::new(
+        RichText::new(format!("{} ({})", group_title(segment), child.count()))
+            .text_style(egui::TextStyle::Body),
+    )
+    .id_salt(("local-branch-group", path))
+    .default_open(true)
+    .icon(icons::collapsing_icon)
+    .show_unindented(ui, |ui| {
+        local_tree(
+            ui,
+            child,
+            path,
+            palette,
+            selected,
+            selected_group,
+            requested,
+            shortcuts,
+        );
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn branch_row(
+    ui: &mut Ui,
+    branch: &BranchRef,
+    display_name: &str,
+    kind: RefKind,
+    palette: Palette,
+    selected: &mut String,
+    selected_group: &mut Option<RefKind>,
+    requested: &mut BranchRequests,
+    shortcuts: &crate::shortcuts::ShortcutBindings,
+) {
+    // Avoid text layout for rows outside the viewport in large ref lists.
+    let size = Vec2::new(ui.available_width(), 22.0);
+    let rect = eframe::egui::Rect::from_min_size(ui.next_widget_position(), size);
+    if !ui.is_rect_visible(rect) {
+        ui.allocate_space(size);
+        return;
+    }
+    ui.push_id(&branch.full_name, |ui| {
+        let response = super::controls::selectable_row_with_outset(
+            ui,
+            selected_group.is_none() && *selected == branch.full_name,
+            22.0,
+            8.0,
+            eframe::egui::Sense::click(),
+            |ui| branch_row_contents(ui, branch, display_name, kind, palette),
+        )
+        .help_text(branch_tooltip(branch, kind));
+        if response.clicked() || response.secondary_clicked() {
+            *selected_group = None;
+            *selected = branch.full_name.clone();
+        }
+        response.widget_info(|| {
+            eframe::egui::WidgetInfo::selected(
+                eframe::egui::Role::Button,
+                true,
+                selected_group.is_none() && *selected == branch.full_name,
+                display_name,
+            )
+        });
+        if response.double_clicked() {
+            requested.action = Some(BranchRequest::Switch(branch.full_name.clone()));
+        }
+        if let Some(action) = popup_menu::context(&response, palette, || match kind {
+            RefKind::Tag => tag_menu(branch, requested),
+            RefKind::Local | RefKind::Remote => branch_menu(branch, requested, shortcuts),
+        }) {
+            requested.action = Some(action);
+        }
+    });
+}
+
+fn branch_row_contents(
+    ui: &mut Ui,
+    branch: &BranchRef,
+    display_name: &str,
+    kind: RefKind,
+    palette: Palette,
+) {
+    ui.add_space(ui.spacing().indent);
+    icons::paint(
+        ui,
+        if kind == RefKind::Tag {
+            Icon::Tag
+        } else {
+            Icon::Branch
+        },
+        palette.text,
+        14.0,
+    );
+    let name = RichText::new(display_name).text_style(egui::TextStyle::Body);
+    let name = if branch.current {
+        name.family(semibold_family())
+    } else {
+        name
+    };
+    let mut text = LayoutJob::default();
+    name.append_to(&mut text, ui.style(), FontSelection::Default, Align::Center);
+    if let Some(subject) = &branch.tag_subject {
+        RichText::new(format!(" - {subject}"))
+            .text_style(egui::TextStyle::Body)
+            .color(palette.muted.lerp_to_gamma(palette.text, 0.25))
+            .append_to(&mut text, ui.style(), FontSelection::Default, Align::Center);
+    }
+    if branch.upstream_gone {
+        RichText::new(" ?")
+            .text_style(egui::TextStyle::Body)
+            .color(palette.removed_text)
+            .append_to(&mut text, ui.style(), FontSelection::Default, Align::Center);
+    }
+    if let Some(remote) = &branch.upstream_remote {
+        let color = if branch.upstream_gone {
+            palette.removed_text
+        } else {
+            palette.muted.lerp_to_gamma(palette.accent, 0.5)
+        };
+        RichText::new(format!(" {remote}"))
+            .text_style(egui::TextStyle::Body)
+            .color(color)
+            .append_to(&mut text, ui.style(), FontSelection::Default, Align::Center);
+    }
+    // Reserve the current-branch star before the name claims the row width.
+    let star = if branch.current { 22.0 } else { 0.0 };
+    let available = ui.available_width();
+    ui.scope(|ui| {
+        ui.set_max_width((available - star).max(0.0));
+        ui.add(
+            egui::Label::new(egui::WidgetText::from(text))
+                .truncate()
+                .show_tooltip_when_elided(false),
+        );
+    });
+    if branch.current {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            icons::paint(ui, Icon::Star, palette.accent, 14.0)
+        });
+    }
+}
+
+fn branch_tooltip(branch: &BranchRef, kind: RefKind) -> String {
+    let upstream = branch
+        .upstream
+        .as_ref()
+        .map(|upstream| {
+            let state = if !branch.upstream_gone {
+                String::new()
+            } else if let Some(remote) = &branch.upstream_remote {
+                format!(" (gone on {remote})")
+            } else {
+                " (gone)".to_owned()
+            };
+            format!("\nUpstream: {upstream}{state}")
+        })
+        .unwrap_or_default();
+    format!(
+        "{}\nObject: {}{}{}{}",
+        branch.full_name,
+        branch.hash,
+        upstream,
+        branch
+            .tag_subject
+            .as_ref()
+            .map(|subject| format!("\n{subject}"))
+            .unwrap_or_default(),
+        match kind {
+            RefKind::Local => "\nDouble-click to switch",
+            RefKind::Remote => {
+                "\nDouble-click to switch to a local branch or choose checkout options"
+            }
+            RefKind::Tag => "\nDouble-click to check out a detached HEAD",
+        }
+    )
 }
 
 fn branch_menu(
@@ -1400,6 +1684,8 @@ mod tests {
                     hash: "a".repeat(40),
                     tag_subject: None,
                     upstream: None,
+                    upstream_remote: None,
+                    upstream_gone: false,
                     current: false,
                     kind: RefKind::Local,
                 }];
@@ -1463,6 +1749,8 @@ mod tests {
                 hash: "a".repeat(40),
                 tag_subject: None,
                 upstream: None,
+                upstream_remote: None,
+                upstream_gone: false,
                 current: false,
                 kind: RefKind::Local,
             }];
@@ -1529,6 +1817,8 @@ mod tests {
             hash: "b".repeat(40),
             tag_subject: None,
             upstream: None,
+            upstream_remote: None,
+            upstream_gone: false,
             current: true,
             kind: RefKind::Local,
         }];
@@ -1563,6 +1853,8 @@ mod tests {
             hash: "a".repeat(40),
             tag_subject: None,
             upstream: None,
+            upstream_remote: None,
+            upstream_gone: false,
             current: false,
             kind: RefKind::Remote,
         }];
@@ -1625,6 +1917,8 @@ mod tests {
                     hash: "a".repeat(40),
                     tag_subject: None,
                     upstream: None,
+                    upstream_remote: None,
+                    upstream_gone: false,
                     current: false,
                     kind,
                 };
@@ -1752,6 +2046,8 @@ mod tests {
                 hash: "a".repeat(40),
                 tag_subject: None,
                 upstream: None,
+                upstream_remote: None,
+                upstream_gone: false,
                 current: false,
                 kind: RefKind::Local,
             }];
@@ -1817,6 +2113,8 @@ mod tests {
                 hash: "a".repeat(40),
                 tag_subject: None,
                 upstream: None,
+                upstream_remote: None,
+                upstream_gone: false,
                 current: false,
                 kind: RefKind::Local,
             }];
@@ -1915,9 +2213,39 @@ mod tests {
             hash: "a".repeat(40),
             tag_subject: None,
             upstream: None,
+            upstream_remote: None,
+            upstream_gone: false,
             current: false,
             kind,
         }
+    }
+
+    #[test]
+    fn local_tree_groups_only_feature_folders_and_counts_each_branch() {
+        let refs = [
+            branch_ref("main", RefKind::Local),
+            branch_ref("release/1.x", RefKind::Local),
+            branch_ref("feature/a", RefKind::Local),
+            branch_ref("feature/ui/b", RefKind::Local),
+        ];
+        let tree = LocalTree::build(refs.iter());
+        assert_eq!(tree.count(), 4);
+        // Branches outside feature folders stay flat, including slashed names.
+        assert_eq!(tree.leaves.len(), 2);
+        assert_eq!(tree.leaves[1].name, "release/1.x");
+        assert_eq!(tree.children.len(), 1);
+        let (segment, feature) = &tree.children[0];
+        assert_eq!(segment, "feature");
+        assert_eq!(feature.count(), 2);
+        assert_eq!(feature.leaves.len(), 1);
+        assert_eq!(feature.children.len(), 1);
+        assert_eq!(feature.children[0].0, "ui");
+        assert_eq!(feature.children[0].1.count(), 1);
+        assert!(is_group_folder("feature") && is_group_folder("Features"));
+        assert!(!is_group_folder("release"));
+        assert_eq!(group_title("feature"), "Features");
+        assert_eq!(group_title("fix"), "Fixes");
+        assert_eq!(group_title("1.0"), "1.0");
     }
 
     fn painted(output: &eframe::egui::FullOutput, label: &str) -> bool {
@@ -1959,6 +2287,17 @@ mod tests {
 
     impl BranchPanel {
         fn new(theme: crate::theme::ThemeChoice) -> Self {
+            Self::with_refs(
+                theme,
+                vec![
+                    branch_ref("main", RefKind::Local),
+                    branch_ref("origin/main", RefKind::Remote),
+                    branch_ref("v1", RefKind::Tag),
+                ],
+            )
+        }
+
+        fn with_refs(theme: crate::theme::ThemeChoice, entries: Vec<BranchRef>) -> Self {
             let ctx = Context::default();
             crate::theme::install_fonts(&ctx);
             egui_extras::install_image_loaders(&ctx);
@@ -1975,11 +2314,7 @@ mod tests {
                 },
             ];
             app.selected_repository = 0;
-            app.branches.entries = vec![
-                branch_ref("main", RefKind::Local),
-                branch_ref("origin/main", RefKind::Remote),
-                branch_ref("v1", RefKind::Tag),
-            ];
+            app.branches.entries = entries;
             Self {
                 ctx,
                 app,
@@ -2052,6 +2387,121 @@ mod tests {
         assert_eq!(painted(output, "v1"), tags, "tag group: {tags}");
     }
 
+    fn text_rect(output: &eframe::egui::FullOutput, label: &str) -> Option<Rect> {
+        output.shapes.iter().find_map(|shape| {
+            let eframe::egui::Shape::Text(text) = &shape.shape else {
+                return None;
+            };
+            (text.galley.job.text == label).then(|| text.galley.rect.translate(text.pos.to_vec2()))
+        })
+    }
+
+    #[test]
+    fn local_branches_group_by_path_and_show_tracked_remote_with_missing_upstream() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            let mut refs = vec![
+                branch_ref("main", RefKind::Local),
+                branch_ref("release/1.x", RefKind::Local),
+                branch_ref("feature/login", RefKind::Local),
+                branch_ref("feature/signup", RefKind::Local),
+            ];
+            refs[0].upstream = Some("origin/main".into());
+            refs[0].upstream_remote = Some("origin".into());
+            refs[1].upstream = Some("origin/release/1.x".into());
+            refs[1].upstream_remote = Some("origin".into());
+            refs[2].upstream = Some("origin/login".into());
+            refs[2].upstream_remote = Some("origin".into());
+            refs[2].upstream_gone = true;
+            refs[3].upstream = Some("origin/signup".into());
+            refs[3].upstream_remote = Some("origin".into());
+            let mut panel = BranchPanel::with_refs(theme, refs);
+            let output = panel.settle();
+            let painted_texts: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    eframe::egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+            for label in [
+                "Features (2)",
+                "Local Branches (2)",
+                "main origin",
+                "release/1.x origin",
+                "login ? origin",
+                "signup origin",
+            ] {
+                assert!(
+                    painted(&output, label),
+                    "missing {label}: {painted_texts:?}"
+                );
+            }
+            assert!(
+                !painted(&output, "Releases"),
+                "Only feature folders become groups"
+            );
+            assert!(
+                !output.shapes.iter().any(|shape| matches!(
+                    &shape.shape,
+                    eframe::egui::Shape::Text(text)
+                        if text.galley.job.text == "main ? origin"
+                )),
+                "Only the missing upstream carries a question mark"
+            );
+            let login_x = text_rect(&output, "login ? origin").unwrap().left();
+            let flat_x = text_rect(&output, "release/1.x origin").unwrap().left();
+            let main_x = text_rect(&output, "main origin").unwrap().left();
+            let features_x = text_rect(&output, "Features (2)").unwrap().left();
+            let locals_x = text_rect(&output, "Local Branches (2)").unwrap().left();
+            assert_eq!(flat_x, main_x, "Slash-prefixed locals stay flat rows");
+            assert_eq!(
+                features_x, locals_x,
+                "Folder groups are siblings of Local Branches"
+            );
+            assert!(
+                login_x > features_x,
+                "Branches inside a group indent past its header: header={features_x}, login={login_x}"
+            );
+            let remote_color = |label: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        eframe::egui::Shape::Text(text) if text.galley.job.text == label => text
+                            .galley
+                            .job
+                            .sections
+                            .last()
+                            .map(|section| section.format.color),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("missing {label}"))
+            };
+            assert_eq!(remote_color("login ? origin"), theme.palette().removed_text);
+            assert_ne!(remote_color("signup origin"), theme.palette().removed_text);
+
+            panel.click("Features (2)");
+            let collapsed = panel.settle();
+            assert!(!painted(&collapsed, "login ? origin"));
+            assert!(painted(&collapsed, "Features (2)"));
+            assert!(painted(&collapsed, "main origin"));
+
+            panel.click("Features (2)");
+            let expanded = panel.settle();
+            assert!(painted(&expanded, "login ? origin"));
+            panel.click("login ? origin");
+            panel.settle();
+            assert_eq!(
+                panel.app.branches.selected_branch,
+                "refs/heads/feature/login"
+            );
+            assert_eq!(panel.app.branches.selected_ref_group, None);
+        }
+    }
     #[test]
     fn branch_group_expansion_is_remembered_per_repository() {
         for theme in [

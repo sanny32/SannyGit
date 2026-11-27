@@ -547,6 +547,8 @@ fn lists_current_local_remote_upstream_and_annotated_tags_without_writes() {
     let current = snapshot.refs.iter().find(|r| r.current).unwrap();
     assert_eq!(current.full_name, "refs/heads/main");
     assert_eq!(current.upstream.as_deref(), Some("origin/main"));
+    assert_eq!(current.upstream_remote.as_deref(), Some("origin"));
+    assert!(!current.upstream_gone);
     assert!(snapshot.refs.iter().any(|r| r.name == "feature/ветка"));
     assert!(snapshot
         .refs
@@ -587,6 +589,80 @@ fn lists_current_local_remote_upstream_and_annotated_tags_without_writes() {
         .unwrap();
     assert!(read_tag_message(&SYSTEM_GIT, &repo.0, &lightweight.hash).is_err());
     assert_eq!(std::fs::read(repo.0.join(".git/index")).unwrap(), index);
+}
+
+#[test]
+fn marks_only_configured_remote_upstreams_missing_from_loaded_remote_refs() {
+    let repo = committed_repo();
+    for name in ["kept", "deleted", "local-track"] {
+        repo.git(&["branch", name]);
+    }
+    repo.git(&[
+        "config",
+        "--local",
+        "remote.origin.url",
+        "https://example.invalid/fixture.git",
+    ]);
+    repo.git(&[
+        "config",
+        "--local",
+        "remote.origin.fetch",
+        "+refs/heads/*:refs/remotes/origin/*",
+    ]);
+    repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    repo.git(&["update-ref", "refs/remotes/origin/kept", "HEAD"]);
+    repo.git(&["branch", "--set-upstream-to=origin/main", "main"]);
+    repo.git(&["branch", "--set-upstream-to=origin/kept", "kept"]);
+    repo.git(&["config", "branch.deleted.remote", "origin"]);
+    repo.git(&["config", "branch.deleted.merge", "refs/heads/deleted"]);
+    repo.git(&["branch", "--set-upstream-to=main", "local-track"]);
+
+    let refs = load(&SYSTEM_GIT, &repo.0).unwrap().refs;
+    let find = |name: &str| {
+        refs.iter()
+            .find(|entry| entry.kind == RefKind::Local && entry.name == name)
+            .unwrap()
+    };
+    assert_eq!(find("main").upstream_remote.as_deref(), Some("origin"));
+    assert!(!find("main").upstream_gone);
+    assert!(!find("kept").upstream_gone);
+    let deleted = find("deleted");
+    assert_eq!(deleted.upstream.as_deref(), Some("origin/deleted"));
+    assert_eq!(deleted.upstream_remote.as_deref(), Some("origin"));
+    assert!(deleted.upstream_gone);
+    let local = find("local-track");
+    assert_eq!(local.upstream.as_deref(), Some("main"));
+    assert_eq!(local.upstream_remote, None);
+    assert!(!local.upstream_gone);
+}
+
+#[test]
+fn never_marks_upstreams_gone_when_the_remote_was_not_fetched() {
+    let repo = committed_repo();
+    repo.git(&["branch", "topic"]);
+    repo.git(&[
+        "config",
+        "--local",
+        "remote.origin.url",
+        "https://example.invalid/fixture.git",
+    ]);
+    repo.git(&[
+        "config",
+        "--local",
+        "remote.origin.fetch",
+        "+refs/heads/*:refs/remotes/origin/*",
+    ]);
+    repo.git(&["config", "branch.topic.remote", "origin"]);
+    repo.git(&["config", "branch.topic.merge", "refs/heads/topic"]);
+
+    let refs = load(&SYSTEM_GIT, &repo.0).unwrap().refs;
+    let topic = refs
+        .iter()
+        .find(|entry| entry.kind == RefKind::Local && entry.name == "topic")
+        .unwrap();
+    assert_eq!(topic.upstream.as_deref(), Some("origin/topic"));
+    assert_eq!(topic.upstream_remote.as_deref(), Some("origin"));
+    assert!(!topic.upstream_gone);
 }
 
 #[test]
@@ -888,7 +964,7 @@ fn validates_names_rejects_duplicates_and_handles_unborn_head() {
 
 #[test]
 fn rejects_malformed_ref_records_and_bounds_ref_count() {
-    let record = format!("refs/heads/main\0{}\0\0*\0\0\0\n", "a".repeat(40));
+    let record = format!("refs/heads/main\0{}\0\0\0*\0\0\0\n", "a".repeat(40));
     assert_eq!(parse(record.as_bytes()).unwrap()[0].name, "main");
     assert!(parse(&record.as_bytes()[..record.len() - 1]).is_err());
     assert!(parse(b"short\0\n").is_err());
@@ -898,7 +974,7 @@ fn rejects_malformed_ref_records_and_bounds_ref_count() {
     bytes[12] = 255;
     assert!(parse(&bytes).is_err());
     let many: String = (0..=REF_LIMIT)
-        .map(|i| format!("refs/heads/b{i}\0{}\0\0 \0\0\0\n", "a".repeat(40)))
+        .map(|i| format!("refs/heads/b{i}\0{}\0\0\0 \0\0\0\n", "a".repeat(40)))
         .collect();
     assert!(parse(many.as_bytes()).is_err_and(|error| error.contains("5,000")));
 }

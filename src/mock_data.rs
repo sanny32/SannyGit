@@ -60,6 +60,8 @@ pub fn refs() -> Vec<BranchRef> {
             } else {
                 None
             },
+            upstream_remote: (kind == RefKind::Local).then(|| "origin".into()),
+            upstream_gone: kind == RefKind::Local && name == "fix/windows-build",
             current: kind == RefKind::Local && name == "main",
             kind,
         })
@@ -223,6 +225,8 @@ pub fn merge_dialog() -> crate::app::merge::Dialog {
             hash: commits[1].hash.clone(),
             tag_subject: None,
             upstream: Some("origin/main".into()),
+            upstream_remote: Some("origin".into()),
+            upstream_gone: false,
             current: true,
             kind: RefKind::Local,
         },
@@ -232,6 +236,8 @@ pub fn merge_dialog() -> crate::app::merge::Dialog {
             hash: commits[2].hash.clone(),
             tag_subject: None,
             upstream: None,
+            upstream_remote: None,
+            upstream_gone: false,
             current: false,
             kind: RefKind::Local,
         },
@@ -241,6 +247,8 @@ pub fn merge_dialog() -> crate::app::merge::Dialog {
             hash: commits[0].hash.clone(),
             tag_subject: None,
             upstream: None,
+            upstream_remote: None,
+            upstream_gone: false,
             current: false,
             kind: RefKind::Remote,
         },

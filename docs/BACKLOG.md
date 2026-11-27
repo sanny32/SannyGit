@@ -38,32 +38,6 @@ call sites of `eframe::viewport_winit_window` (`src/native_window_linux.rs`,
 
 ## UI — Branches panel
 
-### Local branch rows: folder groups and inline tracking (SmartGit-style)
-
-**Problem:** Local branches are listed flat under **Local Branches** with only the
-short ref name. Upstream/tracking data (`BranchRef::upstream`, ahead/behind) is
-not shown on the row — only in tooltips or the status bar for the current
-branch. SmartGit groups slash-prefixed locals (e.g. **Features (1)**) and paints
-rows such as `server-node-icons ? origin`: branch name in body text, the remote
-name (**origin**) in accent/muted color, and a **red ?** only when the
-configured upstream ref on that remote no longer exists (deleted remote branch)
-(screenshot from 2026-11-26).
-
-**Goal:** Match that presentation for local branches: optional nested groups by
-path segment (`feature/foo` → group **Features**), count in the header, remote
-name on the row when an upstream is configured, and **only** the red **?**
-suffix for the “upstream gone on origin” case — not for unknown ahead/behind,
-not for in-sync branches, and not a general status badge on every local branch.
-Truncate with tooltip on elision; keep selection, double-click checkout, and
-context menus working.
-
-**Likely touch points:** `src/ui/branches.rs` (`branch_group`, branch row
-layout), `src/branches.rs` / `src/models.rs` (upstream fields), detection of
-missing remote upstream (fetch/ls-remote or existing ref loads), layout tests
-under `src/ui/branches.rs`.
-
-**Status:** Not started
-
 ### Collapsing group rows: gap between chevron and title
 
 **Problem:** Section headers that use the shared disclosure chevron (**Local Branches**,
@@ -184,5 +158,51 @@ shift between GitHub, GitLab, and default repository icons.
 **Likely touch points:** `assets/icons/` SVG viewports, `src/ui/controls/icons.rs`
 (`image`, provider mapping), `src/ui/repositories.rs` (`repository_row`, 16.0
 icon paint and drag preview).
+
+**Status:** Not started
+
+## Performance — upstream badge (↑ ↓)
+
+### Faster ↑ / ↓ counts after commit and push
+
+**Problem:** The ahead/behind badge (**↑n ↓m** in the status bar and on the active
+repository row) often stays empty for about **500–1000 ms** after a successful
+**Commit** or **Push**, then updates. Users expect the counts to reflect the new
+HEAD immediately (screenshot from 2026-11-27: **↑1 ↓0**).
+
+**Goal:** Show updated local ahead/behind within one frame or a single fast
+`rev-list` pass after commit and push complete, without waiting on the periodic
+tracking worker or optional auto-fetch. Background refresh may still refine
+numbers against the remote; avoid clearing the badge to empty during that gap.
+
+**Likely touch points:** `src/app/tracking.rs` (`Monitor::update`, `invalidate`,
+`next_read` / `from_secs(5)` throttle), `src/app.rs` (`apply_snapshot` after
+commit, push/pull/fetch completion), `src/tracking.rs` (`read`, `badge`),
+`finish_ref_operation` / remote job outcomes for **Push complete**.
+
+**Status:** Not started
+
+## UI — Branches panel (repository switch)
+
+### Show full ref list immediately when changing repository
+
+**Problem:** After selecting another repository, the Branches panel often shows
+only **Tags** (empty or stale) for a moment while locals and remotes are absent.
+`branches.entries` is cleared on switch and refs load asynchronously via
+`load_refs`, and `branch_group` hides empty **Local Branches** / **Remote Branches**
+sections but still paints **Tags**. The result looks like lazy, tag-only loading
+instead of the full tree.
+
+**Goal:** On repository change, present local branches, remote branches, and tags
+together as soon as the panel is visible — either keep showing the last loaded
+snapshot for that repo until the refresh completes, show all three section headers
+with a stable loading state, or block painting until `branches::load` returns.
+Avoid an intermediate UI that lists tags alone.
+
+**Likely touch points:** `src/app.rs` (`apply_snapshot`, `branches.entries.clear`,
+`reload_refs` / `load_refs`), `src/app/repositories.rs` (`reset_repository_view`),
+`src/ui/branches.rs` (`branch_group`, `local_folder_groups`, Tags special-case),
+`BranchState::apply`, tests in `src/app/working_tree.rs` and
+`src/app/repositories.rs` around repo switch.
 
 **Status:** Not started

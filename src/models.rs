@@ -61,7 +61,12 @@ pub struct BranchRef {
     pub name: String,
     pub full_name: String,
     pub hash: String,
+    /// Short upstream ref such as `origin/main`.
     pub upstream: Option<String>,
+    /// Remote that hosts the upstream ref; `None` for local or missing upstreams.
+    pub upstream_remote: Option<String>,
+    /// The tracked remote branch is no longer present in the loaded remote refs.
+    pub upstream_gone: bool,
     pub tag_subject: Option<String>,
     pub current: bool,
     pub kind: RefKind,

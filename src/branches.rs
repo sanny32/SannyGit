@@ -20,7 +20,7 @@ pub fn load(git: &GitContext, root: &Path) -> Result<RefSnapshot, String> {
             "for-each-ref",
             "--sort=refname",
             "--count=5001",
-            "--format=%(refname)%00%(objectname)%00%(upstream)%00%(HEAD)%00%(symref)%00%(if:equals=tag)%(objecttype)%(then)%(contents:subject)%(end)%00",
+            "--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:remotename)%00%(HEAD)%00%(symref)%00%(if:equals=tag)%(objecttype)%(then)%(contents:subject)%(end)%00",
             "refs/heads/",
             "refs/remotes/",
             "refs/tags/",
@@ -112,6 +112,7 @@ fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
         return Err("Truncated Git ref output".into());
     }
     let mut refs = Vec::new();
+    let mut upstream_refs = Vec::new();
     let mut seen = HashSet::new();
     for (index, record) in bytes
         .split(|b| *b == b'\n')
@@ -124,10 +125,10 @@ fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
         let record = record
             .strip_suffix(&[0])
             .ok_or("Malformed Git ref record")?;
-        let mut parts = record.splitn(6, |b| *b == 0);
+        let mut parts = record.splitn(7, |b| *b == 0);
         let fields: Vec<_> = parts
             .by_ref()
-            .take(5)
+            .take(6)
             .map(|s| std::str::from_utf8(s).map_err(|_| "Non-UTF-8 ref names are not supported"))
             .collect::<Result<_, _>>()?;
         let subject = parts.next().ok_or("Malformed Git ref record")?;
@@ -139,12 +140,12 @@ fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
         }
         if !matches!(fields[1].len(), 40 | 64)
             || !fields[1].bytes().all(|c| c.is_ascii_hexdigit())
-            || !matches!(fields[3], "*" | " ")
+            || !matches!(fields[4], "*" | " ")
         {
             return Err("Invalid Git ref metadata".into());
         }
         // Hide symbolic aliases such as origin/HEAD; they are not independent branches.
-        if !fields[4].is_empty() {
+        if !fields[5].is_empty() {
             continue;
         }
         let (kind, name) = if let Some(name) = fields[0].strip_prefix("refs/heads/") {
@@ -166,6 +167,7 @@ fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
         } else {
             None
         };
+        upstream_refs.push((!fields[2].is_empty()).then(|| fields[2].to_owned()));
         refs.push(BranchRef {
             tag_subject,
             name: name.into(),
@@ -178,11 +180,41 @@ fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
                     .unwrap_or(fields[2])
                     .to_owned()
             }),
-            current: fields[3] == "*",
+            // `.` means the upstream is a local branch, not a remote one. Without
+            // a resolved upstream ref there is nothing to show on the row.
+            upstream_remote: (!fields[2].is_empty() && !matches!(fields[3], "" | "."))
+                .then(|| fields[3].to_owned()),
+            upstream_gone: false,
+            current: fields[4] == "*",
             kind,
         });
     }
+    mark_missing_upstreams(&mut refs, upstream_refs);
     Ok(refs)
+}
+
+/// A configured upstream counts as gone only when its remote already has loaded
+/// remote-tracking refs but the tracked one is absent. A remote with no refs at
+/// all was probably never fetched, so its upstream state stays unknown.
+fn mark_missing_upstreams(refs: &mut [BranchRef], upstream_refs: Vec<Option<String>>) {
+    let mut remotes = HashSet::new();
+    let mut loaded = HashSet::new();
+    for entry in refs.iter().filter(|entry| entry.kind == RefKind::Remote) {
+        loaded.insert(entry.full_name.clone());
+        if let Some((remote, _)) = entry
+            .full_name
+            .strip_prefix("refs/remotes/")
+            .and_then(|name| name.split_once('/'))
+        {
+            remotes.insert(remote.to_owned());
+        }
+    }
+    for (entry, upstream) in refs.iter_mut().zip(upstream_refs) {
+        let (Some(upstream), Some(remote)) = (upstream, entry.upstream_remote.as_deref()) else {
+            continue;
+        };
+        entry.upstream_gone = remotes.contains(remote) && !loaded.contains(upstream.as_str());
+    }
 }
 
 /// Lightweight UI validation; Git performs its complete validation when an operation is submitted.
