@@ -522,7 +522,7 @@ fn graph(
             // The row pitch must match graph coordinates, including at clip edges.
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
             ui.style_mut().interaction.selectable_labels = false;
-            super::controls::table_resize_style(ui, palette);
+            super::controls::table_resize_style(ui);
             TableBuilder::new(ui)
                 .id_salt((dialog.operation.id(), "commits"))
                 .striped(true)

@@ -838,30 +838,16 @@ fn shortcut_header(ui: &mut Ui, palette: Palette, width: f32, columns: [f32; 3])
     let mut stored = [columns[1], columns[2]];
     let mut changed = false;
     for separator in 0..2 {
-        let hit = Rect::from_min_max(
-            Pos2::new(x - 5.0, rect.top()),
-            Pos2::new(x + 5.0, rect.bottom()),
-        );
-        let response = ui
-            .interact(
-                hit,
-                ui.make_persistent_id(("preferences.shortcuts.resize", separator)),
-                Sense::drag(),
-            )
-            .on_hover_cursor(egui::CursorIcon::ResizeColumn);
-        if response.dragged() {
-            drag_shortcut_columns(width, &mut stored, separator, response.drag_delta().x);
+        if let Some(delta) = super::controls::table_header_splitter(
+            ui,
+            ("preferences.shortcuts.resize", separator),
+            x,
+            rect,
+            palette,
+        ) {
+            drag_shortcut_columns(width, &mut stored, separator, delta);
             changed = true;
         }
-        let color = if response.hovered() || response.dragged() {
-            palette.text
-        } else {
-            palette.border
-        };
-        ui.painter().line_segment(
-            [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
-            (1.0, color),
-        );
         x += columns[1];
     }
     if changed {

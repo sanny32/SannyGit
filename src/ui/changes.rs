@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 
 const FILTER_WIDTH: f32 = 366.0;
 const MERGE_BANNER_HEIGHT: f32 = 36.0;
-const INDEX_COLUMN_GUTTER: f32 = 6.0;
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
@@ -228,7 +227,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     table
         .header(24.0, |mut header| {
             header.col(|ui| {
-                ui.add_space(INDEX_COLUMN_GUTTER);
+                ui.add_space(super::controls::TABLE_CELL_PADDING);
                 let label = match index_sort {
                     None => "Index",
                     Some(true) => "Index ↑",
@@ -248,10 +247,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 column_separator(ui, "index", &mut index_width, 1.0, 44.0..=80.0, palette);
             });
             header.col(|ui| {
+                ui.add_space(super::controls::TABLE_CELL_PADDING);
                 ui.label("File");
                 column_separator(ui, "file", &mut status_width, -1.0, 64.0..=120.0, palette);
             });
             header.col(|ui| {
+                ui.add_space(super::controls::TABLE_CELL_PADDING);
                 let label = match status_sort {
                     None => "Status",
                     Some(true) => "Status ↑",
@@ -376,6 +377,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     index_toggle = Some(response);
                 });
                 row.col(|ui| {
+                    ui.add_space(super::controls::TABLE_CELL_PADDING);
                     icons::paint(ui, Icon::for_file(&change.path), status_color(change.kind, palette), 16.0);
                     ui.add_space(4.0);
                     let mut name = RichText::new(&change.path).color(palette.text);
@@ -390,6 +392,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         });
                 });
                 row.col(|ui| {
+                    ui.add_space(super::controls::TABLE_CELL_PADDING);
                     row_rect = row_rect.union(ui.max_rect());
                     let color = status_color(change.kind, palette);
                     let fill = match change.kind {
@@ -770,32 +773,11 @@ fn column_separator(
 ) {
     let rect = ui.max_rect();
     let x = rect.right() - 0.5;
-    let hit = Rect::from_min_max(
-        eframe::egui::pos2(x - 5.0, rect.top()),
-        eframe::egui::pos2(x + 5.0, rect.bottom()),
-    );
-    let response = ui
-        .interact(
-            hit,
-            ui.make_persistent_id(("files.header.resize", id)),
-            Sense::drag(),
-        )
-        .on_hover_cursor(eframe::egui::CursorIcon::ResizeColumn);
-    if response.dragged() {
-        *width = (*width + direction * response.drag_delta().x).clamp(*range.start(), *range.end());
+    if let Some(delta) =
+        super::controls::table_header_splitter(ui, ("files.header.resize", id), x, rect, palette)
+    {
+        *width = (*width + direction * delta).clamp(*range.start(), *range.end());
     }
-    let color = if response.hovered() || response.dragged() {
-        palette.text
-    } else {
-        palette.border
-    };
-    ui.painter().line_segment(
-        [
-            eframe::egui::pos2(x, rect.top() + 3.0),
-            eframe::egui::pos2(x, rect.bottom() - 3.0),
-        ],
-        (1.0, color),
-    );
 }
 
 fn ui_line(response: &eframe::egui::Response, row: Rect, clip: Rect, palette: Palette) {

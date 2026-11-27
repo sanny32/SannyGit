@@ -188,33 +188,43 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
     } else {
         None
     };
-    super::controls::table_resize_style(ui, palette);
+    let widths_id = egui::Id::unique(("journal.commits.column_widths", history_window));
+    let defaults = [
+        if history_window {
+            42.0
+        } else if wide {
+            70.0
+        } else {
+            46.0
+        },
+        if wide { 100.0 } else { 70.0 },
+        date_width.clamp(116.0, 170.0),
+        72.0,
+    ];
+    let [mut graph_width, mut author_width, mut date_column_width, mut hash_width] = ui
+        .data_mut(|data| data.get_persisted::<[f32; 4]>(widths_id))
+        .unwrap_or(defaults);
+    let graph_range = if history_window {
+        28.0..=240.0
+    } else {
+        46.0..=240.0
+    };
+    graph_width = graph_width.clamp(*graph_range.start(), *graph_range.end());
+    author_width = author_width.clamp(50.0, 260.0);
+    date_column_width = date_column_width.clamp(96.0, 240.0);
+    hash_width = hash_width.clamp(48.0, 200.0);
     let mut table = TableBuilder::new(ui)
         .id_salt("journal.commits")
         .striped(true)
         .sense(Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
-        .column(
-            Column::initial(if history_window {
-                42.0
-            } else if wide {
-                70.0
-            } else {
-                46.0
-            })
-            .range(if history_window {
-                28.0..=240.0
-            } else {
-                46.0..=240.0
-            })
-            .resizable(true),
-        )
+        .column(Column::initial(graph_width).clip(true))
         .column(Column::remainder().at_least(80.0))
-        .column(Column::exact(if wide { 100.0 } else { 70.0 }))
-        .column(Column::exact(date_width.clamp(116.0, 170.0)))
+        .column(Column::initial(author_width).clip(true))
+        .column(Column::initial(date_column_width).clip(true))
         .min_scrolled_height(0.0);
     if !history_window {
-        table = table.column(Column::exact(72.0));
+        table = table.column(Column::initial(hash_width).clip(true));
     }
     if let Some((row, _)) = offset {
         table = table.scroll_to_row(row, Some(Align::Min));
@@ -224,82 +234,132 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
             table = table.scroll_to_row(index, Some(Align::Center));
         }
     }
-    let output = table
-        .header(24.0, |mut header| {
-            for title in ["Graph", "Message", "Author", "Date", "Hash"] {
-                if history_window && title == "Hash" {
-                    continue;
-                }
-                header.col(|ui| {
-                    if title == "Graph" {
-                        ui.add_space(6.0);
+    let mut resize = None;
+    let table = table.header(24.0, |mut header| {
+        let columns: &[&str] = if history_window {
+            &["Graph", "Message", "Author", "Date"]
+        } else {
+            &["Graph", "Message", "Author", "Date", "Hash"]
+        };
+        for (index, title) in columns.iter().enumerate() {
+            header.col(|ui| {
+                ui.add_space(super::controls::TABLE_CELL_PADDING);
+                ui.label(*title);
+                if index + 1 < columns.len() {
+                    if let Some(delta) = super::controls::table_header_cell_splitter(
+                        ui,
+                        ("journal.commits.resize", index),
+                        palette,
+                    ) {
+                        resize = Some((index, delta));
                     }
-                    ui.label(title);
-                });
-            }
-        })
-        .body(|mut body| {
-            if let Some((_, within_row)) = offset {
-                body.ui_mut().scroll_with_delta_animation(
-                    Vec2::new(0.0, -within_row),
-                    eframe::egui::style::ScrollAnimation::none(),
-                );
-            }
-            // The table row handles selection, including clicks on cell text.
-            body.ui_mut().style_mut().interaction.selectable_labels = false;
-            body.rows(20.0, visible.len(), |mut row| {
-                let (original, commit) = visible[row.index()];
-                row.set_selected(app.history.selected_commit.as_ref() == Some(&commit.hash));
-                row.col(|ui| {
-                    ui.add_space(6.0);
-                    graph(ui, app, original, filter.is_empty(), palette);
-                });
-                row.col(|ui| {
-                    ui.add(Label::new(commit.subject()).show_tooltip_when_elided(false))
-                        .help_text(&commit.message);
-                });
-                row.col(|ui| {
-                    ui.add(
-                        Label::new(RichText::new(&commit.author).color(palette.muted))
-                            .show_tooltip_when_elided(false),
-                    )
-                    .help_text(&commit.email);
-                });
-                row.col(|ui| {
-                    let date = app.preferences.commit_date(&commit.date);
-                    ui.add(
-                        Label::new(RichText::new(date).color(palette.muted))
-                            .show_tooltip_when_elided(false),
-                    )
-                    .help_text(&commit.date);
-                });
-                if !history_window {
-                    row.col(|ui| {
-                        ui.add(
-                            Label::new(
-                                RichText::new(commit.hash.get(..8).unwrap_or(&commit.hash))
-                                    .monospace()
-                                    .color(palette.muted),
-                            )
-                            .show_tooltip_when_elided(false),
-                        )
-                        .help_text(&commit.hash);
-                    });
-                }
-                let response = row.response();
-                if response.double_clicked() {
-                    selected = Some(commit.hash.clone());
-                    open_details = true;
-                } else if response.clicked() || response.secondary_clicked() {
-                    selected = Some(commit.hash.clone());
-                }
-                if let Some(action) =
-                    popup_menu::context(&response, palette, || commit_menu(app, original))
-                {
-                    menu_action = Some(action);
                 }
             });
+        }
+    });
+    let output = table.body(|mut body| {
+        if let Some((_, within_row)) = offset {
+            body.ui_mut().scroll_with_delta_animation(
+                Vec2::new(0.0, -within_row),
+                eframe::egui::style::ScrollAnimation::none(),
+            );
+        }
+        // The table row handles selection, including clicks on cell text.
+        body.ui_mut().style_mut().interaction.selectable_labels = false;
+        body.rows(20.0, visible.len(), |mut row| {
+            let (original, commit) = visible[row.index()];
+            row.set_selected(app.history.selected_commit.as_ref() == Some(&commit.hash));
+            row.col(|ui| {
+                ui.add_space(super::controls::TABLE_CELL_PADDING);
+                graph(ui, app, original, filter.is_empty(), palette);
+            });
+            row.col(|ui| {
+                ui.add_space(super::controls::TABLE_CELL_PADDING);
+                ui.add(Label::new(commit.subject()).show_tooltip_when_elided(false))
+                    .help_text(&commit.message);
+            });
+            row.col(|ui| {
+                ui.add_space(super::controls::TABLE_CELL_PADDING);
+                ui.add(
+                    Label::new(RichText::new(&commit.author).color(palette.muted))
+                        .show_tooltip_when_elided(false),
+                )
+                .help_text(&commit.email);
+            });
+            row.col(|ui| {
+                ui.add_space(super::controls::TABLE_CELL_PADDING);
+                let date = app.preferences.commit_date(&commit.date);
+                ui.add(
+                    Label::new(RichText::new(date).color(palette.muted))
+                        .show_tooltip_when_elided(false),
+                )
+                .help_text(&commit.date);
+            });
+            if !history_window {
+                row.col(|ui| {
+                    ui.add_space(super::controls::TABLE_CELL_PADDING);
+                    ui.add(
+                        Label::new(
+                            RichText::new(commit.hash.get(..8).unwrap_or(&commit.hash))
+                                .monospace()
+                                .color(palette.muted),
+                        )
+                        .show_tooltip_when_elided(false),
+                    )
+                    .help_text(&commit.hash);
+                });
+            }
+            let response = row.response();
+            if response.double_clicked() {
+                selected = Some(commit.hash.clone());
+                open_details = true;
+            } else if response.clicked() || response.secondary_clicked() {
+                selected = Some(commit.hash.clone());
+            }
+            if let Some(action) =
+                popup_menu::context(&response, palette, || commit_menu(app, original))
+            {
+                menu_action = Some(action);
+            }
         });
+    });
+    if let Some((index, delta)) = resize {
+        match index {
+            0 => {
+                graph_width = (graph_width + delta).clamp(*graph_range.start(), *graph_range.end())
+            }
+            1 => author_width = (author_width - delta).clamp(50.0, 260.0),
+            2 => {
+                let delta = pair_drag_delta(
+                    author_width,
+                    date_column_width,
+                    50.0..=260.0,
+                    96.0..=240.0,
+                    delta,
+                );
+                author_width += delta;
+                date_column_width -= delta;
+            }
+            3 => {
+                let delta = pair_drag_delta(
+                    date_column_width,
+                    hash_width,
+                    96.0..=240.0,
+                    48.0..=200.0,
+                    delta,
+                );
+                date_column_width += delta;
+                hash_width -= delta;
+            }
+            _ => {}
+        }
+        ui.data_mut(|data| {
+            data.insert_persisted(
+                widths_id,
+                [graph_width, author_width, date_column_width, hash_width],
+            );
+        });
+    }
     if offset.is_some() {
         // Resolve the anchor after the new content bounds are known. Rendering
         // another pass prevents the old scroll physics from pulling it back.
@@ -524,6 +584,24 @@ fn apply_commit_action(ctx: &egui::Context, app: &mut SannyGitApp, action: Commi
         CommitAction::Push(hash) => app.open_push_up_to(hash),
         CommitAction::CopyMessage(message) => crate::app::copy_to_clipboard(ctx, message),
         CommitAction::CopyId(hash) => ctx.copy_text(hash),
+    }
+}
+
+fn pair_drag_delta(
+    left: f32,
+    right: f32,
+    left_range: std::ops::RangeInclusive<f32>,
+    right_range: std::ops::RangeInclusive<f32>,
+    delta: f32,
+) -> f32 {
+    // Dragging a divider moves the boundary: the left column grows by the
+    // returned delta and the right column shrinks by the same amount.
+    let min = (*left_range.start() - left).max(right - *right_range.end());
+    let max = (*left_range.end() - left).min(right - *right_range.start());
+    if min > max {
+        0.0
+    } else {
+        delta.clamp(min, max)
     }
 }
 
@@ -976,7 +1054,7 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
         .collect::<Vec<_>>();
     let mut selected = None;
     ui.spacing_mut().item_spacing.x = 8.0;
-    super::controls::table_resize_style(ui, palette);
+    super::controls::table_resize_style(ui);
     TableBuilder::new(ui)
         .id_salt("history.files")
         .resizable(true)
@@ -987,10 +1065,16 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
         .column(Column::remainder().at_least(50.0))
         .min_scrolled_height(0.0)
         .header(24.0, |mut header| {
-            for title in ["Name", "Modification", "Relative Directory"] {
+            for (index, title) in ["Name", "Modification", "Relative Directory"]
+                .iter()
+                .enumerate()
+            {
                 header.col(|ui| {
-                    ui.add_space(6.0);
-                    ui.add(Label::new(title).truncate()).help_text(title);
+                    ui.add_space(super::controls::TABLE_CELL_PADDING);
+                    ui.add(Label::new(*title).truncate()).help_text(*title);
+                    if index + 1 < 3 {
+                        super::controls::table_header_separator(ui, palette);
+                    }
                 });
             }
         })
@@ -1000,7 +1084,7 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
                 let (directory, name) = file.path.rsplit_once('/').unwrap_or(("", &file.path));
                 row.set_selected(app.history.selected_commit_file.as_ref() == Some(&file.path));
                 row.col(|ui| {
-                    ui.add_space(6.0);
+                    ui.add_space(super::controls::TABLE_CELL_PADDING);
                     ui.add(icons::image(
                         Icon::for_file(&file.path),
                         palette.muted,
@@ -1013,6 +1097,7 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
                     );
                 });
                 row.col(|ui| {
+                    ui.add_space(super::controls::TABLE_CELL_PADDING);
                     let status = match file.status.as_bytes().first() {
                         Some(b'A') => "Added",
                         Some(b'D') => "Deleted",
@@ -1029,6 +1114,7 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
                     );
                 });
                 row.col(|ui| {
+                    ui.add_space(super::controls::TABLE_CELL_PADDING);
                     ui.add(
                         Label::new(
                             RichText::new(directory.escape_debug().to_string())
@@ -2031,6 +2117,138 @@ mod tests {
             }
             assert!(copied, "Copy ID did not copy {hash} in {theme:?}");
             assert_eq!(app.history.selected_commit.as_deref(), Some(hash.as_str()));
+        }
+    }
+
+    #[test]
+    fn commit_columns_resize_and_keep_their_widths() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let ctx = Context::default();
+            install_fonts(&ctx);
+            theme.apply(&ctx);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.history.commits = crate::mock_data::commits();
+            let render = |app: &mut SannyGitApp, events| {
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 420.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| rows(ui, app, false),
+                );
+                output.textures_delta.clear();
+                output
+            };
+            let header_x = |output: &egui::FullOutput, label: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.job.text == label => {
+                            Some(text.pos.x)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("Missing {label} header in {theme:?}"))
+            };
+            let separator = |output: &egui::FullOutput, left_of: f32| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::LineSegment { points, .. }
+                            if (points[0].x - points[1].x).abs() < 0.1
+                                && points[0].x < left_of
+                                && left_of - points[0].x < 24.0 =>
+                        {
+                            Some((points[0] + points[1].to_vec2()) * 0.5)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("Missing separator left of {left_of} in {theme:?}"))
+            };
+            let drag = |app: &mut SannyGitApp, from: Pos2, delta: f32| {
+                render(app, vec![Event::PointerMoved(from)]);
+                render(
+                    app,
+                    vec![Event::PointerButton {
+                        pos: from,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    }],
+                );
+                let moved = from + Vec2::new(delta, 0.0);
+                for _ in 0..3 {
+                    render(app, vec![Event::PointerMoved(moved)]);
+                }
+                render(
+                    app,
+                    vec![Event::PointerButton {
+                        pos: moved,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    }],
+                );
+            };
+            for _ in 0..3 {
+                render(&mut app, vec![]);
+            }
+            let output = render(&mut app, vec![]);
+            let author = header_x(&output, "Author");
+            let date = header_x(&output, "Date");
+            let hash = header_x(&output, "Hash");
+            let author_separator = separator(&output, date);
+
+            // Dragging the Author/Date divider moves the boundary right:
+            // Author keeps its label position, Date moves right, Hash stays.
+            drag(&mut app, author_separator, 24.0);
+            let output = render(&mut app, vec![]);
+            assert!((header_x(&output, "Author") - author).abs() < 1.0);
+            assert!(header_x(&output, "Date") > date + 12.0);
+            assert!((header_x(&output, "Hash") - hash).abs() < 1.0);
+
+            // Dragging the Date/Hash divider moves Hash right and keeps Date.
+            let output = render(&mut app, vec![]);
+            let date_before = header_x(&output, "Date");
+            let hash_before = header_x(&output, "Hash");
+            let date_separator = separator(&output, hash_before);
+            drag(&mut app, date_separator, 24.0);
+            let output = render(&mut app, vec![]);
+            assert!((header_x(&output, "Date") - date_before).abs() < 1.0);
+            assert!(header_x(&output, "Hash") > hash_before + 12.0);
+
+            // Dragging the Message/Author divider resizes Author against the
+            // flexible Message column.
+            let output = render(&mut app, vec![]);
+            let author_before = header_x(&output, "Author");
+            let date_before = header_x(&output, "Date");
+            let message_separator = separator(&output, author_before);
+            drag(&mut app, message_separator, 20.0);
+            let output = render(&mut app, vec![]);
+            assert!(header_x(&output, "Author") > author_before + 8.0);
+            assert!((header_x(&output, "Date") - date_before).abs() < 1.0);
+
+            // Widths persist across renders and commit changes.
+            let expected = (
+                header_x(&output, "Author"),
+                header_x(&output, "Date"),
+                header_x(&output, "Hash"),
+            );
+            app.history.selected_commit = Some(app.history.commits[1].hash.clone());
+            for _ in 0..3 {
+                let output = render(&mut app, vec![]);
+                assert_eq!(
+                    (
+                        header_x(&output, "Author"),
+                        header_x(&output, "Date"),
+                        header_x(&output, "Hash"),
+                    ),
+                    expected
+                );
+            }
         }
     }
 }

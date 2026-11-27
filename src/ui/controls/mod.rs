@@ -8,11 +8,76 @@ pub(super) mod tooltips;
 
 use eframe::egui::{Align, Layout, Response, Sense, Ui, UiBuilder, Vec2};
 
-/// Column resize handles use the same neutral contrast as panel splitters.
-pub fn table_resize_style(ui: &mut Ui, palette: crate::theme::Palette) {
+/// Shared left inset for table header labels and the cells below them.
+pub const TABLE_CELL_PADDING: f32 = 6.0;
+
+/// Hide the table's own column separators. Dividers are drawn only in the
+/// header row with [`table_header_separator`], and hovering a resize handle
+/// must not paint a full-height line through the rows.
+pub fn table_resize_style(ui: &mut Ui) {
     let visuals = &mut ui.style_mut().visuals;
-    visuals.widgets.hovered.bg_stroke.color = palette.text;
-    visuals.widgets.active.bg_stroke.color = palette.text;
+    visuals.widgets.noninteractive.bg_stroke = eframe::egui::Stroke::NONE;
+    visuals.widgets.hovered.bg_stroke = eframe::egui::Stroke::NONE;
+    visuals.widgets.active.bg_stroke = eframe::egui::Stroke::NONE;
+}
+
+/// Draw the column divider at the right edge of a header cell. Resizing is
+/// indicated by the cursor only, so the divider does not change on hover.
+pub fn table_header_separator(ui: &mut Ui, palette: crate::theme::Palette) {
+    let rect = ui.max_rect();
+    let x = rect.right() + ui.spacing().item_spacing.x * 0.5;
+    table_header_divider(ui, x, rect, palette);
+}
+
+/// Shared vertical divider between table header cells. Callers place it at the
+/// column boundary; the line is always the neutral border color and keeps a
+/// small inset from the header row edges.
+pub fn table_header_divider(
+    ui: &Ui,
+    x: f32,
+    rect: eframe::egui::Rect,
+    palette: crate::theme::Palette,
+) {
+    ui.painter().line_segment(
+        [
+            eframe::egui::pos2(x, rect.top() + 3.0),
+            eframe::egui::pos2(x, rect.bottom() - 3.0),
+        ],
+        (1.0, palette.border),
+    );
+}
+
+/// Draggable header divider at an explicit `x`. Draws the shared divider and
+/// returns the horizontal drag delta while the user drags it. Resizing is
+/// indicated by the cursor only; the line itself never highlights.
+pub fn table_header_splitter(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    x: f32,
+    rect: eframe::egui::Rect,
+    palette: crate::theme::Palette,
+) -> Option<f32> {
+    let hit = eframe::egui::Rect::from_min_max(
+        eframe::egui::pos2(x - 5.0, rect.top()),
+        eframe::egui::pos2(x + 5.0, rect.bottom()),
+    );
+    let response = ui
+        .interact(hit, ui.make_persistent_id(id), Sense::drag())
+        .on_hover_cursor(eframe::egui::CursorIcon::ResizeColumn);
+    table_header_divider(ui, x, rect, palette);
+    response.dragged().then(|| response.drag_delta().x)
+}
+
+/// Draggable divider at the right edge of a table header cell.
+pub fn table_header_cell_splitter(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    palette: crate::theme::Palette,
+) -> Option<f32> {
+    let rect = ui.max_rect();
+    // Stay inside the cell so the interaction survives the cell's clip rect.
+    let x = rect.right() - 0.5;
+    table_header_splitter(ui, id, x, rect, palette)
 }
 
 /// Single-line fields share the same height, padding, and vertical text alignment.
