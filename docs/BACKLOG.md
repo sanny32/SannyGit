@@ -64,30 +64,6 @@ building on `src/tracking.rs` (`read`, `git rev-list --left-right --count`),
 
 **Status:** Not started
 
-## UI — Toolbar
-
-### Russian (and long) action labels overflow fixed button width
-
-**Problem:** The main toolbar paints each action caption centered under a fixed
-**58 px** slot (`action_width` in `src/ui/toolbar.rs`). English short labels fit;
-in **Russian** the translated strings are much wider (**Получить и объединить**,
-**Синхронизировать**, **Отменить изменения**, **Отложить изменения**,
-**Перебазирование**, …) and overlap neighbors, so the bar looks broken
-(screenshot from 2026-11-27, dark theme, ru locale).
-
-**Goal:** Keep toolbar labels readable in all supported locales without collision:
-per-button width from measured text (with min/max), two-line wrap inside the slot,
-smaller caption size when needed, shorter ru strings where appropriate, or
-icons-only with full text in tooltips — pick one approach and apply consistently.
-English layout should stay compact; accessibility (tooltips / widget info) must
-retain the full phrase.
-
-**Likely touch points:** `src/ui/toolbar.rs` (`show`, `toolbar_button`,
-`action_width`, `painter().text`), `locales/ru.yml` (toolbar keys), optional
-layout tests with `Language::Russian` activated.
-
-**Status:** Not started
-
 ## UI — Settings navigation
 
 ### Unify all settings pages to one design system

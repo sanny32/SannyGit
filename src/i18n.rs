@@ -25,6 +25,11 @@ fn translate(locale: &str, key: &str) -> String {
         .unwrap_or_else(|| key.to_owned())
 }
 
+#[cfg(test)]
+pub(crate) fn translate_for_test(locale: &str, key: &str) -> String {
+    translate(locale, key)
+}
+
 /// Translate using the English source text as the lookup key.
 pub fn tr_msg(message: &str) -> String {
     tr_key(message)

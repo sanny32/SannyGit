@@ -772,6 +772,11 @@ remote:
   push: Отправить…
   push_tag: Отправить выбранный тег…
 remote repository: 'удалённый репозиторий'
+'remote %{name} repository': 'удалённый репозиторий %{name}'
+'Push local commits to the %{repository}, then pull possible remote changes (fast-forward only).': 'Отправить локальные коммиты и получить удалённые изменения (%{repository}, только fast-forward).'
+'Fetch branches and tags from the %{repository}.': 'Получить ветки и теги (%{repository}).'
+'Pull remote commits from the %{repository} into the current branch.': 'Получить коммиты в текущую ветку (%{repository}).'
+'Push local commits to the %{repository}.': 'Отправить локальные коммиты (%{repository}).'
 repository:
   add_group: Добавить группу…
   add_or_create: Добавить или создать…
@@ -803,6 +808,18 @@ tools:
   dark_theme: Тёмная тема
   light_theme: Светлая тема
   preferences: Настройки…
+toolbar:
+  pull: Получ.
+  sync: Синхр.
+  push: Отпр.
+  stage: В индекс
+  unstage: Убрать
+  discard: Сброс
+  stash: Стэш
+  log: История
+  merge: Слияние
+  rebase: Ребейз
+  settings: Настр.
 view:
   refresh: Обновить
 window:

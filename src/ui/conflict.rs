@@ -355,7 +355,7 @@ fn tool(
 ) -> egui::Response {
     super::toolbar::toolbar_button(
         ui,
-        (label, style.font_size),
+        (label, style.font_size, None),
         enabled,
         style.palette,
         style.width,

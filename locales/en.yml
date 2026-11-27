@@ -772,6 +772,11 @@ remote:
   push: Push…
   push_tag: Push Selected Tag…
 remote repository: remote repository
+'remote %{name} repository': 'remote %{name} repository'
+'Push local commits to the %{repository}, then pull possible remote changes (fast-forward only).': 'Push local commits to the %{repository}, then pull possible remote changes (fast-forward only).'
+'Fetch branches and tags from the %{repository}.': 'Fetch branches and tags from the %{repository}.'
+'Pull remote commits from the %{repository} into the current branch.': 'Pull remote commits from the %{repository} into the current branch.'
+'Push local commits to the %{repository}.': 'Push local commits to the %{repository}.'
 repository:
   add_group: Add Group…
   add_or_create: Add or Create…
@@ -803,6 +808,18 @@ tools:
   dark_theme: Dark Theme
   light_theme: Light Theme
   preferences: Preferences…
+toolbar:
+  pull: Pull
+  sync: Sync
+  push: Push
+  stage: Stage
+  unstage: Unstage
+  discard: Discard
+  stash: Stash
+  log: Log
+  merge: Merge
+  rebase: Rebase
+  settings: Settings
 view:
   refresh: Refresh
 window:

@@ -6,9 +6,7 @@ use crate::{
     app::SannyGitApp,
     theme::{semibold_family, ui_font_size, Palette, TOOLBAR_BRAND_FONT_SIZE},
 };
-use eframe::egui::{
-    Align, Align2, Button, FontId, Frame, Layout, Margin, Panel, Rect, Response, Ui, Vec2,
-};
+use eframe::egui::{Align, Button, FontId, Frame, Layout, Margin, Panel, Rect, Response, Ui, Vec2};
 
 const TOOLBAR_BUTTON_HEIGHT: f32 = 48.0;
 const TOOLBAR_BUTTON_PADDING_Y: f32 = 4.0;
@@ -26,7 +24,7 @@ fn action_button(
 ) -> Response {
     toolbar_button(
         ui,
-        (label, ui_font_size()),
+        (label, ui_font_size(), Some(toolbar_caption(label))),
         enabled,
         palette,
         width,
@@ -37,16 +35,37 @@ fn action_button(
     )
 }
 
+fn toolbar_caption(label: &str) -> String {
+    toolbar_caption_key(label).map_or_else(|| crate::i18n::tr_msg(label), crate::i18n::tr_key)
+}
+
+fn toolbar_caption_key(label: &str) -> Option<&'static str> {
+    Some(match label {
+        "Pull" => "toolbar.pull",
+        "Sync" => "toolbar.sync",
+        "Push" => "toolbar.push",
+        "Stage" => "toolbar.stage",
+        "Unstage" => "toolbar.unstage",
+        "Discard" => "toolbar.discard",
+        "Save Stash" => "toolbar.stash",
+        "Log" => "toolbar.log",
+        "Merge" => "toolbar.merge",
+        "Rebase" => "toolbar.rebase",
+        "Settings" => "toolbar.settings",
+        _ => return None,
+    })
+}
+
 pub(super) fn toolbar_button(
     ui: &mut Ui,
-    caption: (&str, f32),
+    caption: (&str, f32, Option<String>),
     enabled: bool,
     palette: Palette,
     width: f32,
     selected: bool,
     paint_icon: impl FnOnce(&Ui, Rect, eframe::egui::Color32),
 ) -> Response {
-    let (label, font_size) = caption;
+    let (label, font_size, caption) = caption;
     let label = crate::i18n::tr_msg(label);
     let response = ui.add_enabled(
         enabled,
@@ -117,13 +136,20 @@ pub(super) fn toolbar_button(
         ),
         color,
     );
-    ui.painter().text(
-        response.rect.center_top() + Vec2::new(0.0, TOOLBAR_BUTTON_PADDING_Y + 24.0) + press_offset,
-        Align2::CENTER_TOP,
-        &label,
+    let color = if enabled { palette.text } else { palette.muted };
+    let mut job = eframe::egui::text::LayoutJob::simple_singleline(
+        caption.unwrap_or_else(|| label.clone()),
         FontId::proportional(font_size),
-        if enabled { palette.text } else { palette.muted },
+        color,
     );
+    job.wrap.max_width = (response.rect.width() - 4.0).max(0.0);
+    job.wrap.max_rows = 1;
+    job.wrap.overflow_character = Some('…');
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    let pos = response.rect.center_top()
+        + Vec2::new(-galley.size().x / 2.0, TOOLBAR_BUTTON_PADDING_Y + 24.0)
+        + press_offset;
+    ui.painter().galley(pos, galley, color);
     response
 }
 
@@ -438,19 +464,130 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
 fn remote_help(operation: crate::remotes::Operation, remote: Option<&str>) -> String {
     let repository = remote.map_or_else(
         || crate::i18n::tr_msg("remote repository"),
-        |name| crate::i18n::tr_args("remote {name} repository", &[("name", name)]),
+        |name| crate::i18n::tr_args("remote %{name} repository", &[("name", name)]),
     );
     let key = match operation {
         crate::remotes::Operation::Sync => {
-            "Push local commits to the {repository}, then pull possible remote changes (fast-forward only)."
+            "Push local commits to the %{repository}, then pull possible remote changes (fast-forward only)."
         }
-        crate::remotes::Operation::Fetch => "Fetch branches and tags from the {repository}.",
+        crate::remotes::Operation::Fetch => "Fetch branches and tags from the %{repository}.",
         crate::remotes::Operation::Pull => {
-            "Pull remote commits from the {repository} into the current branch."
+            "Pull remote commits from the %{repository} into the current branch."
         }
-        crate::remotes::Operation::Push => "Push local commits to the {repository}.",
+        crate::remotes::Operation::Push => "Push local commits to the %{repository}.",
     };
     crate::i18n::tr_args(key, &[("repository", &repository)])
+}
+
+#[cfg(test)]
+mod caption_tests {
+    use super::*;
+    use crate::theme::ThemeChoice;
+    use eframe::egui::{self, Context, Pos2, RawInput};
+
+    #[test]
+    fn remote_tooltip_includes_the_selected_remote() {
+        for locale in ["en", "ru"] {
+            for operation in [
+                crate::remotes::Operation::Pull,
+                crate::remotes::Operation::Push,
+                crate::remotes::Operation::Fetch,
+                crate::remotes::Operation::Sync,
+            ] {
+                let text = remote_help(operation, Some("origin"));
+                assert!(text.contains("origin") && !text.contains('{'), "{text}");
+                let key = match operation {
+                    crate::remotes::Operation::Pull => "Pull remote commits from the %{repository} into the current branch.",
+                    crate::remotes::Operation::Push => "Push local commits to the %{repository}.",
+                    crate::remotes::Operation::Fetch => "Fetch branches and tags from the %{repository}.",
+                    crate::remotes::Operation::Sync => "Push local commits to the %{repository}, then pull possible remote changes (fast-forward only).",
+                };
+                assert!(crate::i18n::translate_for_test(locale, key).contains("%{repository}"));
+            }
+        }
+    }
+
+    #[test]
+    fn toolbar_captions_fit_their_buttons_in_both_languages() {
+        for locale in ["en", "ru"] {
+            for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut rects = Vec::new();
+                let mut output = ctx.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            Pos2::ZERO,
+                            Vec2::new(1100.0, 700.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.horizontal(|ui| {
+                            for label in [
+                                "Pull",
+                                "Sync",
+                                "Push",
+                                "Stage",
+                                "Unstage",
+                                "Discard",
+                                "Save Stash",
+                                "Log",
+                                "Merge",
+                                "Rebase",
+                                "Settings",
+                            ] {
+                                rects.push(
+                                    toolbar_button(
+                                        ui,
+                                        (
+                                            label,
+                                            ui_font_size(),
+                                            Some(crate::i18n::translate_for_test(
+                                                locale,
+                                                toolbar_caption_key(label).unwrap(),
+                                            )),
+                                        ),
+                                        true,
+                                        theme.palette(),
+                                        58.0,
+                                        false,
+                                        |_, _, _| {},
+                                    )
+                                    .rect,
+                                );
+                            }
+                        });
+                    },
+                );
+                output.textures_delta.clear();
+                let labels: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if !text.galley.job.text.is_empty() => Some(text),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(labels.len(), rects.len());
+                for (text, button) in labels.iter().zip(&rects) {
+                    let bounds = text.galley.rect.translate(text.pos.to_vec2());
+                    assert!(
+                        button.expand(0.5).contains_rect(bounds),
+                        "{locale}: caption {:?} overflows {button:?}: {bounds:?}",
+                        text.galley.job.text
+                    );
+                    assert!(
+                        !text.galley.elided,
+                        "{locale}: caption {:?} is truncated",
+                        text.galley.job.text
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[cfg(all(test, not(target_os = "macos")))]

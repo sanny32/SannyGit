@@ -1408,14 +1408,8 @@ fn panel_reads_keep_repository_actions_available_and_reject_superseded_results()
                             egui::Shape::Text(text)
                                 if toolbar_rect.contains(text.pos)
                                     && [
-                                        "Pull",
-                                        "Sync",
-                                        "Push",
-                                        "Stage",
-                                        "Unstage",
-                                        "Discard",
-                                        "Save Stash",
-                                        "Settings",
+                                        "Pull", "Sync", "Push", "Stage", "Unstage", "Discard",
+                                        "Stash", "Settings",
                                     ]
                                     .contains(&text.galley.job.text.as_str()) =>
                             {
