@@ -117,6 +117,52 @@ unchanged.
 
 **Status:** Not started
 
+## UI — Settings navigation
+
+### Icons on top-level settings tree nodes
+
+**Problem:** The Settings window left nav is a collapsible tree (`section` /
+`leaf` / `entry` in `src/ui/settings.rs`). Top-level rows — **User Interface**,
+**Keyboard Shortcuts**, **Git**, and **AI** — show only a disclosure chevron (or
+indent) and text. Child pages (Appearance, Remote, …) stay text-only; the top
+nodes have no category icons unlike SmartGit-style settings.
+
+**Goal:** Add a consistent SVG icon beside each top-level nav label (before or
+after the chevron, aligned with existing row height and `nav_title_offset`).
+Reuse or extend `src/ui/controls/icons.rs`; pick icons that read clearly at ~14–16
+px in light and dark themes. Nested entries need not get icons unless needed for
+alignment.
+
+**Likely touch points:** `src/ui/settings.rs` (`section`, `leaf`, navigation
+`ScrollArea` in `show`), `assets/icons/`, layout tests in
+`src/ui/settings/tests.rs` (nav column alignment).
+
+**Status:** Not started
+
+### Unify all settings pages to one design system
+
+**Problem:** The Settings window mixes several page layouts (`page`, `heading`,
+`section`/`entry`, keyboard-shortcuts table, repository **AI** override pages,
+LLM forms). Spacing, headings, muted helper text, control widths, scroll
+regions, and background fills differ between **General**, **Appearance**,
+**Git**, **Remote**, **AI**, **Commit messages**, **Context**, and **Keyboard
+Shortcuts**. Some pages already have visual/layout tests; others do not.
+
+**Goal:** Audit every `SettingsPage` panel in the Settings dialog (application
+defaults and per-repository AI when open). Bring them to a single design
+system: consistent page title, section grouping, label/control pairs, primary
+actions, palette usage, and stable dialog height per [`.agents/docs/ui.md`](../.agents/docs/ui.md)
+and the project **egui-ui-design** skill (layout, typography, both themes,
+minimum window). Settings keeps its own shell (not `dialog_style` headers), but
+inner pages should share one pattern. Document the chosen pattern in code
+comments or a short note in `.agents/docs/ui.md` if needed.
+
+**Likely touch points:** `src/ui/settings.rs` (all `SettingsPage::*` arms,
+`repository_ai_page`, shared helpers), `src/ui/settings/tests.rs`, `src/theme.rs`,
+`src/app.rs` (`SettingsPage`, `SettingsWindow`).
+
+**Status:** Not started
+
 ## UI — Repositories panel
 
 ### Provider icons share the same visual size
