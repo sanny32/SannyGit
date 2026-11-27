@@ -906,14 +906,24 @@ pub fn delete_branch(
         ],
     )
     .map(|_| ())
-    .map_err(|error| {
+    .or_else(|error| {
+        if also_remote
+            && git::run(
+                git,
+                root,
+                &["for-each-ref", "--format=%(refname)", &expected.full_name],
+            )
+            .is_ok_and(|output| output.is_empty())
+        {
+            return Ok(());
+        }
         if also_remote {
-            format!(
+            Err(format!(
                 "The branch was deleted from '{}', but local deletion did not complete.\n{error}",
                 expected.owner
-            )
+            ))
         } else {
-            error
+            Err(error)
         }
     })
 }
