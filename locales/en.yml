@@ -8,6 +8,9 @@
 ' (gone)': ' (gone)'
 ' ?': ' ?'
 '%{count} changes': '%{count} changes'
+'%{count} files selected': '%{count} files selected'
+'%{count} staged': '%{count} staged'
+'(%{count} files)': '(%{count} files)'
 '* if repository commit references non-pushed submodule commit': '* if repository commit references non-pushed submodule commit'
 ? '*.lock
 

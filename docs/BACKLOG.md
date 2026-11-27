@@ -64,22 +64,27 @@ building on `src/tracking.rs` (`read`, `git rev-list --left-right --count`),
 
 **Status:** Not started
 
-## UI — Changes (files list)
+## UI — Toolbar
 
-### Files header shows literal `{count}` instead of file count
+### Russian (and long) action labels overflow fixed button width
 
-**Problem:** The Changes panel title line reads **Files ({count} files)** with the
-placeholder text visible instead of the number of listed files (screenshot from
-2026-11-27).
+**Problem:** The main toolbar paints each action caption centered under a fixed
+**58 px** slot (`action_width` in `src/ui/toolbar.rs`). English short labels fit;
+in **Russian** the translated strings are much wider (**Получить и объединить**,
+**Синхронизировать**, **Отменить изменения**, **Отложить изменения**,
+**Перебазирование**, …) and overlap neighbors, so the bar looks broken
+(screenshot from 2026-11-27, dark theme, ru locale).
 
-**Goal:** Show the real count, e.g. **Files (3 files)** (or localized equivalent).
-Use the same `%{count}` interpolation style as other UI strings (`tr_args` replaces
-`%{name}` only). Audit similar keys so counts are not left as `{count}` in the
-source or locale files.
+**Goal:** Keep toolbar labels readable in all supported locales without collision:
+per-button width from measured text (with min/max), two-line wrap inside the slot,
+smaller caption size when needed, shorter ru strings where appropriate, or
+icons-only with full text in tooltips — pick one approach and apply consistently.
+English layout should stay compact; accessibility (tooltips / widget info) must
+retain the full phrase.
 
-**Likely touch points:** `src/ui/changes.rs` (`changes_title` — key
-`({count} files)`), `src/i18n.rs` (`tr_args`), locale YAML if the string is
-overridden there; same pattern in `src/ui/ignore.rs` (`{count} files selected`).
+**Likely touch points:** `src/ui/toolbar.rs` (`show`, `toolbar_button`,
+`action_width`, `painter().text`), `locales/ru.yml` (toolbar keys), optional
+layout tests with `Language::Russian` activated.
 
 **Status:** Not started
 

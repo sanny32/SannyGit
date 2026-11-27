@@ -49,7 +49,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         let staged = app.changes.iter().filter(|c| c.staged).count();
         ui.label(
             RichText::new(crate::i18n::tr_args(
-                "{count} staged",
+                "%{count} staged",
                 &[("count", &staged.to_string())],
             ))
             .small()

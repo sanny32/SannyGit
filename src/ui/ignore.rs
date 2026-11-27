@@ -26,7 +26,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     dialog.paths[0].clone()
                 } else {
                     crate::i18n::tr_args(
-                        "{count} files selected",
+                        "%{count} files selected",
                         &[("count", &dialog.paths.len().to_string())],
                     )
                 };

@@ -75,6 +75,25 @@ mod tests {
     }
 
     #[test]
+    fn file_counts_are_interpolated_in_each_language() {
+        for (locale, expected) in [
+            ("en", ["(3 files)", "3 files selected", "3 staged"]),
+            ("ru", ["(файлов: 3)", "Выбрано файлов: 3", "В индексе: 3"]),
+        ] {
+            for (key, value) in [
+                "(%{count} files)",
+                "%{count} files selected",
+                "%{count} staged",
+            ]
+            .into_iter()
+            .zip(expected)
+            {
+                assert_eq!(localized(locale, key).replace("%{count}", "3"), value);
+            }
+        }
+    }
+
+    #[test]
     fn locale_files_contain_english_and_russian_text() {
         assert_eq!(localized("en", "Branches"), "Branches");
         assert_eq!(localized("ru", "Branches"), "Ветки");

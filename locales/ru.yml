@@ -8,6 +8,9 @@
 ' (gone)': ' (удалена)'
 ' ?': ' ?'
 '%{count} changes': '%{count} изменений'
+'%{count} files selected': 'Выбрано файлов: %{count}'
+'%{count} staged': 'В индексе: %{count}'
+'(%{count} files)': '(файлов: %{count})'
 '* if repository commit references non-pushed submodule commit': '* если коммит репозитория ссылается на неотправленный коммит подмодуля'
 ? '*.lock
 

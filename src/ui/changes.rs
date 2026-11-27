@@ -813,7 +813,7 @@ fn changes_title(ui: &mut Ui, count: usize) {
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.label(RichText::new(crate::i18n::tr_msg("Files")).family(semibold_family()));
         ui.label(crate::i18n::tr_args(
-            "({count} files)",
+            "(%{count} files)",
             &[("count", &count.to_string())],
         ));
     });
@@ -1199,6 +1199,25 @@ mod tests {
     use super::*;
     use crate::theme::{install_fonts, ThemeChoice};
     use eframe::egui::{Context, Pos2, RawInput};
+
+    #[test]
+    fn files_header_displays_the_actual_count() {
+        crate::i18n::activate_english();
+        for count in [0, 1, 3] {
+            let ctx = Context::default();
+            install_fonts(&ctx);
+            let mut output = ctx.run_ui(RawInput::default(), |ui| changes_title(ui, count));
+            output.textures_delta.clear();
+            let expected = format!("({count} files)");
+            assert!(
+                output.shapes.iter().any(|shape| matches!(
+                    &shape.shape,
+                    eframe::egui::Shape::Text(text) if text.galley.job.text == expected
+                )),
+                "Missing file count {expected}"
+            );
+        }
+    }
 
     #[test]
     fn index_refresh_keeps_visible_row_positions() {
