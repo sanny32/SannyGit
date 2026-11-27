@@ -732,13 +732,18 @@ fn settings_navigation_indents_children_and_aligns_chevronless_rows() {
         egui_extras::install_image_loaders(&context);
         theme.apply(&context);
         let mut app = SannyGitApp::with_theme(theme);
-        let mut output = context.run_ui(
-            RawInput {
-                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(740.0, 420.0))),
-                ..Default::default()
-            },
-            |ui| window_contents(ui, &mut app),
-        );
+        let render = |app: &mut SannyGitApp| {
+            context.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(740.0, 420.0))),
+                    ..Default::default()
+                },
+                |ui| window_contents(ui, app),
+            )
+        };
+        let mut output = render(&mut app);
+        output.textures_delta.clear();
+        output = render(&mut app);
         output.textures_delta.clear();
         let left = |label: &str| {
             output
@@ -755,6 +760,35 @@ fn settings_navigation_indents_children_and_aligns_chevronless_rows() {
         let section = left("User Interface");
         let leaf = left("Keyboard Shortcuts");
         let child = left("Appearance");
+        for label in ["User Interface", "Keyboard Shortcuts", "Git", "AI"] {
+            let text = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        assert!(
+                            !text.galley.elided,
+                            "{theme:?}: category label {label} is clipped"
+                        );
+                        Some(text.galley.rect.translate(text.pos.to_vec2()))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing {label}"));
+            assert!(
+                output.shapes.iter().any(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect) if rect.brush.is_some() => {
+                        let icon = rect.rect;
+                        (icon.width() - NAV_ICON_SIZE).abs() < 0.5
+                            && (icon.height() - NAV_ICON_SIZE).abs() < 0.5
+                            && (text.left() - icon.right() - NAV_ICON_GAP).abs() < 0.5
+                            && (icon.center().y - text.center().y).abs() < 3.0
+                    }
+                    _ => false,
+                }),
+                "{theme:?}: missing aligned category icon for {label}"
+            );
+        }
         assert!(
             (leaf - section).abs() <= 0.5,
             "{theme:?}: chevronless row starts at {leaf}, expandable title at {section}"

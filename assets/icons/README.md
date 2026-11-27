@@ -29,3 +29,6 @@ Stroke color is white for theme tinting; stroke width is adjusted to 1.65 to mat
 - file-type-xml.svg: file-type-xml
 - markdown.svg: markdown
 - repository.svg: brand-git
+
+The navigation icons `device-desktop.svg`, `command.svg`, and
+`sparkles-outline.svg` are also from Tabler Icons (MIT), with stroke width 1.65.

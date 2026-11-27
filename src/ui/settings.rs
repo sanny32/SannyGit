@@ -513,6 +513,19 @@ fn nav_title_offset(ui: &Ui) -> f32 {
     ui.spacing().indent + ui.spacing().item_spacing.x
 }
 
+const NAV_ICON_SIZE: f32 = 14.0;
+const NAV_ICON_GAP: f32 = 4.0;
+
+fn nav_icon(page: SettingsPage) -> Icon {
+    match page {
+        SettingsPage::General => Icon::DeviceDesktop,
+        SettingsPage::KeyboardShortcuts => Icon::Command,
+        SettingsPage::Git => Icon::Repository,
+        SettingsPage::Llm => Icon::SparklesOutline,
+        _ => unreachable!("Only top-level settings pages have navigation icons"),
+    }
+}
+
 fn section(
     ui: &mut Ui,
     app: &mut SannyGitApp,
@@ -523,8 +536,11 @@ fn section(
     let id = ui.make_persistent_id(("preferences.section", title));
     let mut state =
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
+    let color = app.palette().text;
     let response = selectable_row(ui, app.settings_window.page == page, 23.0, |ui| {
         state.show_toggle_button(ui, icons::collapsing_icon);
+        ui.spacing_mut().item_spacing.x = NAV_ICON_GAP;
+        icons::paint(ui, nav_icon(page), color, NAV_ICON_SIZE);
         ui.label(crate::i18n::tr_msg(title));
     });
     if response.clicked() {
@@ -537,8 +553,11 @@ fn leaf(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
     let label = crate::i18n::tr_msg(label);
     let selected = app.settings_window.page == page;
     let offset = nav_title_offset(ui);
+    let color = app.palette().text;
     let response = selectable_row(ui, selected, 23.0, |ui| {
         ui.add_space(offset);
+        ui.spacing_mut().item_spacing.x = NAV_ICON_GAP;
+        icons::paint(ui, nav_icon(page), color, NAV_ICON_SIZE);
         ui.label(&label);
     });
     response.widget_info(|| {
@@ -552,7 +571,7 @@ fn leaf(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
 fn entry(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
     let label = crate::i18n::tr_msg(label);
     let selected = app.settings_window.page == page;
-    let offset = nav_title_offset(ui) + tree_step(ui);
+    let offset = nav_title_offset(ui) + NAV_ICON_SIZE + NAV_ICON_GAP + tree_step(ui);
     let response = selectable_row(ui, selected, 23.0, |ui| {
         ui.add_space(offset);
         ui.label(&label);

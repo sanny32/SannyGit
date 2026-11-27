@@ -90,26 +90,6 @@ layout tests with `Language::Russian` activated.
 
 ## UI — Settings navigation
 
-### Icons on top-level settings tree nodes
-
-**Problem:** The Settings window left nav is a collapsible tree (`section` /
-`leaf` / `entry` in `src/ui/settings.rs`). Top-level rows — **User Interface**,
-**Keyboard Shortcuts**, **Git**, and **AI** — show only a disclosure chevron (or
-indent) and text. Child pages (Appearance, Remote, …) stay text-only; the top
-nodes have no category icons unlike SmartGit-style settings.
-
-**Goal:** Add a consistent SVG icon beside each top-level nav label (before or
-after the chevron, aligned with existing row height and `nav_title_offset`).
-Reuse or extend `src/ui/controls/icons.rs`; pick icons that read clearly at ~14–16
-px in light and dark themes. Nested entries need not get icons unless needed for
-alignment.
-
-**Likely touch points:** `src/ui/settings.rs` (`section`, `leaf`, navigation
-`ScrollArea` in `show`), `assets/icons/`, layout tests in
-`src/ui/settings/tests.rs` (nav column alignment).
-
-**Status:** Not started
-
 ### Unify all settings pages to one design system
 
 **Problem:** The Settings window mixes several page layouts (`page`, `heading`,
