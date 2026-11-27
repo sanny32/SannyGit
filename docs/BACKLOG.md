@@ -105,23 +105,6 @@ painter, the `quazardous/egui` fork or a local wrapper around shortcut display.
 
 **Status:** Not started
 
-### About dialog body uses text-edit black in dark theme
-
-**Problem:** In the **About SannyGit** window, the main content background reads as
-the light “card” surface (white in light theme). In dark theme it stays on
-`palette.panel` / header grays, so it looks lighter than single-line **TextEdit**
-fields elsewhere (screenshot from 2026-11-26).
-
-**Goal:** In dark theme, paint that body background with the same fill as text
-inputs (`text_edit_bg_color` or the palette token used by edits). Keep light
-theme as today (white/light panel). Footer bar, links, and branding layout stay
-unchanged.
-
-**Likely touch points:** `src/ui/about.rs` (`CentralPanel` / `contents` frames,
-`body` columns), `src/theme.rs` if a shared token is preferable.
-
-**Status:** Not started
-
 ## UI — Settings navigation
 
 ### Icons on top-level settings tree nodes

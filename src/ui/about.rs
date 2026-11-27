@@ -107,6 +107,7 @@ fn contents(ui: &mut Ui, palette: Palette) -> bool {
     dialog_style::setup(ui);
     ui.spacing_mut().item_spacing.y = 0.0;
     Frame::new()
+        .fill(palette.editor)
         .inner_margin(Margin::symmetric(24, 16))
         .show(ui, |ui| body(ui, palette));
     ui.add(egui::Separator::default().spacing(1.0));
@@ -295,6 +296,16 @@ mod tests {
                         }
                     }
                     output.textures_delta.clear();
+                    let editor = style.palette(theme).editor;
+                    assert!(
+                        output.shapes.iter().any(|shape| matches!(
+                            &shape.shape,
+                            egui::Shape::Rect(rect)
+                                if rect.fill == editor && rect.rect.width() >= SIZE.x - 1.0
+                                    && rect.rect.height() >= BODY_HEIGHT
+                        )),
+                        "About body should use the text field background ({theme:?}, {style:?})"
+                    );
                     assert!(wrapped.is_empty(), "Wrapped About detail(s): {wrapped:?}");
                     assert_eq!(details, 5);
                     let copyright = copyright.expect("About copyright");
