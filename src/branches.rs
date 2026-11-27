@@ -527,6 +527,9 @@ pub struct DeletePreview {
     pub name: String,
     pub oid: String,
     pub head: String,
+    /// False when the tip is not contained in the current HEAD. Deletion then
+    /// uses `branch -D` and still requires the reviewed preview.
+    pub merged: bool,
 }
 
 pub fn preview_delete(
@@ -560,13 +563,13 @@ pub fn preview_delete(
     )?)?
     .trim()
     .to_owned();
-    git::run(git, root, &["merge-base", "--is-ancestor", &target.hash, &head])
-        .map_err(|_| "The branch is not fully merged into the current HEAD, or its ancestry could not be verified. Force deletion is not available.".to_owned())?;
+    let merged = git::is_ancestor(git, root, &target.hash, &head)?;
     Ok(DeletePreview {
         full_name: target.full_name.clone(),
         name: target.name.clone(),
         oid: target.hash.clone(),
         head,
+        merged,
     })
 }
 
@@ -576,8 +579,9 @@ pub fn delete(git: &GitContext, root: &Path, expected: &DeletePreview) -> Result
             "The branch or HEAD changed after review. Reload details and confirm again.".into(),
         );
     }
-    git::run(git, root, &["branch", "-d", "--", &expected.name])
-        .map_err(|error| format!("Branch deletion did not complete: {error} Only merged branches can be deleted; no force option is used."))?;
+    let flag = if expected.merged { "-d" } else { "-D" };
+    git::run(git, root, &["branch", flag, "--", &expected.name])
+        .map_err(|error| format!("Branch deletion did not complete: {error}"))?;
     Ok(())
 }
 

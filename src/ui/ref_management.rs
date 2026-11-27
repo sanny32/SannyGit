@@ -22,7 +22,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             show_branch_action(ctx, app, dialog);
             return;
         }
-        Kind::Delete { .. } => ("ref.delete", "Delete Local Branch", "Delete a local branch only after it is fully merged into the current HEAD. No force deletion; current and worktree branches are protected.", Icon::Branch, 580.0),
+        Kind::Delete { .. } => ("ref.delete", "Delete Local Branch", "Delete a local branch. An unmerged branch is removed only after confirmation. The current branch and branches checked out in a worktree are protected.", Icon::Branch, 580.0),
         Kind::DeleteTag { .. } => {
             show_tag_delete(ctx, app, dialog);
             return;
@@ -72,7 +72,15 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             }
             match &mut dialog.kind {
                 Kind::Delete { source, prepared } => {
-                    line(ui, source.clone(), palette.text);
+                    line(ui, format!("Branch: {source}"), palette.text);
+                    let loading = prepared.is_none()
+                        && dialog.error.is_none()
+                        && dialog.status == crate::app::ref_management::LOADING_STATUS;
+                    let unavailable = if loading {
+                        "Checking…"
+                    } else {
+                        "Not available"
+                    };
                     line(
                         ui,
                         format!(
@@ -80,7 +88,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                             prepared
                                 .as_ref()
                                 .map(|value| value.oid.as_str())
-                                .unwrap_or("Checking…")
+                                .unwrap_or(unavailable)
                         ),
                         palette.muted,
                     );
@@ -91,17 +99,22 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                             prepared
                                 .as_ref()
                                 .map(|value| value.head.as_str())
-                                .unwrap_or("Checking…")
+                                .unwrap_or(unavailable)
                         ),
                         palette.muted,
                     );
-                    ui.add_enabled(
+                    let confirm_label = if prepared.as_ref().is_some_and(|value| !value.merged) {
+                        "Confirm deleting this unmerged local branch"
+                    } else {
+                        "Confirm deleting this merged local branch"
+                    };
+                    let confirm = ui.add_enabled(
                         !busy && prepared.is_some(),
-                        egui::Checkbox::new(
-                            &mut dialog.confirmed,
-                            "Confirm deleting this merged local branch",
-                        ),
+                        egui::Checkbox::new(&mut dialog.confirmed, confirm_label),
                     );
+                    if prepared.is_none() && !loading {
+                        confirm.disabled_help_text(dialog.status.clone());
+                    }
                 }
                 Kind::Tag {
                     source,
@@ -1097,6 +1110,60 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn failed_delete_preview_names_the_branch_and_drops_the_loading_placeholders() {
+        for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+            let ctx = egui::Context::default();
+            install_fonts(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            theme.apply(&ctx);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.state_current = true;
+            let refusal = "The branch is not fully merged into the current HEAD, or its ancestry could not be verified. Force deletion is not available.";
+            app.branches.ref_dialog = Some(Dialog {
+                root: "D:/repos/example".into(),
+                kind: Kind::Delete {
+                    source: "refs/heads/topic".into(),
+                    prepared: None,
+                },
+                confirmed: false,
+                running: false,
+                reload_pending: false,
+                error: None,
+                status: refusal.into(),
+            });
+            let mut output = egui::FullOutput::default();
+            for _ in 0..4 {
+                output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1100.0, 700.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| show(ui.ctx(), &mut app),
+                );
+                output.textures_delta.clear();
+            }
+            let texts = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(texts.iter().any(|text| text.starts_with("Repository:")));
+            assert!(texts.contains(&"Branch: refs/heads/topic"));
+            assert!(texts.contains(&"Branch object: Not available"));
+            assert!(texts.contains(&"Current HEAD: Not available"));
+            assert!(texts.contains(&refusal));
+            assert!(!texts.contains(&"Checking…"));
+            assert!(!texts.contains(&"Loading details…"));
         }
     }
 

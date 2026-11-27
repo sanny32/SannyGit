@@ -275,7 +275,7 @@ fn delete_removes_only_a_reviewed_merged_branch_and_preserves_dirty_index_and_fi
 }
 
 #[test]
-fn delete_rejects_current_unmerged_worktree_and_stale_branch_targets() {
+fn delete_rejects_current_worktree_and_stale_targets_and_removes_an_unmerged_branch() {
     let repo = committed_repo();
     repo.git(&["branch", "other"]);
     assert!(preview_delete(&SYSTEM_GIT, &repo.0, "refs/heads/main")
@@ -291,9 +291,11 @@ fn delete_rejects_current_unmerged_worktree_and_stale_branch_targets() {
     repo.git(&["add", "file"]);
     repo.git(&["commit", "-m", "Unique"]);
     repo.git(&["switch", "main"]);
-    assert!(preview_delete(&SYSTEM_GIT, &repo.0, "refs/heads/other")
-        .unwrap_err()
-        .contains("not fully merged"));
+    let unmerged = preview_delete(&SYSTEM_GIT, &repo.0, "refs/heads/other").unwrap();
+    assert!(!unmerged.merged);
+    delete(&SYSTEM_GIT, &repo.0, &unmerged).unwrap();
+    assert!(repo.git(&["branch", "--list", "other"]).is_empty());
+    assert!(repo.git(&["branch", "--list", "main"]).contains("main"));
     repo.git(&["branch", "worktree-branch"]);
     let linked = repo.0.join("linked");
     repo.git(&[
@@ -316,7 +318,6 @@ fn delete_rejects_current_unmerged_worktree_and_stale_branch_targets() {
     ] {
         assert!(preview_delete(&SYSTEM_GIT, &repo.0, name).is_err());
     }
-    assert!(repo.git(&["branch", "--list", "other"]).contains("other"));
 }
 
 #[test]

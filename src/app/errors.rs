@@ -104,6 +104,17 @@ impl SannyGitApp {
             self.error_dialogs
                 .observed
                 .retain(|source, message| !(source.starts_with("settings") && message == &error));
+            // A failed delete preview keeps its reason on the dialog status
+            // line. Leaving `error` set queues the same modal again.
+            if self.branches.ref_dialog.as_ref().is_some_and(|dialog| {
+                matches!(dialog.kind, super::ref_management::Kind::Delete { .. })
+                    && dialog.error.as_ref() == Some(&error)
+            }) {
+                if let Some(dialog) = &mut self.branches.ref_dialog {
+                    dialog.error = None;
+                }
+                self.error_dialogs.observed.remove("refs");
+            }
         }
     }
 }

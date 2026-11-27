@@ -94,6 +94,8 @@ pub enum BranchAction {
     StopTracking,
 }
 
+pub const LOADING_STATUS: &str = "Loading details…";
+
 pub struct Dialog {
     pub root: String,
     pub kind: Kind,
@@ -567,7 +569,7 @@ impl SannyGitApp {
             running: false,
             reload_pending,
             error: None,
-            status: "Loading details…".into(),
+            status: LOADING_STATUS.into(),
         });
         self.error = None;
         self.load_ref_pending();
@@ -581,7 +583,7 @@ impl SannyGitApp {
             dialog.confirmed = false;
             dialog.error = None;
             dialog.reload_pending = true;
-            dialog.status = "Loading details…".into();
+            dialog.status = LOADING_STATUS.into();
             match &mut dialog.kind {
                 Kind::Delete { prepared, .. } => *prepared = None,
                 Kind::Branch { prepared, .. } => *prepared = None,
@@ -987,10 +989,20 @@ impl SannyGitApp {
                 },
             ) if *source == requested => match result {
                 Ok(details) => {
+                    dialog.status = if details.merged {
+                        "Merged into the current HEAD. Working files and the index are kept."
+                    } else {
+                        "This branch is not fully merged into the current HEAD. Deleting it removes commits that are only on this branch. Working files and the index are kept."
+                    }
+                    .into();
                     *prepared = Some(details);
-                    dialog.status = "Merged into current HEAD. No force deletion; working files and the index are kept.".into();
                 }
-                Err(error) => dialog.error = Some(error),
+                Err(error) => {
+                    // The refusal stays on the dialog status line. A modal would
+                    // repeat it and come back after OK while this field is set.
+                    dialog.status = error;
+                    dialog.error = None;
+                }
             },
             (
                 Kind::Tag {
@@ -1097,6 +1109,11 @@ impl SannyGitApp {
             dialog.running = false;
             dialog.confirmed = false;
             dialog.error = self.error.clone();
+            if matches!(dialog.kind, Kind::Delete { .. }) {
+                if let Some(error) = dialog.error.clone() {
+                    dialog.status = error;
+                }
+            }
             match &mut dialog.kind {
                 Kind::Delete { prepared, .. } => *prepared = None,
                 Kind::Branch { prepared, .. } => *prepared = None,
@@ -1161,6 +1178,48 @@ mod tests {
         app.branches.current = true;
         app.commit.message = "Keep commit draft".into();
         (repo, app)
+    }
+
+    #[test]
+    fn unmerged_delete_preview_stays_in_the_dialog_after_the_modal_closes() {
+        let (repo, mut app) = opened();
+        repo.git(&["switch", "-c", "topic"]);
+        repo.write("file", "topic\n");
+        repo.git(&["add", "file"]);
+        repo.git(&["commit", "-m", "Topic"]);
+        repo.git(&["switch", "main"]);
+        let head = repo.git(&["rev-parse", "--verify", "HEAD"]);
+        app.apply_snapshot(git::load(&SYSTEM_GIT, &repo.0).unwrap());
+        app.branches.entries = branches::load(&SYSTEM_GIT, &repo.0).unwrap().refs;
+        app.branches.current = true;
+        app.branches.selected_branch = "refs/heads/topic".into();
+        app.open_delete_branch();
+        wait(&mut app);
+        let dialog = app.branches.ref_dialog.as_ref().unwrap();
+        assert!(
+            dialog.status.contains("not fully merged"),
+            "{}",
+            dialog.status
+        );
+        assert_ne!(dialog.status, LOADING_STATUS);
+        assert!(dialog.error.is_none());
+        let Kind::Delete {
+            prepared: Some(preview),
+            ..
+        } = &dialog.kind
+        else {
+            panic!("unmerged branch should stay deletable");
+        };
+        assert!(!preview.merged);
+        app.collect_errors();
+        assert!(app.error_dialogs.pending.is_empty());
+        app.branches.ref_dialog.as_mut().unwrap().confirmed = true;
+        app.run_ref_action();
+        wait(&mut app);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(app.branches.ref_dialog.is_none());
+        assert!(repo.git(&["branch", "--list", "topic"]).is_empty());
+        assert_eq!(repo.git(&["rev-parse", "--verify", "HEAD"]), head);
     }
 
     #[test]

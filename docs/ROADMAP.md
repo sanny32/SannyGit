@@ -72,7 +72,7 @@ Status means the SannyGit command, not a partial visual similarity.
 
 | SmartGit command | SannyGit |
 | --- | --- |
-| Add Branch, Check Out, Rename, Delete | Present. Delete refuses a branch that is not merged. There is no force delete |
+| Add Branch, Check Out, Rename, Delete | Present. An unmerged local branch can be deleted after confirmation. The current branch and a worktree branch stay protected |
 | Add Tag | Lightweight tags only. Annotated and signed tags are not created |
 | Merge: Create Merge-Commit, Merge to Working Tree | Present |
 | Fast-Forward, Squash | Fast-forward is available for a tag. The main merge dialog has no fast-forward or squash action |

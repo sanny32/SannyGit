@@ -36,51 +36,6 @@ call sites of `eframe::viewport_winit_window` (`src/native_window_linux.rs`,
 
 **Status:** Not started
 
-## UI — Changes list
-
-### Grouped file path draws too far to the right
-
-**Problem:** With directory grouping on, a file row under its folder header
-paints the path far to the right of the File column. The file icon stays on the
-left, then a wide gap, then truncated text such as `assets/icons/fo` while the
-header above reads `assets/icons` in the normal place (screenshot from
-2026-11-26, Files list, `assets/icons` group). The path is clipped instead of
-starting next to the icon.
-
-**Goal:** Keep the file icon and path left-aligned in the File column, on the
-same inset as other file rows. Truncate only when the column is actually too
-narrow, and show the full path in the tooltip.
-
-**Likely touch points:** `src/ui/changes.rs` — file row in the changes table
-(`row.col` for the path) and `paint_directory_header` (row-layer text that is
-not clipped to the File cell).
-
-**Status:** Not started
-
-## UI — Branch delete
-
-### Delete preview failure leaves misleading dialog state
-
-**Problem:** Opening **Delete Local Branch** on a branch that is not merged into
-HEAD shows the correct modal message (“not fully merged… Force deletion is not
-available”), but the dialog underneath still reads **Loading details…**,
-**Branch object: Checking…**, and **Current HEAD: Checking…**. The branch ref
-(`refs/heads/…`) sits on its own line without a clear label, so it can be read
-as the repository path (screenshot from 2026-11-26).
-
-**Goal:** When `preview_delete` fails, update the delete dialog in place: clear
-the loading status, show the refusal reason on the status line (and/or disable
-the confirm checkbox with that text), stop showing perpetual “Checking…”, and
-label branch vs repository fields clearly. Dismissing the error modal must not
-leave stale `dialog.error` that immediately reopens the same modal.
-
-**Likely touch points:** `src/branches.rs` (`preview_delete`), `src/app/ref_management.rs`
-(`apply_ref_details` for `Kind::Delete`), `src/ui/ref_management.rs` (delete
-dialog body and status line), `src/app/errors.rs` (`collect_errors` /
-`dismiss_error` for `refs` source).
-
-**Status:** Not started
-
 ## UI — Branches panel
 
 ### Local branch rows: folder groups and inline tracking (SmartGit-style)
@@ -128,6 +83,27 @@ indent or row height unless needed for alignment.
 `src/ui/changes.rs` (directory header chevron + path), `src/ui/settings.rs`,
 `src/ui/merge.rs`, `src/ui/remote_dialog.rs`; egui header internals if the gap
 must be fixed in the fork.
+
+**Status:** Not started
+
+### Deleting a branch on origin fails with an error
+
+**Problem:** Removing a branch on **origin** through the Branches UI (for example
+**Delete…** on a local branch with **Delete from remote repository 'origin'**, or
+the equivalent reviewed delete flow) ends in an **Attention required** modal
+instead of completing the push delete and refresh.
+
+**Goal:** Remote deletion on the configured remote should succeed when Git and
+permissions allow it (`git push origin :branch` / force-with-lease path in
+`remotes::delete_branch`). If the user only deletes a **remote-tracking** ref
+under **Remote Branches**, behavior must match SmartGit expectations (server
+delete vs local ref only) and must not surface spurious errors. Reproduce,
+capture the exact Git diagnostic, fix root cause, and add regression coverage.
+
+**Likely touch points:** `src/remotes.rs` (`delete_branch`, `preview_branch`,
+push `--force-with-lease`), `src/app/ref_management.rs` (`BranchAction::Delete`,
+`run_ref_action`), `src/ui/ref_management.rs` / `src/ui/branches.rs`
+(`DeleteRemoteBranch`, confirm dialog), `src/remotes/tests.rs`.
 
 **Status:** Not started
 
