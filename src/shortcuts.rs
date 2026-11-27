@@ -665,7 +665,21 @@ fn catalog_keys() -> impl Iterator<Item = Key> {
 }
 
 pub fn format_shortcut_text(ctx: &eframe::egui::Context, shortcut: KeyboardShortcut) -> String {
-    ctx.format_shortcut(&shortcut).to_string()
+    space_modifier_symbols(&ctx.format_shortcut(&shortcut))
+}
+
+fn space_modifier_symbols(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(character) = chars.next() {
+        result.push(character);
+        if matches!(character, '⌥' | '⌃' | '⇧' | '⌘')
+            && chars.peek().is_some_and(|next| !next.is_whitespace())
+        {
+            result.push(' ');
+        }
+    }
+    result
 }
 
 pub fn shortcut_from_input(key: Key, modifiers: Modifiers) -> Option<KeyboardShortcut> {
@@ -866,6 +880,21 @@ mod tests {
             if let Some(action) = command.menu_action {
                 assert!(dispatched.contains(&action), "{}", command.id);
             }
+        }
+    }
+
+    #[test]
+    fn shortcut_labels_space_modifier_glyphs_without_changing_named_shortcuts() {
+        for (input, expected) in [
+            ("⇧⌘PageDown", "⇧ ⌘ PageDown"),
+            ("⌥Enter", "⌥ Enter"),
+            ("⌃F4", "⌃ F4"),
+            ("⌥⌃⇧⌘A", "⌥ ⌃ ⇧ ⌘ A"),
+            ("F11", "F11"),
+            ("Ctrl+Shift+O", "Ctrl+Shift+O"),
+            ("⌘ A", "⌘ A"),
+        ] {
+            assert_eq!(space_modifier_symbols(input), expected);
         }
     }
 

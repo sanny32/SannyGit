@@ -1476,6 +1476,34 @@ fn shortcut_editor_sits_above_the_footer() {
 }
 
 #[test]
+fn shortcut_table_renders_spaced_modifier_glyphs() {
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        let context = egui::Context::default();
+        context.set_os(egui::os::OperatingSystem::Mac);
+        crate::theme::install_fonts(&context);
+        theme.apply(&context);
+        let mut app = SannyGitApp::with_theme(theme);
+        app.settings_window.page = SettingsPage::KeyboardShortcuts;
+        app.settings_window.shortcut_filter = "Settings".into();
+        let mut output = context.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), PREFERENCES_SIZE)),
+                ..Default::default()
+            },
+            |ui| window_contents(ui, &mut app),
+        );
+        output.textures_delta.clear();
+        assert!(
+            output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                egui::Shape::Text(text) if text.galley.job.text == "⌥ Enter"
+            )),
+            "The shortcut table should display spaced modifier symbols ({theme:?})"
+        );
+    }
+}
+
+#[test]
 fn shortcut_columns_resize_and_keep_their_widths() {
     use eframe::egui::{Event, Modifiers, PointerButton};
     let context = egui::Context::default();
