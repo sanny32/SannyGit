@@ -63,7 +63,7 @@ pub enum EditAction {
 }
 
 impl EditAction {
-    #[cfg(test)]
+    #[cfg(all(test, not(target_os = "macos")))]
     pub fn from_label_key(key: &str) -> Option<Self> {
         Some(match key {
             "edit.undo" => Self::Undo,
