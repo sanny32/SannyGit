@@ -21,7 +21,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         return;
     }
 
-    let title = format!("{} - Conflict Solver", dialog.path);
+    let title = crate::i18n::tr_args("%{file} - Conflict Solver", &[("file", &dialog.path)]);
     if ctx.embed_viewports() {
         let size = ctx.content_rect().size() - egui::vec2(36.0, 55.0);
         let mut open = true;
@@ -174,8 +174,11 @@ fn workspace(ui: &mut Ui, app: &mut SannyGitApp) {
                 "Your changes in Conflict Solver will be lost.",
             );
             dialog_style::button_row(ui, |ui| {
-                discard = ui.button("Discard Draft").clicked();
-                if ui.button("Keep Editing").dialog_cancel() {
+                discard = ui.button(crate::i18n::tr_msg("Discard Draft")).clicked();
+                if ui
+                    .button(crate::i18n::tr_msg("Keep Editing"))
+                    .dialog_cancel()
+                {
                     dialog.confirm_close = false;
                 }
             });
@@ -204,12 +207,12 @@ fn status_bar(ui: &mut Ui, dialog: &Dialog, palette: Palette, busy: bool) {
             ui.horizontal_centered(|ui| {
                 let state = if busy {
                     if dialog.review.is_some() {
-                        "Saving..."
+                        crate::i18n::tr_msg("Saving...")
                     } else {
-                        "Loading conflict..."
+                        crate::i18n::tr_msg("Loading conflict...")
                     }
                 } else {
-                    "Ready"
+                    crate::i18n::tr_msg("Ready")
                 };
                 ui.label(state);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -219,7 +222,7 @@ fn status_bar(ui: &mut Ui, dialog: &Dialog, palette: Palette, busy: bool) {
                         |ui| {
                             if let Some((line, column)) = dialog.cursor_position {
                                 ui.label(format!("{line}:{column}"))
-                                    .on_hover_text("Line and column");
+                                    .on_hover_text(crate::i18n::tr_msg("Line and column"));
                             }
                         },
                     );
@@ -257,7 +260,7 @@ fn toolbar(
                 .iter()
                 .map(|label| {
                     fonts
-                        .layout_no_wrap((*label).to_owned(), font.clone(), palette.text)
+                        .layout_no_wrap(crate::i18n::tr_msg(label), font.clone(), palette.text)
                         .size()
                         .x
                 })
@@ -306,12 +309,12 @@ fn toolbar(
                         !busy && repository_active && dialog.ready(),
                         false,
                     )
-                    .on_hover_text("Save and stage the resolved file.")
-                    .on_disabled_hover_text(if repository_active {
+                    .on_hover_text(crate::i18n::tr_msg("Save and stage the resolved file."))
+                    .on_disabled_hover_text(crate::i18n::tr_msg(if repository_active {
                         "Resolve all conflicts before saving and staging the file."
                     } else {
                         "Switch back to this file's repository to save and stage it."
-                    })
+                    }))
                     .clicked();
                     ui.add(egui::Separator::default().spacing(DIVIDER));
                     change_navigation(ui, dialog, style, busy);
@@ -570,10 +573,12 @@ fn base_control(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, busy: boo
         !busy && dialog.draft.is_none() && available,
         dialog.show_base,
     )
-    .on_hover_text(
+    .on_hover_text(crate::i18n::tr_msg(
         "Compare Left and Right with their common base. Click again to return to the merge.",
-    )
-    .on_disabled_hover_text("The common base is unavailable or the Working Tree is being edited.")
+    ))
+    .on_disabled_hover_text(crate::i18n::tr_msg(
+        "The common base is unavailable or the Working Tree is being edited.",
+    ))
     .clicked()
     {
         dialog.toggle_base();
@@ -593,10 +598,10 @@ fn working_tree_menu(ui: &Ui, dialog: &mut Dialog, header: egui::Rect) {
                 .as_ref()
                 .is_some_and(|comparison| *draft == comparison.result);
             if ui
-                .add_enabled(clean, Button::new("Return to Merge"))
-                .on_disabled_hover_text(
+                .add_enabled(clean, Button::new(crate::i18n::tr_msg("Return to Merge")))
+                .on_disabled_hover_text(crate::i18n::tr_msg(
                     "Save the result or undo manual edits to return to block selection.",
-                )
+                ))
                 .clicked()
             {
                 dialog.draft = None;
@@ -604,7 +609,10 @@ fn working_tree_menu(ui: &Ui, dialog: &mut Dialog, header: egui::Rect) {
                 dialog.draft_undo.clear();
                 ui.close();
             }
-        } else if ui.button("Edit Working Tree").clicked() {
+        } else if ui
+            .button(crate::i18n::tr_msg("Edit Working Tree"))
+            .clicked()
+        {
             dialog.begin_draft(0);
             ui.close();
         }
@@ -726,7 +734,7 @@ fn layout_controls(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, busy: 
             enabled,
             dialog.layout == layout,
         )
-        .on_hover_text(tooltip)
+        .on_hover_text(crate::i18n::tr_msg(tooltip))
         .clicked()
         {
             dialog.layout = layout;
@@ -858,7 +866,7 @@ fn resolution_controls(ui: &mut Ui, dialog: &mut Dialog, style: ToolbarStyle, bu
             enabled && can_take,
             false,
         )
-        .on_hover_text(tooltip)
+        .on_hover_text(crate::i18n::tr_msg(tooltip))
         .clicked()
         {
             choice = Some((side, both));
@@ -924,7 +932,7 @@ fn confirm_action(ctx: &egui::Context, app: &mut SannyGitApp) {
         dialog_style::section(ui, palette.panel, Margin::same(10), |ui| {
             ui.add(egui::Label::new(RichText::new(&dialog.path).strong()).truncate())
                 .on_hover_text(&dialog.path);
-            let message = match (&dialog.review, dialog.action) {
+            let message = crate::i18n::tr_msg(match (&dialog.review, dialog.action) {
                 (Some(review), Action::Ours) if !review.stages[2] => {
                     "Ours deleted this file. Confirm to remove it and stage the deletion."
                 }
@@ -932,7 +940,7 @@ fn confirm_action(ctx: &egui::Context, app: &mut SannyGitApp) {
                     "Theirs deleted this file. Confirm to remove it and stage the deletion."
                 }
                 _ => "This replaces the current working copy.",
-            };
+            });
             ui.allocate_ui(egui::vec2(ui.available_width(), 46.0), |ui| {
                 ui.set_min_height(46.0);
                 ui.label(message);
@@ -944,7 +952,9 @@ fn confirm_action(ctx: &egui::Context, app: &mut SannyGitApp) {
                         dialog_style::primary(dialog.action.label(), palette),
                     )
                     .clicked();
-                close = ui.add_enabled(!busy, Button::new("Cancel")).dialog_cancel();
+                close = ui
+                    .add_enabled(!busy, Button::new(crate::i18n::tr_msg("Cancel")))
+                    .dialog_cancel();
             });
         });
     });

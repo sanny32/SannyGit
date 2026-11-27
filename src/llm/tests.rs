@@ -17,8 +17,6 @@ fn commit_message_language_defaults_and_updates_instructions() {
         config.commit_message_language,
         CommitMessageLanguage::English
     );
-    assert_eq!(CommitMessageLanguage::Russian.subject_limit(), 60);
-    assert_eq!(CommitMessageLanguage::ChineseSimplified.subject_limit(), 50);
     config.apply_commit_message_language(CommitMessageLanguage::Russian);
     assert!(config.instructions.contains("русском"));
     assert!(config.instructions.contains("60"));
@@ -31,6 +29,14 @@ fn commit_message_language_defaults_and_updates_instructions() {
     assert_eq!(
         restored.instructions,
         CommitMessageLanguage::English.instructions()
+    );
+    assert_eq!(
+        serde_json::to_value(CommitMessageLanguage::ChineseSimplified).unwrap(),
+        json!("zh-CN")
+    );
+    assert_eq!(
+        serde_json::from_value::<CommitMessageLanguage>(json!("zh-CN")).unwrap(),
+        CommitMessageLanguage::ChineseSimplified
     );
 }
 

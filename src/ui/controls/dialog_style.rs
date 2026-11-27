@@ -168,6 +168,8 @@ pub fn header_with_icon(
     description: &str,
     icon: Icon,
 ) -> egui::Rect {
+    let title = crate::i18n::tr_msg(title);
+    let description = crate::i18n::tr_msg(description);
     let width = ui.available_width();
     let rect = Frame::new()
         .fill(palette.panel)
@@ -253,12 +255,12 @@ pub fn text_line(ui: &mut Ui, text: impl Into<egui::WidgetText>, height: f32) ->
     .inner
 }
 
-pub fn button(label: &str) -> Button<'_> {
-    Button::new(label).min_size(egui::vec2(82.0, 28.0))
+pub fn button(label: &str) -> Button<'static> {
+    Button::new(crate::i18n::tr_msg(label)).min_size(egui::vec2(82.0, 28.0))
 }
 
-pub fn primary(label: &str, palette: Palette) -> Button<'_> {
-    Button::new(RichText::new(label).color(palette.on_accent))
+pub fn primary(label: &str, palette: Palette) -> Button<'static> {
+    Button::new(RichText::new(crate::i18n::tr_msg(label)).color(palette.on_accent))
         .min_size(egui::vec2(82.0, 28.0))
         .fill(palette.accent)
         .stroke((1.0, palette.accent))
@@ -312,7 +314,9 @@ mod tests {
                                             theme.palette().header,
                                             Margin::same(18),
                                             |ui| {
-                                                controls[0] = ui.label("Group name").rect;
+                                                controls[0] = ui
+                                                    .label(crate::i18n::tr_msg("Group name"))
+                                                    .rect;
                                                 controls[1] = ui
                                                     .add(crate::ui::controls::singleline(&mut text))
                                                     .rect;

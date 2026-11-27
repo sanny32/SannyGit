@@ -37,7 +37,7 @@ pub(crate) enum Entry<T> {
 impl<T> Entry<T> {
     pub(crate) fn item(label: impl Into<String>, enabled: bool, action: T) -> Self {
         Self::Item {
-            label: label.into(),
+            label: crate::i18n::tr_msg(&label.into()),
             enabled,
             action,
             help: String::new(),
@@ -46,7 +46,7 @@ impl<T> Entry<T> {
     }
     pub(crate) fn help(mut self, text: impl Into<String>) -> Self {
         if let Self::Item { help, .. } = &mut self {
-            *help = text.into();
+            *help = crate::i18n::tr_msg(&text.into());
         }
         self
     }
@@ -70,7 +70,7 @@ impl<T> Entry<T> {
     }
     pub(crate) fn submenu(label: impl Into<String>, entries: Vec<Self>) -> Self {
         Self::Submenu {
-            label: label.into(),
+            label: crate::i18n::tr_msg(&label.into()),
             entries,
         }
     }

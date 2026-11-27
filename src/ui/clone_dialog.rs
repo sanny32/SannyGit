@@ -48,16 +48,17 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                         ui.set_width(114.0);
                         ui.set_min_height(408.0);
                         ui.spacing_mut().item_spacing.y = 10.0;
-                        ui.strong("Steps");
+                        ui.strong(crate::i18n::tr_msg("Steps"));
                         ui.add_space(8.0);
                         for (index, title) in ["Repository", "Selection", "Local Directory"]
                             .iter()
                             .enumerate()
                         {
+                            let title = crate::i18n::tr_msg(title);
                             let text = if index == app.manager.clone_step {
                                 RichText::new(format!("› {title}")).strong()
                             } else {
-                                RichText::new(*title).color(palette.muted)
+                                RichText::new(title).color(palette.muted)
                             };
                             ui.label(text);
                         }
@@ -103,11 +104,11 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                                 if busy {
                                     ui.spinner();
                                     ui.add(
-                                        egui::Label::new(&app.status)
+                                        egui::Label::new(crate::i18n::tr_msg(&app.status))
                                             .truncate()
                                             .show_tooltip_when_elided(false),
                                     )
-                                    .help_text(&app.status);
+                                    .help_text(crate::i18n::tr_msg(&app.status));
                                 }
                             },
                         );
@@ -228,7 +229,7 @@ fn source_page(ui: &mut Ui, app: &mut SannyGitApp) {
             let provider = app.manager.clone_form.provider;
             let width = ui.available_width();
             if provider.self_hosted() {
-                ui.label("Server URL:");
+                ui.label(crate::i18n::tr_msg("Server URL:"));
                 if ui
                     .add_sized(
                         [width, crate::theme::CONTROL_HEIGHT],
@@ -240,11 +241,11 @@ fn source_page(ui: &mut Ui, app: &mut SannyGitApp) {
                     app.error = None;
                 }
             }
-            ui.label(if provider == Provider::Url {
+            ui.label(crate::i18n::tr_msg(if provider == Provider::Url {
                 "Repository URL or local path:"
             } else {
                 "Repository path or clone URL:"
-            });
+            }));
             if ui
                 .add_sized(
                     [width, crate::theme::CONTROL_HEIGHT],
@@ -257,7 +258,7 @@ fn source_page(ui: &mut Ui, app: &mut SannyGitApp) {
             }
             if provider == Provider::Url {
                 ui.horizontal(|ui| {
-                    ui.label("Local repository:");
+                    ui.label(crate::i18n::tr_msg("Local repository:"));
                     choose_folder(ui, app.manager.clone_form.input());
                 });
             }
@@ -268,21 +269,21 @@ fn source_page(ui: &mut Ui, app: &mut SannyGitApp) {
 fn selection_page(ui: &mut Ui, app: &mut SannyGitApp) {
     ui.checkbox(
         &mut app.manager.clone_options.include_submodules,
-        "Include Submodules",
+        crate::i18n::tr_msg("Include Submodules"),
     );
     ui.checkbox(
         &mut app.manager.clone_options.fetch_all,
-        "Fetch all Heads and Tags",
+        crate::i18n::tr_msg("Fetch all Heads and Tags"),
     );
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        ui.label("Check Out Branch:");
+        ui.label(crate::i18n::tr_msg("Check Out Branch:"));
         ComboBox::from_id_salt("clone.branch")
             .width(260.0)
             .selected_text(if app.manager.clone_options.branch.is_empty() {
-                "Default (empty repository)"
+                crate::i18n::tr_msg("Default (empty repository)")
             } else {
-                &app.manager.clone_options.branch
+                app.manager.clone_options.branch.clone()
             })
             .show_ui(ui, |ui| {
                 for branch in &app.manager.clone_branches {
@@ -297,9 +298,14 @@ fn selection_page(ui: &mut Ui, app: &mut SannyGitApp) {
     ui.add_space(24.0);
     ui.add_enabled(
         false,
-        egui::Checkbox::new(&mut false, "Configure SannyGit as credential helper"),
+        egui::Checkbox::new(
+            &mut false,
+            crate::i18n::tr_msg("Configure SannyGit as credential helper"),
+        ),
     )
-    .help_text("SannyGit uses your existing Git credential helpers and SSH configuration.");
+    .help_text(crate::i18n::tr_msg(
+        "SannyGit uses your existing Git credential helpers and SSH configuration.",
+    ));
 }
 
 fn directory_page(ui: &mut Ui, app: &mut SannyGitApp) {
@@ -307,7 +313,7 @@ fn directory_page(ui: &mut Ui, app: &mut SannyGitApp) {
         .min_col_width(110.0)
         .spacing([12.0, 12.0])
         .show(ui, |ui| {
-            ui.label("Parent Directory:");
+            ui.label(crate::i18n::tr_msg("Parent Directory:"));
             ui.horizontal(|ui| {
                 ui.add_sized(
                     [388.0, crate::theme::CONTROL_HEIGHT],
@@ -316,13 +322,13 @@ fn directory_page(ui: &mut Ui, app: &mut SannyGitApp) {
                 choose_folder(ui, &mut app.manager.clone_parent);
             });
             ui.end_row();
-            ui.label("Directory Name:");
+            ui.label(crate::i18n::tr_msg("Directory Name:"));
             ui.add_sized(
                 [388.0, crate::theme::CONTROL_HEIGHT],
                 crate::ui::controls::singleline(&mut app.manager.clone_name),
             );
             ui.end_row();
-            ui.label("Clone Into:");
+            ui.label(crate::i18n::tr_msg("Clone Into:"));
             let mut path = repository::expand_path(&app.manager.clone_parent)
                 .join(&app.manager.clone_name)
                 .display()

@@ -104,9 +104,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 ui.add_sized(
                     [ui.available_width() - 94.0, crate::theme::CONTROL_HEIGHT],
                     super::controls::singleline(&mut dialog.filter)
-                        .hint_text("Filter loaded commits…"),
+                        .hint_text(crate::i18n::tr_msg("Filter loaded commits…")),
                 );
-                let branches_button = Button::new("Branches…")
+                let branches_button = Button::new(crate::i18n::tr_msg("Branches…"))
                     .wrap_mode(egui::TextWrapMode::Extend)
                     .min_size(egui::vec2(86.0, crate::theme::CONTROL_HEIGHT));
                 if ui.add_enabled(dialog.snapshot.is_some() && !busy, branches_button).clicked() {
@@ -115,10 +115,30 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             });
             graph(ui, &mut dialog, palette, &app.preferences, busy);
             let status = match &dialog.snapshot {
-                None if busy => "Loading commits…".to_owned(),
-                None => "Close and reopen the dialog to retry loading commits.".to_owned(),
-                Some(_) if busy => if operation == Operation::Rebase { "Rebasing…" } else { "Merging…" }.to_owned(),
-                Some(snapshot) => format!("{} commits loaded{} · Target: {}", snapshot.history.commits.len(), if snapshot.history.truncated { " (10,000 limit)" } else { "" }, dialog.selected.as_deref().map(|hash| &hash[..8]).unwrap_or("select a commit")),
+                None if busy => crate::i18n::tr_msg("Loading commits…"),
+                None => crate::i18n::tr_msg("Close and reopen the dialog to retry loading commits."),
+                Some(_) if busy => crate::i18n::tr_msg(if operation == Operation::Rebase { "Rebasing…" } else { "Merging…" }),
+                Some(snapshot) => {
+                    let limit = if snapshot.history.truncated {
+                        crate::i18n::tr_msg(" (10,000 limit)")
+                    } else {
+                        String::new()
+                    };
+                    let select = crate::i18n::tr_msg("select a commit");
+                    let target = dialog
+                        .selected
+                        .as_deref()
+                        .map(|hash| &hash[..8])
+                        .unwrap_or(&select);
+                    crate::i18n::tr_args(
+                        "%{count} commits loaded%{limit} · Target: %{target}",
+                        &[
+                            ("count", &snapshot.history.commits.len().to_string()),
+                            ("limit", &limit),
+                            ("target", target),
+                        ],
+                    )
+                }
             };
             dialog_style::text_line(ui, RichText::new(status).color(palette.muted), 20.0);
         });
@@ -127,12 +147,12 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 close = ui.add_enabled(!busy && !dialog.branches_open, dialog_style::button("Cancel")).dialog_cancel();
                 let enabled = !busy && !dialog.branches_open && dialog.snapshot.as_ref().is_some_and(|snapshot| dialog.selected.as_ref().is_some_and(|hash| hash != &snapshot.head));
                 if operation == Operation::Rebase {
-                    rebase = ui.add_enabled(enabled, dialog_style::primary("Rebase HEAD to", palette)).help_text("Replay HEAD commits onto the selected commit. Rewrites commit history; commit or stash local changes first.").clicked();
+                    rebase = ui.add_enabled(enabled, dialog_style::primary("Rebase HEAD to", palette)).help_text(crate::i18n::tr_msg("Replay HEAD commits onto the selected commit. Rewrites commit history; commit or stash local changes first.")).clicked();
                 } else {
-                    if ui.add_enabled(enabled, dialog_style::primary("Merge to Working Tree", palette)).help_text("Start the merge and leave it open. Review changes and resolve conflicts before creating the merge commit.").clicked() { submit = Some(Mode::WorkingTree); }
-                    if ui.add_enabled(enabled, dialog_style::button("Create Merge-Commit")).help_text("Merge the selected commit and create a merge commit, even when a fast-forward is possible. Uses your Git identity, hooks and signing configuration.").clicked() { submit = Some(Mode::Commit); }
-                    if ui.add_enabled(enabled, dialog_style::button("Fast-Forward")).help_text("Move the current branch to the selected commit when it is a descendant of HEAD.").clicked() { submit = Some(Mode::FastForward); }
-                    if ui.add_enabled(enabled, dialog_style::button("Squash Merge")).help_text("Squash the selected commit into staged changes. Review and commit when ready.").clicked() { submit = Some(Mode::Squash); }
+                    if ui.add_enabled(enabled, dialog_style::primary("Merge to Working Tree", palette)).help_text(crate::i18n::tr_msg("Start the merge and leave it open. Review changes and resolve conflicts before creating the merge commit.")).clicked() { submit = Some(Mode::WorkingTree); }
+                    if ui.add_enabled(enabled, dialog_style::button("Create Merge-Commit")).help_text(crate::i18n::tr_msg("Merge the selected commit and create a merge commit, even when a fast-forward is possible. Uses your Git identity, hooks and signing configuration.")).clicked() { submit = Some(Mode::Commit); }
+                    if ui.add_enabled(enabled, dialog_style::button("Fast-Forward")).help_text(crate::i18n::tr_msg("Move the current branch to the selected commit when it is a descendant of HEAD.")).clicked() { submit = Some(Mode::FastForward); }
+                    if ui.add_enabled(enabled, dialog_style::button("Squash Merge")).help_text(crate::i18n::tr_msg("Squash the selected commit into staged changes. Review and commit when ready.")).clicked() { submit = Some(Mode::Squash); }
                 }
             });
         });
@@ -204,36 +224,36 @@ fn tag_confirmation(
         dialog_style::section(ui, palette.panel, egui::Margin::symmetric(12, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             let tag_name = if commit {
-                format!("Commit: {name}")
+                crate::i18n::tr_args("Commit: %{name}", &[("name", name)])
             } else if branch {
-                format!("Branch: {name}")
+                crate::i18n::tr_args("Branch: %{name}", &[("name", name)])
             } else {
-                format!("Tag: {name}")
+                crate::i18n::tr_args("Tag: %{name}", &[("name", name)])
             };
-            dialog_style::text_line(ui, &tag_name, 20.0).help_text(tag_name);
+            dialog_style::text_line(ui, &tag_name, 20.0).help_text(&tag_name);
             let status = match target {
-                Some(_) if busy => "Merging…",
-                Some(tag) if tag.already_merged => "The current branch already contains the selected commit.",
-                Some(tag) if tag.fast_forward => "Fast-forward can move the current branch to the selected commit.",
-                Some(_) => "Fast-forward is unavailable for the selected commit.",
-                None if busy => "Checking merge options…",
-                None => "Close and reopen Merge to retry.",
+                Some(_) if busy => crate::i18n::tr_msg("Merging…"),
+                Some(tag) if tag.already_merged => crate::i18n::tr_msg("The current branch already contains the selected commit."),
+                Some(tag) if tag.fast_forward => crate::i18n::tr_msg("Fast-forward can move the current branch to the selected commit."),
+                Some(_) => crate::i18n::tr_msg("Fast-forward is unavailable for the selected commit."),
+                None if busy => crate::i18n::tr_msg("Checking merge options…"),
+                None => crate::i18n::tr_msg("Close and reopen Merge to retry."),
             };
             dialog_style::text_line(ui, RichText::new(status).color(palette.muted), 20.0);
             dialog_style::button_row(ui, |ui| {
                 close = ui.add_enabled(!busy, dialog_style::button("Cancel")).dialog_cancel();
                 if !fast_forward_only && ui.add_enabled(enabled, dialog_style::button("Merge to Working Tree"))
-                    .help_text("Start the merge and leave it open for review and conflict resolution.")
+                    .help_text(crate::i18n::tr_msg("Start the merge and leave it open for review and conflict resolution."))
                     .clicked() {
                     mode = Some(Mode::WorkingTree);
                 }
                 if !fast_forward_only && ui.add_enabled(enabled, dialog_style::button("Create Merge-Commit"))
-                    .help_text("Create a merge commit even when fast-forward is possible.")
+                    .help_text(crate::i18n::tr_msg("Create a merge commit even when fast-forward is possible."))
                     .clicked() {
                     mode = Some(Mode::Commit);
                 }
                 let forward = ui.add_enabled(fast_forward, dialog_style::primary("Fast-Forward", palette))
-                    .help_text("Move the current branch to the selected commit without creating a merge commit.");
+                    .help_text(crate::i18n::tr_msg("Move the current branch to the selected commit without creating a merge commit."));
                 let confirmed = if fast_forward_only {
                     forward.dialog_accept()
                 } else {
@@ -278,17 +298,17 @@ fn rebase_confirmation(
         );
         dialog_style::section(ui, palette.panel, egui::Margin::symmetric(12, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            let commit_name = format!("Commit: {name}");
-            dialog_style::text_line(ui, &commit_name, 20.0).help_text(commit_name);
+            let commit_name = crate::i18n::tr_args("Commit: %{name}", &[("name", name)]);
+            dialog_style::text_line(ui, &commit_name, 20.0).help_text(&commit_name);
             let status = match target {
-                Some(_) if busy => "Rebasing…",
-                Some(_) if same_commit => "HEAD is already at the selected commit.",
+                Some(_) if busy => crate::i18n::tr_msg("Rebasing…"),
+                Some(_) if same_commit => crate::i18n::tr_msg("HEAD is already at the selected commit."),
                 Some((tag, _)) if tag.already_merged => {
-                    "Rebase will replay the current branch onto an earlier commit."
+                    crate::i18n::tr_msg("Rebase will replay the current branch onto an earlier commit.")
                 }
-                Some(_) => "Rebase will replay the current branch onto the selected commit.",
-                None if busy => "Checking the selected commit…",
-                None => "Close and reopen Rebase to retry.",
+                Some(_) => crate::i18n::tr_msg("Rebase will replay the current branch onto the selected commit."),
+                None if busy => crate::i18n::tr_msg("Checking the selected commit…"),
+                None => crate::i18n::tr_msg("Close and reopen Rebase to retry."),
             };
             dialog_style::text_line(ui, RichText::new(status).color(palette.muted), 20.0);
             dialog_style::button_row(ui, |ui| {
@@ -297,7 +317,7 @@ fn rebase_confirmation(
                     .dialog_cancel();
                 if ui
                     .add_enabled(enabled, dialog_style::primary("Rebase HEAD to", palette))
-                    .help_text("Commit or stash local changes first. The branch picker stays available from the toolbar.")
+                    .help_text(crate::i18n::tr_msg("Commit or stash local changes first. The branch picker stays available from the toolbar."))
                     .dialog_accept()
                 {
                     rebase = true;
@@ -481,7 +501,7 @@ fn graph(
             painter.text(
                 rect.center() + egui::vec2(0.0, 19.0),
                 egui::Align2::CENTER_CENTER,
-                "Loading commit graph…",
+                crate::i18n::tr_msg("Loading commit graph…"),
                 egui::FontId::proportional(crate::theme::ui_font_size()),
                 palette.muted,
             );
@@ -551,9 +571,9 @@ fn graph(
                             if lanes.len().saturating_sub(1) as f32 * GRAPH_LANE_WIDTH + 22.0
                                 > rect.width()
                             {
-                                response.help_text(
+                                response.help_text(crate::i18n::tr_msg(
                                     "Drag the graph column separator to show more lanes.",
-                                );
+                                ));
                             }
                             let painter =
                                 ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
@@ -708,9 +728,12 @@ fn branches(ctx: &egui::Context, dialog: &mut Dialog, palette: Palette) {
                         .show(ui, |ui| {
                             ui.checkbox(
                                 &mut dialog.include_head,
-                                format!("HEAD ({})", &snapshot.head[..8]),
+                                crate::i18n::tr_args(
+                                    "HEAD (%{hash})",
+                                    &[("hash", &snapshot.head[..8])],
+                                ),
                             );
-                            section_header("Local Branches")
+                            section_header(crate::i18n::tr_msg("Local Branches"))
                                 .id_salt((dialog.operation.id(), "local"))
                                 .default_open(true)
                                 .show(ui, |ui| {
@@ -769,7 +792,7 @@ fn branches(ctx: &egui::Context, dialog: &mut Dialog, palette: Palette) {
                 });
             ui.checkbox(
                 &mut dialog.include_tracked,
-                "Include tracked remote branches",
+                crate::i18n::tr_msg("Include tracked remote branches"),
             );
         });
         dialog_style::section(ui, palette.panel, egui::Margin::symmetric(12, 10), |ui| {

@@ -21,7 +21,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let index = app.selection.active;
     let Some(change) = app.changes.get(index) else {
         super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
-            ui.label(RichText::new("Changes").family(crate::theme::semibold_family()));
+            ui.label(
+                RichText::new(crate::i18n::tr_msg("Changes"))
+                    .family(crate::theme::semibold_family()),
+            );
         });
         return;
     };
@@ -35,7 +38,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     if app.selected_diff().is_none() {
         if app.busy() {
             ui.centered_and_justified(|ui| {
-                ui.label(RichText::new("Loading diff…").color(palette.muted));
+                ui.label(RichText::new(crate::i18n::tr_msg("Loading diff…")).color(palette.muted));
             });
         }
         return;
@@ -67,26 +70,26 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 .sense(eframe::egui::Sense::empty()),
             |ui| {
                 if !conflicted {
-                    let noun = if hunk { "hunk" } else { "lines" };
+                    let noun = crate::i18n::tr_msg(if hunk { "hunk" } else { "lines" });
                     let actions = [
                         (
                             Icon::FileCheck,
                             "Stage",
-                            format!("Stage the selected {noun}"),
+                            crate::i18n::tr_args("Stage the selected %{target}", &[("target", &noun)]),
                             &stage_reason,
                             DiffEdit::Stage,
                         ),
                         (
                             Icon::File,
                             "Unstage",
-                            format!("Unstage the selected {noun}"),
+                            crate::i18n::tr_args("Unstage the selected %{target}", &[("target", &noun)]),
                             &unstage_reason,
                             DiffEdit::Unstage,
                         ),
                         (
                             Icon::Discard,
                             "Discard",
-                            format!("Discard the selected {noun}"),
+                            crate::i18n::tr_args("Discard the selected %{target}", &[("target", &noun)]),
                             &discard_reason,
                             DiffEdit::Discard,
                         ),
@@ -124,22 +127,22 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     );
                     let mut side = app.preferences.diff_side_by_side;
                     let before = side;
-                    ui.selectable_value(&mut side, false, "Unified")
-                        .help_text("Show the diff as one column");
-                    ui.selectable_value(&mut side, true, "Side by Side")
-                        .help_text("Show old and new lines in two columns");
+                    ui.selectable_value(&mut side, false, crate::i18n::tr_msg("Unified"))
+                        .help_text(crate::i18n::tr_msg("Show the diff as one column"));
+                    ui.selectable_value(&mut side, true, crate::i18n::tr_msg("Side by Side"))
+                        .help_text(crate::i18n::tr_msg("Show old and new lines in two columns"));
                     if side != before {
                         app.preferences.diff_side_by_side = side;
                     }
                     let mut ignore = app.preferences.diff_ignore_whitespace;
-                    let whitespace = if wide {
+                    let whitespace = crate::i18n::tr_msg(if wide {
                         "Ignore whitespace"
                     } else {
                         "Whitespace"
-                    };
+                    });
                     if ui
                         .checkbox(&mut ignore, whitespace)
-                        .help_text("Hide changes that only add or remove whitespace. Line edits stay disabled while this is on.")
+                        .help_text(crate::i18n::tr_msg("Hide changes that only add or remove whitespace. Line edits stay disabled while this is on."))
                         .changed()
                     {
                         app.preferences.diff_ignore_whitespace = ignore;
@@ -165,8 +168,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
 fn conflict_bar(ui: &mut Ui, app: &mut SannyGitApp, index: usize) {
     let palette = app.palette();
     let state = app.changes[index].conflict_status.map_or_else(
-        || "Conflicted".to_owned(),
-        |status| format!("Conflicted ({status})"),
+        || crate::i18n::tr_msg("Conflicted"),
+        |status| crate::i18n::tr_args("Conflicted (%{status})", &[("status", status)]),
     );
     let compact = ui.available_width() < 570.0;
     let secondary = [Action::Ours, Action::Theirs, Action::Recreate];
@@ -176,10 +179,12 @@ fn conflict_bar(ui: &mut Ui, app: &mut SannyGitApp, index: usize) {
     let conflict_button = |ui: &mut Ui, action: Action| {
         ui.add_enabled(
             app.can_open_conflict(index, action),
-            Button::new(action.label()),
+            Button::new(crate::i18n::tr_msg(action.label())),
         )
-        .help_text(action.description())
-        .disabled_help_text("Select a single file and wait for the working tree to be current")
+        .help_text(crate::i18n::tr_msg(action.description()))
+        .disabled_help_text(crate::i18n::tr_msg(
+            "Select a single file and wait for the working tree to be current",
+        ))
         .clicked()
     };
     super::header(
@@ -194,16 +199,16 @@ fn conflict_bar(ui: &mut Ui, app: &mut SannyGitApp, index: usize) {
             ui.spacing_mut().interact_size.y = 22.0;
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 stage = ui
-                    .add_enabled(stage_enabled, Button::new("Stage"))
-                    .help_text("Stage the working copy after resolving the conflict")
-                    .disabled_help_text(if app.merging {
+                    .add_enabled(stage_enabled, Button::new(crate::i18n::tr_msg("Stage")))
+                    .help_text(crate::i18n::tr_msg("Stage the working copy after resolving the conflict"))
+                    .disabled_help_text(crate::i18n::tr_msg(if app.merging {
                         "Wait for the current operation or refresh the working tree"
                     } else {
                         "Direct staging of conflicts is available during a merge. Use Conflict Solver to stage a resolution."
-                    })
+                    }))
                     .clicked();
                 if compact {
-                    ui.menu_button("Resolve", |ui| {
+                    ui.menu_button(crate::i18n::tr_msg("Resolve"), |ui| {
                         for action in secondary {
                             if conflict_button(ui, action) {
                                 requested = Some(action);
@@ -269,7 +274,9 @@ fn file_header(ui: &mut Ui, path: &str, palette: crate::theme::Palette) -> bool 
     let mut close = false;
     super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
         ui.spacing_mut().interact_size.y = 20.0;
-        ui.label(RichText::new("Changes").family(crate::theme::semibold_family()));
+        ui.label(
+            RichText::new(crate::i18n::tr_msg("Changes")).family(crate::theme::semibold_family()),
+        );
         ui.add_space(8.0);
         let font = eframe::egui::TextStyle::Body.resolve(ui.style());
         let text = ui
@@ -312,7 +319,9 @@ fn file_header(ui: &mut Ui, path: &str, palette: crate::theme::Palette) -> bool 
             ui,
             eframe::egui::Rect::from_center_size(close_rect.center(), Vec2::splat(16.0)),
         );
-        close = close_response.help_text("Close diff").clicked();
+        close = close_response
+            .help_text(crate::i18n::tr_msg("Close diff"))
+            .clicked();
         let text_rect = eframe::egui::Rect::from_min_max(
             eframe::egui::pos2(rect.left() + 24.0, rect.top() + 1.0),
             eframe::egui::pos2(close_rect.left() - 4.0, rect.bottom() - 1.0),
@@ -926,7 +935,7 @@ mod tests {
                 let mut output = ctx.run_ui(eframe::egui::RawInput::default(), |ui| {
                     file_header(ui, "app.rs", theme.palette());
                     super::super::header(ui, 26.0, theme.palette(), |ui| {
-                        ui.label("src/app.rs");
+                        ui.label(crate::i18n::tr_msg("src/app.rs"));
                     });
                 });
                 let palette = theme.palette();

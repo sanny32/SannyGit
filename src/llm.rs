@@ -134,7 +134,7 @@ pub enum CommitMessageLanguage {
     German,
     #[serde(rename = "ru")]
     Russian,
-    #[serde(rename = "zh-Hans")]
+    #[serde(rename = "zh-CN")]
     ChineseSimplified,
 }
 
@@ -155,31 +155,14 @@ impl CommitMessageLanguage {
         }
     }
 
-    /// Rough Git subject length suited to how much fits on one line per script.
-    pub fn subject_limit(self) -> usize {
-        match self {
-            Self::English | Self::German => 72,
-            Self::Russian => 60,
-            Self::ChineseSimplified => 50,
-        }
-    }
-
     pub fn instructions(self) -> String {
-        let limit = self.subject_limit();
-        match self {
-            Self::English => format!(
-                "Write a concise Git commit message in English. Use an imperative subject of at most {limit} characters. Add a short body only when it helps explain why. Return only the commit message."
-            ),
-            Self::German => format!(
-                "Schreibe eine prägnante Git-Commit-Nachricht auf Deutsch. Verwende einen Imperativ als Betreff mit höchstens {limit} Zeichen. Füge einen kurzen Textkörper nur hinzu, wenn er das Warum erklärt. Gib nur die Commit-Nachricht zurück."
-            ),
-            Self::Russian => format!(
-                "Напиши краткое сообщение коммита Git на русском языке. Используй повелительное наклонение в теме длиной не более {limit} символов. Добавь короткое тело только если нужно объяснить причину. Верни только текст сообщения коммита."
-            ),
-            Self::ChineseSimplified => format!(
-                "使用简体中文撰写简洁的 Git 提交说明。主题使用祈使语气，最多 {limit} 个汉字。仅在有助于说明原因时添加简短正文。只返回提交说明。"
-            ),
-        }
+        let template = match self {
+            Self::English => include_str!("../assets/prompts/commit-message/en.txt"),
+            Self::German => include_str!("../assets/prompts/commit-message/de.txt"),
+            Self::Russian => include_str!("../assets/prompts/commit-message/ru.txt"),
+            Self::ChineseSimplified => include_str!("../assets/prompts/commit-message/zh-CN.txt"),
+        };
+        template.trim().to_owned()
     }
 
     pub fn matches_instructions(self, text: &str) -> bool {

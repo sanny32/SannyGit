@@ -25,28 +25,35 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         ui.painter().text(
             rect.center(),
             Align2::CENTER_CENTER,
-            "Commit",
+            crate::i18n::tr_msg("Commit"),
             FontId::new(crate::theme::ui_font_size(), semibold_family()),
             palette.text,
         );
         ui.add_enabled_ui(!app.busy(), |ui| {
             eframe::egui::ComboBox::from_id_salt("commit.contents")
                 .width(98.0)
-                .selected_text(app.commit.contents.label())
+                .selected_text(crate::i18n::tr_msg(app.commit.contents.label()))
                 .show_ui(ui, |ui| {
                     for mode in [
                         crate::git::CommitContents::All,
                         crate::git::CommitContents::Staged,
                     ] {
-                        ui.selectable_value(&mut app.commit.contents, mode, mode.label());
+                        ui.selectable_value(
+                            &mut app.commit.contents,
+                            mode,
+                            crate::i18n::tr_msg(mode.label()),
+                        );
                     }
                 });
         });
         let staged = app.changes.iter().filter(|c| c.staged).count();
         ui.label(
-            RichText::new(format!("{staged} staged"))
-                .small()
-                .color(palette.muted),
+            RichText::new(crate::i18n::tr_args(
+                "{count} staged",
+                &[("count", &staged.to_string())],
+            ))
+            .small()
+            .color(palette.muted),
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
@@ -70,7 +77,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             app.generate_commit_message_blocker().is_none(),
                             MessageAction::Generate,
                         )
-                        .help(app.generate_commit_message_blocker().unwrap_or("")),
+                        .help(crate::i18n::tr_blocker(
+                            app.generate_commit_message_blocker(),
+                        )),
                     );
                     entries.push(Entry::item(
                         "Repository AI settings…",
@@ -99,15 +108,15 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 generating || blocker.is_none(),
             )
             .help_text(if generating {
-                "Cancel commit message generation"
+                crate::i18n::tr_msg("Cancel commit message generation")
+            } else if app.commit.contents == crate::git::CommitContents::All {
+                crate::i18n::tr_msg(
+                    "Generate a commit message from all changes, including new files",
+                )
             } else {
-                if app.commit.contents == crate::git::CommitContents::All {
-                    "Generate a commit message from all changes, including new files"
-                } else {
-                    "Generate a commit message from staged contents only"
-                }
+                crate::i18n::tr_msg("Generate a commit message from staged contents only")
             })
-            .disabled_help_text(blocker.unwrap_or(""))
+            .disabled_help_text(crate::i18n::tr_blocker(blocker))
             .clicked()
             {
                 if generating {
@@ -187,16 +196,19 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 let mut amend = app.commit.amend;
                 if ui.add_enabled(
                     blocker.is_none(),
-                    eframe::egui::Checkbox::new(&mut amend, "Amend last commit"),
+                    eframe::egui::Checkbox::new(
+                        &mut amend,
+                        crate::i18n::tr_msg("Amend last commit"),
+                    ),
                 )
-                .help_text("Replace the last commit using the selected contents mode. Rewrites commit history.")
-                .disabled_help_text(blocker.unwrap_or(""))
+                .help_text(crate::i18n::tr_msg("Replace the last commit using the selected contents mode. Rewrites commit history."))
+                .disabled_help_text(crate::i18n::tr_blocker(blocker))
                 .changed() {
                     app.set_amend(amend);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let blocker = app.commit_blocker();
-                    let label = if app.commit.amend { "Amend" } else { "Commit" };
+                    let label = crate::i18n::tr_msg(if app.commit.amend { "Amend" } else { "Commit" });
                     if ui
                         .add_enabled(
                             blocker.is_none(),
@@ -209,13 +221,13 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 Button::new(label).min_size(Vec2::new(72.0, 24.0))
                             },
                         )
-                        .help_text(match (app.commit.amend, app.commit.contents) {
+                        .help_text(crate::i18n::tr_msg(match (app.commit.amend, app.commit.contents) {
                             (false, crate::git::CommitContents::All) => "Commit all changes, including new files",
                             (false, crate::git::CommitContents::Staged) => "Commit staged changes only; preserve unstaged changes",
                             (true, crate::git::CommitContents::All) => "Replace the last commit with this message and all changes, including new files",
                             (true, crate::git::CommitContents::Staged) => "Replace the last commit with this message and staged changes only; preserve unstaged changes",
-                        })
-                        .disabled_help_text(blocker.unwrap_or(""))
+                        }))
+                        .disabled_help_text(crate::i18n::tr_blocker(blocker))
                         .clicked()
                     {
                         app.create_commit();

@@ -1636,6 +1636,7 @@ fn tag_patch_export_reports_progress_and_path_in_the_status_bar() {
         let (sender, reader) = mpsc::channel();
         app.branches.tag_patch_reader = Some(reader);
         let shows = |app: &mut SannyGitApp, expected: &str| {
+            let displayed = crate::i18n::tr_msg(expected);
             let mut visible = false;
             for _ in 0..4 {
                 let mut output = ctx.run_ui(
@@ -1646,10 +1647,10 @@ fn tag_patch_export_reports_progress_and_path_in_the_status_bar() {
                     |ui| ui::show(ui, app),
                 );
                 output.textures_delta.clear();
-                visible = visible_text(&output.shapes, expected);
+                visible = visible_text(&output.shapes, &displayed);
                 assert!(visible_text(&output.shapes, &repository_path));
             }
-            assert!(visible, "{expected}");
+            assert!(visible, "{displayed}");
         };
 
         assert!(!app.busy() && !app.modal_dialog_open());
@@ -1658,7 +1659,8 @@ fn tag_patch_export_reports_progress_and_path_in_the_status_bar() {
         sender.send(Ok(path.clone())).unwrap();
         app.poll_tag_patch();
         assert!(!app.tag_patch_pending() && !app.modal_dialog_open());
-        shows(&mut app, &format!("Patch exported to {}", path.display()));
+        let exported = app.status.clone();
+        shows(&mut app, &exported);
 
         let (sender, reader) = mpsc::channel();
         app.branches.tag_patch_reader = Some(reader);
@@ -1712,7 +1714,7 @@ fn adding_tags_closes_the_form_and_shows_progress_in_the_status_bar() {
                         assert!(!visible_text(&output.shapes, "Repository operation"));
                         assert!(!visible_text(&output.shapes, "Cancel operation"));
                         assert_eq!(
-                            visible_text_count(&output.shapes, progress),
+                            visible_text_count(&output.shapes, &crate::i18n::tr_msg(progress),),
                             1,
                             "Tag progress should appear exactly once"
                         );

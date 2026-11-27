@@ -49,14 +49,14 @@ fn add_worktree_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                     .num_columns(2)
                     .spacing([8.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Branch:");
+                        ui.label(crate::i18n::tr_msg("Branch:"));
                         ComboBox::from_id_salt("worktree.add.branch")
                             .width(ui.available_width())
                             .truncate()
                             .selected_text(if app.manager.worktree_branch.is_empty() {
-                                "Select a local branch"
+                                crate::i18n::tr_msg("Select a local branch")
                             } else {
-                                &app.manager.worktree_branch
+                                app.manager.worktree_branch.clone()
                             })
                             .show_ui(ui, |ui| {
                                 for branch in &app.manager.worktree_branches {
@@ -68,7 +68,7 @@ fn add_worktree_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                 }
                             });
                         ui.end_row();
-                        ui.label("Directory:");
+                        ui.label(crate::i18n::tr_msg("Directory:"));
                         ui.horizontal(|ui| {
                             let width = (ui.available_width() - 36.0).max(80.0);
                             ui.add(
@@ -134,7 +134,9 @@ fn remove_repository_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
         super::controls::dialog_style::section(ui, palette.header, egui::Margin::same(18), |ui| {
             ui.add(egui::Label::new(&path).truncate())
                 .on_hover_text(&path);
-            ui.label("Any saved commit-message draft for this repository will be discarded.");
+            ui.label(crate::i18n::tr_msg(
+                "Any saved commit-message draft for this repository will be discarded.",
+            ));
         });
         super::controls::dialog_style::section(
             ui,
@@ -178,7 +180,7 @@ fn rename_repository_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
         );
         style::section(ui, palette.header, egui::Margin::same(18), |ui| {
             ui.add_enabled_ui(!busy, |ui| {
-                ui.label("Name");
+                ui.label(crate::i18n::tr_msg("Name"));
                 ui.add(
                     crate::ui::controls::singleline(&mut app.manager.bookmark_name)
                         .desired_width(f32::INFINITY),
@@ -225,7 +227,7 @@ fn rename_group_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
         );
         style::section(ui, palette.header, egui::Margin::same(18), |ui| {
             ui.add_enabled_ui(!busy, |ui| {
-                ui.label("Group name");
+                ui.label(crate::i18n::tr_msg("Group name"));
                 ui.add(
                     crate::ui::controls::singleline(&mut app.manager.group_name)
                         .desired_width(f32::INFINITY),
@@ -272,7 +274,10 @@ fn delete_group_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
             "Remove the group. Its repositories stay in the list.",
         );
         style::section(ui, palette.header, egui::Margin::same(18), |ui| {
-            ui.label(format!("Delete group {name}?"));
+            ui.label(crate::i18n::tr_args(
+                "Delete group %{name}?",
+                &[("name", &name)],
+            ));
         });
         style::section(ui, palette.header, egui::Margin::symmetric(18, 12), |ui| {
             style::button_row(ui, |ui| {
@@ -303,13 +308,13 @@ pub(super) fn group_picker(ui: &mut Ui, app: &mut SannyGitApp) {
                 .preferences
                 .selected_group
                 .as_deref()
-                .unwrap_or("Ungrouped"),
+                .unwrap_or(&crate::i18n::tr_msg("Ungrouped")),
         )
         .show_ui(ui, |ui| {
             ui.selectable_value(
                 &mut app.manager.preferences.selected_group,
                 None,
-                "Ungrouped",
+                crate::i18n::tr_msg("Ungrouped"),
             );
             for group in &app.manager.preferences.groups {
                 ui.selectable_value(
@@ -359,7 +364,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         return;
     }
     if app.busy() && app.manager.cancel.is_some() && !app.background_progress_only {
-        Window::new("Repository operation")
+        Window::new(crate::i18n::tr_msg("Repository operation"))
             .anchor(
                 eframe::egui::Align2::CENTER_CENTER,
                 eframe::egui::Vec2::ZERO,
@@ -370,9 +375,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             .show(ui.ctx(), |ui| {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(&app.status);
+                    ui.label(crate::i18n::tr_msg(&app.status));
                 });
-                if ui.button("Cancel operation").clicked() {
+                if ui.button(crate::i18n::tr_msg("Cancel operation")).clicked() {
                     app.cancel_repository_job();
                 }
             });
@@ -422,7 +427,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             let busy = app.busy();
             ui.add_enabled_ui(!busy, |ui| match dialog {
                 Dialog::Group => {
-                    ui.label("Group name"); ui.add(crate::ui::controls::singleline(&mut app.manager.group_name).desired_width(f32::INFINITY));
+                    ui.label(crate::i18n::tr_msg("Group name")); ui.add(crate::ui::controls::singleline(&mut app.manager.group_name).desired_width(f32::INFINITY));
                 }
                 Dialog::Clone => {},
                 Dialog::Search => {},
@@ -435,35 +440,41 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         }
                     });
                     let removable = app.manager.worktrees.iter().find(|t| Some(&t.path) == app.manager.selected_worktree.as_ref()).is_some_and(|t| !t.main && !t.locked && !t.bare && Some(t.path.as_str()) != active && !t.prunable);
-                    if ui.add_enabled(removable, Button::new("Remove Selected…")).clicked() { app.manager.confirm_remove = true; }
+                    if ui.add_enabled(removable, Button::new(crate::i18n::tr_msg("Remove Selected…"))).clicked() { app.manager.confirm_remove = true; }
                     if app.manager.confirm_remove {
                         ui.separator();
-                        ui.label(format!("Remove worktree directory {}?", app.manager.selected_worktree.as_deref().unwrap_or("")));
-                        ui.label("Removal checks for local, untracked and ignored files. The branch is kept.");
+                        ui.label(crate::i18n::tr_args(
+                            "Remove worktree directory %{path}?",
+                            &[("path", app.manager.selected_worktree.as_deref().unwrap_or(""))],
+                        ));
+                        ui.label(crate::i18n::tr_msg("Removal checks for local, untracked and ignored files. The branch is kept."));
                         ui.horizontal(|ui| {
-                            if ui.button("Cancel removal").clicked() { app.manager.confirm_remove = false; }
-                            if ui.add_enabled(removable, Button::new("Remove Worktree")).clicked() { if let Some(path) = app.manager.selected_worktree.clone() { job = Some(Job::RemoveWorktree(path)); } }
+                            if ui.button(crate::i18n::tr_msg("Cancel removal")).clicked() { app.manager.confirm_remove = false; }
+                            if ui.add_enabled(removable, Button::new(crate::i18n::tr_msg("Remove Worktree"))).clicked() { if let Some(path) = app.manager.selected_worktree.clone() { job = Some(Job::RemoveWorktree(path)); } }
                         });
                     }
-                    ui.separator(); ui.label("Add worktree: destination (new directory)");
+                    ui.separator(); ui.label(crate::i18n::tr_msg("Add worktree: destination (new directory)"));
                     ui.add(crate::ui::controls::singleline(&mut app.manager.destination).desired_width(f32::INFINITY));
-                    ui.checkbox(&mut app.manager.worktree_new_branch, "Create a new branch from HEAD");
+                    ui.checkbox(
+                        &mut app.manager.worktree_new_branch,
+                        crate::i18n::tr_msg("Create a new branch from HEAD"),
+                    );
                     if app.manager.worktree_new_branch {
-                        ui.label("New branch name"); ui.add(crate::ui::controls::singleline(&mut app.manager.worktree_branch).desired_width(f32::INFINITY));
+                        ui.label(crate::i18n::tr_msg("New branch name")); ui.add(crate::ui::controls::singleline(&mut app.manager.worktree_branch).desired_width(f32::INFINITY));
                     } else {
-                        ComboBox::from_id_salt("worktree.branch").selected_text(if app.manager.worktree_branch.is_empty() { "Select a local branch" } else { &app.manager.worktree_branch }).show_ui(ui, |ui| {
+                        ComboBox::from_id_salt("worktree.branch").selected_text(if app.manager.worktree_branch.is_empty() { crate::i18n::tr_msg("Select a local branch") } else { app.manager.worktree_branch.clone() }).show_ui(ui, |ui| {
                             for branch in app.branches.entries.iter().filter(|r| r.kind == crate::models::RefKind::Local) { ui.selectable_value(&mut app.manager.worktree_branch, branch.name.clone(), &branch.name); }
                         });
                     }
-                    if ui.add_enabled(!app.manager.destination.is_empty() && !app.manager.worktree_branch.is_empty(), Button::new("Add Worktree")).clicked() { job = Some(Job::AddWorktree { destination: app.manager.destination.clone(), branch: app.manager.worktree_branch.clone(), new_branch: app.manager.worktree_new_branch }); }
-                    if ui.button("Reload Worktrees").clicked() { job = Some(Job::ListWorktrees); }
+                    if ui.add_enabled(!app.manager.destination.is_empty() && !app.manager.worktree_branch.is_empty(), Button::new(crate::i18n::tr_msg("Add Worktree"))).clicked() { job = Some(Job::AddWorktree { destination: app.manager.destination.clone(), branch: app.manager.worktree_branch.clone(), new_branch: app.manager.worktree_new_branch }); }
+                    if ui.button(crate::i18n::tr_msg("Reload Worktrees")).clicked() { job = Some(Job::ListWorktrees); }
                 }
                 Dialog::Prune => {
                     if let Some(preview) = &app.manager.prune_preview {
-                        ui.label("Only obsolete administrative metadata is removed; working directories are not deleted.");
+                        ui.label(crate::i18n::tr_msg("Only obsolete administrative metadata is removed; working directories are not deleted."));
                         ScrollArea::vertical().max_height(240.0).show(ui, |ui| { ui.add(egui::Label::new(preview).wrap().selectable(true)); });
-                        if preview.is_empty() { ui.label("No obsolete worktree metadata to prune."); }
-                        if ui.add_enabled(!preview.is_empty(), Button::new("Prune Obsolete Metadata")).clicked() { job = Some(Job::Prune); }
+                        if preview.is_empty() { ui.label(crate::i18n::tr_msg("No obsolete worktree metadata to prune.")); }
+                        if ui.add_enabled(!preview.is_empty(), Button::new(crate::i18n::tr_msg("Prune Obsolete Metadata"))).clicked() { job = Some(Job::Prune); }
                     }
                 }
                 Dialog::Settings
@@ -473,10 +484,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 | Dialog::DeleteGroup
                 | Dialog::RenameRepository => {}
                 Dialog::CloseRepository => {
-                    ui.label("Close this repository and discard its commit message drafts?");
+                    ui.label(crate::i18n::tr_msg("Close this repository and discard its commit message drafts?"));
                     ui.horizontal(|ui| {
-                        if ui.button("Cancel").clicked() { app.manager.dialog = None; }
-                        if ui.button("Close Repository").clicked() { app.close_repository(true); }
+                        if ui.button(crate::i18n::tr_msg("Cancel")).clicked() { app.manager.dialog = None; }
+                        if ui.button(crate::i18n::tr_msg("Close Repository")).clicked() { app.close_repository(true); }
                     });
                 }
             });
@@ -525,7 +536,7 @@ fn search_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
         style::section(ui, palette.header, egui::Margin::symmetric(12, 10), |ui| {
             ui.add_enabled_ui(!busy, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Search In:");
+                    ui.label(crate::i18n::tr_msg("Search In:"));
                     let width = (ui.available_width() - 150.0).max(80.0);
                     ui.add(
                         crate::ui::controls::singleline(&mut app.manager.search_root)
@@ -535,12 +546,14 @@ fn search_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                     start = ui
                         .add_enabled(
                             !app.manager.search_root.trim().is_empty(),
-                            Button::new("Start Search"),
+                            Button::new(crate::i18n::tr_msg("Start Search")),
                         )
                         .clicked();
                 });
             });
-            ui.label("Found repositories (selected ones will be remembered):");
+            ui.label(crate::i18n::tr_msg(
+                "Found repositories (selected ones will be remembered):",
+            ));
             egui::Frame::new()
                 .fill(palette.panel)
                 .stroke((1.0, palette.border))
@@ -549,7 +562,7 @@ fn search_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.add_space(24.0);
-                        ui.label("Path");
+                        ui.label(crate::i18n::tr_msg("Path"));
                     });
                     ui.separator();
                     ScrollArea::both()
@@ -573,12 +586,16 @@ fn search_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                 });
             ui.add_enabled_ui(!busy, |ui| group_picker(ui, app));
             let status = if busy {
-                "Searching repositories…"
+                crate::i18n::tr_msg("Searching repositories…")
             } else {
-                &app.manager.search_summary
+                crate::i18n::tr_msg(&app.manager.search_summary)
             };
-            style::text_line(ui, RichText::new(status).small().color(palette.muted), 18.0)
-                .on_hover_text(status);
+            style::text_line(
+                ui,
+                RichText::new(&status).small().color(palette.muted),
+                18.0,
+            )
+            .on_hover_text(&status);
         });
         style::section(ui, palette.header, egui::Margin::symmetric(12, 10), |ui| {
             style::button_row(ui, |ui| {
@@ -632,7 +649,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                 for (index, label) in [
                     "User", "Fetch and Pull", "Push", "Signing", "Encoding",
                 ].iter().enumerate() {
-                    if ui.selectable_label(tab == index, *label).clicked() {
+                    if ui.selectable_label(tab == index, crate::i18n::tr_msg(label)).clicked() {
                         tab = index;
                     }
                 }
@@ -659,50 +676,48 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                     .min_col_width(110.0)
                                     .spacing([8.0, 4.0])
                                     .show(ui, |ui| {
-                                        ui.label("Full Name:");
+                                        ui.label(crate::i18n::tr_msg("Full Name:"));
                                         ui.add(crate::ui::controls::singleline(&mut settings.name)
                                             .desired_width(field_width));
                                         ui.end_row();
-                                        ui.label("Git Email:");
+                                        ui.label(crate::i18n::tr_msg("Git Email:"));
                                         ui.add(crate::ui::controls::singleline(&mut settings.email)
                                             .desired_width(field_width));
                                         ui.end_row();
                                     });
                             });
-                            ui.label(RichText::new(
-                                "Leave a field empty to use the inherited Git setting."
-                            ).small().color(palette.muted));
+                            ui.label(RichText::new(crate::i18n::tr_msg("Leave a field empty to use the inherited Git setting.")).small().color(palette.muted));
                         } else if app.error.is_none() {
                             ui.horizontal(|ui| {
                                 ui.spinner();
-                                ui.label("Loading repository settings…");
+                                ui.label(crate::i18n::tr_msg("Loading repository settings…"));
                             });
                         }
                     } else {
                         ui.add_enabled_ui(false, |ui| {
                             match tab {
                                 1 => {
-                                    let _ = ui.radio(true, "Merge fetched remote changes");
-                                    let _ = ui.radio(false, "Rebase local branch onto fetched changes");
+                                    let _ = ui.radio(true, crate::i18n::tr_msg("Merge fetched remote changes"));
+                                    let _ = ui.radio(false, crate::i18n::tr_msg("Rebase local branch onto fetched changes"));
                                     ui.add_space(4.0);
-                                    ui.checkbox(&mut true, "Prune obsolete remote tracked branches");
+                                    ui.checkbox(&mut true, crate::i18n::tr_msg("Prune obsolete remote tracked branches"));
                                     ui.add_space(4.0);
-                                    ui.checkbox(&mut false, "Always fetch new commits, tags and branches from submodule");
-                                    ui.checkbox(&mut true, "Update registered submodules");
-                                    ui.checkbox(&mut true, "Initialize new submodules");
+                                    ui.checkbox(&mut false, crate::i18n::tr_msg("Always fetch new commits, tags and branches from submodule"));
+                                    ui.checkbox(&mut true, crate::i18n::tr_msg("Update registered submodules"));
+                                    ui.checkbox(&mut true, crate::i18n::tr_msg("Initialize new submodules"));
                                 }
                                 2 => {
                                     ui.horizontal(|ui| {
-                                        ui.label("Submodule handling*:");
+                                        ui.label(crate::i18n::tr_msg("Submodule handling*:"));
                                         ComboBox::from_id_salt("repository.settings.push")
-                                            .selected_text("abort if any needs to be pushed")
+                                            .selected_text(crate::i18n::tr_msg("abort if any needs to be pushed"))
                                             .show_ui(ui, |ui| {
                                                 for label in ["ignore submodules", "abort if any needs to be pushed", "push submodules first"] {
-                                                    ui.label(label);
+                                                    ui.label(crate::i18n::tr_msg(label));
                                                 }
                                             });
                                     });
-                                    ui.label("* if repository commit references non-pushed submodule commit");
+                                    ui.label(crate::i18n::tr_msg("* if repository commit references non-pushed submodule commit"));
                                 }
                                 3 => {
                                     let mut program = String::new();
@@ -713,7 +728,7 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                         .min_col_width(110.0)
                                         .spacing([8.0, 4.0])
                                         .show(ui, |ui| {
-                                            ui.label("GPG Program:");
+                                            ui.label(crate::i18n::tr_msg("GPG Program:"));
                                             ui.horizontal(|ui| {
                                                 let width = field_width
                                                     - super::controls::icons::BUTTON_SIZE
@@ -725,20 +740,20 @@ fn settings_dialog(ctx: &egui::Context, app: &mut SannyGitApp) {
                                                 );
                                             });
                                             ui.end_row();
-                                            ui.label("Signing Key:");
+                                            ui.label(crate::i18n::tr_msg("Signing Key:"));
                                             ui.add(crate::ui::controls::singleline(&mut key)
                                                 .desired_width(field_width));
                                             ui.end_row();
-                                            ui.label("");
-                                            ui.checkbox(&mut false, "Sign all commits");
+                                            ui.label(crate::i18n::tr_msg(""));
+                                            ui.checkbox(&mut false, crate::i18n::tr_msg("Sign all commits"));
                                             ui.end_row();
                                         });
                                 }
                                 4 => {
                                     ui.horizontal(|ui| {
-                                        ui.label("Text File Encoding:");
+                                        ui.label(crate::i18n::tr_msg("Text File Encoding:"));
                                         ComboBox::from_id_salt("repository.settings.encoding")
-                                            .selected_text("System Default (UTF-8)")
+                                            .selected_text(crate::i18n::tr_msg("System Default (UTF-8)"))
                                             .show_ui(ui, |_| {});
                                     });
                                 }

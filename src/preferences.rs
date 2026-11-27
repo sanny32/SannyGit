@@ -10,12 +10,24 @@ pub enum Language {
     #[default]
     #[serde(rename = "en")]
     English,
+    #[serde(rename = "ru")]
+    Russian,
 }
 
 impl Language {
+    pub const ALL: [Self; 2] = [Self::English, Self::Russian];
+
     pub fn label(self) -> &'static str {
         match self {
             Self::English => "English",
+            Self::Russian => "Русский",
+        }
+    }
+
+    pub fn locale(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::Russian => "ru",
         }
     }
 }
@@ -150,8 +162,8 @@ impl Preferences {
             .signed_duration_since(date.date_naive())
             .num_days();
         let day = match (self.verbose_dates, days) {
-            (true, 0) => "Today".into(),
-            (true, 1) => "Yesterday".into(),
+            (true, 0) => crate::i18n::tr_msg("Today"),
+            (true, 1) => crate::i18n::tr_msg("Yesterday"),
             _ => date.format(self.date_format.pattern()).to_string(),
         };
         format!("{day} {}", date.format(self.time_format.pattern()))

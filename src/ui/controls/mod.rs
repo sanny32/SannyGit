@@ -215,10 +215,10 @@ mod tests {
             },
             |ui| {
                 ui.indent("plain-indent", |ui| {
-                    ui.label("Plain child");
+                    ui.label(crate::i18n::tr_msg("Plain child"));
                 });
                 super::tree_indent(ui, "shared-indent", |ui| {
-                    ui.label("Tree child");
+                    ui.label(crate::i18n::tr_msg("Tree child"));
                 });
             },
         );

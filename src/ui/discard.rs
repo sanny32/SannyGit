@@ -39,7 +39,10 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         dialog_style::header_with_icon(ui, palette, title, description, Icon::Discard);
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            let repository = format!("Repository: {:?}", dialog.root);
+            let repository = crate::i18n::tr_args(
+                "Repository: %{path}",
+                &[("path", &format!("{:?}", dialog.root))],
+            );
             super::controls::dialog_style::text_line(ui, RichText::new(&repository).color(palette.muted), 26.0).help_text(repository);
             if multiple {
                 egui::ScrollArea::vertical().id_salt("discard.paths").min_scrolled_height(110.0).max_height(110.0).auto_shrink([false, false]).show(ui, |ui| {
@@ -48,30 +51,43 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     }
                 });
             } else {
-                let path = format!("File: {:?}", dialog.path);
+                let path = crate::i18n::tr_args(
+                    "File: %{path}",
+                    &[("path", &format!("{:?}", dialog.path))],
+                );
                 super::controls::dialog_style::text_line(ui, RichText::new(&path).monospace(), 26.0).help_text(path);
             }
             ui.scope(|ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                ui.add_enabled(!busy && dialog.prepared.is_some(), egui::Checkbox::new(&mut dialog.confirmed, if multiple { "I confirm this action on all reviewed files." } else { "I confirm this action on the reviewed file." }));
+                ui.add_enabled(
+                    !busy && dialog.prepared.is_some(),
+                    egui::Checkbox::new(
+                        &mut dialog.confirmed,
+                        crate::i18n::tr_msg(if multiple {
+                            "I confirm this action on all reviewed files."
+                        } else {
+                            "I confirm this action on the reviewed file."
+                        }),
+                    ),
+                );
             });
             let (message, color) = if dialog.error.is_some() {
-                ("Reload details to retry.", palette.muted)
+                (crate::i18n::tr_msg("Reload details to retry."), palette.muted)
             } else if dialog.running {
-                ("Operation in progress…", palette.muted)
+                (crate::i18n::tr_msg("Operation in progress…"), palette.muted)
             } else if multiple && dialog.prepared.is_some() {
-                ("Selected files reviewed.", palette.muted)
+                (crate::i18n::tr_msg("Selected files reviewed."), palette.muted)
             } else if let Some(prepared) = &dialog.prepared {
-                (prepared.summary.as_str(), palette.muted)
+                (prepared.summary.clone(), palette.muted)
             } else {
-                ("Checking file, index and repository state…", palette.muted)
+                (crate::i18n::tr_msg("Checking file, index and repository state…"), palette.muted)
             };
-            super::controls::dialog_style::text_line(ui, RichText::new(message).color(color), 26.0).help_text(message);
+            super::controls::dialog_style::text_line(ui, RichText::new(&message).color(color), 26.0).help_text(&message);
         });
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             dialog_style::button_row(ui, |ui| {
                 if ui.add_enabled(!busy && current && dialog.prepared.is_some() && dialog.confirmed,
-                    dialog_style::primary(title, palette)).disabled_help_text("Review the files and confirm the action. Reload details if a file, index or HEAD changed.").dialog_accept() { submit = true; }
+                    dialog_style::primary(title, palette)).disabled_help_text(crate::i18n::tr_msg("Review the files and confirm the action. Reload details if a file, index or HEAD changed.")).dialog_accept() { submit = true; }
                 if ui.add_enabled(!dialog.running, dialog_style::button("Cancel")).dialog_cancel() { cancel = true; }
                 if ui.add_enabled(!busy && !dialog.running, dialog_style::button("Reload details")).clicked() { reload = true; }
             });

@@ -261,11 +261,13 @@ pub fn action(ui: &mut Ui, icon: Icon, enabled: bool) -> Response {
 }
 
 pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str) -> Response {
+    let tooltip = crate::i18n::tr_msg(tooltip);
     let response = action(ui, icon, true);
+    let info = tooltip.clone();
     response.widget_info(|| {
-        eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, true, tooltip)
+        eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, true, info.clone())
     });
-    response.help_text(tooltip)
+    response.help_text(&tooltip)
 }
 
 /// An X inside a faint disc, like the JetBrains status-bar progress stop icon.
@@ -277,6 +279,7 @@ pub fn circled_button(
     tooltip: &str,
     size: Vec2,
 ) -> Response {
+    let tooltip = crate::i18n::tr_msg(tooltip);
     button_scope(ui, |ui| {
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let diameter = rect.width().min(rect.height());
@@ -298,15 +301,17 @@ pub fn circled_button(
             ui,
             Rect::from_center_size(rect.center(), Vec2::splat(glyph)),
         );
+        let info = tooltip.clone();
         response.widget_info(|| {
-            eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, true, tooltip)
+            eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, true, info.clone())
         });
-        response.help_text(tooltip)
+        response.help_text(&tooltip)
     })
 }
 
 #[cfg(any(not(target_os = "macos"), test))]
 pub fn menu(ui: &mut Ui, icon: Icon, tooltip: &str, contents: impl FnOnce(&mut Ui)) -> Response {
+    let tooltip = crate::i18n::tr_msg(tooltip);
     let spacing = ui.spacing().clone();
     button_scope(ui, |ui| {
         let response =
@@ -316,19 +321,22 @@ pub fn menu(ui: &mut Ui, icon: Icon, tooltip: &str, contents: impl FnOnce(&mut U
                     contents(ui);
                 })
                 .0;
+        let info = tooltip.clone();
         response.widget_info(|| {
-            eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, true, tooltip)
+            eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, true, info.clone())
         });
-        response.help_text(tooltip)
+        response.help_text(&tooltip)
     })
 }
 
 pub fn unavailable(ui: &mut Ui, icon: Icon, tooltip: &str) {
+    let tooltip = crate::i18n::tr_msg(tooltip);
     let response = action(ui, icon, false);
+    let info = tooltip.clone();
     response.widget_info(|| {
-        eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, false, tooltip)
+        eframe::egui::WidgetInfo::labeled(eframe::egui::Role::Button, false, info.clone())
     });
-    response.disabled_help_text(tooltip);
+    response.disabled_help_text(&tooltip);
 }
 
 #[cfg(test)]

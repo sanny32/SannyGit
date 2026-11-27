@@ -60,12 +60,12 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 if ui
                     .add_enabled(
                         app.abort_merge_allowed(),
-                        eframe::egui::Button::new("Abort"),
+                        eframe::egui::Button::new(crate::i18n::tr_msg("Abort")),
                     )
-                    .help_text(app.sequencing.abort_help())
-                    .disabled_help_text(
+                    .help_text(crate::i18n::tr_msg(app.sequencing.abort_help()))
+                    .disabled_help_text(crate::i18n::tr_msg(
                         "Wait for the current operation or refresh the working tree",
-                    )
+                    ))
                     .clicked()
                 {
                     app.open_abort_merge();
@@ -74,10 +74,14 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     && ui
                         .add_enabled(
                             app.sequencer_skip_allowed(),
-                            eframe::egui::Button::new("Skip"),
+                            eframe::egui::Button::new(crate::i18n::tr_msg("Skip")),
                         )
-                        .help_text("Skip the current step after conflicts are resolved")
-                        .disabled_help_text("Resolve conflicts and refresh the working tree")
+                        .help_text(crate::i18n::tr_msg(
+                            "Skip the current step after conflicts are resolved",
+                        ))
+                        .disabled_help_text(crate::i18n::tr_msg(
+                            "Resolve conflicts and refresh the working tree",
+                        ))
                         .clicked()
                 {
                     app.skip_sequence();
@@ -90,17 +94,24 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 ) && ui
                     .add_enabled(
                         app.sequencer_continue_allowed(),
-                        eframe::egui::Button::new("Continue"),
+                        eframe::egui::Button::new(crate::i18n::tr_msg("Continue")),
                     )
-                    .help_text("Continue after all conflicts are resolved")
-                    .disabled_help_text("Resolve conflicts and refresh the working tree")
+                    .help_text(crate::i18n::tr_msg(
+                        "Continue after all conflicts are resolved",
+                    ))
+                    .disabled_help_text(crate::i18n::tr_msg(
+                        "Resolve conflicts and refresh the working tree",
+                    ))
                     .clicked()
                 {
                     app.continue_sequence();
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     icons::paint(ui, Icon::Warning, palette.warning, 16.0);
-                    ui.add(eframe::egui::Label::new(app.sequencing.banner()).truncate());
+                    ui.add(
+                        eframe::egui::Label::new(crate::i18n::tr_msg(app.sequencing.banner()))
+                            .truncate(),
+                    );
                 });
             });
         });
@@ -235,7 +246,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 };
                 if ui
                     .add(eframe::egui::Button::new(label).frame(false))
-                    .help_text("Sort by staged state")
+                    .help_text(crate::i18n::tr_msg("Sort by staged state"))
                     .clicked()
                 {
                     ui.data_mut(|data| {
@@ -248,7 +259,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             });
             header.col(|ui| {
                 ui.add_space(super::controls::TABLE_CELL_PADDING);
-                ui.label("File");
+                ui.label(crate::i18n::tr_msg("File"));
                 column_separator(ui, "file", &mut status_width, -1.0, 64.0..=120.0, palette);
             });
             header.col(|ui| {
@@ -259,7 +270,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     Some(false) => "Status ↓",
                 };
                 if ui.add(eframe::egui::Button::new(label).frame(false))
-                    .help_text("Sort by file status")
+                    .help_text(crate::i18n::tr_msg("Sort by file status"))
                     .clicked()
                 {
                     ui.data_mut(|data| {
@@ -348,15 +359,18 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     ui.spacing_mut().interact_size.y = row_height;
                     let mut checked = change.staged;
                     let tooltip = if conflicted {
-                        "Double-click the file to open Conflict Solver"
+                        crate::i18n::tr_msg("Double-click the file to open Conflict Solver")
                     } else if !operations_enabled {
-                        "Wait for the current operation or refresh the repository"
+                        crate::i18n::tr_msg("Wait for the current operation or refresh the repository")
                     } else if change.staged && app.merging {
-                        "Use Discard to restore the pre-merge version of this file"
+                        crate::i18n::tr_msg("Use Discard to restore the pre-merge version of this file")
                     } else if change.staged && change.unstaged {
-                        "Some changes are staged. Click to unstage; use Stage to include the remaining changes"
-                    } else if change.staged { "Unstage this file (preserve working-tree contents)" }
-                    else { "Stage all changes in this file" };
+                        crate::i18n::tr_msg("Some changes are staged. Click to unstage; use Stage to include the remaining changes")
+                    } else if change.staged {
+                        crate::i18n::tr_msg("Unstage this file (preserve working-tree contents)")
+                    } else {
+                        crate::i18n::tr_msg("Stage all changes in this file")
+                    };
                     let response = ui
                         .allocate_ui_with_layout(
                             Vec2::new(ui.available_width(), row_height),
@@ -369,8 +383,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                             },
                         )
                         .inner
-                        .help_text(tooltip)
-                        .disabled_help_text(tooltip);
+                        .help_text(&tooltip)
+                        .disabled_help_text(&tooltip);
                     if response.changed() {
                         staging_request = Some((index, !change.staged));
                     }
@@ -797,8 +811,11 @@ fn ui_line(response: &eframe::egui::Response, row: Rect, clip: Rect, palette: Pa
 fn changes_title(ui: &mut Ui, count: usize) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        ui.label(RichText::new("Files").family(semibold_family()));
-        ui.label(format!("({count} files)"));
+        ui.label(RichText::new(crate::i18n::tr_msg("Files")).family(semibold_family()));
+        ui.label(crate::i18n::tr_args(
+            "({count} files)",
+            &[("count", &count.to_string())],
+        ));
     });
 }
 
@@ -820,8 +837,15 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         let selected = app.change_filter == filter;
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(width * width_scale, 22.0), Sense::click());
-        response.widget_info(|| {
-            eframe::egui::WidgetInfo::selected(eframe::egui::Role::Button, true, selected, label)
+        let localized = crate::i18n::tr_msg(label);
+        let info = localized.clone();
+        response.widget_info(move || {
+            eframe::egui::WidgetInfo::selected(
+                eframe::egui::Role::Button,
+                true,
+                selected,
+                info.clone(),
+            )
         });
         ui.painter().rect_filled(
             rect,
@@ -850,7 +874,7 @@ fn filters(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         ui.painter().text(
             rect.left_center() + Vec2::new(6.0, 0.0),
             Align2::LEFT_CENTER,
-            label,
+            &localized,
             FontId::proportional(crate::theme::ui_font_size()),
             text_color,
         );
@@ -911,34 +935,43 @@ fn view_menu(app: &SannyGitApp) -> Vec<popup_menu::Entry<ViewAction>> {
     let scope = app.preferences.changes_scope;
     vec![
         E::item(
-            format!(
-                "{}Group by Directory",
-                mark(app.preferences.changes_group_directories)
+            crate::i18n::tr_args(
+                "%{mark}Group by Directory",
+                &[("mark", mark(app.preferences.changes_group_directories))],
             ),
             true,
             ViewAction::Group,
         ),
         E::Separator,
         E::item(
-            format!("{}Show All", mark(scope == ChangesScope::All)),
+            crate::i18n::tr_args(
+                "%{mark}Show All",
+                &[("mark", mark(scope == ChangesScope::All))],
+            ),
             true,
             ViewAction::Scope(ChangesScope::All),
         ),
         E::item(
-            format!("{}Only Staged", mark(scope == ChangesScope::Staged)),
+            crate::i18n::tr_args(
+                "%{mark}Only Staged",
+                &[("mark", mark(scope == ChangesScope::Staged))],
+            ),
             true,
             ViewAction::Scope(ChangesScope::Staged),
         ),
         E::item(
-            format!("{}Only Unstaged", mark(scope == ChangesScope::Unstaged)),
+            crate::i18n::tr_args(
+                "%{mark}Only Unstaged",
+                &[("mark", mark(scope == ChangesScope::Unstaged))],
+            ),
             true,
             ViewAction::Scope(ChangesScope::Unstaged),
         ),
         E::Separator,
         E::item(
-            format!(
-                "{}Show Ignored Files",
-                mark(app.preferences.show_ignored_files)
+            crate::i18n::tr_args(
+                "%{mark}Show Ignored Files",
+                &[("mark", mark(app.preferences.show_ignored_files))],
             ),
             true,
             ViewAction::Ignored,
@@ -1052,7 +1085,7 @@ fn change_rows(app: &SannyGitApp, visible: &[usize], collapsed: &[String]) -> Ve
     let mut rows = Vec::new();
     for (key, files) in groups {
         let label = if key.is_empty() {
-            "Repository root".to_owned()
+            crate::i18n::tr_msg("Repository root")
         } else {
             key.clone()
         };

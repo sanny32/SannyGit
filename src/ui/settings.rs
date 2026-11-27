@@ -32,20 +32,22 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     }
     let ctx = ui.ctx();
     if app.settings_window.llm_repository.is_some() {
+        let title = crate::i18n::tr_msg("Repository AI Settings");
         settings_viewport(
             ctx,
             app,
             ViewportId::from_hash_of("sannygit.repository.llm.settings"),
-            "Repository AI Settings",
+            &title,
             true,
         );
         return;
     }
+    let title = crate::i18n::tr_msg(branding::PREFERENCES_WINDOW_TITLE);
     settings_viewport(
         ctx,
         app,
         ViewportId::from_hash_of("sannygit.preferences"),
-        branding::PREFERENCES_WINDOW_TITLE,
+        &title,
         false,
     );
 }
@@ -61,7 +63,7 @@ fn settings_viewport(
     ctx: &egui::Context,
     app: &mut SannyGitApp,
     viewport_id: ViewportId,
-    title: &'static str,
+    title: &str,
     repository: bool,
 ) {
     let min_size = [680.0, 380.0];
@@ -273,10 +275,26 @@ fn repository_navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         .auto_shrink([false; 2])
                         .max_height(scroll_height)
                         .show(ui, |ui| {
-                            section(ui, app, SettingsPage::Llm, "AI", |ui, app| {
-                                entry(ui, app, SettingsPage::CommitContext, "Context");
-                                entry(ui, app, SettingsPage::CommitMessages, "Commit messages");
-                            });
+                            section(
+                                ui,
+                                app,
+                                SettingsPage::Llm,
+                                &crate::i18n::tr_msg("AI"),
+                                |ui, app| {
+                                    entry(
+                                        ui,
+                                        app,
+                                        SettingsPage::CommitContext,
+                                        &crate::i18n::tr_msg("Context"),
+                                    );
+                                    entry(
+                                        ui,
+                                        app,
+                                        SettingsPage::CommitMessages,
+                                        &crate::i18n::tr_msg("Commit messages"),
+                                    );
+                                },
+                            );
                         });
                 });
         });
@@ -290,11 +308,11 @@ fn repository_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     match app.settings_window.page {
         SettingsPage::Llm => repository_ai_page(ui, app, palette, &path),
         SettingsPage::CommitMessages => {
-            heading(ui, "Commit messages");
+            heading(ui, &crate::i18n::tr_msg("Commit messages"));
             repository_llm_prompt_tab(ui, app, Some(&path), palette);
         }
         SettingsPage::CommitContext => {
-            heading(ui, "Context");
+            heading(ui, &crate::i18n::tr_msg("Context"));
             commit_context_page(
                 ui,
                 palette,
@@ -324,12 +342,12 @@ fn footer(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette, repository: bool
                                 enabled,
                                 dialog_style::button("Reset"),
                             )
-                            .help_text(
+                            .help_text(crate::i18n::tr_msg(
                                 "Reset to defaults: discard repository overrides and use the settings from Preferences",
-                            )
-                            .disabled_help_text(
+                            ))
+                            .disabled_help_text(crate::i18n::tr_msg(
                                 "This repository already uses the application defaults",
-                            )
+                            ))
                             .clicked()
                         {
                             reset_repository_settings_draft(app, &path);
@@ -422,11 +440,26 @@ fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                                 ui,
                                 app,
                                 SettingsPage::General,
-                                "User Interface",
+                                &crate::i18n::tr_msg("User Interface"),
                                 |ui, app| {
-                                    entry(ui, app, SettingsPage::Appearance, "Appearance");
-                                    entry(ui, app, SettingsPage::DateTime, "Date & Time");
-                                    entry(ui, app, SettingsPage::Logging, "Logging");
+                                    entry(
+                                        ui,
+                                        app,
+                                        SettingsPage::Appearance,
+                                        &crate::i18n::tr_msg("Appearance"),
+                                    );
+                                    entry(
+                                        ui,
+                                        app,
+                                        SettingsPage::DateTime,
+                                        &crate::i18n::tr_msg("Date & Time"),
+                                    );
+                                    entry(
+                                        ui,
+                                        app,
+                                        SettingsPage::Logging,
+                                        &crate::i18n::tr_msg("Logging"),
+                                    );
                                 },
                             );
                             leaf(
@@ -435,13 +468,40 @@ fn navigation(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                                 SettingsPage::KeyboardShortcuts,
                                 "Keyboard Shortcuts",
                             );
-                            section(ui, app, SettingsPage::Git, "Git", |ui, app| {
-                                entry(ui, app, SettingsPage::Remote, "Remote");
-                            });
-                            section(ui, app, SettingsPage::Llm, "AI", |ui, app| {
-                                entry(ui, app, SettingsPage::CommitContext, "Context");
-                                entry(ui, app, SettingsPage::CommitMessages, "Commit messages");
-                            });
+                            section(
+                                ui,
+                                app,
+                                SettingsPage::Git,
+                                &crate::i18n::tr_msg("Git"),
+                                |ui, app| {
+                                    entry(
+                                        ui,
+                                        app,
+                                        SettingsPage::Remote,
+                                        &crate::i18n::tr_msg("Remote"),
+                                    );
+                                },
+                            );
+                            section(
+                                ui,
+                                app,
+                                SettingsPage::Llm,
+                                &crate::i18n::tr_msg("AI"),
+                                |ui, app| {
+                                    entry(
+                                        ui,
+                                        app,
+                                        SettingsPage::CommitContext,
+                                        &crate::i18n::tr_msg("Context"),
+                                    );
+                                    entry(
+                                        ui,
+                                        app,
+                                        SettingsPage::CommitMessages,
+                                        &crate::i18n::tr_msg("Commit messages"),
+                                    );
+                                },
+                            );
                         });
                 });
         });
@@ -465,7 +525,7 @@ fn section(
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
     let response = selectable_row(ui, app.settings_window.page == page, 23.0, |ui| {
         state.show_toggle_button(ui, icons::collapsing_icon);
-        ui.label(title);
+        ui.label(crate::i18n::tr_msg(title));
     });
     if response.clicked() {
         app.settings_window.page = page;
@@ -474,26 +534,32 @@ fn section(
 }
 
 fn leaf(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
+    let label = crate::i18n::tr_msg(label);
     let selected = app.settings_window.page == page;
     let offset = nav_title_offset(ui);
     let response = selectable_row(ui, selected, 23.0, |ui| {
         ui.add_space(offset);
-        ui.label(label);
+        ui.label(&label);
     });
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::Button, true, selected, label.clone())
+    });
     if response.clicked() {
         app.settings_window.page = page;
     }
 }
 
 fn entry(ui: &mut Ui, app: &mut SannyGitApp, page: SettingsPage, label: &str) {
+    let label = crate::i18n::tr_msg(label);
     let selected = app.settings_window.page == page;
     let offset = nav_title_offset(ui) + tree_step(ui);
     let response = selectable_row(ui, selected, 23.0, |ui| {
         ui.add_space(offset);
-        ui.label(label);
+        ui.label(&label);
     });
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::Button, true, selected, label.clone())
+    });
     if response.clicked() {
         app.settings_window.page = page;
     }
@@ -504,95 +570,114 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
     match app.settings_window.page {
         SettingsPage::General => {
             ui.spacing_mut().item_spacing.y = 4.0;
-            heading(ui, "User Interface");
+            heading(ui, &crate::i18n::tr_msg("User Interface"));
             ui.horizontal(|ui| {
-                ui.label("Language:");
+                ui.label(crate::i18n::tr_msg("Language:"));
                 egui::ComboBox::from_id_salt("preferences.language")
                     .selected_text(app.settings_window.preferences.language.label())
                     .width(150.0)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut app.settings_window.preferences.language,
-                            crate::preferences::Language::English,
-                            "English",
-                        );
+                        for language in crate::preferences::Language::ALL {
+                            ui.selectable_value(
+                                &mut app.settings_window.preferences.language,
+                                language,
+                                language.label(),
+                            );
+                        }
                     })
                     .response
-                    .help_text("English is currently the only available language");
+                    .help_text(crate::i18n::tr_msg(
+                        "Choose the language used throughout the application",
+                    ));
             });
             // Keep the remaining checkbox and radio sections compact; the language
             // field above uses the application's shared input height.
             ui.spacing_mut().interact_size.y = 20.0;
             ui.add_space(4.0);
-            group(ui, palette, "Behavior", |ui| {
+            group(ui, palette, &crate::i18n::tr_msg("Behavior"), |ui| {
                 ui.checkbox(
                     &mut app.settings_window.preferences.show_welcome,
-                    "Show welcome dialog if no repository is reopened",
+                    crate::i18n::tr_msg("Show welcome dialog if no repository is reopened"),
                 );
                 ui.checkbox(
                     &mut app.settings_window.preferences.staged_only_after_staging,
-                    "Use Staged only when opening or staging files",
+                    crate::i18n::tr_msg("Use Staged only when opening or staging files"),
                 )
-                .help_text("Use only staged changes for commits and message generation when opening a repository with staged files or after staging a file. Switch back to All changes when the index is empty.");
+                .help_text(crate::i18n::tr_msg("Use only staged changes for commits and message generation when opening a repository with staged files or after staging a file. Switch back to All changes when the index is empty."));
             });
             ui.add_space(4.0);
-            group(ui, palette, "Double-clicking a local file", |ui| {
-                ui.radio_value(
-                    &mut app.settings_window.preferences.file_double_click,
-                    crate::preferences::FileDoubleClick::ShowDiff,
-                    "Show changes in the diff panel",
-                );
-                ui.radio_value(
-                    &mut app.settings_window.preferences.file_double_click,
-                    crate::preferences::FileDoubleClick::ToggleStage,
-                    "Stage or unstage changes",
-                );
-            });
+            group(
+                ui,
+                palette,
+                &crate::i18n::tr_msg("Double-clicking a local file"),
+                |ui| {
+                    ui.radio_value(
+                        &mut app.settings_window.preferences.file_double_click,
+                        crate::preferences::FileDoubleClick::ShowDiff,
+                        crate::i18n::tr_msg("Show changes in the diff panel"),
+                    );
+                    ui.radio_value(
+                        &mut app.settings_window.preferences.file_double_click,
+                        crate::preferences::FileDoubleClick::ToggleStage,
+                        crate::i18n::tr_msg("Stage or unstage changes"),
+                    );
+                },
+            );
             ui.add_space(4.0);
-            group(ui, palette, "Confirmations", |ui| {
+            group(ui, palette, &crate::i18n::tr_msg("Confirmations"), |ui| {
                 let restore_enabled = app.settings_window.skip_push_confirmation
                     || app.settings_window.preferences.skip_sync_confirmation;
                 ui.add_enabled(
                     restore_enabled,
                     egui::Checkbox::new(
                         &mut app.settings_window.restore_all_confirmations,
-                        "Restore all confirmation dialogs",
+                        crate::i18n::tr_msg("Restore all confirmation dialogs"),
                     ),
                 )
-                .help_text("Re-enable upstream push and sync confirmations")
-                .disabled_help_text("All confirmation dialogs are already enabled");
+                .help_text(crate::i18n::tr_msg(
+                    "Re-enable upstream push and sync confirmations",
+                ))
+                .disabled_help_text(crate::i18n::tr_msg(
+                    "All confirmation dialogs are already enabled",
+                ));
             });
         }
         SettingsPage::Appearance => {
-            heading(ui, "Appearance");
-            group(ui, palette, "Interface", |ui| {
+            heading(ui, &crate::i18n::tr_msg("Appearance"));
+            group(ui, palette, &crate::i18n::tr_msg("Interface"), |ui| {
                 egui::Grid::new("preferences.appearance")
                     .spacing([12.0, 6.0])
                     .show(ui, |ui| {
-                        form_label(ui, "Interface style:");
+                        form_label(ui, &crate::i18n::tr_msg("Interface style:"));
                         let style = &mut app.settings_window.interface_style;
                         egui::ComboBox::from_id_salt("preferences.interface_style")
-                            .selected_text(style.label())
+                            .selected_text(crate::i18n::tr_msg(style.label()))
                             .width(150.0)
                             .show_ui(ui, |ui| {
                                 for choice in [InterfaceStyle::Classic, InterfaceStyle::Modern] {
-                                    ui.selectable_value(style, choice, choice.label());
+                                    ui.selectable_value(
+                                        style,
+                                        choice,
+                                        crate::i18n::tr_msg(choice.label()),
+                                    );
                                 }
                             });
                         ui.end_row();
-                        form_label(ui, "Color theme:");
+                        form_label(ui, &crate::i18n::tr_msg("Color theme:"));
                         egui::ComboBox::from_id_salt("preferences.theme")
-                            .selected_text(if app.settings_window.preferences.follow_system_theme {
-                                "Automatic (system)"
-                            } else {
-                                app.settings_window.theme.label()
-                            })
+                            .selected_text(crate::i18n::tr_msg(
+                                if app.settings_window.preferences.follow_system_theme {
+                                    "Automatic (system)"
+                                } else {
+                                    app.settings_window.theme.label()
+                                },
+                            ))
                             .width(150.0)
                             .show_ui(ui, |ui| {
                                 if ui
                                     .selectable_label(
                                         app.settings_window.preferences.follow_system_theme,
-                                        "Automatic (system)",
+                                        crate::i18n::tr_msg("Automatic (system)"),
                                     )
                                     .clicked()
                                 {
@@ -603,7 +688,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                                         .selectable_label(
                                             !app.settings_window.preferences.follow_system_theme
                                                 && app.settings_window.theme == theme,
-                                            theme.label(),
+                                            crate::i18n::tr_msg(theme.label()),
                                         )
                                         .clicked()
                                     {
@@ -618,13 +703,13 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
         }
         SettingsPage::DateTime => {
             use crate::preferences::{DateFormat, TimeFormat};
-            heading(ui, "Date & Time");
-            group(ui, palette, "Commit dates", |ui| {
+            heading(ui, &crate::i18n::tr_msg("Date & Time"));
+            group(ui, palette, &crate::i18n::tr_msg("Commit dates"), |ui| {
                 let preferences = &mut app.settings_window.preferences;
                 egui::Grid::new("preferences.date_time")
                     .spacing([12.0, 6.0])
                     .show(ui, |ui| {
-                        form_label(ui, "Date format:");
+                        form_label(ui, &crate::i18n::tr_msg("Date format:"));
                         egui::ComboBox::from_id_salt("preferences.date_format")
                             .selected_text(preferences.date_format.label())
                             .width(150.0)
@@ -642,10 +727,10 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                                 }
                             });
                         ui.end_row();
-                        form_label(ui, "Example:");
+                        form_label(ui, &crate::i18n::tr_msg("Example:"));
                         ui.label(RichText::new(preferences.date_example()).color(palette.muted));
                         ui.end_row();
-                        form_label(ui, "Time format:");
+                        form_label(ui, &crate::i18n::tr_msg("Time format:"));
                         egui::ComboBox::from_id_salt("preferences.time_format")
                             .selected_text(preferences.time_format.label())
                             .width(150.0)
@@ -659,44 +744,52 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                                 }
                             });
                         ui.end_row();
-                        form_label(ui, "Example:");
+                        form_label(ui, &crate::i18n::tr_msg("Example:"));
                         ui.label(RichText::new(preferences.time_example()).color(palette.muted));
                         ui.end_row();
                     });
                 ui.add_space(8.0);
                 ui.checkbox(
                     &mut preferences.verbose_dates,
-                    "Show Today and Yesterday for recent dates",
+                    crate::i18n::tr_msg("Show Today and Yesterday for recent dates"),
                 );
                 ui.label(
-                    RichText::new("Commit dates are shown in your local time zone.")
-                        .small()
-                        .color(palette.muted),
+                    RichText::new(crate::i18n::tr_msg(
+                        "Commit dates are shown in your local time zone.",
+                    ))
+                    .small()
+                    .color(palette.muted),
                 );
             });
         }
         SettingsPage::Logging => {
-            heading(ui, "Logging");
-            group(ui, palette, "Application log", |ui| {
+            heading(ui, &crate::i18n::tr_msg("Logging"));
+            group(ui, palette, &crate::i18n::tr_msg("Application log"), |ui| {
                 let label = |ui: &mut Ui, text| {
                     ui.horizontal(|ui| {
                         ui.set_min_width(82.0);
-                        ui.label(text);
+                        ui.label(crate::i18n::tr_msg(text));
                     });
                 };
                 let level = &mut app.settings_window.preferences.log_level;
                 ui.horizontal(|ui| {
                     label(ui, "Log level:");
                     egui::ComboBox::from_id_salt("preferences.logging.level")
-                        .selected_text(level.label())
+                        .selected_text(crate::i18n::tr_msg(level.label()))
                         .width(160.0)
                         .show_ui(ui, |ui| {
                             for option in Level::ALL {
-                                ui.selectable_value(level, option, option.label());
+                                ui.selectable_value(
+                                    level,
+                                    option,
+                                    crate::i18n::tr_msg(option.label()),
+                                );
                             }
                         })
                         .response
-                        .help_text("Debug includes Git command timings and exit codes");
+                        .help_text(crate::i18n::tr_msg(
+                            "Debug includes Git command timings and exit codes",
+                        ));
                 });
                 if let Some(path) = logging::path() {
                     let path = path.to_string_lossy();
@@ -708,7 +801,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                                 .help_text(path.as_ref());
                         },
                         |ui| {
-                            if ui.button("Copy path").clicked() {
+                            if ui.button(crate::i18n::tr_msg("Copy path")).clicked() {
                                 ui.ctx().copy_text(path.to_string());
                             }
                         },
@@ -717,9 +810,9 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             });
         }
         SettingsPage::Git => {
-            heading(ui, "Git executable");
-            group(ui, palette, "Command", |ui| {
-                ui.label("Path to Git executable:");
+            heading(ui, &crate::i18n::tr_msg("Git executable"));
+            group(ui, palette, &crate::i18n::tr_msg("Command"), |ui| {
+                ui.label(crate::i18n::tr_msg("Path to Git executable:"));
                 ui.horizontal(|ui| {
                     let value = &mut app.settings_window.preferences.git_executable;
                     ui.add_sized(
@@ -727,7 +820,8 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                         singleline(value),
                     );
                     if icons::button(ui, Icon::Folder, "Choose Git executable").clicked() {
-                        let mut picker = rfd::FileDialog::new().set_title("Choose Git executable");
+                        let mut picker = rfd::FileDialog::new()
+                            .set_title(crate::i18n::tr_msg("Choose Git executable"));
                         if let Some(parent) =
                             std::path::Path::new(value).parent().filter(|p| p.is_dir())
                         {
@@ -741,16 +835,16 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             });
         }
         SettingsPage::Remote => {
-            heading(ui, "Remote");
-            group(ui, palette, "Automatic fetch", |ui| {
+            heading(ui, &crate::i18n::tr_msg("Remote"));
+            group(ui, palette, &crate::i18n::tr_msg("Automatic fetch"), |ui| {
                 ui.checkbox(
                     &mut app.settings_window.auto_fetch,
-                    "Fetch the upstream repository every 60 seconds",
+                    crate::i18n::tr_msg("Fetch the upstream repository every 60 seconds"),
                 );
                 ui.label(
-                    RichText::new(
+                    RichText::new(crate::i18n::tr_msg(
                         "Automatic fetch runs only while a repository is open and the application is idle.",
-                    )
+                    ))
                     .small()
                     .color(palette.muted),
                 );
@@ -760,14 +854,14 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             ai_page(ui, app, palette, true, None);
         }
         SettingsPage::CommitMessages => {
-            heading(ui, "Commit messages");
+            heading(ui, &crate::i18n::tr_msg("Commit messages"));
             ui.checkbox(
                 &mut app.settings_window.preferences.show_commit_token_usage,
-                "Show token counts after generation",
+                crate::i18n::tr_msg("Show token counts after generation"),
             )
-            .help_text(
+            .help_text(crate::i18n::tr_msg(
                 "On the commit message, show input and output tokens for the last generation and the total for this session.",
-            );
+            ));
             ui.add_space(6.0);
             instructions_form(ui, &mut app.settings_window.llm, palette, true);
         }
@@ -775,7 +869,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             keyboard_shortcuts_page(ui, app, palette);
         }
         SettingsPage::CommitContext => {
-            heading(ui, "Context");
+            heading(ui, &crate::i18n::tr_msg("Context"));
             commit_context_page(
                 ui,
                 palette,
@@ -840,9 +934,21 @@ fn shortcut_header(ui: &mut Ui, palette: Palette, width: f32, columns: [f32; 3])
             .max_rect(rect.shrink2(Vec2::new(6.0, 1.0)))
             .layout(Layout::left_to_right(Align::Center)),
     );
-    shortcut_cell(&mut cells, columns[0], RichText::new("Command"));
-    shortcut_cell(&mut cells, columns[1], RichText::new("Shortcut"));
-    shortcut_cell(&mut cells, columns[2], RichText::new("Default"));
+    shortcut_cell(
+        &mut cells,
+        columns[0],
+        RichText::new(crate::i18n::tr_msg("Command")),
+    );
+    shortcut_cell(
+        &mut cells,
+        columns[1],
+        RichText::new(crate::i18n::tr_msg("Shortcut")),
+    );
+    shortcut_cell(
+        &mut cells,
+        columns[2],
+        RichText::new(crate::i18n::tr_msg("Default")),
+    );
     let mut x = rect.left() + 6.0 + columns[0];
     let mut stored = [columns[1], columns[2]];
     let mut changed = false;
@@ -890,10 +996,10 @@ fn keyboard_shortcuts_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette)
     use eframe::egui::Event;
 
     let assign_id = ui.scope_id().with("preferences.shortcuts.assign");
-    heading(ui, "Keyboard Shortcuts");
+    heading(ui, &crate::i18n::tr_msg("Keyboard Shortcuts"));
     ui.add(
         singleline(&mut app.settings_window.shortcut_filter)
-            .hint_text("Filter")
+            .hint_text(crate::i18n::tr_msg("Filter"))
             .desired_width(ui.available_width()),
     );
     ui.add_space(4.0);
@@ -925,8 +1031,8 @@ fn keyboard_shortcuts_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette)
                 .show(ui, |ui| {
                     for command in shortcuts::catalog() {
                         if !filter.is_empty()
-                            && !command.label.to_lowercase().contains(&filter)
-                            && !command.category.to_lowercase().contains(&filter)
+                            && !command.label().to_lowercase().contains(&filter)
+                            && !command.category().to_lowercase().contains(&filter)
                         {
                             continue;
                         }
@@ -946,7 +1052,7 @@ fn keyboard_shortcuts_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette)
                             String::new()
                         };
                         let response = selectable_row(ui, selected, 22.0, |ui| {
-                            shortcut_cell(ui, columns[0], RichText::new(command.label));
+                            shortcut_cell(ui, columns[0], RichText::new(command.label()));
                             shortcut_cell(ui, columns[1], RichText::new(shortcut_text));
                             shortcut_cell(
                                 ui,
@@ -981,13 +1087,24 @@ fn keyboard_shortcuts_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette)
                 shortcuts::catalog()
                     .iter()
                     .find(|command| command.id == id)
-                    .map(|command| format!("{} — {}", command.category, command.label))
+                    .map(|command| {
+                        crate::i18n::tr_args(
+                            "%{category} — %{command}",
+                            &[
+                                ("category", &command.category()),
+                                ("command", &command.label()),
+                            ],
+                        )
+                    })
             })
             .collect::<Vec<_>>()
             .join(", ");
-        ui.label(format!("Already used by {names}."));
+        ui.label(crate::i18n::tr_args(
+            "Already used by %{names}.",
+            &[("names", &names)],
+        ));
         ui.horizontal(|ui| {
-            if ui.button("Clear Others").clicked() {
+            if ui.button(crate::i18n::tr_msg("Clear Others")).clicked() {
                 app.settings_window.preferences.shortcuts.assign_resolving(
                     &conflict.command_id,
                     conflict.shortcut,
@@ -995,7 +1112,7 @@ fn keyboard_shortcuts_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette)
                 );
                 app.settings_window.shortcut_conflict = None;
             }
-            if ui.button("Keep Others").clicked() {
+            if ui.button(crate::i18n::tr_msg("Keep Others")).clicked() {
                 app.settings_window.preferences.shortcuts.assign_resolving(
                     &conflict.command_id,
                     conflict.shortcut,
@@ -1003,14 +1120,14 @@ fn keyboard_shortcuts_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette)
                 );
                 app.settings_window.shortcut_conflict = None;
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(crate::i18n::tr_msg("Cancel")).clicked() {
                 app.settings_window.shortcut_conflict = None;
             }
         });
     }
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        ui.label("Shortcut:");
+        ui.label(crate::i18n::tr_msg("Shortcut:"));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let selected = app.settings_window.shortcut_selected.is_some();
             let button = |ui: &mut Ui, enabled: bool, label: &str| {
@@ -1215,10 +1332,11 @@ fn repository_ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette, path
         .iter()
         .find(|repository| repository.path == path)
         .map_or(path, |repository| repository.name.as_str());
-    heading(ui, "AI");
+    heading(ui, &crate::i18n::tr_msg("AI"));
     ui.label(
-        RichText::new(format!(
-            "Model settings used to generate commit messages for {name}. Matching Preferences uses the application defaults."
+        RichText::new(crate::i18n::tr_args(
+            "Model settings used to generate commit messages for %{name}. Matching Preferences uses the application defaults.",
+            &[("name", name)],
         ))
         .color(palette.muted),
     );
@@ -1258,7 +1376,7 @@ fn repository_llm_prompt_tab(
         "repository.commit_message.language",
         &mut instructions,
     );
-    ui.label("Generation instructions:");
+    ui.label(crate::i18n::tr_msg("Generation instructions:"));
     instructions_editor(ui, &mut instructions, true);
     if instructions == global {
         window.llm_instructions.remove(path);
@@ -1280,22 +1398,29 @@ fn ai_page(
     repository: Option<&str>,
 ) {
     if show_heading {
-        heading(ui, "AI");
+        heading(ui, &crate::i18n::tr_msg("AI"));
         ui.label(
-            RichText::new("Connect a service to generate commit messages.").color(palette.muted),
+            RichText::new(crate::i18n::tr_msg(
+                "Connect a service to generate commit messages.",
+            ))
+            .color(palette.muted),
         );
     }
     let section_gap = ui.spacing().item_spacing.y;
     ui.add_space(section_gap);
 
     let subscription_mode = app.settings_window.llm.config.chatgpt_subscription;
+    let provider_label = crate::i18n::tr_msg("AI Provider");
+    let provider_description = crate::i18n::tr_msg("Sign in with your AI Provider account");
+    let api_label = crate::i18n::tr_msg("OpenAI API");
+    let api_description = crate::i18n::tr_msg("OpenAI-compatible API or local server");
     ui.columns(2, |columns| {
         connection_choice(
             &mut columns[0],
             &mut app.settings_window.llm.config.chatgpt_subscription,
             true,
             Icon::Sparkles,
-            ("AI Provider", "Sign in with your AI Provider account"),
+            (provider_label.as_str(), provider_description.as_str()),
             palette,
         );
         connection_choice(
@@ -1303,7 +1428,7 @@ fn ai_page(
             &mut app.settings_window.llm.config.chatgpt_subscription,
             false,
             Icon::Code,
-            ("OpenAI API", "OpenAI-compatible API or local server"),
+            (api_label.as_str(), api_description.as_str()),
             palette,
         );
     });
@@ -1368,7 +1493,7 @@ fn ai_page(
                     branding::SIGN_IN_COPILOT
                 }
                 SubscriptionProvider::Copilot => {
-                    "GitHub Copilot sign-in is unavailable in this build."
+                    &crate::i18n::tr_msg("GitHub Copilot sign-in is unavailable in this build.")
                 }
             };
             ai_sign_in_banner(ui, palette, instructions);
@@ -1433,7 +1558,7 @@ fn subscription_provider(
             .num_columns(2)
             .spacing([8.0, 6.0])
             .show(ui, |ui| {
-                form_label(ui, "Provider:");
+                form_label(ui, &crate::i18n::tr_msg("Provider:"));
                 ai_provider_field_row(
                     ui,
                     palette,
@@ -1467,7 +1592,7 @@ fn subscription_provider(
                 ui.end_row();
 
                 if config.subscription_provider != Copilot {
-                    form_label(ui, "Model:");
+                    form_label(ui, &crate::i18n::tr_msg("Model:"));
                     ai_provider_field_row(ui, palette, None, &mut clicked, |ui| {
                         let settings = config
                             .subscription_models
@@ -1497,11 +1622,11 @@ fn ai_provider_field_row(
     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
         if let Some((enabled, connected)) = action {
             let button = if connected {
-                egui::Button::new("Sign out")
+                egui::Button::new(crate::i18n::tr_msg("Sign out"))
             } else {
                 egui::Button::image_and_text(
                     icons::image(Icon::ExternalLink, palette.text, 18.0),
-                    "Sign in",
+                    crate::i18n::tr_msg("Sign in"),
                 )
                 .gap(6.0)
             };
@@ -1629,7 +1754,7 @@ fn chatgpt_model_row(
         .entry(PROVIDER_ID.into())
         .or_default();
     ui.horizontal(|ui| {
-        form_label(ui, "Model:");
+        form_label(ui, &crate::i18n::tr_msg("Model:"));
         ui.add_enabled_ui(!models.is_empty(), |ui| {
             generation_settings_field(ui, palette, settings, models);
         });
@@ -1936,13 +2061,17 @@ fn llm_api_form(
 ) {
     catalog.update();
     ui.push_id(("llm.form", repository), |ui| {
-        let title = if show_heading { "OpenAI-compatible API" } else { "" };
+        let title = if show_heading {
+            "OpenAI-compatible API"
+        } else {
+            ""
+        };
         group(ui, palette, title, |ui| {
             let key_left = egui::Grid::new("preferences.llm.connection")
                 .num_columns(2)
                 .spacing([8.0, 6.0])
                 .show(ui, |ui| {
-                    form_label(ui, "Endpoint:");
+                    form_label(ui, &crate::i18n::tr_msg("Endpoint:"));
                     let mut endpoint = draft.config.endpoint.clone();
                     let endpoints: Vec<_> = crate::llm::PROVIDER_PRESETS
                         .iter()
@@ -1959,11 +2088,13 @@ fn llm_api_form(
                     );
                     let preset_selected =
                         endpoint_response.changed() && !endpoint_response.has_focus();
+                    let custom_endpoint = crate::i18n::tr_msg("Custom endpoint");
                     let provider = crate::llm::PROVIDER_PRESETS.iter()
                         .find(|provider| provider.endpoint == endpoint)
-                        .map_or("Custom endpoint", |provider| provider.name);
-                    endpoint_response.clone().help_text(format!(
-                        "{provider}. HTTPS is required outside loopback. HTTP is allowed for localhost and loopback IPs. Redirects are blocked. Use the API key field; URL credentials, queries and fragments are rejected."
+                        .map_or(custom_endpoint.as_str(), |provider| provider.name);
+                    endpoint_response.clone().help_text(crate::i18n::tr_args(
+                        "%{provider}. HTTPS is required outside loopback. HTTP is allowed for localhost and loopback IPs. Redirects are blocked. Use the API key field; URL credentials, queries and fragments are rejected.",
+                        &[("provider", provider)],
                     ));
                     if endpoint != draft.config.endpoint {
                         draft.config.endpoint = endpoint;
@@ -1989,17 +2120,17 @@ fn llm_api_form(
                         catalog.load(&draft.config, repository, ui.ctx());
                     }
                     ui.end_row();
-                    form_label(ui, "Model:");
+                    form_label(ui, &crate::i18n::tr_msg("Model:"));
                     let id = ui.make_persistent_id("preferences.llm.model");
                     let popup = id.with("popup");
                     let was_open = Popup::is_id_open(ui.ctx(), popup);
                     let models = catalog.entry(&draft.config, repository);
                     let should_load = !models.attempted || (models.error.is_some() && !was_open);
-                    let empty_text = if models.loading() {
+                    let empty_text = crate::i18n::tr_msg(if models.loading() {
                         "Loading models…"
                     } else {
                         "Enter a model name"
-                    };
+                    });
                     editable_combobox::show(
                         ui,
                         id,
@@ -2007,9 +2138,9 @@ fn llm_api_form(
                         &models.options,
                         ui.available_width(),
                         palette,
-                        empty_text,
+                        &empty_text,
                     )
-                    .help_text("Select a model from the server or enter a custom model name");
+                    .help_text(crate::i18n::tr_msg("Select a model from the server or enter a custom model name"));
                     if ui.is_enabled() && should_load && Popup::is_id_open(ui.ctx(), popup) {
                         if draft.api_key_dirty {
                             catalog.load(&draft.config, repository, ui.ctx());
@@ -2019,14 +2150,14 @@ fn llm_api_form(
                         ui.ctx().request_repaint();
                     }
                     ui.end_row();
-                    form_label(ui, "API key:");
+                    form_label(ui, &crate::i18n::tr_msg("API key:"));
                     let api_key_response = ui.add(
                         singleline(&mut draft.config.api_key)
-                            .hint_text(if draft.config.store_api_key {
+                            .hint_text(crate::i18n::tr_msg(if draft.config.store_api_key {
                                 "Leave unchanged to keep saved key"
                             } else {
                                 "Optional for local servers"
-                            })
+                            }))
                             .password(true)
                             .desired_width(f32::INFINITY),
                     );
@@ -2062,12 +2193,15 @@ fn llm_api_form(
 }
 
 fn store_api_key(ui: &mut Ui, enabled: &mut bool) {
-    ui.checkbox(enabled, "Store API key and model securely")
-        .help_text(if cfg!(target_os = "macos") {
-            "Builds with Keychain entitlements use Touch ID. Other builds use the login Keychain and may ask for your macOS password."
-        } else {
-            "Save the API key and model in the OS credential manager"
-        });
+    ui.checkbox(
+        enabled,
+        crate::i18n::tr_msg("Store API key and model securely"),
+    )
+    .help_text(crate::i18n::tr_msg(if cfg!(target_os = "macos") {
+        "Builds with Keychain entitlements use Touch ID. Other builds use the login Keychain and may ask for your macOS password."
+    } else {
+        "Save the API key and model in the OS credential manager"
+    }));
 }
 
 fn instructions_form(
@@ -2082,7 +2216,7 @@ fn instructions_form(
         "preferences.commit_message.language",
         &mut draft.config,
     );
-    ui.label("Generation instructions:");
+    ui.label(crate::i18n::tr_msg("Generation instructions:"));
     instructions_editor(ui, &mut draft.config.instructions, fill_to_bottom);
 }
 
@@ -2108,15 +2242,18 @@ fn commit_context_page(
     id_prefix: &str,
 ) {
     ui.label(
-        RichText::new("What is sent when you generate a commit message.").color(palette.muted),
+        RichText::new(crate::i18n::tr_msg(
+            "What is sent when you generate a commit message.",
+        ))
+        .color(palette.muted),
     );
     ui.add_space(8.0);
     egui::Grid::new(format!("{id_prefix}.fields"))
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
-            form_label(ui, "Changes:");
+            form_label(ui, &crate::i18n::tr_msg("Changes:"));
             egui::ComboBox::from_id_salt(format!("{id_prefix}.generation_scope"))
-                .selected_text(config.generation_scope.label())
+                .selected_text(crate::i18n::tr_msg(config.generation_scope.label()))
                 .width(200.0)
                 .show_ui(ui, |ui| {
                     for scope in [
@@ -2124,13 +2261,19 @@ fn commit_context_page(
                         crate::llm::CommitGenerationScope::AllChanges,
                         crate::llm::CommitGenerationScope::StagedOnly,
                     ] {
-                        ui.selectable_value(&mut config.generation_scope, scope, scope.label());
+                        ui.selectable_value(
+                            &mut config.generation_scope,
+                            scope,
+                            crate::i18n::tr_msg(scope.label()),
+                        );
                     }
                 })
                 .response
-                .help_text("Used only when generating a commit message.");
+                .help_text(crate::i18n::tr_msg(
+                    "Used only when generating a commit message.",
+                ));
             ui.end_row();
-            form_label(ui, "Patch size:");
+            form_label(ui, &crate::i18n::tr_msg("Patch size:"));
             let mut limit = config.max_patch_bytes;
             egui::ComboBox::from_id_salt(format!("{id_prefix}.patch_limit"))
                 .selected_text(crate::llm::patch_byte_limit_label(limit))
@@ -2141,23 +2284,25 @@ fn commit_context_page(
                     }
                 })
                 .response
-                .help_text(
+                .help_text(crate::i18n::tr_msg(
                     "Generation stops if the diff is larger. Each new file sends at most 64 KiB.",
-                );
+                ));
             config.max_patch_bytes = limit;
             ui.end_row();
         });
     ui.add_space(4.0);
     ui.checkbox(
         &mut config.include_branch_in_prompt,
-        "Include the current branch name",
+        crate::i18n::tr_msg("Include the current branch name"),
     );
     ui.add_space(6.0);
-    ui.label("Excluded paths:");
+    ui.label(crate::i18n::tr_msg("Excluded paths:"));
     ui.label(
-        RichText::new("One pattern per line. Matching files are left out.")
-            .small()
-            .color(palette.muted),
+        RichText::new(crate::i18n::tr_msg(
+            "One pattern per line. Matching files are left out.",
+        ))
+        .small()
+        .color(palette.muted),
     );
     egui::TextEdit::multiline(&mut config.patch_path_excludes)
         .id_salt(format!("{id_prefix}.path_excludes"))
@@ -2175,7 +2320,7 @@ fn commit_message_language_selector(
     mut apply: impl FnMut(crate::llm::CommitMessageLanguage),
 ) {
     ui.horizontal(|ui| {
-        ui.label("Language:");
+        ui.label(crate::i18n::tr_msg("Language:"));
         let previous = selected;
         egui::ComboBox::from_id_salt(id)
             .selected_text(selected.label())
@@ -2221,6 +2366,7 @@ fn instructions_editor(ui: &mut Ui, instructions: &mut String, fill_to_bottom: b
 }
 
 fn form_label(ui: &mut Ui, text: &str) {
+    let text = crate::i18n::tr_msg(text);
     ui.allocate_ui_with_layout(
         Vec2::new(82.0, ui.spacing().interact_size.y),
         Layout::left_to_right(Align::Center),
@@ -2232,7 +2378,7 @@ fn form_label(ui: &mut Ui, text: &str) {
 
 fn heading(ui: &mut Ui, title: &str) {
     ui.label(
-        RichText::new(title)
+        RichText::new(crate::i18n::tr_msg(title))
             .size(crate::theme::SETTINGS_TITLE_FONT_SIZE)
             .family(semibold_family()),
     );
@@ -2245,7 +2391,7 @@ fn group(ui: &mut Ui, palette: Palette, title: &str, contents: impl FnOnce(&mut 
         return;
     }
     ui.horizontal(|ui| {
-        ui.label(RichText::new(title).family(semibold_family()));
+        ui.label(RichText::new(crate::i18n::tr_msg(title)).family(semibold_family()));
         let (rect, _) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
         ui.painter()

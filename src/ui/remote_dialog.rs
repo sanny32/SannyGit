@@ -28,8 +28,8 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             pull_confirmation(ui, app, &mut dialog, busy, &mut submit, &mut fetch_only, &mut keep);
             return;
         }
-        let description = "Download remote branches and tags without changing your working tree.";
-        super::controls::dialog_style::header(ui, palette, dialog.operation.label(), description);
+        let description = crate::i18n::tr_msg("Download remote branches and tags without changing your working tree.");
+        super::controls::dialog_style::header(ui, palette, dialog.operation.label(), &description);
         super::controls::dialog_style::section(ui, palette.header, egui::Margin::same(18), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             let loaded = dialog.state.is_some();
@@ -37,7 +37,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             // Render the same fields while loading, running or reporting errors.
             ui.add_enabled_ui(!busy && loaded, |ui| {
                 egui::Grid::new("remote.fields").min_col_width(110.0).spacing([12.0,6.0]).show(ui, |ui| {
-                    ui.label("Remote:");
+                    ui.label(crate::i18n::tr_msg("Remote:"));
                     ComboBox::from_id_salt("remote.name").width(310.0).truncate().selected_text(&dialog.remote).show_ui(ui, |ui| {
                         for remote in &state.remotes { ui.selectable_value(&mut dialog.remote, remote.clone(), remote); }
                     }); ui.end_row();
@@ -45,17 +45,20 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 });
             });
             let (message, color) = if app.error.is_some() {
-                ("Review the options and retry.", palette.muted)
+                (crate::i18n::tr_msg("Review the options and retry."), palette.muted)
             } else if !loaded {
-                ("Loading remotes…", palette.muted)
+                (crate::i18n::tr_msg("Loading remotes…"), palette.muted)
             } else if busy {
-                (app.status.as_str(), palette.muted)
+                (crate::i18n::tr_msg(&app.status), palette.muted)
             } else if state.remotes.is_empty() {
-                ("No configured remotes. Add one through Remote → Manage Remotes, then reopen this dialog.", palette.muted)
+                (
+                    crate::i18n::tr_msg("No configured remotes. Add one through Remote → Manage Remotes, then reopen this dialog."),
+                    palette.muted,
+                )
             } else {
-                ("", palette.muted)
+                (String::new(), palette.muted)
             };
-            super::controls::dialog_style::text_line(ui, RichText::new(message).color(color), 26.0).help_text(message);
+            super::controls::dialog_style::text_line(ui, RichText::new(&message).color(color), 26.0).help_text(&message);
         });
         super::controls::dialog_style::section(ui, palette.header, egui::Margin::symmetric(18,12), |ui| {
             super::controls::dialog_style::button_row(ui, |ui| {
@@ -97,7 +100,7 @@ fn pull_confirmation(
         ui.spacing_mut().item_spacing.y = 6.0;
         ui.add_enabled_ui(!busy && loaded, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Fetch From:");
+                ui.label(crate::i18n::tr_msg("Fetch From:"));
                 let label = |remote: &str| {
                     dialog
                         .state
@@ -123,33 +126,33 @@ fn pull_confirmation(
                     .response
                     .help_text(selected_label);
             });
-            let options = section_header("Options")
+            let options = section_header(crate::i18n::tr_msg("Options"))
                 .id_salt("pull.options")
                 .open(Some(dialog.pull.more_options))
                 .show(ui, |ui| {
                     ui.radio_value(
                         &mut dialog.pull.rebase,
                         false,
-                        "Merge fetched remote changes",
+                        crate::i18n::tr_msg("Merge fetched remote changes"),
                     )
-                    .help_text(
+                    .help_text(crate::i18n::tr_msg(
                         "Fast-forward when possible. Otherwise create a merge commit. Uncommitted changes stay when incoming commits do not touch those files.",
-                    );
+                    ));
                     ui.radio_value(
                         &mut dialog.pull.rebase,
                         true,
-                        "Rebase local branch onto fetched changes",
+                        crate::i18n::tr_msg("Rebase local branch onto fetched changes"),
                     )
-                    .help_text(
+                    .help_text(crate::i18n::tr_msg(
                         "Replay local commits on top of the fetched branch. Requires a clean working tree.",
-                    );
+                    ));
                     ui.checkbox(
                         &mut dialog.pull.update_tags,
-                        "Update existing and fetch new tags",
+                        crate::i18n::tr_msg("Update existing and fetch new tags"),
                     );
                     ui.checkbox(
                         &mut dialog.pull.remember,
-                        "Remember as default for repository",
+                        crate::i18n::tr_msg("Remember as default for repository"),
                     );
                 });
             if options.header_response.clicked() {
@@ -158,19 +161,18 @@ fn pull_confirmation(
         });
     });
     let message = if app.error.is_some() {
-        "Review the options and retry."
+        crate::i18n::tr_msg("Review the options and retry.")
     } else if !loaded {
-        "Loading remotes…"
+        crate::i18n::tr_msg("Loading remotes…")
     } else if dialog
         .state
         .as_ref()
         .is_some_and(|state| state.remotes.is_empty())
     {
-        "No configured remotes."
+        crate::i18n::tr_msg("No configured remotes.")
     } else {
-        ""
-    }
-    .to_owned();
+        String::new()
+    };
     dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
         let valid_remote = dialog
             .state
@@ -238,9 +240,9 @@ fn branch_confirmation(
                     }
                 });
                 let title = if sync {
-                    "Do you want to proceed with sync?".to_owned()
+                    crate::i18n::tr_msg("Do you want to proceed with sync?")
                 } else {
-                    format!("Do you want to push branch '{branch}'?")
+                    crate::i18n::tr_args("Do you want to push branch '%{branch}'?", &[("branch", branch)])
                 };
                 ui.add(
                     egui::Label::new(
@@ -250,29 +252,42 @@ fn branch_confirmation(
                     )
                     .truncate().show_tooltip_when_elided(false),
                 )
-                .help_text(title);
+                .help_text(&title);
                 ui.add_space(6.0);
                 if sync {
-                    ui.label("First, local changes will be pushed, then possible remote changes pulled. The advantage over a normal push is that if it fails because of remote changes, they will be pulled automatically.");
+                    ui.label(crate::i18n::tr_msg("First, local changes will be pushed, then possible remote changes pulled. The advantage over a normal push is that if it fails because of remote changes, they will be pulled automatically."));
                 }
                 // Reuse one compact line for all operation states. Neither a spinner
                 // nor a long error may add rows or move the options and buttons.
                 let (message, color, spinning) = if app.error.is_some() {
-                    ("Review the options and retry.".into(), palette.text, false)
+                    (crate::i18n::tr_msg("Review the options and retry."), palette.text, false)
                 } else if !loaded {
-                    ("Loading remotes…".into(), palette.text, true)
+                    (crate::i18n::tr_msg("Loading remotes…"), palette.text, true)
                 } else if busy {
-                    (app.status.clone(), palette.text, true)
+                    (crate::i18n::tr_msg(&app.status), palette.text, true)
                 } else if dialog.remote.is_empty() {
-                    ("No configured remotes.".into(), palette.text, false)
+                    (crate::i18n::tr_msg("No configured remotes."), palette.text, false)
                 } else {
                     let mut message = if sync {
-                        format!("{} → {}/{} · Fast-forward only; clean working tree required.", branch, dialog.remote, dialog.branch)
+                        crate::i18n::tr_args(
+                            "%{branch} → %{remote}/%{target} · Fast-forward only; clean working tree required.",
+                            &[
+                                ("branch", branch),
+                                ("remote", &dialog.remote),
+                                ("target", &dialog.branch),
+                            ],
+                        )
                     } else {
-                        format!("1 branch will be pushed to '{}'.", dialog.remote)
+                        crate::i18n::tr_args(
+                            "1 branch will be pushed to '%{remote}'.",
+                            &[("remote", &dialog.remote)],
+                        )
                     };
                     if !sync && dialog.branch != branch {
-                        message.push_str(&format!(" Remote branch: {}", dialog.branch));
+                        message.push_str(&crate::i18n::tr_args(
+                            " Remote branch: %{branch}",
+                            &[("branch", &dialog.branch)],
+                        ));
                     }
                     (message, palette.text, false)
                 };
@@ -282,10 +297,10 @@ fn branch_confirmation(
                         ui.add(egui::Spinner::new().size(18.0));
                     }
                     ui.add(egui::Label::new(RichText::new(&message).color(color)).truncate().show_tooltip_when_elided(false))
-                        .help_text(message);
+                        .help_text(&message);
                 });
                 ui.add_enabled_ui(!busy && loaded, |ui| {
-                    section_header("Options")
+                    section_header(crate::i18n::tr_msg("Options"))
                         .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 8.0;
                         egui::Grid::new("push.options")
@@ -294,7 +309,7 @@ fn branch_confirmation(
                             .spacing([12.0, 6.0])
                             .show(ui, |ui| {
                                 ui.add(
-                                    egui::Label::new("Remote:")
+                                    egui::Label::new(crate::i18n::tr_msg("Remote:"))
                                         .wrap_mode(egui::TextWrapMode::Extend),
                                 );
                                 ui.scope(|ui| {
@@ -314,7 +329,7 @@ fn branch_confirmation(
                                 });
                                 ui.end_row();
                                 ui.add(
-                                    egui::Label::new("Remote branch:")
+                                    egui::Label::new(crate::i18n::tr_msg("Remote branch:"))
                                         .wrap_mode(egui::TextWrapMode::Extend),
                                 );
                                 ui.add(
@@ -325,7 +340,7 @@ fn branch_confirmation(
                         if !sync {
                             ui.checkbox(
                                 &mut dialog.set_upstream,
-                                "Set as upstream (track this remote branch)",
+                                crate::i18n::tr_msg("Set as upstream (track this remote branch)"),
                             );
                         }
                     });
@@ -338,11 +353,14 @@ fn branch_confirmation(
                 ui.horizontal(|ui| {
                     ui.add_enabled(
                         !busy && can_skip,
-                        egui::Checkbox::new(&mut dialog.dont_show_again, "Don't show again"),
+                        egui::Checkbox::new(
+                            &mut dialog.dont_show_again,
+                            crate::i18n::tr_msg("Don't show again"),
+                        ),
                     )
-                    .disabled_help_text(
+                    .disabled_help_text(crate::i18n::tr_msg(
                         "Available when using the branch's configured upstream.",
-                    );
+                    ));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let valid = state.branch.is_some()
                             && state.remotes.contains(&dialog.remote)

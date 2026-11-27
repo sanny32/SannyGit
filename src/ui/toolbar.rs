@@ -47,18 +47,20 @@ pub(super) fn toolbar_button(
     paint_icon: impl FnOnce(&Ui, Rect, eframe::egui::Color32),
 ) -> Response {
     let (label, font_size) = caption;
+    let label = crate::i18n::tr_msg(label);
     let response = ui.add_enabled(
         enabled,
         Button::new("")
             .frame(false)
             .min_size(Vec2::new(width, TOOLBAR_BUTTON_HEIGHT)),
     );
+    let info = label.clone();
     response.widget_info(|| {
         eframe::egui::WidgetInfo::selected(
             eframe::egui::Role::Button,
             response.enabled(),
             selected,
-            label,
+            info.clone(),
         )
     });
 
@@ -118,7 +120,7 @@ pub(super) fn toolbar_button(
     ui.painter().text(
         response.rect.center_top() + Vec2::new(0.0, TOOLBAR_BUTTON_PADDING_Y + 24.0) + press_offset,
         Align2::CENTER_TOP,
-        label,
+        &label,
         FontId::proportional(font_size),
         if enabled { palette.text } else { palette.muted },
     );
@@ -151,7 +153,7 @@ fn menu_bar(ui: &mut Ui, app: &mut SannyGitApp) {
                 })
                 .ui(ui, |ui| {
                     for menu in crate::menu::MENUS {
-                        ui.menu_button(menu.title, |ui| {
+                        ui.menu_button(menu.title(), |ui| {
                             menu_items(ui, app, menu.items);
                         });
                     }
@@ -196,7 +198,7 @@ fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem
     // Reserve the shortcut column only when the menu actually shows shortcuts;
     // menus without any shortcut stay as narrow as their labels (like SmartGit).
     let has_shortcut = items.iter().any(|item| {
-        crate::menu::EditAction::from_label(item.label).is_some()
+        item.edit_action.is_some()
             || item
                 .action
                 .is_some_and(|action| action.shortcut(&app.preferences.shortcuts).is_some())
@@ -208,11 +210,11 @@ fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem
         if item.separator {
             popup_menu::separator(ui);
         } else if !item.children.is_empty() {
-            popup_menu::submenu(ui, item.label, |ui| {
+            popup_menu::submenu(ui, &item.label(), |ui| {
                 menu_items(ui, app, item.children);
             });
         } else {
-            if let Some(edit) = crate::menu::EditAction::from_label(item.label) {
+            if let Some(edit) = item.edit_action {
                 let target = edit_target(ui.ctx());
                 let has_selection = target
                     .and_then(|id| eframe::egui::text_edit::TextEditState::load(ui.ctx(), id))
@@ -226,10 +228,12 @@ fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem
                 if ui
                     .add_enabled(
                         enabled,
-                        Button::new(item.label)
+                        Button::new(item.label())
                             .shortcut_text(ui.ctx().format_shortcut(&edit.shortcut())),
                     )
-                    .disabled_help_text("Focus a text field; Cut and Copy require selected text")
+                    .disabled_help_text(crate::i18n::tr_msg(
+                        "Focus a text field; Cut and Copy require selected text",
+                    ))
                     .clicked()
                 {
                     perform_edit(ui.ctx(), edit);
@@ -240,7 +244,7 @@ fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem
             let enabled = item
                 .action
                 .is_some_and(|action| app.menu_action_enabled(action));
-            let mut button = Button::new(item.label);
+            let mut button = Button::new(item.label());
             if let Some(shortcut) = item
                 .action
                 .and_then(|action| action.shortcut(&app.preferences.shortcuts))
@@ -254,7 +258,7 @@ fn menu_items(ui: &mut Ui, app: &mut SannyGitApp, items: &[crate::menu::MenuItem
                     ui.close();
                 }
             } else {
-                response.disabled_help_text("Not implemented yet");
+                response.disabled_help_text(crate::i18n::tr_msg("Not implemented yet"));
             }
         }
     }
@@ -277,7 +281,7 @@ fn brand(ui: &mut Ui, palette: Palette) {
     }
     let title = ui.fonts_mut(|fonts| fonts.layout_job(title));
     let subtitle = ui.painter().layout_no_wrap(
-        "A simple Git client".into(),
+        crate::i18n::tr_msg("A simple Git client"),
         FontId::proportional(ui_font_size()),
         palette.muted,
     );
@@ -362,34 +366,38 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                 };
                                 if action_button(ui, icon, label, app.remote_allowed(), palette, action_width)
                                     .help_text(remote_help(operation, app.tracking.status.as_ref().and_then(|status| status.remote.as_deref())))
-                                    .disabled_help_text("Open and refresh a repository; wait for the current operation")
+                                    .disabled_help_text(crate::i18n::tr_msg("Open and refresh a repository; wait for the current operation"))
                                     .clicked()
                                 {
                                     app.open_remote(operation);
                                 }
                             } else if matches!(label, "Merge" | "Rebase") {
                                 if action_button(ui, icon, label, app.merge_allowed(), palette, action_width)
-                                    .help_text(if label == "Rebase" { "Rebase HEAD onto a selected commit" } else { "Select a branch or commit to merge" })
-                                    .disabled_help_text("Open and refresh a repository with commits; wait for the current operation")
+                                    .help_text(crate::i18n::tr_msg(if label == "Rebase" { "Rebase HEAD onto a selected commit" } else { "Select a branch or commit to merge" }))
+                                    .disabled_help_text(crate::i18n::tr_msg("Open and refresh a repository with commits; wait for the current operation"))
                                     .clicked() { if label == "Rebase" { app.open_rebase(); } else { app.open_merge(); } }
                             } else if label == "Discard" {
                                 let blocker = app.discard_blocker();
                                 if action_button(ui, icon, label, blocker.is_none(), palette, action_width)
-                                    .help_text("Review restoring selected files from the index or deleting selected untracked files")
-                                    .disabled_help_text(blocker.unwrap_or(""))
+                                    .help_text(crate::i18n::tr_msg("Review restoring selected files from the index or deleting selected untracked files"))
+                                    .disabled_help_text(crate::i18n::tr_blocker(blocker))
                                     .clicked() { app.open_discard(); }
                             } else if label == "Save Stash" {
                                 if action_button(ui, icon, label, app.stash_allowed(), palette, action_width)
-                                    .help_text("Save local changes for later")
-                                    .disabled_help_text("Open and refresh a repository; wait for the current operation")
+                                    .help_text(crate::i18n::tr_msg("Save local changes for later"))
+                                    .disabled_help_text(crate::i18n::tr_msg("Open and refresh a repository; wait for the current operation"))
                                     .clicked() { app.open_save_stash(); }
                             } else if label == "Stage" || label == "Unstage" {
                                 let staged = label == "Stage";
                                 let enabled = app.selected_staging_allowed(staged);
-                                let tooltip = if staged { "Stage all changes in the selected files" } else { "Unstage the selected files; preserve working-tree contents" };
+                                let tooltip = if staged {
+                                    crate::i18n::tr_msg("Stage all changes in the selected files")
+                                } else {
+                                    crate::i18n::tr_msg("Unstage the selected files; preserve working-tree contents")
+                                };
                                 if action_button(ui, icon, label, enabled, palette, action_width)
-                                    .help_text(tooltip)
-                                    .disabled_help_text("Select a suitable file after refreshing; conflicts must be resolved outside SannyGit")
+                                    .help_text(&tooltip)
+                                    .disabled_help_text(crate::i18n::tr_msg("Select a suitable file after refreshing; conflicts must be resolved outside SannyGit"))
                                     .clicked() {
                                     app.set_selected_staged(staged);
                                 }
@@ -398,8 +406,8 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                                     && app.repositories.get(app.selected_repository).is_some()
                                     && !app.history.commits.is_empty();
                                 if action_button(ui, icon, label, enabled, palette, action_width)
-                                    .help_text("Open the history of the current branch")
-                                    .disabled_help_text("Open a repository and wait until its history is loaded")
+                                    .help_text(crate::i18n::tr_msg("Open the history of the current branch"))
+                                    .disabled_help_text(crate::i18n::tr_msg("Open a repository and wait until its history is loaded"))
                                     .clicked()
                                 {
                                     app.open_current_branch_log();
@@ -418,7 +426,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                         palette,
                         action_width,
                     )
-                    .help_text("Settings");
+                    .help_text(crate::i18n::tr_msg("Settings"));
                     if response.clicked() {
                         app.open_settings();
                     }
@@ -429,21 +437,20 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
 
 fn remote_help(operation: crate::remotes::Operation, remote: Option<&str>) -> String {
     let repository = remote.map_or_else(
-        || "remote repository".to_owned(),
-        |name| format!("remote {name} repository"),
+        || crate::i18n::tr_msg("remote repository"),
+        |name| crate::i18n::tr_args("remote {name} repository", &[("name", name)]),
     );
-    match operation {
-        crate::remotes::Operation::Sync => format!(
+    let key = match operation {
+        crate::remotes::Operation::Sync => {
             "Push local commits to the {repository}, then pull possible remote changes (fast-forward only)."
-        ),
-        crate::remotes::Operation::Fetch => {
-            format!("Fetch branches and tags from the {repository}.")
         }
+        crate::remotes::Operation::Fetch => "Fetch branches and tags from the {repository}.",
         crate::remotes::Operation::Pull => {
-            format!("Pull remote commits from the {repository} into the current branch.")
+            "Pull remote commits from the {repository} into the current branch."
         }
-        crate::remotes::Operation::Push => format!("Push local commits to the {repository}."),
-    }
+        crate::remotes::Operation::Push => "Push local commits to the {repository}.",
+    };
+    crate::i18n::tr_args(key, &[("repository", &repository)])
 }
 
 #[cfg(all(test, not(target_os = "macos")))]
@@ -517,14 +524,14 @@ mod tests {
     #[test]
     fn edit_shortcuts_use_os_conventions_and_leave_unimplemented_items_alone() {
         use egui::{Key, Modifiers};
-        for (label, key) in [
-            ("Undo", Key::Z),
-            ("Cut", Key::X),
-            ("Copy", Key::C),
-            ("Paste", Key::V),
-            ("Select All", Key::A),
+        for (key_id, key) in [
+            ("edit.undo", Key::Z),
+            ("edit.cut", Key::X),
+            ("edit.copy", Key::C),
+            ("edit.paste", Key::V),
+            ("edit.select_all", Key::A),
         ] {
-            let shortcut = EditAction::from_label(label).unwrap().shortcut();
+            let shortcut = EditAction::from_label_key(key_id).unwrap().shortcut();
             assert_eq!(shortcut.logical_key, key);
             assert_eq!(shortcut.modifiers, Modifiers::CTRL);
         }
@@ -534,7 +541,7 @@ mod tests {
             if cfg!(windows) { Key::Y } else { Key::Z }
         );
         assert_eq!(redo.modifiers.shift, !cfg!(windows));
-        assert!(EditAction::from_label("Merge…").is_none());
+        assert!(EditAction::from_label_key("Merge…").is_none());
         let context = Context::default();
         for action in [EditAction::Cut, EditAction::Paste, EditAction::SelectAll] {
             perform_edit(&context, action);

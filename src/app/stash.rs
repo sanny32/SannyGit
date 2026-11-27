@@ -306,7 +306,10 @@ impl SannyGitApp {
                         dialog.rename_message = message;
                     }
                     dialog.entries_current = true;
-                    dialog.status = format!("{} stashes. Apply retains the entry; Pop removes it only after a successful apply.", dialog.entries.len());
+                    dialog.status = crate::i18n::tr_args(
+                        "%{count} stashes. Apply retains the entry; Pop removes it only after a successful apply.",
+                        &[("count", &dialog.entries.len().to_string())],
+                    );
                 }
                 Err(error) => {
                     dialog.entries_current = false;

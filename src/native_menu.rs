@@ -152,7 +152,7 @@ impl NativeMenu {
         let mut items = Vec::new();
         let mut edit_items = Vec::new();
         for definition in MENUS {
-            let menu = submenu(marker, &root, definition.title);
+            let menu = submenu(marker, &root, &definition.title());
             append_items(
                 marker,
                 &menu,
@@ -230,12 +230,13 @@ fn append_items(
             menu.addItem(&NSMenuItem::separatorItem(marker));
             continue;
         }
-        let standard_edit = standard_edit_item(definition.label);
+        let label = definition.label();
+        let standard_edit = definition.edit_action.map(standard_edit_item);
         // SAFETY: The selectors below have AppKit's NSMenuItem target/action ABI.
         let item = unsafe {
             NSMenuItem::initWithTitle_action_keyEquivalent(
                 NSMenuItem::alloc(marker),
-                &NSString::from_str(definition.label),
+                &NSString::from_str(&label),
                 definition
                     .action
                     .map(|_| sel!(performMenuAction:))
@@ -262,8 +263,7 @@ fn append_items(
             )
         };
         if !definition.children.is_empty() {
-            let child =
-                NSMenu::initWithTitle(NSMenu::alloc(marker), &NSString::from_str(definition.label));
+            let child = NSMenu::initWithTitle(NSMenu::alloc(marker), &NSString::from_str(&label));
             child.setAutoenablesItems(false);
             append_items(
                 marker,
@@ -346,27 +346,26 @@ struct StandardEditItem {
     native_action: Option<NativeEditAction>,
 }
 
-fn standard_edit_item(label: &str) -> Option<StandardEditItem> {
-    let (selector, key, shift, native_action) = match label {
-        "Undo" => (sel!(undo:), "z", false, Some(NativeEditAction::Undo)),
-        "Redo" => (sel!(redo:), "z", true, Some(NativeEditAction::Redo)),
-        "Cut" => (sel!(cut:), "x", false, Some(NativeEditAction::Cut)),
-        "Copy" => (sel!(copy:), "c", false, Some(NativeEditAction::Copy)),
-        "Paste" => (sel!(paste:), "v", false, Some(NativeEditAction::Paste)),
-        "Select All" => (
+fn standard_edit_item(edit: crate::menu::EditAction) -> StandardEditItem {
+    let (selector, key, shift, native_action) = match edit {
+        crate::menu::EditAction::Undo => (sel!(undo:), "z", false, Some(NativeEditAction::Undo)),
+        crate::menu::EditAction::Redo => (sel!(redo:), "z", true, Some(NativeEditAction::Redo)),
+        crate::menu::EditAction::Cut => (sel!(cut:), "x", false, Some(NativeEditAction::Cut)),
+        crate::menu::EditAction::Copy => (sel!(copy:), "c", false, Some(NativeEditAction::Copy)),
+        crate::menu::EditAction::Paste => (sel!(paste:), "v", false, Some(NativeEditAction::Paste)),
+        crate::menu::EditAction::SelectAll => (
             sel!(selectAll:),
             "a",
             false,
             Some(NativeEditAction::SelectAll),
         ),
-        _ => return None,
     };
-    Some(StandardEditItem {
+    StandardEditItem {
         selector,
         key,
         shift,
         native_action,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -375,15 +374,16 @@ mod tests {
 
     #[test]
     fn standard_edit_items_have_native_shortcuts() {
-        for (label, key, shift) in [
-            ("Undo", "z", false),
-            ("Redo", "z", true),
-            ("Cut", "x", false),
-            ("Copy", "c", false),
-            ("Paste", "v", false),
-            ("Select All", "a", false),
+        use crate::menu::EditAction as E;
+        for (edit, key, shift) in [
+            (E::Undo, "z", false),
+            (E::Redo, "z", true),
+            (E::Cut, "x", false),
+            (E::Copy, "c", false),
+            (E::Paste, "v", false),
+            (E::SelectAll, "a", false),
         ] {
-            let item = standard_edit_item(label).unwrap();
+            let item = standard_edit_item(edit);
             assert_eq!((item.key, item.shift), (key, shift));
         }
         for action in [
@@ -397,10 +397,9 @@ mod tests {
             assert_eq!(NativeEditAction::from_tag(action.tag()), Some(action));
         }
         assert_eq!(
-            standard_edit_item("Paste").unwrap().native_action,
+            standard_edit_item(crate::menu::EditAction::Paste).native_action,
             Some(NativeEditAction::Paste)
         );
-        assert!(standard_edit_item("Preferences").is_none());
     }
 
     #[test]

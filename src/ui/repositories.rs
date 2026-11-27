@@ -24,7 +24,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
             super::controls::dialog_style::section(ui, palette.header, eframe::egui::Margin::same(18), |ui| {
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("Repository:");
+                        ui.label(crate::i18n::tr_msg("Repository:"));
                         let width = (ui.available_width() - 36.0).max(100.0);
                         ui.add_sized([width, crate::theme::CONTROL_HEIGHT], crate::ui::controls::singleline(&mut app.repository_path));
                         super::clone_dialog::choose_folder(ui, &mut app.repository_path);
@@ -53,7 +53,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         eframe::egui::vec2(ui.available_width(), super::WORKSPACE_HEADER_HEIGHT),
         Layout::left_to_right(Align::Center),
         |ui| {
-            ui.heading("Repositories");
+            ui.heading(crate::i18n::tr_msg("Repositories"));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if app.busy() {
                     icons::unavailable(
@@ -436,11 +436,11 @@ fn repository_name_line(
                 });
             }
             if favorite {
-                ui.label(RichText::new("★").color(palette.warning));
+                ui.label(RichText::new(crate::i18n::tr_msg("★")).color(palette.warning));
             }
             if let Some(marker) = marker {
                 ui.add(eframe::egui::Label::new(marker))
-                    .help_text("Merge in progress");
+                    .help_text(crate::i18n::tr_msg("Merge in progress"));
             }
         },
     );
@@ -560,7 +560,7 @@ fn repository_row(
                     eframe::egui::FontId::new(9.0, semibold_family()),
                     palette.editor,
                 );
-                icon_response.help_text("Unresolved conflicts");
+                icon_response.help_text(crate::i18n::tr_msg("Unresolved conflicts"));
             }
             let name = RichText::new(label).color(palette.text);
             let (badge, _) = if active {

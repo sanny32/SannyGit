@@ -26,9 +26,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         );
         dialog_style::section(ui, palette.panel, egui::Margin::symmetric(12, 10), |ui| {
             ui.label(
-                RichText::new(format!(
-                    "Commit {}",
-                    &dialog.commit[..12.min(dialog.commit.len())]
+                RichText::new(crate::i18n::tr_args(
+                    "Commit %{commit}",
+                    &[("commit", &dialog.commit[..12.min(dialog.commit.len())])],
                 ))
                 .small(),
             );
@@ -36,7 +36,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 let label = format!("Parent {} — {}", index + 1, &hash[..8.min(hash.len())]);
                 if ui
                     .add(Button::new(label))
-                    .help_text("Revert relative to this parent")
+                    .help_text(crate::i18n::tr_msg("Revert relative to this parent"))
                     .clicked()
                 {
                     parent = Some((index + 1) as u8);

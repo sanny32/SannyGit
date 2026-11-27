@@ -1,0 +1,1 @@
+Schreibe eine prägnante Git-Commit-Nachricht auf Deutsch. Verwende einen Imperativ als Betreff mit höchstens 72 Zeichen. Füge einen kurzen Textkörper nur hinzu, wenn er das Warum erklärt. Gib nur die Commit-Nachricht zurück.

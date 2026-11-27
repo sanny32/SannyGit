@@ -52,7 +52,6 @@ impl MenuAction {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditAction {
     Undo,
@@ -63,20 +62,23 @@ pub enum EditAction {
     SelectAll,
 }
 
-#[cfg(not(target_os = "macos"))]
 impl EditAction {
-    pub fn from_label(label: &str) -> Option<Self> {
-        Some(match label {
-            "Undo" => Self::Undo,
-            "Redo" => Self::Redo,
-            "Cut" => Self::Cut,
-            "Copy" => Self::Copy,
-            "Paste" => Self::Paste,
-            "Select All" => Self::SelectAll,
+    #[cfg(test)]
+    pub fn from_label_key(key: &str) -> Option<Self> {
+        Some(match key {
+            "edit.undo" => Self::Undo,
+            "edit.redo" => Self::Redo,
+            "edit.cut" => Self::Cut,
+            "edit.copy" => Self::Copy,
+            "edit.paste" => Self::Paste,
+            "edit.select_all" => Self::SelectAll,
             _ => return None,
         })
     }
+}
 
+#[cfg(not(target_os = "macos"))]
+impl EditAction {
     pub fn shortcut(self) -> eframe::egui::KeyboardShortcut {
         use eframe::egui::{Key, KeyboardShortcut, Modifiers};
         let (modifiers, key) = match self {
@@ -113,29 +115,63 @@ impl EditAction {
 }
 
 pub struct MenuItem {
-    pub label: &'static str,
+    pub label_key: &'static str,
     pub action: Option<MenuAction>,
+    pub edit_action: Option<EditAction>,
     pub children: &'static [MenuItem],
     pub separator: bool,
 }
 
+impl MenuItem {
+    pub fn label(&self) -> String {
+        crate::i18n::tr_key(self.label_key)
+    }
+}
+
 pub struct Menu {
-    pub title: &'static str,
+    pub title_key: &'static str,
     pub items: &'static [MenuItem],
 }
 
-const fn action(label: &'static str, action: MenuAction) -> MenuItem {
+impl Menu {
+    pub fn title(&self) -> String {
+        crate::i18n::tr_key(self.title_key)
+    }
+}
+
+const fn action(label_key: &'static str, action: MenuAction) -> MenuItem {
     MenuItem {
-        label,
+        label_key,
         action: Some(action),
+        edit_action: None,
         children: &[],
         separator: false,
     }
 }
-const fn pending(label: &'static str) -> MenuItem {
+
+const fn pending(label_key: &'static str) -> MenuItem {
     MenuItem {
-        label,
+        label_key,
         action: None,
+        edit_action: None,
+        children: &[],
+        separator: false,
+    }
+}
+
+const fn edit(edit: EditAction) -> MenuItem {
+    let label_key = match edit {
+        EditAction::Undo => "edit.undo",
+        EditAction::Redo => "edit.redo",
+        EditAction::Cut => "edit.cut",
+        EditAction::Copy => "edit.copy",
+        EditAction::Paste => "edit.paste",
+        EditAction::SelectAll => "edit.select_all",
+    };
+    MenuItem {
+        label_key,
+        action: None,
+        edit_action: Some(edit),
         children: &[],
         separator: false,
     }
@@ -143,16 +179,19 @@ const fn pending(label: &'static str) -> MenuItem {
 
 const fn separator() -> MenuItem {
     MenuItem {
-        label: "",
+        label_key: "",
         action: None,
+        edit_action: None,
         children: &[],
         separator: true,
     }
 }
-const fn submenu(label: &'static str, children: &'static [MenuItem]) -> MenuItem {
+
+const fn submenu(label_key: &'static str, children: &'static [MenuItem]) -> MenuItem {
     MenuItem {
-        label,
+        label_key,
         action: None,
+        edit_action: None,
         children,
         separator: false,
     }
@@ -177,111 +216,111 @@ pub fn actions() -> Vec<MenuAction> {
 
 pub const MENUS: &[Menu] = &[
     Menu {
-        title: "Repository",
+        title_key: "menu_title.repository",
         items: &[
-            action("New Window", MenuAction::NewWindow),
-            action("Add or Create…", MenuAction::Open),
-            action("Add Group…", MenuAction::AddGroup),
-            action("Clone…", MenuAction::Clone),
-            action("Search for Repositories…", MenuAction::SearchRepositories),
-            action("Close Repository", MenuAction::CloseRepository),
+            action("repository.new_window", MenuAction::NewWindow),
+            action("repository.add_or_create", MenuAction::Open),
+            action("repository.add_group", MenuAction::AddGroup),
+            action("repository.clone", MenuAction::Clone),
+            action("repository.search", MenuAction::SearchRepositories),
+            action("repository.close_repository", MenuAction::CloseRepository),
             separator(),
-            action("Add Worktree…", MenuAction::AddWorktree),
-            action("Remove Worktree…", MenuAction::RemoveWorktree),
-            action("Prune Obsolete Worktrees…", MenuAction::PruneWorktrees),
+            action("repository.add_worktree", MenuAction::AddWorktree),
+            action("repository.remove_worktree", MenuAction::RemoveWorktree),
+            action("repository.prune_worktrees", MenuAction::PruneWorktrees),
             separator(),
-            action("Settings…", MenuAction::RepositorySettings),
+            action("repository.settings", MenuAction::RepositorySettings),
             submenu(
-                "Edit Git Config",
+                "menu.edit_git_config",
                 &[
-                    action("Repository…", MenuAction::EditRepositoryConfig),
-                    action("User…", MenuAction::EditUserConfig),
+                    action("menu.repository_config", MenuAction::EditRepositoryConfig),
+                    action("menu.user_config", MenuAction::EditUserConfig),
                 ],
             ),
             separator(),
-            action("Close", MenuAction::Close),
-            action("Exit", MenuAction::Exit),
+            action("repository.close", MenuAction::Close),
+            action("repository.exit", MenuAction::Exit),
         ],
     },
     Menu {
-        title: "Edit",
+        title_key: "menu_title.edit",
         items: &[
-            pending("Undo"),
-            pending("Redo"),
-            pending("Cut"),
-            pending("Copy"),
-            pending("Paste"),
-            pending("Select All"),
+            edit(EditAction::Undo),
+            edit(EditAction::Redo),
+            edit(EditAction::Cut),
+            edit(EditAction::Copy),
+            edit(EditAction::Paste),
+            edit(EditAction::SelectAll),
         ],
     },
     Menu {
-        title: "View",
-        items: &[action("Refresh", MenuAction::Refresh)],
+        title_key: "menu_title.view",
+        items: &[action("view.refresh", MenuAction::Refresh)],
     },
     Menu {
-        title: "Remote",
+        title_key: "menu_title.remote",
         items: &[
-            action("Fetch…", MenuAction::Fetch),
-            action("Pull…", MenuAction::Pull),
-            action("Push…", MenuAction::Push),
-            action("Push Selected Tag…", MenuAction::PushTag),
+            action("remote.fetch", MenuAction::Fetch),
+            action("remote.pull", MenuAction::Pull),
+            action("remote.push", MenuAction::Push),
+            action("remote.push_tag", MenuAction::PushTag),
             separator(),
-            action("Manage Remotes…", MenuAction::ManageRemotes),
+            action("remote.manage", MenuAction::ManageRemotes),
         ],
     },
     Menu {
-        title: "Local",
+        title_key: "menu_title.local",
         items: &[
-            action("Stage", MenuAction::Stage),
-            action("Unstage", MenuAction::Unstage),
-            action("Commit", MenuAction::Commit),
-            action("Discard…", MenuAction::Discard),
-            action("Stashes…", MenuAction::Stashes),
+            action("local.stage", MenuAction::Stage),
+            action("local.unstage", MenuAction::Unstage),
+            action("local.commit", MenuAction::Commit),
+            action("local.discard", MenuAction::Discard),
+            action("local.stashes", MenuAction::Stashes),
         ],
     },
     Menu {
-        title: "Branch",
+        title_key: "menu_title.branch",
         items: &[
-            action("Create…", MenuAction::CreateBranch),
-            action("Switch", MenuAction::SwitchBranch),
-            action("Rename…", MenuAction::RenameBranch),
-            action("Delete…", MenuAction::DeleteBranch),
-            action("Merge…", MenuAction::Merge),
-            action("Rebase…", MenuAction::Rebase),
+            action("branch.create", MenuAction::CreateBranch),
+            action("branch.switch", MenuAction::SwitchBranch),
+            action("branch.rename", MenuAction::RenameBranch),
+            action("branch.delete", MenuAction::DeleteBranch),
+            action("branch.merge_picker", MenuAction::Merge),
+            action("branch.rebase_picker", MenuAction::Rebase),
         ],
     },
     Menu {
-        title: "Query",
+        title_key: "menu_title.query",
         items: &[
-            action("Reload History", MenuAction::ReloadHistory),
-            pending("Blame…"),
+            action("query.reload_history", MenuAction::ReloadHistory),
+            pending("menu.blame"),
         ],
     },
     Menu {
-        title: "Tools",
+        title_key: "menu_title.tools",
         items: &[
-            action("Preferences…", MenuAction::Preferences),
+            action("tools.preferences", MenuAction::Preferences),
             separator(),
-            action("Light Theme", MenuAction::LightTheme),
-            action("Dark Theme", MenuAction::DarkTheme),
+            action("tools.light_theme", MenuAction::LightTheme),
+            action("tools.dark_theme", MenuAction::DarkTheme),
         ],
     },
     Menu {
-        title: "Review",
-        items: &[pending("Review…")],
+        title_key: "menu_title.review",
+        items: &[pending("menu.review")],
     },
     Menu {
-        title: "Window",
+        title_key: "menu_title.window",
         items: &[
-            action("New Window", MenuAction::NewWindow),
+            action("repository.new_window", MenuAction::NewWindow),
             separator(),
-            action("Maximize", MenuAction::MaximizeWindow),
-            action("Minimize", MenuAction::MinimizeWindow),
-            action("Full Screen", MenuAction::FullScreen),
+            action("window.maximize", MenuAction::MaximizeWindow),
+            action("window.minimize", MenuAction::MinimizeWindow),
+            action("window.full_screen", MenuAction::FullScreen),
         ],
     },
     Menu {
-        title: "Help",
-        items: &[action("About SannyGit", MenuAction::About)],
+        title_key: "menu_title.help",
+        items: &[action("help.about", MenuAction::About)],
     },
 ];

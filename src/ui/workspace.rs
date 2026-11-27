@@ -52,12 +52,13 @@ pub(super) fn show(ui: &mut Ui, app: &mut SannyGitApp) -> [Rect; 4] {
         .show(ui, |ui| {
             ui.take_available_space();
             super::header(ui, super::WORKSPACE_HEADER_HEIGHT, palette, |ui| {
+                let default_name = crate::i18n::tr_msg("Working Tree");
                 let name = app
                     .repositories
                     .get(app.selected_repository)
-                    .map_or("Working Tree", |repository| repository.name.as_str());
+                    .map_or(default_name.as_str(), |repository| repository.name.as_str());
                 ui.heading(name);
-                ui.label("›");
+                ui.label(crate::i18n::tr_msg("›"));
                 ui.label(&app.branches.current_branch);
             });
             super::changes::show(ui, app);

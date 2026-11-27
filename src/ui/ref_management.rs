@@ -68,46 +68,65 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             if !matches!(dialog.kind, Kind::Remotes(_)) {
-                line(ui, format!("Repository: {:?}", dialog.root), palette.muted);
+                line(
+                    ui,
+                    crate::i18n::tr_args(
+                        "Repository: %{path}",
+                        &[("path", &format!("{:?}", dialog.root))],
+                    ),
+                    palette.muted,
+                );
             }
             match &mut dialog.kind {
                 Kind::Delete { source, prepared } => {
-                    line(ui, format!("Branch: {source}"), palette.text);
+                    line(
+                        ui,
+                        crate::i18n::tr_args("Branch: %{branch}", &[("branch", source)]),
+                        palette.text,
+                    );
                     let loading = prepared.is_none()
                         && dialog.error.is_none()
                         && dialog.status == crate::app::ref_management::LOADING_STATUS;
                     let unavailable = if loading {
-                        "Checking…"
+                        crate::i18n::tr_msg("Checking…")
                     } else {
-                        "Not available"
+                        crate::i18n::tr_msg("Not available")
                     };
                     line(
                         ui,
-                        format!(
-                            "Branch object: {}",
-                            prepared
-                                .as_ref()
-                                .map(|value| value.oid.as_str())
-                                .unwrap_or(unavailable)
+                        crate::i18n::tr_args(
+                            "Branch object: %{object}",
+                            &[(
+                                "object",
+                                prepared
+                                    .as_ref()
+                                    .map(|value| value.oid.as_str())
+                                    .unwrap_or(&unavailable),
+                            )],
                         ),
                         palette.muted,
                     );
                     line(
                         ui,
-                        format!(
-                            "Current HEAD: {}",
-                            prepared
-                                .as_ref()
-                                .map(|value| value.head.as_str())
-                                .unwrap_or(unavailable)
+                        crate::i18n::tr_args(
+                            "Current HEAD: %{head}",
+                            &[(
+                                "head",
+                                prepared
+                                    .as_ref()
+                                    .map(|value| value.head.as_str())
+                                    .unwrap_or(&unavailable),
+                            )],
                         ),
                         palette.muted,
                     );
-                    let confirm_label = if prepared.as_ref().is_some_and(|value| !value.merged) {
-                        "Confirm deleting this unmerged local branch"
-                    } else {
-                        "Confirm deleting this merged local branch"
-                    };
+                    let confirm_label = crate::i18n::tr_msg(
+                        if prepared.as_ref().is_some_and(|value| !value.merged) {
+                            "Confirm deleting this unmerged local branch"
+                        } else {
+                            "Confirm deleting this merged local branch"
+                        },
+                    );
                     let confirm = ui.add_enabled(
                         !busy && prepared.is_some(),
                         egui::Checkbox::new(&mut dialog.confirmed, confirm_label),
@@ -125,17 +144,20 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     line(ui, source.clone(), palette.text);
                     line(
                         ui,
-                        format!(
-                            "Tag object: {}",
-                            prepared
-                                .as_ref()
-                                .map(|value| value.oid.as_str())
-                                .unwrap_or("Checking…")
+                        crate::i18n::tr_args(
+                            "Tag object: %{object}",
+                            &[(
+                                "object",
+                                prepared
+                                    .as_ref()
+                                    .map(|value| value.oid.as_str())
+                                    .unwrap_or(&crate::i18n::tr_msg("Checking…")),
+                            )],
                         ),
                         palette.muted,
                     );
                     ui.horizontal(|ui| {
-                        ui.label("Remote:");
+                        ui.label(crate::i18n::tr_msg("Remote:"));
                         ui.add_enabled_ui(!busy && !names.is_empty(), |ui| {
                             ComboBox::from_id_salt("ref.tag.remote")
                                 .width(320.0)
@@ -157,12 +179,15 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     });
                     line(
                         ui,
-                        format!(
-                            "Push address: {}",
-                            prepared
-                                .as_ref()
-                                .map(|value| value.endpoint_display.as_str())
-                                .unwrap_or("Not yet verified")
+                        crate::i18n::tr_args(
+                            "Push address: %{address}",
+                            &[(
+                                "address",
+                                prepared
+                                    .as_ref()
+                                    .map(|value| value.endpoint_display.as_str())
+                                    .unwrap_or(&crate::i18n::tr_msg("Not yet verified")),
+                            )],
                         ),
                         palette.muted,
                     );
@@ -170,7 +195,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                         !busy && prepared.is_some(),
                         egui::Checkbox::new(
                             &mut dialog.confirmed,
-                            "Confirm pushing only this tag to the displayed address",
+                            crate::i18n::tr_msg(
+                                "Confirm pushing only this tag to the displayed address",
+                            ),
                         ),
                     );
                 }
@@ -295,35 +322,38 @@ fn show_branch_action(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Di
         .unwrap_or("");
     let (title, description, icon, button, dialog_id) = match &*action {
         BranchAction::Delete { .. } => (
-            format!("Delete branch '{name}'?"),
+            crate::i18n::tr_args("Delete branch '%{name}'?", &[("name", name)]),
             "If the branch remains on the remote, it may come back with the next fetch.",
             Icon::Warning,
             "Delete",
             "ref.remote_branch.delete",
         ),
         BranchAction::Push { .. } => (
-            format!("Push '{name}' to remote '{owner}'"),
+            crate::i18n::tr_args(
+                "Push '%{name}' to remote '%{owner}'",
+                &[("name", name), ("owner", owner)],
+            ),
             "Select the destination ref for the push.",
             Icon::Push,
             "Push",
             "ref.remote_branch.push",
         ),
         BranchAction::PushLocal { .. } => (
-            format!("Push branch '{name}'"),
+            crate::i18n::tr_args("Push branch '%{name}'", &[("name", name)]),
             "Review the remote and destination ref for this branch.",
             Icon::Push,
             "Push",
             "ref.local_branch.push",
         ),
         BranchAction::SetTracking { .. } => (
-            format!("Set tracked branch for '{name}'"),
+            crate::i18n::tr_args("Set tracked branch for '%{name}'", &[("name", name)]),
             "Choose the remote branch to track.",
             Icon::Branch,
             "Set Tracked Branch",
             "ref.local_branch.track",
         ),
         BranchAction::StopTracking => (
-            format!("Stop tracking for '{name}'?"),
+            crate::i18n::tr_args("Stop tracking for '%{name}'?", &[("name", name)]),
             "Remove this local branch’s upstream configuration.",
             Icon::Branch,
             "Stop Tracking",
@@ -346,13 +376,16 @@ fn show_branch_action(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Di
             let mut ready = prepared.is_some();
             match action {
                 BranchAction::Delete { also_remote } => {
-                    let label = format!("Delete from remote repository '{owner}'");
+                    let label = crate::i18n::tr_args(
+                        "Delete from remote repository '%{owner}'",
+                        &[("owner", owner)],
+                    );
                     let supported = prepared.as_ref().is_some_and(|preview| preview.can_delete_remote);
                     let response = ui.add_enabled(!busy && supported, egui::Checkbox::new(also_remote, &label));
                     response.help_text(if ready && !supported {
-                        "Deleting on the server requires a configured remote with the standard branch fetch mapping."
+                        crate::i18n::tr_msg("Deleting on the server requires a configured remote with the standard branch fetch mapping.")
                     } else {
-                        &label
+                        label.clone()
                     });
                 }
                 BranchAction::Push { custom, destination } => {
@@ -363,7 +396,7 @@ fn show_branch_action(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Di
                 BranchAction::PushLocal { remote, custom, destination, choose_destination } => {
                     let options = prepared.as_ref().map_or(&[][..], |preview| preview.destinations.as_slice());
                     ui.horizontal(|ui| {
-                        ui.label("Remote");
+                        ui.label(crate::i18n::tr_msg("Remote"));
                         ui.add_enabled_ui(!busy && *choose_destination && !options.is_empty(), |ui| {
                             ComboBox::from_id_salt("local_branch.push_remote").width(240.0)
                                 .selected_text(remote.as_str()).show_ui(ui, |ui| {
@@ -378,7 +411,14 @@ fn show_branch_action(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Di
                     if *choose_destination {
                         push_target(ui, busy, custom, destination, target);
                     } else {
-                        line(ui, format!("Destination branch · {target}"), palette.text);
+                        line(
+                            ui,
+                            crate::i18n::tr_args(
+                                "Destination branch · %{target}",
+                                &[("target", target)],
+                            ),
+                            palette.text,
+                        );
                     }
                     ready = options.contains(remote) && (!*custom || !destination.trim().is_empty());
                 }
@@ -387,7 +427,11 @@ fn show_branch_action(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Di
                     let display = |reference: &str| reference.strip_prefix("refs/remotes/").unwrap_or(reference).to_owned();
                     ui.add_enabled_ui(!busy && !options.is_empty(), |ui| {
                         ComboBox::from_id_salt("local_branch.upstream").width(320.0).truncate()
-                            .selected_text(if upstream.is_empty() { "Select a remote branch".into() } else { display(upstream) })
+                            .selected_text(if upstream.is_empty() {
+                                crate::i18n::tr_msg("Select a remote branch")
+                            } else {
+                                display(upstream)
+                            })
                             .show_ui(ui, |ui| {
                                 for reference in options {
                                     ui.selectable_value(upstream, reference.clone(), display(reference));
@@ -399,11 +443,11 @@ fn show_branch_action(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Di
                 BranchAction::StopTracking => {}
             }
             let status = if busy {
-                "Checking branch…"
+                crate::i18n::tr_msg("Checking branch…")
             } else if matches!(action, BranchAction::Push { .. } | BranchAction::PushLocal { .. }) && prepared.as_ref().is_some_and(|preview| !preview.has_owner) {
-                "The source remote is no longer configured"
+                crate::i18n::tr_msg("The source remote is no longer configured")
             } else {
-                ""
+                String::new()
             };
             dialog_style::text_line(ui, RichText::new(status).color(palette.muted), 18.0);
             dialog_style::button_row(ui, |ui| {
@@ -440,17 +484,21 @@ fn push_target(
     egui::Grid::new("remote_branch.push_target")
         .spacing([12.0, 4.0])
         .show(ui, |ui| {
-            ui.label("Push To");
+            ui.label(crate::i18n::tr_msg("Push To"));
             ui.add_enabled_ui(!busy, |ui| {
-                ui.radio_value(custom, false, "Tracked or matching branch")
+                ui.radio_value(
+                    custom,
+                    false,
+                    crate::i18n::tr_msg("Tracked or matching branch"),
+                )
             })
             .inner
             .help_text(matching);
             ui.end_row();
-            ui.label("");
+            ui.label(crate::i18n::tr_msg(""));
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(!busy, |ui| {
-                    ui.radio_value(custom, true, "Custom Ref");
+                    ui.radio_value(custom, true, crate::i18n::tr_msg("Custom Ref"));
                 });
                 ui.add_enabled(
                     !busy && *custom,
@@ -478,8 +526,8 @@ fn show_tag_delete(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Dialo
         .as_ref()
         .map_or(&[][..], |preview| preview.remotes.as_slice());
     let label = match remotes {
-        [remote] => format!("Delete from remote '{remote}'"),
-        _ => "Delete from all remotes".into(),
+        [remote] => crate::i18n::tr_args("Delete from remote '%{remote}'", &[("remote", remote)]),
+        _ => crate::i18n::tr_msg("Delete from all remotes"),
     };
     let name = source.strip_prefix("refs/tags/").unwrap_or(source);
     let mut close = false;
@@ -498,7 +546,11 @@ fn show_tag_delete(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Dialo
         );
         dialog_style::section(ui, palette.panel, egui::Margin::symmetric(18, 8), |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            line(ui, format!("Tag: {name}"), palette.text);
+            line(
+                ui,
+                crate::i18n::tr_args("Tag: %{name}", &[("name", name)]),
+                palette.text,
+            );
             ui.add_enabled_ui(!busy, |ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 ui.add_visible(
@@ -508,11 +560,11 @@ fn show_tag_delete(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: Dialo
                 .help_text(label);
             });
             let status = if dialog.running {
-                "Deleting tag…"
+                crate::i18n::tr_msg("Deleting tag…")
             } else if busy {
-                "Checking tag…"
+                crate::i18n::tr_msg("Checking tag…")
             } else {
-                ""
+                String::new()
             };
             dialog_style::text_line(ui, RichText::new(status).color(palette.muted), 18.0);
         });
@@ -575,20 +627,30 @@ fn show_tag_reset(ctx: &egui::Context, app: &mut SannyGitApp, dialog: Dialog) {
             Icon::Warning,
         );
         dialog_style::section(ui, palette.panel, egui::Margin::symmetric(18, 10), |ui| {
-            line(ui, format!("Target: {target}"), palette.text);
-            let details = if dialog.running {
-                "Resetting HEAD…"
-            } else if *choose_changes {
-                "Save the staged and unstaged changes to a stash, or discard them."
-            } else if prepared.is_none() && busy {
-                "Checking the target and working tree…"
-            } else {
-                "Reset will discard any staged and unstaged changes unless you save them."
-            };
-            line(ui, details.into(), palette.text);
             line(
                 ui,
-                "Untracked or ignored files in the way may be overwritten or removed.".into(),
+                crate::i18n::tr_args("Target: %{target}", &[("target", &target)]),
+                palette.text,
+            );
+            let details = if dialog.running {
+                crate::i18n::tr_msg("Resetting HEAD…")
+            } else if *choose_changes {
+                crate::i18n::tr_msg(
+                    "Save the staged and unstaged changes to a stash, or discard them.",
+                )
+            } else if prepared.is_none() && busy {
+                crate::i18n::tr_msg("Checking the target and working tree…")
+            } else {
+                crate::i18n::tr_msg(
+                    "Reset will discard any staged and unstaged changes unless you save them.",
+                )
+            };
+            line(ui, details, palette.text);
+            line(
+                ui,
+                crate::i18n::tr_msg(
+                    "Untracked or ignored files in the way may be overwritten or removed.",
+                ),
                 palette.muted,
             );
         });
@@ -684,9 +746,9 @@ fn show_advanced_reset(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: D
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.spacing_mut().interact_size.y = 18.0;
             ui.spacing_mut().button_padding.y = 1.0;
-            let target = format!("Target: {target}");
+            let target = crate::i18n::tr_args("Target: %{target}", &[("target", &target)]);
             dialog_style::text_line(ui, RichText::new(&target).color(palette.text), 20.0)
-                .help_text(target);
+                .help_text(&target);
             ui.add_space(3.0);
             ui.add_enabled_ui(!busy, |ui| {
                 for (strategy, label, description) in [
@@ -716,15 +778,20 @@ fn show_advanced_reset(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: D
                         "Abort if a file that needs updating has conflicting unstaged changes.",
                     ),
                 ] {
-                    ui.radio_value(&mut options.strategy, strategy, label);
+                    ui.radio_value(
+                        &mut options.strategy,
+                        strategy,
+                        crate::i18n::tr_msg(label),
+                    );
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
                         dialog_style::text_line(
                             ui,
-                            RichText::new(description).color(palette.muted),
+                            RichText::new(crate::i18n::tr_msg(description))
+                                .color(palette.muted),
                             17.0,
                         )
-                        .help_text(description);
+                        .help_text(crate::i18n::tr_msg(description));
                     });
                     if strategy == ResetStrategy::Hard {
                         ui.horizontal(|ui| {
@@ -734,7 +801,7 @@ fn show_advanced_reset(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: D
                                 hard,
                                 egui::Checkbox::new(
                                     &mut options.fix_line_endings,
-                                    "Refresh line endings using .gitattributes",
+                                    crate::i18n::tr_msg("Refresh line endings using .gitattributes"),
                                 ),
                             );
                         });
@@ -743,16 +810,16 @@ fn show_advanced_reset(ctx: &egui::Context, app: &mut SannyGitApp, mut dialog: D
                 }
             });
             let notice = if dialog.running {
-                "Resetting HEAD…"
+                crate::i18n::tr_msg("Resetting HEAD…")
             } else if prepared.is_none() && busy {
-                "Checking the target and working tree…"
+                crate::i18n::tr_msg("Checking the target and working tree…")
             } else if options.strategy == ResetStrategy::Hard {
-                "Untracked or ignored files in the way may be overwritten or removed."
+                crate::i18n::tr_msg("Untracked or ignored files in the way may be overwritten or removed.")
             } else {
-                ""
+                String::new()
             };
-            dialog_style::text_line(ui, RichText::new(notice).color(palette.muted), 18.0)
-                .help_text(notice);
+            dialog_style::text_line(ui, RichText::new(&notice).color(palette.muted), 18.0)
+                .help_text(&notice);
         });
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             dialog_style::button_row(ui, |ui| {
@@ -827,8 +894,11 @@ fn remote_editor(
 ) -> Option<bool> {
     let mut change = None;
     ui.horizontal(|ui| {
-        ui.strong("Configured remotes");
-        if ui.add_enabled(!busy, Button::new("New Remote")).clicked() {
+        ui.strong(crate::i18n::tr_msg("Configured remotes"));
+        if ui
+            .add_enabled(!busy, Button::new(crate::i18n::tr_msg("New Remote")))
+            .clicked()
+        {
             editor.select(None);
         }
     });
@@ -841,7 +911,7 @@ fn remote_editor(
         .show(ui, |ui| {
             if let Some(snapshot) = &editor.snapshot {
                 if snapshot.entries.is_empty() {
-                    ui.label("No configured remotes");
+                    ui.label(crate::i18n::tr_msg("No configured remotes"));
                 }
                 for entry in &snapshot.entries {
                     let label = format!("{}   {}", entry.name, entry.fetch_display);
@@ -864,7 +934,7 @@ fn remote_editor(
                     }
                 }
             } else {
-                ui.label("Loading remotes…");
+                ui.label(crate::i18n::tr_msg("Loading remotes…"));
             }
         });
     if let Some(name) = selected {
@@ -886,7 +956,7 @@ fn remote_editor(
             .min_col_width(90.0)
             .spacing([12.0, 6.0])
             .show(ui, |ui| {
-                ui.label("Name:");
+                ui.label(crate::i18n::tr_msg("Name:"));
                 if ui
                     .add_enabled_ui(editor.selected.is_none(), |ui| {
                         ui.add_sized(
@@ -900,7 +970,7 @@ fn remote_editor(
                     editor.confirm_remove = false;
                 }
                 ui.end_row();
-                ui.label("Fetch URL:");
+                ui.label(crate::i18n::tr_msg("Fetch URL:"));
                 let masked =
                     !editor.url.is_empty() && remote_config::url_hint(&editor.url).is_some();
                 if ui
@@ -915,7 +985,7 @@ fn remote_editor(
                     editor.confirm_remove = false;
                 }
                 ui.end_row();
-                ui.label("Push URL:");
+                ui.label(crate::i18n::tr_msg("Push URL:"));
                 let masked = !editor.push_url.is_empty()
                     && remote_config::url_hint(&editor.push_url).is_some();
                 if ui
@@ -924,7 +994,7 @@ fn remote_editor(
                         crate::ui::controls::singleline(&mut editor.push_url)
                             .char_limit(4096)
                             .password(masked)
-                            .hint_text("Same as fetch when empty"),
+                            .hint_text(crate::i18n::tr_msg("Same as fetch when empty")),
                     )
                     .changed()
                 {
@@ -944,15 +1014,21 @@ fn remote_editor(
         });
     ui.horizontal(|ui| {
         let valid = can_edit && current && validation.is_none();
-        if ui.add_enabled(valid && editor.selected.is_none(), Button::new("Add Remote")).disabled_help_text(validation.unwrap_or("Choose New Remote to add an entry")).dialog_accept() { change = Some(false); }
-        if ui.add_enabled(valid && editor.selected.is_some(), Button::new("Save URLs")).disabled_help_text(validation.unwrap_or("Select an editable repository-local remote")).dialog_accept() { change = Some(false); }
-        if ui.add_enabled(can_remove && current && editor.confirm_remove, Button::new("Remove Remote")).disabled_help_text("Select a repository-local remote with standard fetch destinations and confirm removal below").clicked() { change = Some(true); }
+        if ui.add_enabled(valid && editor.selected.is_none(), Button::new(crate::i18n::tr_msg("Add Remote"))).disabled_help_text(validation.unwrap_or(&crate::i18n::tr_msg("Choose New Remote to add an entry"))).dialog_accept() { change = Some(false); }
+        if ui.add_enabled(valid && editor.selected.is_some(), Button::new(crate::i18n::tr_msg("Save URLs"))).disabled_help_text(validation.unwrap_or(&crate::i18n::tr_msg("Select an editable repository-local remote"))).dialog_accept() { change = Some(false); }
+        if ui.add_enabled(can_remove && current && editor.confirm_remove, Button::new(crate::i18n::tr_msg("Remove Remote"))).disabled_help_text(crate::i18n::tr_msg("Select a repository-local remote with standard fetch destinations and confirm removal below")).clicked() { change = Some(true); }
     });
     ui.scope(|ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-        let text = format!(
-            "Confirm removing '{}' and its cached remote-tracking refs",
-            editor.selected.as_deref().unwrap_or("selected remote")
+        let text = crate::i18n::tr_args(
+            "Confirm removing '%{remote}' and its cached remote-tracking refs",
+            &[(
+                "remote",
+                editor
+                    .selected
+                    .as_deref()
+                    .unwrap_or(&crate::i18n::tr_msg("selected remote")),
+            )],
         );
         ui.add_enabled(
             can_remove,

@@ -69,9 +69,9 @@ fn show_rename(ctx: &egui::Context, app: &mut SannyGitApp) {
         );
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            let from = format!("From: {}", dialog.from);
+            let from = crate::i18n::tr_args("From: %{path}", &[("path", &dialog.from)]);
             dialog_style::text_line(ui, RichText::new(&from).monospace(), 26.0).help_text(&from);
-            ui.label("To");
+            ui.label(crate::i18n::tr_msg("To"));
             ui.add_enabled(
                 !busy,
                 crate::ui::controls::singleline(&mut dialog.to).desired_width(f32::INFINITY),
@@ -87,7 +87,9 @@ fn show_rename(ctx: &egui::Context, app: &mut SannyGitApp) {
                     !busy && crate::app::diff_actions::destination_error(&dialog.to).is_none();
                 confirm = ui
                     .add_enabled(ready, dialog_style::primary("Rename", palette))
-                    .disabled_help_text("Enter a different relative path inside the repository.")
+                    .disabled_help_text(crate::i18n::tr_msg(
+                        "Enter a different relative path inside the repository.",
+                    ))
                     .dialog_accept();
                 cancel = ui
                     .add_enabled(!busy, dialog_style::button("Cancel"))

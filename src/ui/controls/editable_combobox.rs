@@ -86,7 +86,7 @@ pub fn show(
         .show(|ui| {
             ui.set_min_width((width - 16.0).max(120.0));
             if options.is_empty() {
-                ui.add_enabled(false, egui::Label::new(empty_text));
+                ui.add_enabled(false, egui::Label::new(crate::i18n::tr_msg(empty_text)));
             }
             egui::ScrollArea::vertical()
                 .max_height(220.0)
@@ -145,7 +145,7 @@ mod tests {
                             }).inner;
                             let combo = egui::ComboBox::from_id_salt("height.combo")
                                 .selected_text("yyyy-MM-dd")
-                                .show_ui(ui, |ui| { ui.label("Example"); })
+                                .show_ui(ui, |ui| { ui.label(crate::i18n::tr_msg("Example")); })
                                 .response;
                             let editable = show(ui, Id::unique("height.editable"), &mut editable_value, &[], 180.0, theme.palette(), "No options");
                             for (label, response) in [("HH:mm", edit), ("yyyy-MM-dd", combo), ("Editable text", editable)] {

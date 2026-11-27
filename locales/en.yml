@@ -1,0 +1,812 @@
+? '
+
+  Double-click to switch'
+: '
+
+  Double-click to switch'
+' (10,000 limit)': ' (10,000 limit)'
+' (gone)': ' (gone)'
+' ?': ' ?'
+'%{count} changes': '%{count} changes'
+'* if repository commit references non-pushed submodule commit': '* if repository commit references non-pushed submodule commit'
+? '*.lock
+
+  package-lock.json
+
+  dist/'
+: '*.lock
+
+  package-lock.json
+
+  dist/'
+.gitignore in file’s folder: .gitignore in file’s folder
+.gitignore in repository root: .gitignore in repository root
+? 500 commits per page; 10,000 loaded commits maximum. Search applies to loaded history only. More retains existing rows; Reload updates the snapshot.
+: 500 commits per page; 10,000 loaded commits maximum. Search applies to loaded history only. More retains existing rows; Reload updates the snapshot.
+A desktop Git client built with Rust and egui.: A desktop Git client built with Rust and egui.
+A simple Git client: A simple Git client
+AI: AI
+AI Provider: AI Provider
+AI connection failed: AI connection failed
+'API key:': 'API key:'
+Abort: Abort
+Abort Merge: Abort Merge
+Abort merge?: Abort merge?
+Add: Add
+Add Group: Add Group
+Add Group…: Add Group…
+Add Remote: Add Remote
+Add Tag: Add Tag
+Add Tag & Push: Add Tag & Push
+Add Tag…: Add Tag…
+Add Worktree: Add Worktree
+Add a Remote?: Add a Remote?
+Add an existing local or create a new repository: Add an existing local or create a new repository
+Add existing or create new repository: Add existing or create new repository
+Add selected untracked files or a filename pattern to .gitignore.: Add selected untracked files or a filename pattern to .gitignore.
+Add tag to current branch (HEAD): Add tag to current branch (HEAD)
+'Add worktree: destination (new directory)': 'Add worktree: destination (new directory)'
+Added: Added
+Adding tag…: Adding tag…
+? Additional graph lanes are outside the column. Drag the graph column separator to widen it, or open Commit details to inspect all parents.
+: Additional graph lanes are outside the column. Drag the graph column separator to widen it, or open Commit details to inspect all parents.
+All: All
+All branches: All branches
+All changes: All changes
+All commits up to the selected commit will be pushed to the remote repository.: All commits up to the selected commit will be pushed to the remote repository.
+All confirmation dialogs are already enabled: All confirmation dialogs are already enabled
+Always fetch new commits, tags and branches from submodule: Always fetch new commits, tags and branches from submodule
+Amend: Amend
+Amend last commit: Amend last commit
+'Annotated Tag Message:': 'Annotated Tag Message:'
+Any saved commit-message draft for this repository will be discarded.: Any saved commit-message draft for this repository will be discarded.
+Appearance: Appearance
+Application log: Application log
+Apply: Apply
+Apply and then remove this entry. Conflicts or apply errors retain the entry.: Apply and then remove this entry. Conflicts or apply errors retain the entry.
+Apply keeps the stash. Pop removes it after a successful apply.: Apply keeps the stash. Pop removes it after a successful apply.
+Applying conflict resolution…: Applying conflict resolution…
+Attention required: Attention required
+Automatic (system): Automatic (system)
+Automatic fetch: Automatic fetch
+Automatic fetch runs only while a repository is open and the application is idle.: Automatic fetch runs only while a repository is open and the application is idle.
+Available when using the branch's configured upstream.: Available when using the branch's configured upstream.
+Behavior: Behavior
+'Branch:': 'Branch:'
+Branches: Branches
+Branches…: Branches…
+Browse commits, changed files and their diffs.: Browse commits, changed files and their diffs.
+Builds with Keychain entitlements use Touch ID. Other builds use the login Keychain and may ask for your macOS password.: Builds with Keychain entitlements use Touch ID. Other builds use the login Keychain and may ask for your macOS password.
+Cancel: Cancel
+Cancel commit message generation: Cancel commit message generation
+Cancel generation: Cancel generation
+Cancel history loading; keep existing rows, selection and scroll position.: Cancel history loading; keep existing rows, selection and scroll position.
+Cancel operation: Cancel operation
+Cancel removal: Cancel removal
+Cancel the background operation: Cancel the background operation
+Cancelled: Cancelled
+Cancelling operation…: Cancelling operation…
+Changes: Changes
+'Changes:': 'Changes:'
+Check Out: Check Out
+'Check Out Branch:': 'Check Out Branch:'
+Check Out…: Check Out…
+Check out commit: Check out commit
+Check out this commit as detached HEAD: Check out this commit as detached HEAD
+Checking branch…: Checking branch…
+Checking file, index and repository state…: Checking file, index and repository state…
+Checking merge options…: Checking merge options…
+Checking out commit…: Checking out commit…
+Checking out remote branch…: Checking out remote branch…
+Checking revert…: Checking revert…
+Checking tag…: Checking tag…
+Checking the selected commit…: Checking the selected commit…
+Checking the target and working tree…: Checking the target and working tree…
+Checking whether this commit can be pushed…: Checking whether this commit can be pushed…
+Checking…: Checking…
+Checkout: Checkout
+'Checkout local branch:': 'Checkout local branch:'
+Cherry-Pick: Cherry-Pick
+Choose GPG program: Choose GPG program
+Choose Git executable: Choose Git executable
+Choose New Remote to add an entry: Choose New Remote to add an entry
+Choose a new local name. The remote branch keeps its name.: Choose a new local name. The remote branch keeps its name.
+Choose how to merge the selected commit into the current branch.: Choose how to merge the selected commit into the current branch.
+Choose how to merge the selected tag into the current branch.: Choose how to merge the selected tag into the current branch.
+Choose the language used throughout the application: Choose the language used throughout the application
+Choose the parent to keep when reverting a merge commit.: Choose the parent to keep when reverting a merge commit.
+Classic: Classic
+Clear: Clear
+Clear Comparison: Clear Comparison
+Clear Others: Clear Others
+'Clone Into:': 'Clone Into:'
+Clone existing repository: Clone existing repository
+Close: Close
+Close Repository: Close Repository
+Close and reopen Merge to retry.: Close and reopen Merge to retry.
+Close and reopen Push to retry.: Close and reopen Push to retry.
+Close and reopen Rebase to retry.: Close and reopen Rebase to retry.
+Close and reopen the dialog to retry loading commits.: Close and reopen the dialog to retry loading commits.
+Close diff: Close diff
+Close this repository and discard its commit message drafts?: Close this repository and discard its commit message drafts?
+'Color theme:': 'Color theme:'
+Command: Command
+Commit: Commit
+Commit all changes, including new files: Commit all changes, including new files
+Commit dates: Commit dates
+Commit dates are shown in your local time zone.: Commit dates are shown in your local time zone.
+Commit message generated: Commit message generated
+Commit message generation cancelled: Commit message generation cancelled
+Commit messages: Commit messages
+Commit or stash local changes first. The branch picker stays available from the toolbar.: Commit or stash local changes first. The branch picker stays available from the toolbar.
+Commit staged changes only; preserve unstaged changes: Commit staged changes only; preserve unstaged changes
+Commit…: Commit…
+Common Base: Common Base
+Compare Left and Right with their common base. Click again to return to the merge.: Compare Left and Right with their common base. Click again to return to the merge.
+Compare the selected commit with the remembered comparison commit: Compare the selected commit with the remembered comparison commit
+Compare with Comparison Commit: Compare with Comparison Commit
+Compare with HEAD: Compare with HEAD
+Comparison: Comparison
+Comparison commit set: Comparison commit set
+Configure SannyGit as credential helper: Configure SannyGit as credential helper
+Configured remotes: Configured remotes
+Confirm deleting this unmerged local branch: Confirm deleting this unmerged local branch
+Confirm pushing only this tag to the displayed address: Confirm pushing only this tag to the displayed address
+Confirmations: Confirmations
+Conflicted: Conflicted
+Connect a service to generate commit messages.: Connect a service to generate commit messages.
+Context: Context
+Continue: Continue
+Continue after all conflicts are resolved: Continue after all conflicts are resolved
+Copied: Copied
+Copy: Copy
+Copy ID: Copy ID
+Copy Message: Copy Message
+Copy full commit hash: Copy full commit hash
+Copy path: Copy path
+Could not generate commit message: Could not generate commit message
+Could not load diff: Could not load diff
+Could not load last commit: Could not load last commit
+Could not load repository; previous view retained: Could not load repository; previous view retained
+Create: Create
+Create Merge-Commit: Create Merge-Commit
+Create a local branch from the current HEAD.: Create a local branch from the current HEAD.
+Create a local branch starting at this commit: Create a local branch starting at this commit
+Create a merge commit even when fast-forward is possible.: Create a merge commit even when fast-forward is possible.
+Create a new branch from HEAD: Create a new branch from HEAD
+Create branch: Create branch
+Create local branch from HEAD: Create local branch from HEAD
+'Create local branch:': 'Create local branch:'
+Create the tag and push it to the current remote: Create the tag and push it to the current remote
+Creating and pushing tag…: Creating and pushing tag…
+Creating branch…: Creating branch…
+Creating tag…: Creating tag…
+Current branch: Current branch
+Custom Ref: Custom Ref
+Custom endpoint: Custom endpoint
+Customize how and what to clone.: Customize how and what to clone.
+Dark: Dark
+Date & Time: Date & Time
+'Date format:': 'Date format:'
+Debug: Debug
+Debug includes Git command timings and exit codes: Debug includes Git command timings and exit codes
+Default: Default
+Default (empty repository): Default (empty repository)
+Delete: Delete
+Delete Branch: Delete Branch
+Delete Local Branch: Delete Local Branch
+Delete Tag: Delete Tag
+Delete from all remotes: Delete from all remotes
+Delete the selected tracked files and stage their removal: Delete the selected tracked files and stage their removal
+Deleted: Deleted
+Delete…: Delete…
+Deleting on the server requires a configured remote with the standard branch fetch mapping.: Deleting on the server requires a configured remote with the standard branch fetch mapping.
+Deleting tag…: Deleting tag…
+Direct push is available for local branches: Direct push is available for local branches
+Direct staging of conflicts is available during a merge. Use Conflict Solver to stage a resolution.: Direct staging of conflicts is available during a merge. Use Conflict Solver to stage a resolution.
+'Directory Name:': 'Directory Name:'
+'Directory:': 'Directory:'
+Discard: Discard
+Discard Draft: Discard Draft
+Discard lines: Discard lines
+Discard operation in progress…: Discard operation in progress…
+Discard resolution draft?: Discard resolution draft?
+Discard…: Discard…
+Do you want to proceed with sync?: Do you want to proceed with sync?
+Do you want to push changes up to this commit?: Do you want to push changes up to this commit?
+Don't create local branch (detached HEAD): Don't create local branch (detached HEAD)
+Don't show again: Don't show again
+Double-click the file to open Conflict Solver: Double-click the file to open Conflict Solver
+Double-clicking a local file: Double-clicking a local file
+Download remote branches and tags without changing your working tree.: Download remote branches and tags without changing your working tree.
+Drag the graph column separator to show more lanes.: Drag the graph column separator to show more lanes.
+Drop: Drop
+Edit Working Tree: Edit Working Tree
+Edit the repository settings: Edit the repository settings
+Editing lines…: Editing lines…
+'Endpoint:': 'Endpoint:'
+Enter a different relative path inside the repository.: Enter a different relative path inside the repository.
+Enter a filename pattern or wait for the working tree to refresh: Enter a filename pattern or wait for the working tree to refresh
+Enter the name of the tag to create. If entering a message, an annotated tag is created.: Enter the name of the tag to create. If entering a message, an annotated tag is created.
+Errors: Errors
+Example: Example
+'Example:': 'Example:'
+'Excluded paths:': 'Excluded paths:'
+Exporting patch…: Exporting patch…
+Fast-Forward: Fast-Forward
+Fast-Forward Merge: Fast-Forward Merge
+Fast-forward can move the current branch to the selected commit.: Fast-forward can move the current branch to the selected commit.
+Fast-forward is unavailable for the selected commit.: Fast-forward is unavailable for the selected commit.
+? Fast-forward when possible. Otherwise create a merge commit. Uncommitted changes stay when incoming commits do not touch those files.
+: Fast-forward when possible. Otherwise create a merge commit. Uncommitted changes stay when incoming commits do not touch those files.
+Fetch: Fetch
+'Fetch From:': 'Fetch From:'
+Fetch Only: Fetch Only
+'Fetch URL:': 'Fetch URL:'
+Fetch all Heads and Tags: Fetch all Heads and Tags
+Fetch remote branches and refresh the repository: Fetch remote branches and refresh the repository
+Fetch the upstream repository every 60 seconds: Fetch the upstream repository every 60 seconds
+File: File
+File filter: File filter
+Files: Files
+Filter: Filter
+Filter loaded commits…: Filter loaded commits…
+Finish: Finish
+? First, local changes will be pushed, then possible remote changes pulled. The advantage over a normal push is that if it fails because of remote changes, they will be pulled automatically.
+: First, local changes will be pushed, then possible remote changes pulled. The advantage over a normal push is that if it fails because of remote changes, they will be pulled automatically.
+Focus a text field; Cut and Copy require selected text: Focus a text field; Cut and Copy require selected text
+Format Patch: Format Patch
+'Found repositories (selected ones will be remembered):': 'Found repositories (selected ones will be remembered):'
+'Full Name:': 'Full Name:'
+'GPG Program:': 'GPG Program:'
+Generate a commit message from all changes, including new files: Generate a commit message from all changes, including new files
+Generate a commit message from staged contents only: Generate a commit message from staged contents only
+Generate commit message: Generate commit message
+Generating commit message…: Generating commit message…
+'Generation instructions:': 'Generation instructions:'
+Generation stops if the diff is larger. Each new file sends at most 64 KiB.: Generation stops if the diff is larger. Each new file sends at most 64 KiB.
+Git: Git
+'Git Email:': 'Git Email:'
+Git details: Git details
+Git executable: Git executable
+? Git will attempt to restore the working tree and index to their state before the merge. Conflict resolutions and changes made during the merge may be lost.
+: Git will attempt to restore the working tree and index to their state before the merge. Conflict resolutions and changes made during the merge may be lost.
+GitHub Copilot connection failed: GitHub Copilot connection failed
+GitHub Copilot sign-in is unavailable in this build.: GitHub Copilot sign-in is unavailable in this build.
+Go Back: Go Back
+Graph: Graph
+Graph connections are hidden while filtering: Graph connections are hidden while filtering
+Group added: Group added
+Group deleted: Group deleted
+Group name: Group name
+Group renamed: Group renamed
+HEAD is already at the selected commit.: HEAD is already at the selected commit.
+Here you can edit the Git settings for the repository. The default settings can be found in the Preferences.: Here you can edit the Git settings for the repository. The default settings can be found in the Preferences.
+Hide changes that only add or remove whitespace. Line edits stay disabled while this is on.: Hide changes that only add or remove whitespace. Line edits stay disabled while this is on.
+Hide preview: Hide preview
+History: History
+History unavailable: History unavailable
+I confirm this action on all reviewed files.: I confirm this action on all reviewed files.
+Idle: Idle
+Ignore: Ignore
+Ignore Files: Ignore Files
+Ignore by pattern: Ignore by pattern
+Ignore file: Ignore file
+Ignore selected files: Ignore selected files
+Ignore whitespace: Ignore whitespace
+Ignore…: Ignore…
+Include Submodules: Include Submodules
+Include the current branch name: Include the current branch name
+Include tracked remote branches: Include tracked remote branches
+Include untracked files: Include untracked files
+Information: Information
+Initialize new submodules: Initialize new submodules
+Interface: Interface
+'Interface style:': 'Interface style:'
+Journal: Journal
+Keep Editing: Keep Editing
+Keep Others: Keep Others
+Keyboard Shortcuts: Keyboard Shortcuts
+'Language:': 'Language:'
+Leave a field empty to use the inherited Git setting.: Leave a field empty to use the inherited Git setting.
+Leave unchanged to keep saved key: Leave unchanged to keep saved key
+Light: Light
+Line and column: Line and column
+Load up to 500 more commits from the same snapshot. Search covers loaded commits only.: Load up to 500 more commits from the same snapshot. Search covers loaded commits only.
+Loading commit graph…: Loading commit graph…
+Loading commits…: Loading commits…
+Loading conflict...: Loading conflict...
+Loading contents preview…: Loading contents preview…
+Loading diff…: Loading diff…
+Loading file diff…: Loading file diff…
+Loading files…: Loading files…
+Loading history; existing rows remain available.: Loading history; existing rows remain available.
+Loading last commit message…: Loading last commit message…
+Loading models…: Loading models…
+Loading remotes…: Loading remotes…
+Loading repository settings…: Loading repository settings…
+Loading repository…: Loading repository…
+Loading stashes…: Loading stashes…
+Loading…: Loading…
+Local Branches: Local Branches
+Local Branches (1): Local Branches (1)
+Local Directory: Local Directory
+Local branch already checked out: Local branch already checked out
+'Local repository:': 'Local repository:'
+Log: Log
+Logging: Logging
+MIT: MIT
+Manage Remotes: Manage Remotes
+Merge: Merge
+Merge Commit: Merge Commit
+Merge Tag: Merge Tag
+Merge changes against first parent: Merge changes against first parent
+Merge fetched remote changes: Merge fetched remote changes
+Merge in progress: Merge in progress
+Merge requires an existing HEAD, fresh repository data and no operation in progress: Merge requires an existing HEAD, fresh repository data and no operation in progress
+? Merge the selected commit and create a merge commit, even when a fast-forward is possible. Uses your Git identity, hooks and signing configuration.
+: Merge the selected commit and create a merge commit, even when a fast-forward is possible. Uses your Git identity, hooks and signing configuration.
+Merge to Working Tree: Merge to Working Tree
+Merge…: Merge…
+Merging…: Merging…
+'Message:': 'Message:'
+'Model:': 'Model:'
+Modern: Modern
+Modified: Modified
+More: More
+Move HEAD to the selected commit. Choose what to update in the index and working tree.: Move HEAD to the selected commit. Choose what to update in the index and working tree.
+Move HEAD to the tagged commit when it is a descendant of HEAD: Move HEAD to the tagged commit when it is a descendant of HEAD
+Move HEAD, the index and the working tree to the selected commit.: Move HEAD, the index and the working tree to the selected commit.
+Move To: Move To
+Move the current branch to the selected branch’s commit without creating a merge commit.: Move the current branch to the selected branch’s commit without creating a merge commit.
+Move the current branch to the selected commit when it is a descendant of HEAD.: Move the current branch to the selected commit when it is a descendant of HEAD.
+Move the current branch to the selected commit without creating a merge commit.: Move the current branch to the selected commit without creating a merge commit.
+Move the current branch to the tagged commit without creating a merge commit.: Move the current branch to the tagged commit without creating a merge commit.
+Move the file inside this repository. The destination directory must already exist.: Move the file inside this repository. The destination directory must already exist.
+Name: Name
+'Name:': 'Name:'
+New Branch…: New Branch…
+New Remote: New Remote
+New branch name: New branch name
+No changed files: No changed files
+No configured remotes: No configured remotes
+No configured remotes.: No configured remotes.
+No configured remotes. Add one through Remote → Manage Remotes, then reopen this dialog.: No configured remotes. Add one through Remote → Manage Remotes, then reopen this dialog.
+No existing tags: No existing tags
+No more history is available yet; wait for loading or use Reload.: No more history is available yet; wait for loading or use Reload.
+No obsolete worktree metadata to prune.: No obsolete worktree metadata to prune.
+No previously used repositories: No previously used repositories
+No previously used repositories. Open or clone a repository first.: No previously used repositories. Open or clone a repository first.
+No provider presets: No provider presets
+No repository: No repository
+No saved stashes: No saved stashes
+Not available: Not available
+Not implemented yet: Not implemented yet
+Not yet verified: Not yet verified
+'Off': 'Off'
+On the commit message, show input and output tokens for the last generation and the total for this session.: On the commit message, show input and output tokens for the last generation and the total for this session.
+One pattern per line. Matching files are left out.: One pattern per line. Matching files are left out.
+Only obsolete administrative metadata is removed; working directories are not deleted.: Only obsolete administrative metadata is removed; working directories are not deleted.
+Open: Open
+Open File: Open File
+Open a repository and wait for the current operation: Open a repository and wait for the current operation
+Open a repository and wait until its history is loaded: Open a repository and wait until its history is loaded
+Open and refresh a repository with commits; wait for the current operation: Open and refresh a repository with commits; wait for the current operation
+Open and refresh a repository; wait for the current operation: Open and refresh a repository; wait for the current operation
+Open directory chooser: Open directory chooser
+Open in Terminal: Open in Terminal
+Open repository: Open repository
+Open the history of the current branch: Open the history of the current branch
+Open the history of this file: Open the history of this file
+OpenAI API: OpenAI API
+OpenAI-compatible API or local server: OpenAI-compatible API or local server
+Opening an external terminal is not implemented yet: Opening an external terminal is not implemented yet
+Operation failed: Operation failed
+Operation failed; inspect the current state before retrying: Operation failed; inspect the current state before retrying
+Operation in progress…: Operation in progress…
+Optional for local servers: Optional for local servers
+Optional stash message: Optional stash message
+Options: Options
+Ours: Ours
+Ours deleted this file. Confirm to remove it and stage the deletion.: Ours deleted this file. Confirm to remove it and stage the deletion.
+'Parent Directory:': 'Parent Directory:'
+'Parent: none (root or shallow boundary)': 'Parent: none (root or shallow boundary)'
+Patch export failed: Patch export failed
+Patch exported to %{path}: Patch exported to %{path}
+'Patch size:': 'Patch size:'
+Path: Path
+'Path to Git executable:': 'Path to Git executable:'
+Plain child: Plain child
+Pop: Pop
+Preview changes: Preview changes
+Preview contents will appear here.: Preview contents will appear here.
+Preview local changes before saving; contents are checked again when saving.: Preview local changes before saving; contents are checked again when saving.
+Preview stash: Preview stash
+Preview the selected files before saving.: Preview the selected files before saving.
+Preview the selected local changes before saving.: Preview the selected local changes before saving.
+Preview the selected stash and confirm its deletion below.: Preview the selected stash and confirm its deletion below.
+Preview the selected stash before applying or deleting it.: Preview the selected stash before applying or deleting it.
+Preview unavailable: Preview unavailable
+'Preview: local changes to save. Save rechecks these contents before changing files.': 'Preview: local changes to save. Save rechecks these contents before changing files.'
+'Preview: selected stash. Apply and Pop require a clean working tree.': 'Preview: selected stash. Apply and Pop require a clean working tree.'
+'Provider:': 'Provider:'
+Prune Obsolete Metadata: Prune Obsolete Metadata
+Prune obsolete remote tracked branches: Prune obsolete remote tracked branches
+Pull: Pull
+Pull commits from a remote repository: Pull commits from a remote repository
+Pull in progress…: Pull in progress…
+Pull incorporates fetched changes into the current branch. Expand the options below to configure.: Pull incorporates fetched changes into the current branch. Expand the options below to configure.
+Push: Push
+Push Selected Tag: Push Selected Tag
+Push Tag: Push Tag
+Push To: Push To
+Push To…: Push To…
+'Push URL:': 'Push URL:'
+Pushing commits…: Pushing commits…
+Pushing tag…: Pushing tag…
+Re-enable upstream push and sync confirmations: Re-enable upstream push and sync confirmations
+Ready: Ready
+Ready to amend last commit: Ready to amend last commit
+Rebase: Rebase
+Rebase HEAD onto a selected commit: Rebase HEAD onto a selected commit
+Rebase HEAD to: Rebase HEAD to
+Rebase local branch onto fetched changes: Rebase local branch onto fetched changes
+Rebase will replay the current branch onto an earlier commit.: Rebase will replay the current branch onto an earlier commit.
+Rebase will replay the current branch onto the selected commit.: Rebase will replay the current branch onto the selected commit.
+Rebase…: Rebase…
+Rebasing…: Rebasing…
+Refresh branches to load the full commit id: Refresh branches to load the full commit id
+Refresh line endings using .gitattributes: Refresh line endings using .gitattributes
+Refresh the repository and tags before continuing: Refresh the repository and tags before continuing
+Refresh the repository and wait for the current operation: Refresh the repository and wait for the current operation
+Reload: Reload
+Reload Details: Reload Details
+Reload Worktrees: Reload Worktrees
+Reload branches and tags: Reload branches and tags
+Reload branches to retry.: Reload branches to retry.
+Reload details: Reload details
+Reload details to retry.: Reload details to retry.
+Reload list: Reload list
+Reload to retry; displayed rows are from the previous load.: Reload to retry; displayed rows are from the previous load.
+Remember as default for repository: Remember as default for repository
+Remember this commit for a two-commit comparison: Remember this commit for a two-commit comparison
+Remote: Remote
+Remote Branches: Remote Branches
+'Remote branch:': 'Remote branch:'
+'Remote:': 'Remote:'
+Removal checks for local, untracked and ignored files. The branch is kept.: Removal checks for local, untracked and ignored files. The branch is kept.
+Remove: Remove
+Remove Remote: Remove Remote
+Remove Repository: Remove Repository
+Remove Selected…: Remove Selected…
+Remove Worktree: Remove Worktree
+Remove this repository from the list? Files on disk will be kept.: Remove this repository from the list? Files on disk will be kept.
+Remove…: Remove…
+Rename: Rename
+Rename file: Rename file
+Rename local branch: Rename local branch
+'Rename:': 'Rename:'
+Renamed: Renamed
+Rename…: Rename…
+Renaming branch…: Renaming branch…
+Renaming file…: Renaming file…
+'Reopen previously used repository:': 'Reopen previously used repository:'
+Replace the last commit using the selected contents mode. Rewrites commit history.: Replace the last commit using the selected contents mode. Rewrites commit history.
+Replace the last commit with this message and all changes, including new files: Replace the last commit with this message and all changes, including new files
+Replace the last commit with this message and staged changes only; preserve unstaged changes: Replace the last commit with this message and staged changes only; preserve unstaged changes
+Replay HEAD commits onto the selected commit. Rewrites commit history; commit or stash local changes first.: Replay HEAD commits onto the selected commit. Rewrites commit history; commit or stash local changes first.
+Replay commits that are on the current branch and not in the selected commit. This rewrites those commits.: Replay commits that are on the current branch and not in the selected commit. This rewrites those commits.
+Replay local commits on top of the fetched branch. Requires a clean working tree.: Replay local commits on top of the fetched branch. Requires a clean working tree.
+Repositories: Repositories
+Repositories added: Repositories added
+Repository: Repository
+Repository AI Settings: Repository AI Settings
+Repository AI settings…: Repository AI settings…
+'Repository URL or local path:': 'Repository URL or local path:'
+Repository history: Repository history
+Repository marked as a favorite: Repository marked as a favorite
+Repository opened: Repository opened
+Repository operation: Repository operation
+'Repository path or clone URL:': 'Repository path or clone URL:'
+Repository removed from the list: Repository removed from the list
+Repository renamed: Repository renamed
+Repository root: Repository root
+Repository settings saved: Repository settings saved
+Repository unmarked as a favorite: Repository unmarked as a favorite
+'Repository:': 'Repository:'
+Reset: Reset
+Reset Advanced: Reset Advanced
+Reset Advanced…: Reset Advanced…
+Reset requires an existing HEAD, fresh repository data and no operation in progress: Reset requires an existing HEAD, fresh repository data and no operation in progress
+'Reset to defaults: discard repository overrides and use the settings from Preferences': 'Reset to defaults: discard repository overrides and use the settings from Preferences'
+Reset will discard any staged and unstaged changes unless you save them.: Reset will discard any staged and unstaged changes unless you save them.
+Resetting HEAD…: Resetting HEAD…
+Reset…: Reset…
+Resolve: Resolve
+Resolve all conflicts before saving and staging the file.: Resolve all conflicts before saving and staging the file.
+Resolve conflicts and refresh the working tree: Resolve conflicts and refresh the working tree
+Restore all confirmation dialogs: Restore all confirmation dialogs
+Restore staged state: Restore staged state
+Restore the original staging state with git stash apply --index. Uncheck to apply tracked contents as unstaged changes.: Restore the original staging state with git stash apply --index. Uncheck to apply tracked contents as unstaged changes.
+Restored: Restored
+Retry: Retry
+Return to Merge: Return to Merge
+Revert: Revert
+Revert merge commit: Revert merge commit
+Revert relative to this parent: Revert relative to this parent
+Revert…: Revert…
+Review restoring selected files from the index or deleting selected untracked files: Review restoring selected files from the index or deleting selected untracked files
+Review the files and confirm the action. Reload details if a file, index or HEAD changed.: Review the files and confirm the action. Reload details if a file, index or HEAD changed.
+Review the options and retry.: Review the options and retry.
+Same as commit panel: Same as commit panel
+Same as fetch when empty: Same as fetch when empty
+SannyGit: SannyGit
+SannyGit uses your existing Git credential helpers and SSH configuration.: SannyGit uses your existing Git credential helpers and SSH configuration.
+Save Stash: Save Stash
+Save URLs: Save URLs
+Save and stage the resolved file.: Save and stage the resolved file.
+Save local changes for later: Save local changes for later
+Save new stash…: Save new stash…
+Save staged and unstaged changes for later.: Save staged and unstaged changes for later.
+Save the API key and model in the OS credential manager: Save the API key and model in the OS credential manager
+Save the result or undo manual edits to return to block selection.: Save the result or undo manual edits to return to block selection.
+Save the staged and unstaged changes to a stash, or discard them.: Save the staged and unstaged changes to a stash, or discard them.
+Saved Stashes: Saved Stashes
+Saved stashes: Saved stashes
+Saved stashes…: Saved stashes…
+Saving...: Saving...
+'Search In:': 'Search In:'
+Search loaded commits…: Search loaded commits…
+Searching repositories…: Searching repositories…
+Select Directory: Select Directory
+Select Repository Root: Select Repository Root
+Select a branch or commit to merge: Select a branch or commit to merge
+Select a branch that is not checked out and refresh the repository: Select a branch that is not checked out and refresh the repository
+Select a commit: Select a commit
+Select a file: Select a file
+Select a local branch: Select a local branch
+Select a model from the server or enter a custom model name: Select a model from the server or enter a custom model name
+Select a remote branch: Select a remote branch
+Select a repository-local remote with standard fetch destinations and confirm removal below: Select a repository-local remote with standard fetch destinations and confirm removal below
+Select a single file and wait for the working tree to be current: Select a single file and wait for the working tree to be current
+Select a staged file after refreshing: Select a staged file after refreshing
+Select a stash to confirm deletion: Select a stash to confirm deletion
+Select a suitable file after refreshing; conflicts must be resolved outside SannyGit: Select a suitable file after refreshing; conflicts must be resolved outside SannyGit
+Select all visible changes in this repository: Select all visible changes in this repository
+Select an editable repository-local remote: Select an editable repository-local remote
+Select and preview a stash; applying requires a clean working tree.: Select and preview a stash; applying requires a clean working tree.
+Select another branch while a current HEAD is available: Select another branch while a current HEAD is available
+Select files from one folder to use a pattern: Select files from one folder to use a pattern
+Select files that are not conflicted, then wait until the working tree is current: Select files that are not conflicted, then wait until the working tree is current
+Select one file that is not deleted or conflicted, and wait until the working tree is current: Select one file that is not deleted or conflicted, and wait until the working tree is current
+Select shown branches: Select shown branches
+Select the branches for which to show commits in the graph.: Select the branches for which to show commits in the graph.
+Select untracked files with supported names, then refresh if needed: Select untracked files with supported names, then refresh if needed
+Select visible changes in this folder and its subfolders: Select visible changes in this folder and its subfolders
+Select whether to open or create a local repository, clone a remote repository, or reopen a previously used repository.: Select whether to open or create a local repository, clone a remote repository, or reopen a previously used repository.
+Selected files reviewed.: Selected files reviewed.
+'Selected files:': 'Selected files:'
+Selection: Selection
+'Server URL:': 'Server URL:'
+Set Tracked Branch…: Set Tracked Branch…
+Set as Comparison Commit: Set as Comparison Commit
+Set as upstream (track this remote branch): Set as upstream (track this remote branch)
+Settings: Settings
+Shortcut: Shortcut
+'Shortcut:': 'Shortcut:'
+Show Changes: Show Changes
+Show Today and Yesterday for recent dates: Show Today and Yesterday for recent dates
+Show a diff against the current branch tip: Show a diff against the current branch tip
+Show changes in the diff panel: Show changes in the diff panel
+Show old and new lines in two columns: Show old and new lines in two columns
+Show the diff as one column: Show the diff as one column
+Show this dialog if no repository was opened: Show this dialog if no repository was opened
+Show this file in its folder: Show this file in its folder
+Show token counts after generation: Show token counts after generation
+Show welcome dialog if no repository is reopened: Show welcome dialog if no repository is reopened
+Side by Side: Side by Side
+Sign all commits: Sign all commits
+Sign in: Sign in
+Sign in with your AI Provider account: Sign in with your AI Provider account
+Sign out: Sign out
+'Signing Key:': 'Signing Key:'
+Skip: Skip
+Skip the current step after conflicts are resolved: Skip the current step after conflicts are resolved
+Some changes are staged. Click to unstage; use Stage to include the remaining changes: Some changes are staged. Click to unstage; use Stage to include the remaining changes
+Sort by file status: Sort by file status
+Sort by staged state: Sort by staged state
+Specify the local Git repository to open. To create a new repository, specify an empty directory.: Specify the local Git repository to open. To create a new repository, specify an empty directory.
+Specify the local directory for the new repository.: Specify the local directory for the new repository.
+Specify the repository to clone.: Specify the repository to clone.
+Squash Merge: Squash Merge
+Squash the selected commit into staged changes. Review and commit when ready.: Squash the selected commit into staged changes. Review and commit when ready.
+Stage: Stage
+Stage all changes in the selected files: Stage all changes in the selected files
+Stage all changes in this file: Stage all changes in this file
+Stage or unstage changes: Stage or unstage changes
+Stage selected changes. For a merge conflict, stage after editing the file to resolve it.: Stage selected changes. For a merge conflict, stage after editing the file to resolve it.
+Stage the working copy after resolving the conflict: Stage the working copy after resolving the conflict
+Staged only: Staged only
+Start Search: Start Search
+Start the merge and leave it open for review and conflict resolution.: Start the merge and leave it open for review and conflict resolution.
+Start the merge and leave it open. Review changes and resolve conflicts before creating the merge commit.: Start the merge and leave it open. Review changes and resolve conflicts before creating the merge commit.
+Stash: Stash
+Stash Selection…: Stash Selection…
+Stash operation in progress…: Stash operation in progress…
+Status: Status
+Steps: Steps
+Stop Tracking…: Stop Tracking…
+Store API key and model securely: Store API key and model securely
+Store this message on the selected stash: Store this message on the selected stash
+'Submodule handling*:': 'Submodule handling*:'
+Switch back to this file's repository to save and stage it.: Switch back to this file's repository to save and stage it.
+Switch to a local branch, create a tracking branch, or check out without creating a branch.: Switch to a local branch, create a tracking branch, or check out without creating a branch.
+Switch to the new branch: Switch to the new branch
+Switching branch or tag…: Switching branch or tag…
+Sync: Sync
+Synchronize: Synchronize
+Syncing with remote…: Syncing with remote…
+System Default (UTF-8): System Default (UTF-8)
+Tag push cancelled: Tag push cancelled
+'Tag:': 'Tag:'
+Tags: Tags
+'Text File Encoding:': 'Text File Encoding:'
+The 10,000-commit safety limit is reached. Search covers loaded commits only.: The 10,000-commit safety limit is reached. Search covers loaded commits only.
+The common base is unavailable or the Working Tree is being edited.: The common base is unavailable or the Working Tree is being edited.
+The current branch already contains the selected commit.: The current branch already contains the selected commit.
+The current branch must track a remote branch: The current branch must track a remote branch
+The file must exist in the working tree and no file-changing operation can be running: The file must exist in the working tree and no file-changing operation can be running
+The operation could not be completed.: The operation could not be completed.
+The remote branch already contains this commit.: The remote branch already contains this commit.
+The selected branch must have a tracked branch: The selected branch must have a tracked branch
+The selected lines are removed from the working tree. Other changes in the file stay.: The selected lines are removed from the working tree. Other changes in the file stay.
+The source remote is no longer configured: The source remote is no longer configured
+Theirs: Theirs
+This commit cannot be pushed without rewriting the remote branch.: This commit cannot be pushed without rewriting the remote branch.
+This commit is not on the current branch.: This commit is not on the current branch.
+This file has no editable text. Use Take Ours or Take Theirs from the file menu.: This file has no editable text. Use Take Ours or Take Theirs from the file menu.
+This repository already uses the application defaults: This repository already uses the application defaults
+This tag has no message: This tag has no message
+This will remove the selected tag from the local repository.: This will remove the selected tag from the local repository.
+'Time format:': 'Time format:'
+To: To
+To commit selected files, Stage them and use Staged only in the commit panel: To commit selected files, Stage them and use Staged only in the commit panel
+Today: Today
+Tracked or matching branch: Tracked or matching branch
+Tree child: Tree child
+Type changed: Type changed
+Ungrouped: Ungrouped
+Unified: Unified
+Unified diff from the first commit to the second: Unified diff from the first commit to the second
+Unresolved conflicts: Unresolved conflicts
+Unstage: Unstage
+Unstage the selected files; preserve working-tree contents: Unstage the selected files; preserve working-tree contents
+Unstage this file (preserve working-tree contents): Unstage this file (preserve working-tree contents)
+Untracked or ignored files in the way may be overwritten or removed.: Untracked or ignored files in the way may be overwritten or removed.
+Update existing and fetch new tags: Update existing and fetch new tags
+Update registered submodules: Update registered submodules
+Updating .gitignore…: Updating .gitignore…
+Updating remote configuration…: Updating remote configuration…
+Use ? for one character or * for any number of characters in this folder.: Use ? for one character or * for any number of characters in this folder.
+Use Discard to restore the pre-merge version of this file: Use Discard to restore the pre-merge version of this file
+Use Staged only when opening or staging files: Use Staged only when opening or staging files
+? Use only staged changes for commits and message generation when opening a repository with staged files or after staging a file. Switch back to All changes when the index is empty.
+: Use only staged changes for commits and message generation when opening a repository with staged files or after staging a file. Switch back to All changes when the index is empty.
+Used only when generating a commit message.: Used only when generating a commit message.
+User Interface: User Interface
+Wait for the current operation or refresh the repository: Wait for the current operation or refresh the repository
+Wait for the current operation or refresh the working tree: Wait for the current operation or refresh the working tree
+Wait for the current operation to finish: Wait for the current operation to finish
+Wait for the current operation to finish.: Wait for the current operation to finish.
+Warnings and errors: Warnings and errors
+What do you want to do?: What do you want to do?
+What is sent when you generate a commit message.: What is sent when you generate a commit message.
+Working Tree: Working Tree
+Worktrees updated: Worktrees updated
+Yesterday: Yesterday
+Your changes in Conflict Solver will be lost.: Your changes in Conflict Solver will be lost.
+abort if any needs to be pushed: abort if any needs to be pushed
+branch:
+  check_out: Check Out…
+  copy: Copy
+  copy_id: Copy ID
+  copy_message: Copy Message
+  create: Create…
+  delete: Delete…
+  fast_forward: Fast-Forward Merge
+  log: Log
+  merge: Merge Branch…
+  merge_picker: Merge…
+  push: Push
+  push_to: Push To…
+  rebase_head_to: Rebase Branch…
+  rebase_picker: Rebase…
+  rename: Rename…
+  reset: Reset…
+  reset_advanced: Reset Advanced…
+  set_tracking: Set Tracked Branch…
+  stop_tracking: Stop Tracking…
+  switch: Switch
+edit:
+  copy: Copy
+  cut: Cut
+  paste: Paste
+  redo: Redo
+  select_all: Select All
+  undo: Undo
+help:
+  about: About SannyGit
+local:
+  commit: Commit
+  discard: Discard…
+  stage: Stage
+  stashes: Stashes…
+  unstage: Unstage
+menu:
+  blame: Blame…
+  edit_git_config: Edit Git Config
+  repository_config: Repository…
+  review: Review…
+  user_config: User…
+menu_title:
+  branch: Branch
+  edit: Edit
+  help: Help
+  local: Local
+  query: Query
+  remote: Remote
+  repository: Repository
+  review: Review
+  tools: Tools
+  view: View
+  window: Window
+query:
+  reload_history: Reload History
+remote:
+  fetch: Fetch…
+  manage: Manage Remotes…
+  pull: Pull…
+  push: Push…
+  push_tag: Push Selected Tag…
+remote repository: remote repository
+repository:
+  add_group: Add Group…
+  add_or_create: Add or Create…
+  add_worktree: Add Worktree…
+  clone: Clone…
+  close: Close
+  close_repository: Close Repository
+  edit_config: Edit Repository Config…
+  edit_user_config: Edit User Config…
+  exit: Exit
+  new_window: New Window
+  prune_worktrees: Prune Obsolete Worktrees…
+  remove_worktree: Remove Worktree…
+  search: Search for Repositories…
+  settings: Settings…
+select a commit: select a commit
+selected remote: selected remote
+shortcut_category:
+  branch: Branch
+  help: Help
+  local: Local
+  query: Query
+  remote: Remote
+  repository: Repository
+  tools: Tools
+  view: View
+  window: Window
+tools:
+  dark_theme: Dark Theme
+  light_theme: Light Theme
+  preferences: Preferences…
+view:
+  refresh: Refresh
+window:
+  full_screen: Full Screen
+  maximize: Maximize
+  minimize: Minimize
+›: ›
+★: ★
+✓  Amend: ✓  Amend
+✓  Commit: ✓  Commit

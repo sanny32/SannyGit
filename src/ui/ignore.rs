@@ -25,17 +25,30 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 let selection = if dialog.paths.len() == 1 {
                     dialog.paths[0].clone()
                 } else {
-                    format!("{} files selected", dialog.paths.len())
+                    crate::i18n::tr_args(
+                        "{count} files selected",
+                        &[("count", &dialog.paths.len().to_string())],
+                    )
                 };
                 dialog_style::text_line(ui, RichText::new(&selection).color(palette.muted), 22.0)
                     .help_text(selection);
-                ui.radio_value(&mut dialog.use_pattern, false, "Ignore selected files");
+                ui.radio_value(
+                    &mut dialog.use_pattern,
+                    false,
+                    crate::i18n::tr_msg("Ignore selected files"),
+                );
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(dialog.parent.is_some(), |ui| {
-                        ui.radio_value(&mut dialog.use_pattern, true, "Ignore by pattern");
+                        ui.radio_value(
+                            &mut dialog.use_pattern,
+                            true,
+                            crate::i18n::tr_msg("Ignore by pattern"),
+                        );
                     })
                     .response
-                    .disabled_help_text("Select files from one folder to use a pattern");
+                    .disabled_help_text(crate::i18n::tr_msg(
+                        "Select files from one folder to use a pattern",
+                    ));
                     ui.add_enabled(
                         dialog.use_pattern,
                         super::controls::singleline(&mut dialog.pattern)
@@ -44,19 +57,19 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     );
                 });
                 ui.label(
-                    RichText::new(
+                    RichText::new(crate::i18n::tr_msg(
                         "Use ? for one character or * for any number of characters in this folder.",
-                    )
+                    ))
                     .color(palette.muted),
                 );
                 ui.horizontal(|ui| {
-                    ui.label("Ignore file");
+                    ui.label(crate::i18n::tr_msg("Ignore file"));
                     egui::ComboBox::from_id_salt("ignore.destination")
-                        .selected_text(if dialog.use_parent {
+                        .selected_text(crate::i18n::tr_msg(if dialog.use_parent {
                             ".gitignore in file’s folder"
                         } else {
                             ".gitignore in repository root"
-                        })
+                        }))
                         .width(260.0)
                         .show_ui(ui, |ui| {
                             if dialog
@@ -67,13 +80,13 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                                 ui.selectable_value(
                                     &mut dialog.use_parent,
                                     true,
-                                    ".gitignore in file’s folder",
+                                    crate::i18n::tr_msg(".gitignore in file’s folder"),
                                 );
                             }
                             ui.selectable_value(
                                 &mut dialog.use_parent,
                                 false,
-                                ".gitignore in repository root",
+                                crate::i18n::tr_msg(".gitignore in repository root"),
                             );
                         });
                 });
@@ -87,9 +100,9 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                         !busy && current && valid,
                         dialog_style::primary("Ignore", palette),
                     )
-                    .disabled_help_text(
+                    .disabled_help_text(crate::i18n::tr_msg(
                         "Enter a filename pattern or wait for the working tree to refresh",
-                    )
+                    ))
                     .dialog_accept();
                 cancel = ui
                     .add_enabled(!busy, dialog_style::button("Cancel"))

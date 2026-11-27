@@ -207,7 +207,10 @@ impl SannyGitApp {
         }
         self.manager.cancel = Some(cancel.clone());
         self.error = None;
-        self.status = format!("{} in progress…", operation.label());
+        self.status = crate::i18n::tr_args(
+            "%{operation} in progress…",
+            &[("operation", &crate::i18n::tr_msg(operation.label()))],
+        );
         self.state_current = false;
         self.branches.current = false;
         if !self.start_background_operation(move |git| {

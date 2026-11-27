@@ -37,10 +37,10 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(14, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             if !managing {
-                ui.label("Message:");
+                ui.label(crate::i18n::tr_msg("Message:"));
                 message_editor(ui, &mut dialog.message, !busy);
                 if !dialog.paths.is_empty() {
-                    ui.label("Selected files:");
+                    ui.label(crate::i18n::tr_msg("Selected files:"));
                     ScrollArea::vertical()
                         .id_salt("stash.paths")
                         .max_height(66.0)
@@ -51,20 +51,31 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                             }
                         });
                 }
-                if ui.add_enabled(!busy, egui::Checkbox::new(&mut dialog.include_untracked, "Include untracked files")).changed() {
+                if ui.add_enabled(
+                    !busy,
+                    egui::Checkbox::new(
+                        &mut dialog.include_untracked,
+                        crate::i18n::tr_msg("Include untracked files"),
+                    ),
+                )
+                .changed() {
                     dialog.invalidate_preview();
                     dialog.error = None;
                     dialog.status = "Preview the selected local changes before saving.".into();
                 }
             } else {
                 ui.horizontal(|ui| {
-                    ui.strong("Saved stashes");
-                    if ui.add_enabled(!busy, Button::new("Reload list")).clicked() { reload = true; }
+                    ui.strong(crate::i18n::tr_msg("Saved stashes"));
+                    if ui.add_enabled(!busy, Button::new(crate::i18n::tr_msg("Reload list"))).clicked() { reload = true; }
                 });
                 ScrollArea::vertical().id_salt("stash.entries").min_scrolled_height(88.0).max_height(88.0).auto_shrink([false, false]).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     if dialog.entries.is_empty() {
-                        ui.label(if dialog.entries_current { "No saved stashes" } else { "Loading stashes…" });
+                        ui.label(crate::i18n::tr_msg(if dialog.entries_current {
+                            "No saved stashes"
+                        } else {
+                            "Loading stashes…"
+                        }));
                     }
                     let mut selected = None;
                     for (index, entry) in dialog.entries.iter().enumerate() {
@@ -83,16 +94,27 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                 let selected_ready = allowed && dialog.entries_current && dialog.selected_entry().is_some();
                 let entry_ready = selected_ready && dialog.previewed_entry.as_ref() == dialog.selected_entry();
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(selected_ready, Button::new("Preview stash")).clicked() { dialog.preview_expanded = true; preview = Some(false); }
-                    if ui.add_enabled(entry_ready, Button::new("Apply")).disabled_help_text("Select and preview a stash; applying requires a clean working tree.").clicked() { action = Some(Action::Apply); }
-                    if ui.add_enabled(entry_ready, Button::new("Pop")).help_text("Apply and then remove this entry. Conflicts or apply errors retain the entry.").clicked() { action = Some(Action::Pop); }
-                    if ui.add_enabled(entry_ready && dialog.confirm_drop, Button::new("Drop")).disabled_help_text("Preview the selected stash and confirm its deletion below.").clicked() { action = Some(Action::Drop); }
+                    if ui.add_enabled(selected_ready, Button::new(crate::i18n::tr_msg("Preview stash"))).clicked() { dialog.preview_expanded = true; preview = Some(false); }
+                    if ui.add_enabled(entry_ready, Button::new(crate::i18n::tr_msg("Apply"))).disabled_help_text(crate::i18n::tr_msg("Select and preview a stash; applying requires a clean working tree.")).clicked() { action = Some(Action::Apply); }
+                    if ui.add_enabled(entry_ready, Button::new(crate::i18n::tr_msg("Pop"))).help_text(crate::i18n::tr_msg("Apply and then remove this entry. Conflicts or apply errors retain the entry.")).clicked() { action = Some(Action::Pop); }
+                    if ui.add_enabled(entry_ready && dialog.confirm_drop, Button::new(crate::i18n::tr_msg("Drop"))).disabled_help_text(crate::i18n::tr_msg("Preview the selected stash and confirm its deletion below.")).clicked() { action = Some(Action::Drop); }
                 });
-                ui.add_enabled(!busy, egui::Checkbox::new(&mut dialog.restore_index, "Restore staged state"))
-                    .help_text("Restore the original staging state with git stash apply --index. Uncheck to apply tracked contents as unstaged changes.");
+                ui.add_enabled(
+                    !busy,
+                    egui::Checkbox::new(
+                        &mut dialog.restore_index,
+                        crate::i18n::tr_msg("Restore staged state"),
+                    ),
+                )
+                    .help_text(crate::i18n::tr_msg("Restore the original staging state with git stash apply --index. Uncheck to apply tracked contents as unstaged changes."));
                 let confirmation = dialog.selected_entry().zip(dialog.selected).map_or_else(
-                    || "Select a stash to confirm deletion".to_owned(),
-                    |(entry, index)| format!("Confirm deleting stash@{{{index}}}: {}", entry.message),
+                    || crate::i18n::tr_msg("Select a stash to confirm deletion"),
+                    |(entry, index)| {
+                        crate::i18n::tr_args(
+                            "Confirm deleting stash@{%{index}}: %{message}",
+                            &[("index", &index.to_string()), ("message", &entry.message)],
+                        )
+                    },
                 );
                 ui.scope(|ui| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
@@ -104,15 +126,15 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                         .selected_entry()
                         .is_some_and(|entry| entry.message != dialog.rename_message);
                 ui.horizontal(|ui| {
-                    ui.label("Rename:");
+                    ui.label(crate::i18n::tr_msg("Rename:"));
                     let width = (ui.available_width() - 88.0).max(80.0);
                     ui.add_enabled(
                         selected_ready,
                         crate::ui::controls::singleline(&mut dialog.rename_message).desired_width(width),
                     );
                     if ui
-                        .add_enabled(rename_ready, Button::new("Rename"))
-                        .help_text("Store this message on the selected stash")
+                        .add_enabled(rename_ready, Button::new(crate::i18n::tr_msg("Rename")))
+                        .help_text(crate::i18n::tr_msg("Store this message on the selected stash"))
                         .clicked()
                     {
                         action = Some(Action::Rename);
@@ -128,32 +150,48 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
                     if let Some(diff) = &dialog.preview {
                         render_preview(ui, diff, palette);
                     } else {
-                        ui.label("Preview contents will appear here.");
+                        ui.label(crate::i18n::tr_msg("Preview contents will appear here."));
                     }
                 });
             }
-            let message = &dialog.status;
+            let message = crate::i18n::tr_msg(&dialog.status);
             let color = palette.muted;
-            super::controls::dialog_style::text_line(ui, RichText::new(message).color(color), 26.0).help_text(message);
+            super::controls::dialog_style::text_line(ui, RichText::new(&message).color(color), 26.0).help_text(&message);
         });
         dialog_style::section(ui, palette.header, egui::Margin::symmetric(18, 10), |ui| {
             ui.horizontal(|ui| {
-                if ui.add_enabled(!busy, Button::new(if managing { "Save new stash…" } else { "Saved stashes…" })).clicked() {
+                if ui.add_enabled(
+                    !busy,
+                    Button::new(crate::i18n::tr_msg(if managing {
+                        "Save new stash…"
+                    } else {
+                        "Saved stashes…"
+                    })),
+                )
+                .clicked() {
                     dialog.managing = !managing;
                     dialog.preview_expanded = false;
                     dialog.invalidate_preview();
                     dialog.status = if dialog.managing { "Select and preview a saved stash." } else { "Preview changes before saving." }.into();
                     reload = dialog.managing;
                 }
-                if managing && dialog.preview_expanded && ui.add_enabled(!busy, Button::new("Hide preview")).clicked() {
+                if managing && dialog.preview_expanded && ui.add_enabled(!busy, Button::new(crate::i18n::tr_msg("Hide preview"))).clicked() {
                     dialog.preview_expanded = false;
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add_enabled(!busy, dialog_style::button(if managing { "Close" } else { "Cancel" })).disabled_help_text("Wait for the current operation to finish.").dialog_cancel() { close = true; }
+                    if ui.add_enabled(!busy, dialog_style::button(if managing { "Close" } else { "Cancel" })).disabled_help_text(crate::i18n::tr_msg("Wait for the current operation to finish.")).dialog_cancel() { close = true; }
                     if !managing {
                         let save_ready = allowed && dialog.prepared_save.as_ref().is_some_and(|prepared| prepared.include_untracked == dialog.include_untracked);
-                        if ui.add_enabled(save_ready, dialog_style::primary("Save Stash", palette)).disabled_help_text("Preview local changes before saving; contents are checked again when saving.").dialog_accept() { action = Some(Action::Save); }
-                        if ui.add_enabled(allowed, Button::new(if dialog.preview_expanded { "Hide preview" } else { "Preview changes" })).clicked() {
+                        if ui.add_enabled(save_ready, dialog_style::primary("Save Stash", palette)).disabled_help_text(crate::i18n::tr_msg("Preview local changes before saving; contents are checked again when saving.")).dialog_accept() { action = Some(Action::Save); }
+                        if ui.add_enabled(
+                            allowed,
+                            Button::new(crate::i18n::tr_msg(if dialog.preview_expanded {
+                                "Hide preview"
+                            } else {
+                                "Preview changes"
+                            })),
+                        )
+                        .clicked() {
                             dialog.preview_expanded = !dialog.preview_expanded;
                             if dialog.preview_expanded { preview = Some(true); }
                         }
@@ -197,7 +235,7 @@ fn message_editor(ui: &mut egui::Ui, message: &mut String, enabled: bool) -> egu
                             .desired_width(f32::INFINITY)
                             .desired_rows(1)
                             .min_size(egui::vec2(0.0, 118.0))
-                            .hint_text("Optional stash message"),
+                            .hint_text(crate::i18n::tr_msg("Optional stash message")),
                     )
                 })
                 .inner

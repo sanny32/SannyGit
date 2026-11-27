@@ -12,6 +12,7 @@ mod discard;
 mod git;
 mod history;
 mod hunk;
+mod i18n;
 mod llm;
 mod logging;
 mod menu;

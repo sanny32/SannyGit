@@ -494,6 +494,7 @@ impl SannyGitApp {
         } else if let Some(path) = saved.active_repository {
             app.restore_active_repository(path);
         }
+        crate::i18n::activate(app.preferences.language);
         app
     }
 
@@ -522,7 +523,7 @@ impl SannyGitApp {
     }
 
     pub(crate) fn with_theme(theme: ThemeChoice) -> Self {
-        Self {
+        let app = Self {
             manager: RepositoryManager::default(),
             tracking: tracking::Monitor::default(),
             #[cfg(target_os = "macos")]
@@ -586,7 +587,9 @@ impl SannyGitApp {
             state_current: false,
             merging: false,
             sequencing: crate::git::Sequencing::None,
-        }
+        };
+        crate::i18n::activate(app.preferences.language);
+        app
     }
     pub fn selected_diff(&self) -> Option<&crate::models::DiffPreview> {
         (self.loaded_diff == Some(self.selection.active))
@@ -1492,7 +1495,10 @@ impl SannyGitApp {
     fn poll_tag_patch(&mut self) {
         match Self::poll_reader(&mut self.branches.tag_patch_reader) {
             Some(Ok(Ok(path))) => {
-                self.status = format!("Patch exported to {}", path.display());
+                self.status = crate::i18n::tr_args(
+                    "Patch exported to %{path}",
+                    &[("path", &path.display().to_string())],
+                );
             }
             Some(Ok(Err(error)) | Err(error)) => {
                 self.status = "Patch export failed".into();
@@ -2890,6 +2896,7 @@ impl eframe::App for SannyGitApp {
     }
 
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+        crate::i18n::activate(self.preferences.language);
         #[cfg(target_os = "windows")]
         if let Err(error) = crate::native_window::finish_first_presentation(ui.ctx()) {
             self.error = Some(error.to_string());

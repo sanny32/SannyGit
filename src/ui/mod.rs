@@ -153,6 +153,7 @@ fn sidebar_contents(ui: &mut Ui, app: &mut SannyGitApp) -> eframe::egui::Rect {
 }
 
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
+    crate::i18n::activate(app.preferences.language);
     #[cfg(target_os = "windows")]
     crate::native_window::repair_root_focus(ui.ctx(), app.modal_dialog_open());
     // Rows that are scrolled out of view do not rebuild their menu. Close any
@@ -329,22 +330,22 @@ fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.radio_value(
                     &mut app.welcome_action,
                     WelcomeAction::Add,
-                    "Add an existing local or create a new repository",
+                    crate::i18n::tr_msg("Add an existing local or create a new repository"),
                 );
                 ui.radio_value(
                     &mut app.welcome_action,
                     WelcomeAction::Clone,
-                    "Clone existing repository",
+                    crate::i18n::tr_msg("Clone existing repository"),
                 );
                 ui.add_enabled_ui(!app.repositories.is_empty(), |ui| {
                     ui.radio_value(
                         &mut app.welcome_action,
                         WelcomeAction::Reopen,
-                        "Reopen previously used repository:",
+                        crate::i18n::tr_msg("Reopen previously used repository:"),
                     );
                 })
                 .response
-                .on_disabled_hover_text("No previously used repositories. Open or clone a repository first.");
+                .on_disabled_hover_text(crate::i18n::tr_msg("No previously used repositories. Open or clone a repository first."));
                 controls::tree_indent(ui, "welcome.repositories.indent", |ui| {
                     Frame::new()
                         .fill(palette.editor)
@@ -359,7 +360,7 @@ fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
                                 .show(ui, |ui| {
                                     ui.spacing_mut().item_spacing.y = 0.0;
                                     if app.repositories.is_empty() {
-                                        ui.label(RichText::new("No previously used repositories").color(palette.muted));
+                                        ui.label(RichText::new(crate::i18n::tr_msg("No previously used repositories")).color(palette.muted));
                                     }
                                     for repository in &app.repositories {
                                         ui.push_id(&repository.path, |ui| {
@@ -389,7 +390,7 @@ fn welcome(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.horizontal(|ui| {
                 ui.checkbox(
                     &mut app.preferences.show_welcome,
-                    "Show this dialog if no repository was opened",
+                    crate::i18n::tr_msg("Show this dialog if no repository was opened"),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let can_accept = !busy && (app.welcome_action != WelcomeAction::Reopen
@@ -464,7 +465,7 @@ fn show_errors(ui: &mut Ui, app: &mut SannyGitApp) {
                         ui.add(eframe::egui::Label::new(summary).wrap().selectable(true));
                         if let Some(details) = details {
                             ui.add_space(12.0);
-                            ui.label("Git details");
+                            ui.label(crate::i18n::tr_msg("Git details"));
                             ui.add_space(4.0);
                             eframe::egui::Frame::new()
                                 .fill(palette.header)

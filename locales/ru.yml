@@ -1,0 +1,812 @@
+? '
+
+  Double-click to switch'
+: '
+
+  Двойной щелчок для переключения'
+' (10,000 limit)': ' (лимит 10 000)'
+' (gone)': ' (удалена)'
+' ?': ' ?'
+'%{count} changes': '%{count} изменений'
+'* if repository commit references non-pushed submodule commit': '* если коммит репозитория ссылается на неотправленный коммит подмодуля'
+? '*.lock
+
+  package-lock.json
+
+  dist/'
+: '*.lock
+
+  package-lock.json
+
+  dist/'
+.gitignore in file’s folder: '.gitignore в папке файла'
+.gitignore in repository root: '.gitignore в корне репозитория'
+? 500 commits per page; 10,000 loaded commits maximum. Search applies to loaded history only. More retains existing rows; Reload updates the snapshot.
+: '500 коммитов на страницу; не более 10 000 загруженных коммитов. Поиск охватывает только загруженную историю. Кнопка «Ещё» сохраняет существующие строки; перезагрузка обновляет снимок.'
+A desktop Git client built with Rust and egui.: 'Настольный клиент Git на Rust и egui.'
+A simple Git client: 'Простой клиент Git'
+AI: AI
+AI Provider: 'Провайдер ИИ'
+AI connection failed: 'Не удалось подключиться к ИИ'
+'API key:': 'Ключ API:'
+Abort: Прервать
+Abort Merge: 'Прервать слияние'
+Abort merge?: 'Прервать слияние?'
+Add: Добавить
+Add Group: 'Добавить группу'
+Add Group…: 'Добавить группу…'
+Add Remote: 'Добавить удалённый репозиторий'
+Add Tag: 'Добавить тег'
+Add Tag & Push: 'Добавить тег и отправить'
+Add Tag…: 'Добавить тег…'
+Add Worktree: 'Добавить рабочую копию'
+Add a Remote?: 'Добавить удалённый репозиторий?'
+Add an existing local or create a new repository: 'Добавить существующий или создать новый локальный репозиторий'
+Add existing or create new repository: 'Добавить существующий или создать новый репозиторий'
+Add selected untracked files or a filename pattern to .gitignore.: 'Добавить выбранные неотслеживаемые файлы или шаблон имени в .gitignore.'
+Add tag to current branch (HEAD): 'Добавить тег к текущей ветке (HEAD)'
+'Add worktree: destination (new directory)': 'Добавление рабочей копии: путь назначения (новая папка)'
+Added: 'Добавлен'
+Adding tag…: 'Добавление тега…'
+? Additional graph lanes are outside the column. Drag the graph column separator to widen it, or open Commit details to inspect all parents.
+: 'Дополнительные линии графа находятся за пределами столбца. Перетащите его границу для расширения или откройте сведения о коммите, чтобы увидеть всех родителей.'
+All: 'Все'
+All branches: 'Все ветки'
+All changes: 'Все изменения'
+All commits up to the selected commit will be pushed to the remote repository.: 'Все коммиты до выбранного включительно будут отправлены в удалённый репозиторий.'
+All confirmation dialogs are already enabled: 'Все диалоги подтверждения уже включены'
+Always fetch new commits, tags and branches from submodule: 'Всегда получать новые коммиты, теги и ветки из подмодуля'
+Amend: Изменить коммит
+Amend last commit: 'Изменить последний коммит'
+'Annotated Tag Message:': 'Сообщение аннотированного тега:'
+Any saved commit-message draft for this repository will be discarded.: 'Сохранённый черновик сообщения коммита для этого репозитория будет удалён.'
+Appearance: Оформление
+Application log: 'Журнал приложения'
+Apply: Применить
+Apply and then remove this entry. Conflicts or apply errors retain the entry.: 'Применить и удалить запись. При конфликтах или ошибках применения запись сохраняется.'
+Apply keeps the stash. Pop removes it after a successful apply.: 'Применение сохраняет отложенные изменения. Извлечение удаляет запись после успешного применения.'
+Applying conflict resolution…: 'Применение разрешения конфликта…'
+Attention required: 'Требуется внимание'
+Automatic (system): 'Автоматически (системная)'
+Automatic fetch: 'Автоматическое получение'
+Automatic fetch runs only while a repository is open and the application is idle.: 'Автоматическое получение выполняется только при открытом репозитории и отсутствии активных операций.'
+Available when using the branch's configured upstream.: 'Доступно при использовании настроенной отслеживаемой ветки.'
+Behavior: 'Поведение'
+'Branch:': 'Ветка:'
+Branches: Ветки
+Branches…: 'Ветки…'
+Browse commits, changed files and their diffs.: 'Просмотр коммитов, изменённых файлов и различий.'
+Builds with Keychain entitlements use Touch ID. Other builds use the login Keychain and may ask for your macOS password.: 'Сборки с разрешениями Keychain используют Touch ID. Остальные используют связку ключей входа и могут запросить пароль macOS.'
+Cancel: Отмена
+Cancel commit message generation: 'Отменить генерацию сообщения коммита'
+Cancel generation: 'Отменить генерацию'
+Cancel history loading; keep existing rows, selection and scroll position.: 'Отменить загрузку истории, сохранив строки, выделение и положение прокрутки.'
+Cancel operation: 'Отменить операцию'
+Cancel removal: 'Отменить удаление'
+Cancel the background operation: 'Отменить фоновую операцию'
+Cancelled: 'Отменено'
+Cancelling operation…: 'Отмена операции…'
+Changes: Изменения
+'Changes:': 'Изменения:'
+Check Out: 'Переключиться'
+'Check Out Branch:': 'Переключиться на ветку:'
+Check Out…: 'Переключиться…'
+Check out commit: 'Переключиться на коммит'
+Check out this commit as detached HEAD: 'Переключиться на этот коммит с отделённым HEAD'
+Checking branch…: 'Проверка ветки…'
+Checking file, index and repository state…: 'Проверка файла, индекса и состояния репозитория…'
+Checking merge options…: 'Проверка параметров слияния…'
+Checking out commit…: 'Переключение на коммит…'
+Checking out remote branch…: 'Переключение на удалённую ветку…'
+Checking revert…: 'Проверка отмены коммита…'
+Checking tag…: 'Проверка тега…'
+Checking the selected commit…: 'Проверка выбранного коммита…'
+Checking the target and working tree…: 'Проверка цели и рабочей копии…'
+Checking whether this commit can be pushed…: 'Проверка возможности отправки коммита…'
+Checking…: 'Проверка…'
+Checkout: 'Переключиться'
+'Checkout local branch:': 'Переключиться на локальную ветку:'
+Cherry-Pick: 'Применить коммит'
+Choose GPG program: 'Выбрать программу GPG'
+Choose Git executable: 'Выбрать исполняемый файл Git'
+Choose New Remote to add an entry: 'Выберите «Новый удалённый репозиторий», чтобы добавить запись'
+Choose a new local name. The remote branch keeps its name.: 'Задайте новое локальное имя. Имя удалённой ветки останется прежним.'
+Choose how to merge the selected commit into the current branch.: 'Выберите способ слияния выбранного коммита с текущей веткой.'
+Choose how to merge the selected tag into the current branch.: 'Выберите способ слияния выбранного тега с текущей веткой.'
+Choose the language used throughout the application: 'Выберите язык интерфейса приложения'
+Choose the parent to keep when reverting a merge commit.: 'Выберите родителя, которого следует сохранить при отмене коммита слияния.'
+Classic: 'Классический'
+Clear: 'Очистить'
+Clear Comparison: 'Очистить сравнение'
+Clear Others: 'Очистить остальные'
+'Clone Into:': 'Клонировать в:'
+Clone existing repository: 'Клонировать существующий репозиторий'
+Close: Закрыть
+Close Repository: 'Закрыть репозиторий'
+Close and reopen Merge to retry.: 'Закройте и снова откройте диалог слияния для повторной попытки.'
+Close and reopen Push to retry.: 'Закройте и снова откройте диалог отправки для повторной попытки.'
+Close and reopen Rebase to retry.: 'Закройте и снова откройте диалог перебазирования для повторной попытки.'
+Close and reopen the dialog to retry loading commits.: 'Закройте и снова откройте диалог для повторной загрузки коммитов.'
+Close diff: 'Закрыть сравнение'
+Close this repository and discard its commit message drafts?: 'Закрыть этот репозиторий и удалить его черновики сообщений коммитов?'
+'Color theme:': 'Цветовая тема:'
+Command: 'Команда'
+Commit: Коммит
+Commit all changes, including new files: 'Создать коммит со всеми изменениями, включая новые файлы'
+Commit dates: 'Даты коммитов'
+Commit dates are shown in your local time zone.: 'Даты коммитов отображаются в вашем часовом поясе.'
+Commit message generated: 'Сообщение коммита сгенерировано'
+Commit message generation cancelled: 'Генерация сообщения коммита отменена'
+Commit messages: 'Сообщения коммитов'
+Commit or stash local changes first. The branch picker stays available from the toolbar.: 'Сначала создайте коммит или отложите локальные изменения. Выбор ветки доступен на панели инструментов.'
+Commit staged changes only; preserve unstaged changes: 'Создать коммит только с индексированными изменениями; сохранить остальные изменения'
+Commit…: 'Коммит…'
+Common Base: Общий предок
+Compare Left and Right with their common base. Click again to return to the merge.: 'Сравнить левую и правую версии с общим предком. Нажмите ещё раз, чтобы вернуться к слиянию.'
+Compare the selected commit with the remembered comparison commit: 'Сравнить выбранный коммит с запомненным коммитом для сравнения'
+Compare with Comparison Commit: 'Сравнить с коммитом для сравнения'
+Compare with HEAD: 'Сравнить с HEAD'
+Comparison: 'Сравнение'
+Comparison commit set: 'Коммит для сравнения выбран'
+Configure SannyGit as credential helper: 'Настроить SannyGit как помощник учётных данных'
+Configured remotes: 'Настроенные удалённые репозитории'
+Confirm deleting this unmerged local branch: 'Подтвердите удаление локальной ветки, которая ещё не слита'
+Confirm pushing only this tag to the displayed address: 'Подтвердите отправку только этого тега по указанному адресу'
+Confirmations: 'Подтверждения'
+Conflicted: Конфликт
+Connect a service to generate commit messages.: 'Подключите сервис для генерации сообщений коммитов.'
+Context: 'Контекст'
+Continue: Продолжить
+Continue after all conflicts are resolved: 'Продолжить после разрешения всех конфликтов'
+Copied: 'Скопировано'
+Copy: 'Копировать'
+Copy ID: 'Копировать ID'
+Copy Message: 'Копировать сообщение'
+Copy full commit hash: 'Копировать полный хеш коммита'
+Copy path: 'Копировать путь'
+Could not generate commit message: 'Не удалось сгенерировать сообщение коммита'
+Could not load diff: 'Не удалось загрузить различия'
+Could not load last commit: 'Не удалось загрузить последний коммит'
+Could not load repository; previous view retained: 'Не удалось загрузить репозиторий; предыдущий вид сохранён'
+Create: 'Создать'
+Create Merge-Commit: 'Создать коммит слияния'
+Create a local branch from the current HEAD.: 'Создать локальную ветку от текущего HEAD.'
+Create a local branch starting at this commit: 'Создать локальную ветку от этого коммита'
+Create a merge commit even when fast-forward is possible.: 'Создать коммит слияния, даже если возможна перемотка.'
+Create a new branch from HEAD: 'Создать новую ветку от HEAD'
+Create branch: 'Создать ветку'
+Create local branch from HEAD: 'Создать локальную ветку от HEAD'
+'Create local branch:': 'Создать локальную ветку:'
+Create the tag and push it to the current remote: 'Создать тег и отправить его в текущий удалённый репозиторий'
+Creating and pushing tag…: 'Создание и отправка тега…'
+Creating branch…: 'Создание ветки…'
+Creating tag…: 'Создание тега…'
+Current branch: 'Текущая ветка'
+Custom Ref: 'Произвольная ссылка'
+Custom endpoint: 'Другой адрес сервера'
+Customize how and what to clone.: 'Настройте способ и параметры клонирования.'
+Dark: Тёмная
+Date & Time: 'Дата и время'
+'Date format:': 'Формат даты:'
+Debug: 'Отладка'
+Debug includes Git command timings and exit codes: 'Отладка включает время выполнения команд Git и коды завершения'
+Default: 'По умолчанию'
+Default (empty repository): 'По умолчанию (пустой репозиторий)'
+Delete: Удалить
+Delete Branch: 'Удалить ветку'
+Delete Local Branch: 'Удалить локальную ветку'
+Delete Tag: 'Удалить тег'
+Delete from all remotes: 'Удалить из всех удалённых репозиториев'
+Delete the selected tracked files and stage their removal: 'Удалить выбранные отслеживаемые файлы и индексировать удаление'
+Deleted: 'Удалён'
+Delete…: 'Удалить…'
+Deleting on the server requires a configured remote with the standard branch fetch mapping.: 'Для удаления на сервере нужен настроенный удалённый репозиторий со стандартным сопоставлением получаемых веток.'
+Deleting tag…: 'Удаление тега…'
+Direct push is available for local branches: 'Прямая отправка доступна для локальных веток'
+Direct staging of conflicts is available during a merge. Use Conflict Solver to stage a resolution.: 'Прямое индексирование конфликтов доступно во время слияния. Используйте редактор конфликтов, чтобы индексировать разрешённую версию.'
+'Directory Name:': 'Имя папки:'
+'Directory:': 'Папка:'
+Discard: Отменить изменения
+Discard Draft: 'Удалить черновик'
+Discard lines: 'Отменить изменения строк'
+Discard operation in progress…: 'Отмена изменений…'
+Discard resolution draft?: 'Удалить черновик разрешения конфликта?'
+Discard…: 'Отменить изменения…'
+Do you want to proceed with sync?: 'Продолжить синхронизацию?'
+Do you want to push changes up to this commit?: 'Отправить изменения до этого коммита?'
+Don't create local branch (detached HEAD): 'Не создавать локальную ветку (отделённый HEAD)'
+Don't show again: 'Больше не показывать'
+Double-click the file to open Conflict Solver: 'Дважды щёлкните файл, чтобы открыть редактор конфликтов'
+Double-clicking a local file: 'Двойной щелчок по локальному файлу'
+Download remote branches and tags without changing your working tree.: 'Загрузить удалённые ветки и теги без изменения рабочей копии.'
+Drag the graph column separator to show more lanes.: 'Перетащите границу столбца графа, чтобы показать больше линий.'
+Drop: 'Удалить'
+Edit Working Tree: 'Редактировать рабочую копию'
+Edit the repository settings: 'Изменить настройки репозитория'
+Editing lines…: 'Редактирование строк…'
+'Endpoint:': 'Адрес сервера:'
+Enter a different relative path inside the repository.: 'Введите другой относительный путь внутри репозитория.'
+Enter a filename pattern or wait for the working tree to refresh: 'Введите шаблон имени файла или дождитесь обновления рабочей копии'
+Enter the name of the tag to create. If entering a message, an annotated tag is created.: 'Введите имя нового тега. Если указано сообщение, будет создан аннотированный тег.'
+Errors: 'Ошибки'
+Example: 'Пример'
+'Example:': 'Пример:'
+'Excluded paths:': 'Исключённые пути:'
+Exporting patch…: 'Экспорт патча…'
+Fast-Forward: 'Перемотка'
+Fast-Forward Merge: 'Слияние перемоткой'
+Fast-forward can move the current branch to the selected commit.: 'Перемотка может передвинуть текущую ветку на выбранный коммит.'
+Fast-forward is unavailable for the selected commit.: 'Перемотка недоступна для выбранного коммита.'
+? Fast-forward when possible. Otherwise create a merge commit. Uncommitted changes stay when incoming commits do not touch those files.
+: 'Использовать перемотку, когда возможно. Иначе создать коммит слияния. Незакоммиченные изменения сохраняются, если входящие коммиты не затрагивают эти файлы.'
+Fetch: Получить
+'Fetch From:': 'Получить из:'
+Fetch Only: 'Только получить'
+'Fetch URL:': 'URL получения:'
+Fetch all Heads and Tags: 'Получить все ветки и теги'
+Fetch remote branches and refresh the repository: 'Получить удалённые ветки и обновить репозиторий'
+Fetch the upstream repository every 60 seconds: 'Получать данные из отслеживаемого репозитория каждые 60 секунд'
+File: 'Файл'
+File filter: 'Фильтр файлов'
+Files: 'Файлы'
+Filter: Фильтр
+Filter loaded commits…: 'Фильтр загруженных коммитов…'
+Finish: 'Готово'
+? First, local changes will be pushed, then possible remote changes pulled. The advantage over a normal push is that if it fails because of remote changes, they will be pulled automatically.
+: 'Сначала локальные изменения будут отправлены, затем получены удалённые. Если отправка не удастся из-за удалённых изменений, они будут получены автоматически.'
+Focus a text field; Cut and Copy require selected text: 'Выберите текстовое поле; для вырезания и копирования нужно выделить текст'
+Format Patch: 'Создать патч'
+'Found repositories (selected ones will be remembered):': 'Найденные репозитории (выбранные будут сохранены):'
+'Full Name:': 'Полное имя:'
+'GPG Program:': 'Программа GPG:'
+Generate a commit message from all changes, including new files: 'Сгенерировать сообщение коммита по всем изменениям, включая новые файлы'
+Generate a commit message from staged contents only: 'Сгенерировать сообщение коммита только по индексированным изменениям'
+Generate commit message: 'Сгенерировать сообщение коммита'
+Generating commit message…: 'Генерация сообщения коммита…'
+'Generation instructions:': 'Инструкции генерации:'
+Generation stops if the diff is larger. Each new file sends at most 64 KiB.: 'Генерация прекращается при превышении размера различий. Для каждого нового файла отправляется не более 64 КиБ.'
+Git: Git
+'Git Email:': 'Email Git:'
+Git details: 'Сведения Git'
+Git executable: 'Исполняемый файл Git'
+? Git will attempt to restore the working tree and index to their state before the merge. Conflict resolutions and changes made during the merge may be lost.
+: 'Git попытается восстановить рабочую копию и индекс до состояния перед слиянием. Разрешения конфликтов и изменения, сделанные во время слияния, могут быть потеряны.'
+GitHub Copilot connection failed: 'Не удалось подключиться к GitHub Copilot'
+GitHub Copilot sign-in is unavailable in this build.: 'Вход в GitHub Copilot недоступен в этой сборке.'
+Go Back: 'Назад'
+Graph: 'Граф'
+Graph connections are hidden while filtering: 'Связи графа скрыты при фильтрации'
+Group added: 'Группа добавлена'
+Group deleted: 'Группа удалена'
+Group name: 'Имя группы'
+Group renamed: 'Группа переименована'
+HEAD is already at the selected commit.: 'HEAD уже находится на выбранном коммите.'
+Here you can edit the Git settings for the repository. The default settings can be found in the Preferences.: 'Здесь можно изменить настройки Git для репозитория. Настройки по умолчанию находятся в общих настройках.'
+Hide changes that only add or remove whitespace. Line edits stay disabled while this is on.: 'Скрыть изменения, которые только добавляют или удаляют пробельные символы. Редактирование строк будет отключено.'
+Hide preview: 'Скрыть предпросмотр'
+History: 'История'
+History unavailable: 'История недоступна'
+I confirm this action on all reviewed files.: 'Подтверждаю это действие для всех проверенных файлов.'
+Idle: Ожидание
+Ignore: 'Игнорировать'
+Ignore Files: 'Игнорировать файлы'
+Ignore by pattern: 'Игнорировать по шаблону'
+Ignore file: 'Файл исключений'
+Ignore selected files: 'Игнорировать выбранные файлы'
+Ignore whitespace: 'Игнорировать пробельные символы'
+Ignore…: 'Игнорировать…'
+Include Submodules: 'Включить подмодули'
+Include the current branch name: 'Включить имя текущей ветки'
+Include tracked remote branches: 'Включить отслеживаемые удалённые ветки'
+Include untracked files: 'Включить неотслеживаемые файлы'
+Information: 'Информация'
+Initialize new submodules: 'Инициализировать новые подмодули'
+Interface: 'Интерфейс'
+'Interface style:': 'Стиль интерфейса:'
+Journal: 'Журнал'
+Keep Editing: 'Продолжить редактирование'
+Keep Others: 'Сохранить остальные'
+Keyboard Shortcuts: 'Сочетания клавиш'
+'Language:': 'Язык:'
+Leave a field empty to use the inherited Git setting.: 'Оставьте поле пустым, чтобы использовать унаследованную настройку Git.'
+Leave unchanged to keep saved key: 'Не изменяйте поле, чтобы сохранить записанный ключ'
+Light: Светлая
+Line and column: 'Строка и столбец'
+Load up to 500 more commits from the same snapshot. Search covers loaded commits only.: 'Загрузить ещё до 500 коммитов из того же снимка. Поиск охватывает только загруженные коммиты.'
+Loading commit graph…: 'Загрузка графа коммитов…'
+Loading commits…: 'Загрузка коммитов…'
+Loading conflict...: 'Загрузка конфликта…'
+Loading contents preview…: 'Загрузка предпросмотра содержимого…'
+Loading diff…: 'Загрузка различий…'
+Loading file diff…: 'Загрузка различий файла…'
+Loading files…: 'Загрузка файлов…'
+Loading history; existing rows remain available.: 'Загрузка истории; существующие строки остаются доступны.'
+Loading last commit message…: 'Загрузка сообщения последнего коммита…'
+Loading models…: 'Загрузка моделей…'
+Loading remotes…: 'Загрузка удалённых репозиториев…'
+Loading repository settings…: 'Загрузка настроек репозитория…'
+Loading repository…: 'Загрузка репозитория…'
+Loading stashes…: 'Загрузка отложенных изменений…'
+Loading…: 'Загрузка…'
+Local Branches: 'Локальные ветки'
+Local Branches (1): 'Локальные ветки (1)'
+Local Directory: 'Локальная папка'
+Local branch already checked out: 'Локальная ветка уже выбрана'
+'Local repository:': 'Локальный репозиторий:'
+Log: 'Журнал'
+Logging: 'Журналирование'
+MIT: MIT
+Manage Remotes: 'Управление удалёнными репозиториями'
+Merge: Слияние
+Merge Commit: 'Коммит слияния'
+Merge Tag: 'Слить тег'
+Merge changes against first parent: 'Изменения слияния относительно первого родителя'
+Merge fetched remote changes: 'Слить полученные удалённые изменения'
+Merge in progress: 'Выполняется слияние'
+Merge requires an existing HEAD, fresh repository data and no operation in progress: 'Для слияния нужны существующий HEAD, актуальные данные репозитория и отсутствие выполняющихся операций'
+? Merge the selected commit and create a merge commit, even when a fast-forward is possible. Uses your Git identity, hooks and signing configuration.
+: 'Слить выбранный коммит и создать коммит слияния, даже если возможна перемотка. Используются ваши данные автора Git, хуки и настройки подписи.'
+Merge to Working Tree: 'Слить в рабочую копию'
+Merge…: 'Слить…'
+Merging…: 'Слияние…'
+'Message:': 'Сообщение:'
+'Model:': 'Модель:'
+Modern: 'Современный'
+Modified: 'Изменён'
+More: 'Ещё'
+Move HEAD to the selected commit. Choose what to update in the index and working tree.: 'Переместить HEAD на выбранный коммит. Выберите, что обновить в индексе и рабочей копии.'
+Move HEAD to the tagged commit when it is a descendant of HEAD: 'Переместить HEAD на коммит тега, если он является потомком HEAD'
+Move HEAD, the index and the working tree to the selected commit.: 'Переместить HEAD, индекс и рабочую копию на выбранный коммит.'
+Move To: 'Переместить в'
+Move the current branch to the selected branch’s commit without creating a merge commit.: 'Переместить текущую ветку на коммит выбранной ветки без создания коммита слияния.'
+Move the current branch to the selected commit when it is a descendant of HEAD.: 'Переместить текущую ветку на выбранный коммит, если он является потомком HEAD.'
+Move the current branch to the selected commit without creating a merge commit.: 'Переместить текущую ветку на выбранный коммит без создания коммита слияния.'
+Move the current branch to the tagged commit without creating a merge commit.: 'Переместить текущую ветку на коммит тега без создания коммита слияния.'
+Move the file inside this repository. The destination directory must already exist.: 'Переместить файл внутри этого репозитория. Папка назначения должна уже существовать.'
+Name: 'Имя'
+'Name:': 'Имя:'
+New Branch…: 'Новая ветка…'
+New Remote: 'Новый удалённый репозиторий'
+New branch name: 'Имя новой ветки'
+No changed files: 'Нет изменённых файлов'
+No configured remotes: 'Нет настроенных удалённых репозиториев'
+No configured remotes.: 'Нет настроенных удалённых репозиториев.'
+No configured remotes. Add one through Remote → Manage Remotes, then reopen this dialog.: 'Нет настроенных удалённых репозиториев. Добавьте репозиторий через меню удалённых операций и снова откройте этот диалог.'
+No existing tags: 'Нет существующих тегов'
+No more history is available yet; wait for loading or use Reload.: 'История пока недоступна; дождитесь загрузки или обновите данные.'
+No obsolete worktree metadata to prune.: 'Нет устаревших метаданных рабочих копий для очистки.'
+No previously used repositories: 'Нет ранее использованных репозиториев'
+No previously used repositories. Open or clone a repository first.: 'Нет ранее использованных репозиториев. Сначала откройте или клонируйте репозиторий.'
+No provider presets: 'Нет предустановок провайдера'
+No repository: 'Нет репозитория'
+No saved stashes: 'Нет отложенных изменений'
+Not available: 'Недоступно'
+Not implemented yet: 'Пока не реализовано'
+Not yet verified: 'Ещё не проверено'
+'Off': 'Выключено'
+On the commit message, show input and output tokens for the last generation and the total for this session.: 'Показывать у сообщения коммита число входных и выходных токенов последней генерации и итог за сеанс.'
+One pattern per line. Matching files are left out.: 'Один шаблон на строку. Совпадающие файлы исключаются.'
+Only obsolete administrative metadata is removed; working directories are not deleted.: 'Удаляются только устаревшие служебные метаданные; рабочие папки сохраняются.'
+Open: 'Открыть'
+Open File: 'Открыть файл'
+Open a repository and wait for the current operation: 'Откройте репозиторий и дождитесь завершения текущей операции'
+Open a repository and wait until its history is loaded: 'Откройте репозиторий и дождитесь загрузки его истории'
+Open and refresh a repository with commits; wait for the current operation: 'Откройте и обновите репозиторий с коммитами; дождитесь завершения текущей операции'
+Open and refresh a repository; wait for the current operation: 'Откройте и обновите репозиторий; дождитесь завершения текущей операции'
+Open directory chooser: 'Выбрать папку'
+Open in Terminal: 'Открыть в терминале'
+Open repository: 'Открыть репозиторий'
+Open the history of the current branch: 'Открыть историю текущей ветки'
+Open the history of this file: 'Открыть историю этого файла'
+OpenAI API: API OpenAI
+OpenAI-compatible API or local server: 'API, совместимый с OpenAI, или локальный сервер'
+Opening an external terminal is not implemented yet: 'Открытие внешнего терминала пока не реализовано'
+Operation failed: 'Ошибка операции'
+Operation failed; inspect the current state before retrying: 'Операция завершилась с ошибкой; проверьте текущее состояние перед повторной попыткой'
+Operation in progress…: 'Выполняется операция…'
+Optional for local servers: 'Необязательно для локальных серверов'
+Optional stash message: 'Необязательное сообщение отложенных изменений'
+Options: Параметры
+Ours: Наша версия
+Ours deleted this file. Confirm to remove it and stage the deletion.: 'В нашей версии этот файл удалён. Подтвердите удаление и его индексирование.'
+'Parent Directory:': 'Родительская папка:'
+'Parent: none (root or shallow boundary)': 'Родитель: нет (корень или граница неполной истории)'
+Patch export failed: 'Не удалось экспортировать патч'
+Patch exported to %{path}: 'Патч экспортирован в %{path}'
+'Patch size:': 'Размер патча:'
+Path: 'Путь'
+'Path to Git executable:': 'Путь к исполняемому файлу Git:'
+Plain child: 'Обычный дочерний элемент'
+Pop: 'Применить и удалить'
+Preview changes: 'Предпросмотр изменений'
+Preview contents will appear here.: 'Здесь появится предпросмотр содержимого.'
+Preview local changes before saving; contents are checked again when saving.: 'Проверьте локальные изменения перед сохранением; при сохранении содержимое проверяется повторно.'
+Preview stash: 'Предпросмотр отложенных изменений'
+Preview the selected files before saving.: 'Просмотрите выбранные файлы перед сохранением.'
+Preview the selected local changes before saving.: 'Просмотрите выбранные локальные изменения перед сохранением.'
+Preview the selected stash and confirm its deletion below.: 'Просмотрите выбранные отложенные изменения и подтвердите удаление ниже.'
+Preview the selected stash before applying or deleting it.: 'Просмотрите выбранные отложенные изменения перед применением или удалением.'
+Preview unavailable: 'Предпросмотр недоступен'
+'Preview: local changes to save. Save rechecks these contents before changing files.': 'Предпросмотр: локальные изменения для сохранения. Содержимое проверяется повторно перед изменением файлов.'
+'Preview: selected stash. Apply and Pop require a clean working tree.': 'Предпросмотр: выбранные отложенные изменения. Применение и извлечение требуют чистой рабочей копии.'
+'Provider:': 'Провайдер:'
+Prune Obsolete Metadata: 'Очистить устаревшие метаданные'
+Prune obsolete remote tracked branches: 'Удалить устаревшие ссылки на удалённые ветки'
+Pull: Получить и объединить
+Pull commits from a remote repository: 'Получить коммиты из удалённого репозитория'
+Pull in progress…: 'Получение изменений…'
+Pull incorporates fetched changes into the current branch. Expand the options below to configure.: 'Полученные изменения включаются в текущую ветку. Разверните параметры ниже для настройки.'
+Push: Отправить
+Push Selected Tag: 'Отправить выбранный тег'
+Push Tag: 'Отправить тег'
+Push To: 'Отправить в'
+Push To…: 'Отправить в…'
+'Push URL:': 'URL отправки:'
+Pushing commits…: 'Отправка коммитов…'
+Pushing tag…: 'Отправка тега…'
+Re-enable upstream push and sync confirmations: 'Снова включить подтверждения отправки и синхронизации с отслеживаемой веткой'
+Ready: Готово
+Ready to amend last commit: 'Готово к изменению последнего коммита'
+Rebase: Перебазирование
+Rebase HEAD onto a selected commit: 'Перебазировать HEAD на выбранный коммит'
+Rebase HEAD to: 'Перебазировать HEAD на'
+Rebase local branch onto fetched changes: 'Перебазировать локальную ветку на полученные изменения'
+Rebase will replay the current branch onto an earlier commit.: 'Перебазирование повторит коммиты текущей ветки поверх более раннего коммита.'
+Rebase will replay the current branch onto the selected commit.: 'Перебазирование повторит коммиты текущей ветки поверх выбранного коммита.'
+Rebase…: 'Перебазировать…'
+Rebasing…: 'Перебазирование…'
+Refresh branches to load the full commit id: 'Обновите ветки для загрузки полного ID коммита'
+Refresh line endings using .gitattributes: 'Обновить окончания строк по .gitattributes'
+Refresh the repository and tags before continuing: 'Обновите репозиторий и теги перед продолжением'
+Refresh the repository and wait for the current operation: 'Обновите репозиторий и дождитесь завершения текущей операции'
+Reload: Перезагрузить
+Reload Details: 'Перезагрузить сведения'
+Reload Worktrees: 'Перезагрузить рабочие копии'
+Reload branches and tags: 'Перезагрузить ветки и теги'
+Reload branches to retry.: 'Перезагрузите ветки для повторной попытки.'
+Reload details: 'Перезагрузить сведения'
+Reload details to retry.: 'Перезагрузите сведения для повторной попытки.'
+Reload list: 'Перезагрузить список'
+Reload to retry; displayed rows are from the previous load.: 'Перезагрузите данные для повторной попытки; показаны строки предыдущей загрузки.'
+Remember as default for repository: 'Использовать по умолчанию для репозитория'
+Remember this commit for a two-commit comparison: 'Запомнить этот коммит для сравнения двух коммитов'
+Remote: Удалённый репозиторий
+Remote Branches: 'Удалённые ветки'
+'Remote branch:': 'Удалённая ветка:'
+'Remote:': 'Удалённый репозиторий:'
+Removal checks for local, untracked and ignored files. The branch is kept.: 'При удалении проверяются локальные, неотслеживаемые и игнорируемые файлы. Ветка сохраняется.'
+Remove: Удалить
+Remove Remote: 'Удалить удалённый репозиторий'
+Remove Repository: 'Удалить репозиторий'
+Remove Selected…: 'Удалить выбранные…'
+Remove Worktree: 'Удалить рабочую копию'
+Remove this repository from the list? Files on disk will be kept.: 'Удалить этот репозиторий из списка? Файлы на диске сохранятся.'
+Remove…: 'Удалить…'
+Rename: Переименовать
+Rename file: 'Переименовать файл'
+Rename local branch: 'Переименовать локальную ветку'
+'Rename:': 'Переименовать:'
+Renamed: 'Переименован'
+Rename…: 'Переименовать…'
+Renaming branch…: 'Переименование ветки…'
+Renaming file…: 'Переименование файла…'
+'Reopen previously used repository:': 'Открыть ранее использованный репозиторий:'
+Replace the last commit using the selected contents mode. Rewrites commit history.: 'Заменить последний коммит в соответствии с выбранным режимом содержимого. История коммитов будет переписана.'
+Replace the last commit with this message and all changes, including new files: 'Заменить последний коммит этим сообщением и всеми изменениями, включая новые файлы'
+Replace the last commit with this message and staged changes only; preserve unstaged changes: 'Заменить последний коммит этим сообщением и только индексированными изменениями; сохранить остальные изменения'
+Replay HEAD commits onto the selected commit. Rewrites commit history; commit or stash local changes first.: 'Повторить коммиты HEAD поверх выбранного коммита. История будет переписана; сначала создайте коммит или отложите локальные изменения.'
+Replay commits that are on the current branch and not in the selected commit. This rewrites those commits.: 'Повторить коммиты текущей ветки, отсутствующие в выбранном коммите. Эти коммиты будут переписаны.'
+Replay local commits on top of the fetched branch. Requires a clean working tree.: 'Повторить локальные коммиты поверх полученной ветки. Требуется чистая рабочая копия.'
+Repositories: Репозитории
+Repositories added: 'Репозитории добавлены'
+Repository: Репозиторий
+Repository AI Settings: 'Настройки ИИ репозитория'
+Repository AI settings…: 'Настройки ИИ репозитория…'
+'Repository URL or local path:': 'URL репозитория или локальный путь:'
+Repository history: 'История репозитория'
+Repository marked as a favorite: 'Репозиторий добавлен в избранное'
+Repository opened: 'Репозиторий открыт'
+Repository operation: 'Операция с репозиторием'
+'Repository path or clone URL:': 'Путь репозитория или URL клонирования:'
+Repository removed from the list: 'Репозиторий удалён из списка'
+Repository renamed: 'Репозиторий переименован'
+Repository root: 'Корень репозитория'
+Repository settings saved: 'Настройки репозитория сохранены'
+Repository unmarked as a favorite: 'Репозиторий удалён из избранного'
+'Repository:': 'Репозиторий:'
+Reset: 'Сбросить'
+Reset Advanced: 'Расширенный сброс'
+Reset Advanced…: 'Расширенный сброс…'
+Reset requires an existing HEAD, fresh repository data and no operation in progress: 'Для сброса нужны существующий HEAD, актуальные данные репозитория и отсутствие выполняющихся операций'
+'Reset to defaults: discard repository overrides and use the settings from Preferences': 'Вернуться к настройкам по умолчанию: удалить переопределения репозитория и использовать общие настройки'
+Reset will discard any staged and unstaged changes unless you save them.: 'Сброс удалит индексированные и неиндексированные изменения, если вы их не сохраните.'
+Resetting HEAD…: 'Сброс HEAD…'
+Reset…: 'Сбросить…'
+Resolve: Разрешить
+Resolve all conflicts before saving and staging the file.: 'Разрешите все конфликты перед сохранением и индексированием файла.'
+Resolve conflicts and refresh the working tree: 'Разрешите конфликты и обновите рабочую копию'
+Restore all confirmation dialogs: 'Восстановить все диалоги подтверждения'
+Restore staged state: 'Восстановить состояние индекса'
+Restore the original staging state with git stash apply --index. Uncheck to apply tracked contents as unstaged changes.: 'Восстановить исходное состояние индекса командой git stash apply --index. Снимите флажок, чтобы применить отслеживаемое содержимое как неиндексированные изменения.'
+Restored: 'Восстановлено'
+Retry: 'Повторить'
+Return to Merge: 'Вернуться к слиянию'
+Revert: 'Отменить коммит'
+Revert merge commit: 'Отменить коммит слияния'
+Revert relative to this parent: 'Отменить относительно этого родителя'
+Revert…: 'Отменить коммит…'
+Review restoring selected files from the index or deleting selected untracked files: 'Проверить восстановление выбранных файлов из индекса или удаление выбранных неотслеживаемых файлов'
+Review the files and confirm the action. Reload details if a file, index or HEAD changed.: 'Проверьте файлы и подтвердите действие. Перезагрузите сведения, если файл, индекс или HEAD изменились.'
+Review the options and retry.: 'Проверьте параметры и повторите попытку.'
+Same as commit panel: 'Как на панели коммита'
+Same as fetch when empty: 'Как при получении, если пусто'
+SannyGit: SannyGit
+SannyGit uses your existing Git credential helpers and SSH configuration.: 'SannyGit использует существующие помощники учётных данных Git и настройки SSH.'
+Save Stash: 'Отложить изменения'
+Save URLs: 'Сохранить URL'
+Save and stage the resolved file.: 'Сохранить и индексировать файл с разрешёнными конфликтами.'
+Save local changes for later: 'Отложить локальные изменения'
+Save new stash…: 'Отложить новые изменения…'
+Save staged and unstaged changes for later.: 'Сохранить индексированные и неиндексированные изменения на будущее.'
+Save the API key and model in the OS credential manager: 'Сохранить ключ API и модель в системном хранилище учётных данных'
+Save the result or undo manual edits to return to block selection.: 'Сохраните результат или отмените ручные правки для возврата к выбору блоков.'
+Save the staged and unstaged changes to a stash, or discard them.: 'Отложить индексированные и неиндексированные изменения или отменить их.'
+Saved Stashes: 'Отложенные изменения'
+Saved stashes: 'Отложенные изменения'
+Saved stashes…: 'Отложенные изменения…'
+Saving...: 'Сохранение…'
+'Search In:': 'Искать в:'
+Search loaded commits…: 'Поиск по загруженным коммитам…'
+Searching repositories…: 'Поиск репозиториев…'
+Select Directory: 'Выбрать папку'
+Select Repository Root: 'Выбрать корень репозитория'
+Select a branch or commit to merge: 'Выберите ветку или коммит для слияния'
+Select a branch that is not checked out and refresh the repository: 'Выберите ветку, которая не используется, и обновите репозиторий'
+Select a commit: 'Выберите коммит'
+Select a file: 'Выберите файл'
+Select a local branch: 'Выберите локальную ветку'
+Select a model from the server or enter a custom model name: 'Выберите модель с сервера или введите своё имя модели'
+Select a remote branch: 'Выберите удалённую ветку'
+Select a repository-local remote with standard fetch destinations and confirm removal below: 'Выберите удалённый репозиторий, настроенный локально, со стандартными путями получения и подтвердите удаление ниже'
+Select a single file and wait for the working tree to be current: 'Выберите один файл и дождитесь обновления рабочей копии'
+Select a staged file after refreshing: 'Выберите индексированный файл после обновления'
+Select a stash to confirm deletion: 'Выберите отложенные изменения для подтверждения удаления'
+Select a suitable file after refreshing; conflicts must be resolved outside SannyGit: 'Выберите подходящий файл после обновления; конфликты нужно разрешить вне SannyGit'
+Select all visible changes in this repository: 'Выбрать все видимые изменения в этом репозитории'
+Select an editable repository-local remote: 'Выберите удалённый репозиторий, настройки которого можно изменить в этом репозитории'
+Select and preview a stash; applying requires a clean working tree.: 'Выберите и просмотрите отложенные изменения; применение требует чистой рабочей копии.'
+Select another branch while a current HEAD is available: 'Выберите другую ветку при наличии текущего HEAD'
+Select files from one folder to use a pattern: 'Выберите файлы из одной папки для использования шаблона'
+Select files that are not conflicted, then wait until the working tree is current: 'Выберите файлы без конфликтов и дождитесь обновления рабочей копии'
+Select one file that is not deleted or conflicted, and wait until the working tree is current: 'Выберите один неудалённый файл без конфликтов и дождитесь обновления рабочей копии'
+Select shown branches: 'Выбрать показанные ветки'
+Select the branches for which to show commits in the graph.: 'Выберите ветки, коммиты которых нужно показывать на графе.'
+Select untracked files with supported names, then refresh if needed: 'Выберите неотслеживаемые файлы с поддерживаемыми именами и при необходимости обновите данные'
+Select visible changes in this folder and its subfolders: 'Выбрать видимые изменения в этой папке и её подпапках'
+Select whether to open or create a local repository, clone a remote repository, or reopen a previously used repository.: 'Выберите действие: открыть или создать локальный репозиторий, клонировать удалённый или открыть ранее использованный.'
+Selected files reviewed.: 'Выбранные файлы проверены.'
+'Selected files:': 'Выбранные файлы:'
+Selection: 'Выделение'
+'Server URL:': 'URL сервера:'
+Set Tracked Branch…: 'Настроить отслеживаемую ветку…'
+Set as Comparison Commit: 'Выбрать для сравнения'
+Set as upstream (track this remote branch): 'Назначить отслеживаемой (отслеживать эту удалённую ветку)'
+Settings: Настройки
+Shortcut: 'Сочетание клавиш'
+'Shortcut:': 'Сочетание клавиш:'
+Show Changes: 'Показать изменения'
+Show Today and Yesterday for recent dates: 'Показывать «Сегодня» и «Вчера» для недавних дат'
+Show a diff against the current branch tip: 'Показать различия с вершиной текущей ветки'
+Show changes in the diff panel: 'Показывать изменения на панели различий'
+Show old and new lines in two columns: 'Показывать старые и новые строки в двух столбцах'
+Show the diff as one column: 'Показывать различия в одном столбце'
+Show this dialog if no repository was opened: 'Показывать этот диалог, если репозиторий не открыт'
+Show this file in its folder: 'Показать этот файл в папке'
+Show token counts after generation: 'Показывать число токенов после генерации'
+Show welcome dialog if no repository is reopened: 'Показывать приветствие, если репозиторий не открыт повторно'
+Side by Side: Рядом
+Sign all commits: 'Подписывать все коммиты'
+Sign in: 'Войти'
+Sign in with your AI Provider account: 'Войти с учётной записью провайдера ИИ'
+Sign out: 'Выйти'
+'Signing Key:': 'Ключ подписи:'
+Skip: 'Пропустить'
+Skip the current step after conflicts are resolved: 'Пропустить текущий шаг после разрешения конфликтов'
+Some changes are staged. Click to unstage; use Stage to include the remaining changes: 'Часть изменений индексирована. Нажмите, чтобы убрать их из индекса; используйте индексирование для добавления остальных изменений'
+Sort by file status: 'Сортировать по статусу файла'
+Sort by staged state: 'Сортировать по состоянию индекса'
+Specify the local Git repository to open. To create a new repository, specify an empty directory.: 'Укажите локальный репозиторий Git для открытия. Для создания нового репозитория укажите пустую папку.'
+Specify the local directory for the new repository.: 'Укажите локальную папку для нового репозитория.'
+Specify the repository to clone.: 'Укажите репозиторий для клонирования.'
+Squash Merge: 'Слияние со сжатием'
+Squash the selected commit into staged changes. Review and commit when ready.: 'Объединить выбранный коммит в индексированные изменения. Проверьте их и создайте коммит, когда будете готовы.'
+Stage: Индексировать
+Stage all changes in the selected files: 'Индексировать все изменения в выбранных файлах'
+Stage all changes in this file: 'Индексировать все изменения в этом файле'
+Stage or unstage changes: 'Индексировать изменения или убрать их из индекса'
+Stage selected changes. For a merge conflict, stage after editing the file to resolve it.: 'Индексировать выбранные изменения. При конфликте слияния сначала отредактируйте файл, чтобы разрешить конфликт.'
+Stage the working copy after resolving the conflict: 'Индексировать рабочую копию после разрешения конфликта'
+Staged only: 'Только индексированные'
+Start Search: 'Начать поиск'
+Start the merge and leave it open for review and conflict resolution.: 'Начать слияние и оставить его открытым для проверки и разрешения конфликтов.'
+Start the merge and leave it open. Review changes and resolve conflicts before creating the merge commit.: 'Начать слияние и оставить его открытым. Проверьте изменения и разрешите конфликты перед созданием коммита слияния.'
+Stash: Отложить
+Stash Selection…: 'Отложить выбранные изменения…'
+Stash operation in progress…: 'Операция с отложенными изменениями…'
+Status: 'Статус'
+Steps: 'Шаги'
+Stop Tracking…: 'Прекратить отслеживание…'
+Store API key and model securely: 'Безопасно хранить ключ API и модель'
+Store this message on the selected stash: 'Сохранить это сообщение для выбранных отложенных изменений'
+'Submodule handling*:': 'Обработка подмодулей*:'
+Switch back to this file's repository to save and stage it.: 'Вернитесь к репозиторию этого файла, чтобы сохранить и индексировать его.'
+Switch to a local branch, create a tracking branch, or check out without creating a branch.: 'Переключитесь на локальную ветку, создайте отслеживающую ветку или переключитесь без создания ветки.'
+Switch to the new branch: 'Переключиться на новую ветку'
+Switching branch or tag…: 'Переключение ветки или тега…'
+Sync: 'Синхронизировать'
+Synchronize: 'Синхронизировать'
+Syncing with remote…: 'Синхронизация с удалённым репозиторием…'
+System Default (UTF-8): 'Системная по умолчанию (UTF-8)'
+Tag push cancelled: 'Отправка тега отменена'
+'Tag:': 'Тег:'
+Tags: Теги
+'Text File Encoding:': 'Кодировка текстовых файлов:'
+The 10,000-commit safety limit is reached. Search covers loaded commits only.: 'Достигнут лимит 10 000 коммитов. Поиск охватывает только загруженные коммиты.'
+The common base is unavailable or the Working Tree is being edited.: 'Общий предок недоступен или рабочая копия редактируется.'
+The current branch already contains the selected commit.: 'Текущая ветка уже содержит выбранный коммит.'
+The current branch must track a remote branch: 'Текущая ветка должна отслеживать удалённую ветку'
+The file must exist in the working tree and no file-changing operation can be running: 'Файл должен существовать в рабочей копии; операции, изменяющие файлы, не должны выполняться'
+The operation could not be completed.: 'Не удалось завершить операцию.'
+The remote branch already contains this commit.: 'Удалённая ветка уже содержит этот коммит.'
+The selected branch must have a tracked branch: 'Выбранная ветка должна иметь отслеживаемую ветку'
+The selected lines are removed from the working tree. Other changes in the file stay.: 'Выбранные строки удаляются из рабочей копии. Остальные изменения файла сохраняются.'
+The source remote is no longer configured: 'Исходный удалённый репозиторий больше не настроен'
+Theirs: Их версия
+This commit cannot be pushed without rewriting the remote branch.: 'Этот коммит нельзя отправить без перезаписи удалённой ветки.'
+This commit is not on the current branch.: 'Этот коммит отсутствует в текущей ветке.'
+This file has no editable text. Use Take Ours or Take Theirs from the file menu.: 'В этом файле нет редактируемого текста. Используйте «Взять нашу версию» или «Взять их версию» в меню файла.'
+This repository already uses the application defaults: 'Этот репозиторий уже использует настройки приложения по умолчанию'
+This tag has no message: 'У этого тега нет сообщения'
+This will remove the selected tag from the local repository.: 'Выбранный тег будет удалён из локального репозитория.'
+'Time format:': 'Формат времени:'
+To: 'В'
+To commit selected files, Stage them and use Staged only in the commit panel: 'Для коммита выбранных файлов индексируйте их и выберите «Только индексированные» на панели коммита'
+Today: 'Сегодня'
+Tracked or matching branch: 'Отслеживаемая или совпадающая ветка'
+Tree child: 'Дочерний элемент дерева'
+Type changed: 'Тип изменён'
+Ungrouped: 'Без группы'
+Unified: Общий
+Unified diff from the first commit to the second: 'Общие различия от первого коммита ко второму'
+Unresolved conflicts: 'Неразрешённые конфликты'
+Unstage: Убрать из индекса
+Unstage the selected files; preserve working-tree contents: 'Убрать выбранные файлы из индекса; сохранить содержимое рабочей копии'
+Unstage this file (preserve working-tree contents): 'Убрать этот файл из индекса (сохранить содержимое рабочей копии)'
+Untracked or ignored files in the way may be overwritten or removed.: 'Мешающие неотслеживаемые или игнорируемые файлы могут быть перезаписаны или удалены.'
+Update existing and fetch new tags: 'Обновить существующие и получить новые теги'
+Update registered submodules: 'Обновить зарегистрированные подмодули'
+Updating .gitignore…: 'Обновление .gitignore…'
+Updating remote configuration…: 'Обновление настроек удалённого репозитория…'
+Use ? for one character or * for any number of characters in this folder.: 'Используйте ? для одного символа или * для любого числа символов в этой папке.'
+Use Discard to restore the pre-merge version of this file: 'Используйте отмену изменений для восстановления версии файла до слияния'
+Use Staged only when opening or staging files: 'Использовать только индексированные изменения при открытии или индексировании файлов'
+? Use only staged changes for commits and message generation when opening a repository with staged files or after staging a file. Switch back to All changes when the index is empty.
+: 'Использовать только индексированные изменения для коммитов и генерации сообщений при открытии репозитория с индексированными файлами или после индексирования файла. Вернуться ко всем изменениям, когда индекс пуст.'
+Used only when generating a commit message.: 'Используется только при генерации сообщения коммита.'
+User Interface: 'Интерфейс пользователя'
+Wait for the current operation or refresh the repository: 'Дождитесь завершения текущей операции или обновите репозиторий'
+Wait for the current operation or refresh the working tree: 'Дождитесь завершения текущей операции или обновите рабочую копию'
+Wait for the current operation to finish: 'Дождитесь завершения текущей операции'
+Wait for the current operation to finish.: 'Дождитесь завершения текущей операции.'
+Warnings and errors: 'Предупреждения и ошибки'
+What do you want to do?: 'Что вы хотите сделать?'
+What is sent when you generate a commit message.: 'Какие данные отправляются при генерации сообщения коммита.'
+Working Tree: Рабочая копия
+Worktrees updated: 'Рабочие копии обновлены'
+Yesterday: 'Вчера'
+Your changes in Conflict Solver will be lost.: 'Изменения в редакторе конфликтов будут потеряны.'
+abort if any needs to be pushed: 'Прервать, если требуется отправка'
+branch:
+  check_out: Переключиться…
+  copy: Копировать
+  copy_id: Копировать ID
+  copy_message: Копировать сообщение
+  create: Создать…
+  delete: Удалить…
+  fast_forward: Слияние перемоткой
+  log: Журнал
+  merge: Слить ветку…
+  merge_picker: Слияние…
+  push: Отправить…
+  push_to: Отправить в…
+  rebase_head_to: Перебазировать ветку…
+  rebase_picker: Перебазирование…
+  rename: Переименовать…
+  reset: Сбросить…
+  reset_advanced: Расширенный сброс…
+  set_tracking: Настроить отслеживание…
+  stop_tracking: Прекратить отслеживание…
+  switch: Переключиться
+edit:
+  copy: Копировать
+  cut: Вырезать
+  paste: Вставить
+  redo: Повторить
+  select_all: Выделить всё
+  undo: Отменить
+help:
+  about: О SannyGit
+local:
+  commit: Коммит
+  discard: Отменить изменения…
+  stage: Индексировать
+  stashes: Отложенные изменения…
+  unstage: Убрать из индекса
+menu:
+  blame: Авторство строк…
+  edit_git_config: Изменить конфигурацию Git
+  repository_config: Репозитория…
+  review: Обзор
+  user_config: Пользователя…
+menu_title:
+  branch: Ветка
+  edit: Правка
+  help: Справка
+  local: Локальные операции
+  query: Запрос
+  remote: Удалённые операции
+  repository: Репозиторий
+  review: Обзор
+  tools: Инструменты
+  view: Вид
+  window: Окно
+query:
+  reload_history: Перезагрузить историю
+remote:
+  fetch: Получить…
+  manage: Управление удалёнными репозиториями…
+  pull: Получить и объединить…
+  push: Отправить…
+  push_tag: Отправить выбранный тег…
+remote repository: 'удалённый репозиторий'
+repository:
+  add_group: Добавить группу…
+  add_or_create: Добавить или создать…
+  add_worktree: Добавить рабочую копию…
+  clone: Клонировать…
+  close: Закрыть
+  close_repository: Закрыть репозиторий
+  edit_config: Изменить конфигурацию репозитория…
+  edit_user_config: Изменить конфигурацию пользователя…
+  exit: Выход
+  new_window: Новое окно
+  prune_worktrees: Очистить устаревшие рабочие копии…
+  remove_worktree: Удалить рабочую копию…
+  search: Поиск репозиториев…
+  settings: Настройки…
+select a commit: 'выберите коммит'
+selected remote: 'выбранный удалённый репозиторий'
+shortcut_category:
+  branch: Ветка
+  help: Справка
+  local: Локальные операции
+  query: Запрос
+  remote: Удалённые операции
+  repository: Репозиторий
+  tools: Инструменты
+  view: Вид
+  window: Окно
+tools:
+  dark_theme: Тёмная тема
+  light_theme: Светлая тема
+  preferences: Настройки…
+view:
+  refresh: Обновить
+window:
+  full_screen: Полный экран
+  maximize: Развернуть
+  minimize: Свернуть
+›: ›
+★: ★
+✓  Amend: '✓  Изменить коммит'
+✓  Commit: '✓  Коммит'

@@ -21,9 +21,9 @@ pub(super) fn documents(ui: &mut Ui, dialog: &mut Dialog, palette: Palette) {
         .as_ref()
         .or(dialog.comparison.as_ref())
     else {
-        ui.label(
+        ui.label(crate::i18n::tr_msg(
             "This file has no editable text. Use Take Ours or Take Theirs from the file menu.",
-        );
+        ));
         return;
     };
     let row_height = ui.text_style_height(&egui::TextStyle::Monospace) + 4.0;
@@ -534,9 +534,11 @@ fn ribbon_button(
     let y = ((top + bottom) / 2.0).clamp(clip.top() + size / 2.0, clip.bottom() - size / 2.0);
     let rect =
         egui::Rect::from_center_size(egui::pos2(clip.center().x, y), egui::Vec2::splat(size));
+    let label = crate::i18n::tr_msg(label);
     let response = ui.interact(rect, ui.make_persistent_id(id), egui::Sense::click());
-    response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, response.enabled(), label));
+    let info = label.clone();
+    let enabled = response.enabled();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, info.clone()));
     let fill = if response.hovered() || response.has_focus() {
         palette.selection
     } else {
@@ -596,11 +598,13 @@ fn pane(
         .show(ui, |ui| {
             ui.set_min_width((width - 14.0).max(0.0));
             let result = if dialog.show_base {
-                "Common Base"
+                crate::i18n::tr_msg("Common Base")
             } else {
-                "Working Tree"
+                crate::i18n::tr_msg("Working Tree")
             };
-            ui.strong(["Ours", "Theirs", result][column]);
+            ui.strong(crate::i18n::tr_msg(
+                ["Ours", "Theirs", result.as_str()][column],
+            ));
         })
         .response
         .rect;

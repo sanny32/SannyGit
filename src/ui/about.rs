@@ -19,6 +19,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         ctx.data_mut(|data| data.remove::<Option<egui::Pos2>>(state_id));
         return;
     }
+    let title = crate::i18n::tr_msg(TITLE);
     let saved_position = ctx.data(|data| data.get_temp::<Option<egui::Pos2>>(state_id));
     let first_frame = saved_position.is_none();
     let position = saved_position.unwrap_or_else(|| {
@@ -32,7 +33,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
         position
     });
     let builder = crate::theme::native_viewport()
-        .with_title(TITLE)
+        .with_title(title.as_str())
         .with_inner_size(SIZE)
         .with_resizable(false)
         .with_decorations(true)
@@ -55,7 +56,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             }
             #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             if first_frame && class == egui::ViewportClass::Immediate {
-                if let Err(error) = crate::native_window::begin_modal(ui.ctx(), TITLE) {
+                if let Err(error) = crate::native_window::begin_modal(ui.ctx(), &title) {
                     app.error = Some(format!("Cannot attach About to the main window: {error}"));
                     close(ui.ctx(), app);
                     return;
@@ -81,7 +82,7 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
             } else if first_frame && class == egui::ViewportClass::Immediate {
                 #[cfg(target_os = "windows")]
                 if let Err(error) =
-                    crate::native_window::prepare_child_presentation(ui.ctx(), TITLE)
+                    crate::native_window::prepare_child_presentation(ui.ctx(), &title)
                 {
                     app.error = Some(error.to_string());
                 }
@@ -154,19 +155,22 @@ fn body(ui: &mut Ui, palette: Palette) {
             ui.set_width(ui.available_width());
             ui.add_space(8.0);
             ui.label(
-                RichText::new("SannyGit")
+                RichText::new(crate::i18n::tr_msg("SannyGit"))
                     .size(ABOUT_BRAND_FONT_SIZE)
                     .family(semibold_family()),
             );
             ui.add_space(8.0);
-            ui.label(concat!("Version ", env!("CARGO_PKG_VERSION")));
-            ui.add_space(12.0);
-            ui.label(RichText::new(
-                "A desktop Git client built with Rust and egui.",
+            ui.label(crate::i18n::tr_args(
+                "Version %{version}",
+                &[("version", env!("CARGO_PKG_VERSION"))],
             ));
+            ui.add_space(12.0);
+            ui.label(RichText::new(crate::i18n::tr_msg(
+                "A desktop Git client built with Rust and egui.",
+            )));
             ui.add_space(16.0);
             detail_row(ui, palette, Icon::TextFile, "License:", |ui| {
-                ui.label("MIT");
+                ui.label(crate::i18n::tr_msg("MIT"));
             });
             detail_row(ui, palette, Icon::CodeFile, "Source code:", |ui| {
                 ui.hyperlink_to(
@@ -201,7 +205,7 @@ fn brand_caption(ui: &mut Ui, palette: Palette) {
     }
     ui.label(title);
     ui.label(
-        RichText::new("A simple Git client")
+        RichText::new(crate::i18n::tr_msg("A simple Git client"))
             .size(ABOUT_CAPTION_FONT_SIZE)
             .color(palette.muted),
     );
@@ -215,6 +219,7 @@ fn detail_row(ui: &mut Ui, palette: Palette, icon: Icon, label: &str, value: imp
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             ui.spacing_mut().item_spacing.x = 12.0;
             icons::paint(ui, icon, palette.muted, 18.0);
+            let label = crate::i18n::tr_msg(label);
             let column = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(92.0, 24.0));
             ui.allocate_ui_with_layout(column.size(), Layout::left_to_right(Align::Center), |ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);

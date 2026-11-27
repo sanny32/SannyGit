@@ -1,4 +1,4 @@
-use super::controls::icons::{self, Icon};
+﻿use super::controls::icons::{self, Icon};
 use super::controls::popup_menu::{self, Entry};
 use super::controls::tooltips::TooltipResponse;
 use crate::{
@@ -34,9 +34,9 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
     super::header(ui, 28.0, palette, |ui| {
         ui.spacing_mut().interact_size.y = 20.0;
         if history_window {
-            ui.label("Graph");
+            ui.label(crate::i18n::tr_msg("Graph"));
         } else {
-            ui.heading("Journal");
+            ui.heading(crate::i18n::tr_msg("Journal"));
         }
         ui.add_space(8.0);
         let search_width = (ui.available_width() - 360.0).clamp(60.0, 240.0);
@@ -44,7 +44,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
             !app.history.commits.is_empty(),
             crate::ui::controls::singleline(&mut app.history.journal_filter)
                 .min_size(Vec2::ZERO)
-                .hint_text("Search loaded commits…")
+                .hint_text(crate::i18n::tr_msg("Search loaded commits…"))
                 .desired_width(search_width)
                 .margin(Vec2::new(5.0, 2.0)),
         );
@@ -59,14 +59,14 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
             ui.add_enabled_ui(!app.blocks_reads(), |ui| {
                 ComboBox::from_id_salt("journal.scope")
                     .width(100.0)
-                    .selected_text(if all {
+                    .selected_text(crate::i18n::tr_msg(if all {
                         "All branches"
                     } else {
                         "Current branch"
-                    })
+                    }))
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut all, false, "Current branch");
-                        ui.selectable_value(&mut all, true, "All branches");
+                        ui.selectable_value(&mut all, false, crate::i18n::tr_msg("Current branch"));
+                        ui.selectable_value(&mut all, true, crate::i18n::tr_msg("All branches"));
                     });
             });
         }
@@ -77,7 +77,7 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
         if ui
             .add_enabled(
                 !app.blocks_reads() && app.repositories.get(app.selected_repository).is_some(),
-                Button::new("Reload"),
+                Button::new(crate::i18n::tr_msg("Reload")),
             )
             .clicked()
         {
@@ -86,15 +86,15 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
         let cancelling = app.history_cancellable();
         let response = ui.add_enabled(
             cancelling || app.history_can_load_more(),
-            Button::new(if cancelling { "Cancel" } else { "More" })
+            Button::new(crate::i18n::tr_msg(if cancelling { "Cancel" } else { "More" }))
                 .min_size(Vec2::new(60.0, search.rect.height())),
-        ).help_text(if cancelling {
+        ).help_text(crate::i18n::tr_msg(if cancelling {
             "Cancel history loading; keep existing rows, selection and scroll position."
         } else {
             "Load up to 500 more commits from the same snapshot. Search covers loaded commits only."
-        }).disabled_help_text(if app.history_at_limit() {
+        })).disabled_help_text(crate::i18n::tr_msg(if app.history_at_limit() {
             "The 10,000-commit safety limit is reached. Search covers loaded commits only."
-        } else { "No more history is available yet; wait for loading or use Reload." });
+        } else { "No more history is available yet; wait for loading or use Reload." }));
         if response.clicked() && ui.ctx().current_pass_index() == 0 {
             if cancelling {
                 app.cancel_history();
@@ -104,24 +104,41 @@ fn rows(ui: &mut Ui, app: &mut SannyGitApp, history_window: bool) {
         }
         let (status, help, color) = if app.history.history_error.is_some() {
             (
-                "History unavailable".into(),
-                String::from("Reload to retry; displayed rows are from the previous load."),
+                crate::i18n::tr_msg("History unavailable"),
+                crate::i18n::tr_msg("Reload to retry; displayed rows are from the previous load."),
                 palette.removed_text,
             )
         } else if app.history.history_loading {
             (
-                "Loading…".into(),
-                "Loading history; existing rows remain available.".into(),
+                crate::i18n::tr_msg("Loading…"),
+                crate::i18n::tr_msg("Loading history; existing rows remain available."),
                 palette.muted,
             )
         } else if let Some(notice) = app.history_notice() {
-            ("Cancelled".into(), notice.into(), palette.muted)
+            (
+                crate::i18n::tr_msg("Cancelled"),
+                crate::i18n::tr_msg(notice),
+                palette.muted,
+            )
         } else {
             (
-                if app.history_at_limit() { format!("{} (limit)", app.history.commits.len()) }
-                else if app.history.history_truncated { format!("{}+ loaded", app.history.commits.len()) }
-                else { format!("{} commits", app.history.commits.len()) },
-                "500 commits per page; 10,000 loaded commits maximum. Search applies to loaded history only. More retains existing rows; Reload updates the snapshot.".into(),
+                if app.history_at_limit() {
+                    crate::i18n::tr_args(
+                        "%{count} (limit)",
+                        &[("count", &app.history.commits.len().to_string())],
+                    )
+                } else if app.history.history_truncated {
+                    crate::i18n::tr_args(
+                        "%{count}+ loaded",
+                        &[("count", &app.history.commits.len().to_string())],
+                    )
+                } else {
+                    crate::i18n::tr_args(
+                        "%{count} commits",
+                        &[("count", &app.history.commits.len().to_string())],
+                    )
+                },
+                crate::i18n::tr_msg("500 commits per page; 10,000 loaded commits maximum. Search applies to loaded history only. More retains existing rows; Reload updates the snapshot."),
                 palette.muted,
             )
         };
@@ -612,7 +629,7 @@ fn graph(ui: &mut Ui, app: &SannyGitApp, index: usize, connected: bool, palette:
     // Appending older branches must not move already visible graph nodes.
     let step = 14.0;
     if app.history.history_max_lane as f32 * step + 12.0 > rect.width() {
-        response.clone().help_text("Additional graph lanes are outside the column. Drag the graph column separator to widen it, or open Commit details to inspect all parents.");
+        response.clone().help_text(crate::i18n::tr_msg("Additional graph lanes are outside the column. Drag the graph column separator to widen it, or open Commit details to inspect all parents."));
     }
     let position = |row: usize, lane: usize| {
         eframe::egui::pos2(
@@ -640,7 +657,9 @@ fn graph(ui: &mut Ui, app: &SannyGitApp, index: usize, connected: bool, palette:
             }
         }
     } else {
-        response.help_text("Graph connections are hidden while filtering");
+        response.help_text(crate::i18n::tr_msg(
+            "Graph connections are hidden while filtering",
+        ));
     }
     let commit = &app.history.commits[index];
     painter.circle_filled(
@@ -664,21 +683,26 @@ fn details(ui: &mut Ui, app: &mut SannyGitApp) {
         ui.data_mut(|data| data.remove::<bool>(shown_id));
         return;
     }
+    let default_name = crate::i18n::tr_msg("Repository");
     let name = app
         .repositories
         .get(app.selected_repository)
-        .map_or("Repository", |repository| repository.name.as_str());
-    let history_title = view
-        .ref_name()
-        .map_or_else(|| "History".to_owned(), |tag| format!("Log: {tag}"));
-    let title = format!("SannyGit — {name} — {history_title}");
+        .map_or(default_name.as_str(), |repository| repository.name.as_str());
+    let history_title = view.ref_name().map_or_else(
+        || crate::i18n::tr_msg("History"),
+        |tag| crate::i18n::tr_args("Log: %{tag}", &[("tag", tag)]),
+    );
+    let title = crate::i18n::tr_args(
+        "SannyGit — %{name} — %{history}",
+        &[("name", name), ("history", &history_title)],
+    );
     let ctx = ui.ctx().clone();
     if ctx.embed_viewports() {
         let mut open = true;
-        Window::new(
-            view.ref_name()
-                .map_or("Repository history", |_| history_title.as_str()),
-        )
+        Window::new(view.ref_name().map_or_else(
+            || crate::i18n::tr_msg("Repository history"),
+            |_| history_title.clone(),
+        ))
         .id(egui::Id::unique("journal.details"))
         .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
         .collapsible(false)
@@ -801,14 +825,14 @@ fn history_panels(ui: &mut Ui, app: &mut SannyGitApp) {
         .frame(Frame::new().fill(palette.panel))
         .show(ui, |ui| {
             let title = app.history.ref_name().map_or_else(
-                || "Repository history".to_owned(),
-                |tag| format!("Log: {tag}"),
+                || crate::i18n::tr_msg("Repository history"),
+                |tag| crate::i18n::tr_args("Log: %{tag}", &[("tag", tag)]),
             );
             super::controls::dialog_style::header(
                 ui,
                 palette,
                 &title,
-                "Browse commits, changed files and their diffs.",
+                &crate::i18n::tr_msg("Browse commits, changed files and their diffs."),
             );
         });
     Panel::bottom("history.diff")
@@ -825,8 +849,8 @@ fn history_panels(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.spacing_mut().interact_size.y = 20.0;
                 ui.spacing_mut().button_padding = Vec2::new(6.0, 1.0);
                 if app.history.comparing_with.is_some() {
-                    ui.label("Comparison");
-                    if ui.small_button("Clear").clicked() {
+                    ui.label(crate::i18n::tr_msg("Comparison"));
+                    if ui.small_button(crate::i18n::tr_msg("Clear")).clicked() {
                         app.clear_commit_comparison();
                     }
                     let from = app
@@ -842,16 +866,23 @@ fn history_panels(ui: &mut Ui, app: &mut SannyGitApp) {
                         .map(|hash| hash.get(..8).unwrap_or(hash))
                         .unwrap_or("?");
                     ui.add(Label::new(format!("{from} → {to}")).truncate())
-                        .help_text("Unified diff from the first commit to the second");
+                        .help_text(crate::i18n::tr_msg(
+                            "Unified diff from the first commit to the second",
+                        ));
                 } else {
-                    ui.label("Changes");
-                    ui.selectable_value(&mut side_by_side, false, "Unified");
-                    ui.selectable_value(&mut side_by_side, true, "Side by Side");
+                    ui.label(crate::i18n::tr_msg("Changes"));
+                    ui.selectable_value(&mut side_by_side, false, crate::i18n::tr_msg("Unified"));
+                    ui.selectable_value(
+                        &mut side_by_side,
+                        true,
+                        crate::i18n::tr_msg("Side by Side"),
+                    );
+                    let select_file = crate::i18n::tr_msg("Select a file");
                     let path = app
                         .history
                         .selected_commit_file
                         .as_deref()
-                        .unwrap_or("Select a file");
+                        .unwrap_or(&select_file);
                     ui.add(Label::new(path).truncate()).help_text(path);
                 }
                 if let Some(preview) = &app.history.commit_preview {
@@ -894,7 +925,7 @@ fn history_panels(ui: &mut Ui, app: &mut SannyGitApp) {
                 .show(ui, |ui| {
                     ui.take_available_space();
                     super::header(ui, 28.0, palette, |ui| {
-                        ui.label("Commit");
+                        ui.label(crate::i18n::tr_msg("Commit"));
                     });
                     metadata(ui, app);
                 });
@@ -942,15 +973,18 @@ fn metadata(ui: &mut Ui, app: &SannyGitApp) {
                     ui.vertical(|ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            ui.label("Commit");
+                            ui.label(crate::i18n::tr_msg("Commit"));
                             ui.monospace(commit.hash.get(..8).unwrap_or(&commit.hash))
                                 .help_text(&commit.hash);
                             if icons::button(ui, Icon::Copy, "Copy full commit hash").clicked() {
                                 ui.ctx().copy_text(commit.hash.clone());
                             }
                         });
-                        ui.label(format!("by {}", commit.author))
-                            .help_text(&commit.email);
+                        ui.label(crate::i18n::tr_args(
+                            "by %{author}",
+                            &[("author", &commit.author)],
+                        ))
+                        .help_text(&commit.email);
                         ui.label(app.preferences.commit_date(&commit.date))
                             .help_text(&commit.date);
                         let parents = commit
@@ -960,9 +994,12 @@ fn metadata(ui: &mut Ui, app: &SannyGitApp) {
                             .collect::<Vec<_>>();
                         ui.add(
                             Label::new(if parents.is_empty() {
-                                "Parent: none (root or shallow boundary)".into()
+                                crate::i18n::tr_msg("Parent: none (root or shallow boundary)")
                             } else {
-                                format!("Parent: {}", parents.join(", "))
+                                crate::i18n::tr_args(
+                                    "Parent: %{parents}",
+                                    &[("parents", &parents.join(", "))],
+                                )
                             })
                             .wrap(),
                         )
@@ -977,7 +1014,8 @@ fn metadata(ui: &mut Ui, app: &SannyGitApp) {
                 );
                 if commit.parents.len() > 1 {
                     ui.label(
-                        RichText::new("Merge changes against first parent").color(palette.muted),
+                        RichText::new(crate::i18n::tr_msg("Merge changes against first parent"))
+                            .color(palette.muted),
                     );
                 }
                 let mut refs = app
@@ -995,9 +1033,12 @@ fn metadata(ui: &mut Ui, app: &SannyGitApp) {
                 if !refs.is_empty() {
                     ui.add_space(8.0);
                     ui.add(
-                        Label::new(format!("Refs: {}", refs.join(", ")))
-                            .wrap()
-                            .selectable(true),
+                        Label::new(crate::i18n::tr_args(
+                            "Refs: %{refs}",
+                            &[("refs", &refs.join(", "))],
+                        ))
+                        .wrap()
+                        .selectable(true),
                     );
                 }
             });
@@ -1012,10 +1053,10 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
     super::header(ui, 28.0, palette, |ui| {
         ui.spacing_mut().interact_size.y = 20.0;
         ui.spacing_mut().button_padding = Vec2::new(6.0, 1.0);
-        ui.label("Files");
+        ui.label(crate::i18n::tr_msg("Files"));
         ui.add(
             super::controls::singleline(&mut filter)
-                .hint_text("File filter")
+                .hint_text(crate::i18n::tr_msg("File filter"))
                 .desired_width(100.0)
                 .min_size(Vec2::ZERO)
                 .margin(Vec2::new(5.0, 2.0)),
@@ -1023,23 +1064,23 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
         retry = ui
             .add_enabled(
                 app.history.commit_preview_error.is_some() && !app.blocks_reads(),
-                Button::new("Retry"),
+                Button::new(crate::i18n::tr_msg("Retry")),
             )
             .clicked();
         let status = if app.history.commit_preview_error.is_some() {
-            "Preview unavailable"
+            crate::i18n::tr_msg("Preview unavailable")
         } else if app.history.selected_commit.is_none() {
-            "Select a commit"
+            crate::i18n::tr_msg("Select a commit")
         } else if let Some(files) = &app.history.commit_files {
             if files.is_empty() {
-                "No changed files"
+                crate::i18n::tr_msg("No changed files")
             } else if app.history.commit_preview.is_none() {
-                "Loading file diff…"
+                crate::i18n::tr_msg("Loading file diff…")
             } else {
-                ""
+                String::new()
             }
         } else {
-            "Loading files…"
+            crate::i18n::tr_msg("Loading files…")
         };
         ui.add(Label::new(RichText::new(status).color(palette.muted)).truncate());
     });
@@ -1071,7 +1112,8 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
             {
                 header.col(|ui| {
                     ui.add_space(super::controls::TABLE_CELL_PADDING);
-                    ui.add(Label::new(*title).truncate()).help_text(*title);
+                    ui.add(Label::new(crate::i18n::tr_msg(title)).truncate())
+                        .help_text(crate::i18n::tr_msg(title));
                     if index + 1 < 3 {
                         super::controls::table_header_separator(ui, palette);
                     }
@@ -1098,15 +1140,15 @@ fn files(ui: &mut Ui, app: &mut SannyGitApp) {
                 });
                 row.col(|ui| {
                     ui.add_space(super::controls::TABLE_CELL_PADDING);
-                    let status = match file.status.as_bytes().first() {
+                    let status = crate::i18n::tr_msg(match file.status.as_bytes().first() {
                         Some(b'A') => "Added",
                         Some(b'D') => "Deleted",
                         Some(b'M') => "Modified",
                         Some(b'R') => "Renamed",
                         Some(b'C') => "Copied",
                         Some(b'T') => "Type changed",
-                        _ => &file.status,
-                    };
+                        _ => file.status.as_str(),
+                    });
                     ui.add(
                         Label::new(RichText::new(status).color(palette.muted))
                             .truncate()

@@ -23,9 +23,9 @@ pub(crate) fn operation_cancel_id() -> Id {
 pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     let status = if app.tag_patch_pending() {
-        "Exporting patch…".to_owned()
+        crate::i18n::tr_msg("Exporting patch…")
     } else {
-        app.status.clone()
+        crate::i18n::tr_msg(&app.status)
     };
     Panel::bottom("working_tree.v2.status")
         .exact_size(HEIGHT)
@@ -41,9 +41,9 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.spacing_mut().item_spacing.x = 5.0;
                 icons::paint(ui, Icon::Branch, palette.text, 14.0);
                 ui.label(if app.branches.current_branch.is_empty() {
-                    "No repository"
+                    crate::i18n::tr_msg("No repository")
                 } else {
-                    &app.branches.current_branch
+                    app.branches.current_branch.clone()
                 });
                 let badge = app.tracking.badge();
                 if !badge.is_empty() {
@@ -54,7 +54,10 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                     .help_text(app.tracking.description());
                 }
                 ui.separator();
-                ui.label(format!("{} changes", app.changes.len()));
+                ui.label(crate::i18n::tr_args(
+                    "%{count} changes",
+                    &[("count", &app.changes.len().to_string())],
+                ));
                 ui.separator();
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some((icon, tooltip)) = connection_indicator(app) {
@@ -737,7 +740,7 @@ mod tests {
                     app.background_progress_only = true;
                     app.status = "Pull in progress…".repeat(12);
                     let output = render(&mut app, vec![]);
-                    let messages = text_rects(&output.shapes, &app.status);
+                    let messages = text_rects(&output.shapes, &crate::i18n::tr_msg(&app.status));
                     assert_eq!(messages.len(), 1);
                     let cancel = ctx
                         .data(|data| data.get_temp::<Rect>(super::operation_cancel_id()))
@@ -755,7 +758,7 @@ mod tests {
                     app.status = "Idle".into();
                     let output = render(&mut app, vec![]);
                     assert!(text_rects(&output.shapes, "Syncing with remote…").is_empty());
-                    let idle = text_rects(&output.shapes, "Idle");
+                    let idle = text_rects(&output.shapes, &crate::i18n::tr_msg("Idle"));
                     assert_eq!(idle.len(), 1);
                     assert_eq!(idle[0].center().y, status_message.center().y);
                 }

@@ -16,26 +16,31 @@ pub fn show(ctx: &egui::Context, app: &mut SannyGitApp) {
     let (status, push_ready) = match (&dialog.error, &dialog.preview) {
         (Some(error), _) => (error.clone(), false),
         (None, Some(preview)) if preview.fast_forward => (
-            "Do you want to push changes up to this commit?".to_owned(),
+            crate::i18n::tr_msg("Do you want to push changes up to this commit?"),
             true,
         ),
         (None, Some(preview)) if preview.already_pushed => (
-            "The remote branch already contains this commit.".to_owned(),
+            crate::i18n::tr_msg("The remote branch already contains this commit."),
             false,
         ),
         (None, Some(preview)) if !preview.on_branch => (
-            "This commit is not on the current branch.".to_owned(),
+            crate::i18n::tr_msg("This commit is not on the current branch."),
             false,
         ),
         (None, Some(_)) => (
-            "This commit cannot be pushed without rewriting the remote branch.".to_owned(),
+            crate::i18n::tr_msg(
+                "This commit cannot be pushed without rewriting the remote branch.",
+            ),
             false,
         ),
         (None, None) if busy => (
-            "Checking whether this commit can be pushed…".to_owned(),
+            crate::i18n::tr_msg("Checking whether this commit can be pushed…"),
             false,
         ),
-        (None, None) => ("Close and reopen Push to retry.".to_owned(), false),
+        (None, None) => (
+            crate::i18n::tr_msg("Close and reopen Push to retry."),
+            false,
+        ),
     };
     let (close, push) = confirmation(
         ctx,
@@ -84,11 +89,14 @@ fn confirmation(ctx: &egui::Context, prompt: Prompt<'_>, palette: Palette) -> (b
         );
         dialog_style::section(ui, palette.panel, egui::Margin::symmetric(12, 10), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            let commit_line = format!("Commit: {}", prompt.subject);
+            let commit_line =
+                crate::i18n::tr_args("Commit: %{subject}", &[("subject", prompt.subject)]);
             dialog_style::text_line(ui, &commit_line, 20.0).help_text(prompt.commit);
-            let branch_line = format!("Branch: {}", prompt.branch);
+            let branch_line =
+                crate::i18n::tr_args("Branch: %{branch}", &[("branch", prompt.branch)]);
             dialog_style::text_line(ui, &branch_line, 20.0).help_text(&branch_line);
-            let remote_line = format!("Remote: {}", prompt.upstream);
+            let remote_line =
+                crate::i18n::tr_args("Remote: %{remote}", &[("remote", prompt.upstream)]);
             dialog_style::text_line(ui, &remote_line, 20.0).help_text(&remote_line);
             dialog_style::text_line(ui, RichText::new(prompt.status).color(palette.muted), 20.0)
                 .help_text(prompt.status);

@@ -67,7 +67,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         Vec2::new(ui.available_width(), super::WORKSPACE_HEADER_HEIGHT),
         Layout::left_to_right(Align::Center),
         |ui| {
-            let heading = ui.heading(RichText::new("Branches").color(
+            let heading = ui.heading(RichText::new(crate::i18n::tr_msg("Branches")).color(
                 if app.branches.error.is_some() {
                     palette.removed_text
                 } else {
@@ -75,7 +75,7 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
                 },
             ));
             if app.branches.error.is_some() {
-                heading.help_text("Reload branches to retry.");
+                heading.help_text(crate::i18n::tr_msg("Reload branches to retry."));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_enabled_ui(!app.busy(), |ui| {
@@ -288,7 +288,7 @@ pub(super) fn pick_pending_tag_patch(ctx: &egui::Context, app: &mut SannyGitApp)
     };
     egui::Popup::close_all(ctx);
     let mut picker = rfd::FileDialog::new()
-        .set_title("Select Directory")
+        .set_title(crate::i18n::tr_msg("Select Directory"))
         .set_can_create_directories(true);
     // Own the picker by the window that opened it. rfd then keeps it modal
     // on Windows, macOS, and Linux (X11 and Wayland).
@@ -418,6 +418,7 @@ fn branch_group(
         RefKind::Remote => "Remote Branches",
         RefKind::Tag => "Tags",
     };
+    let localized_title = crate::i18n::tr_msg(title);
     let matching: Vec<_> = refs.iter().filter(|r| r.kind == kind).collect();
     if matching.is_empty() && kind != RefKind::Tag {
         return false;
@@ -451,7 +452,11 @@ fn branch_group(
     }
     let body_visuals = previous_visuals.clone();
     let group = section_header(
-        RichText::new(format!("{title} ({shown})")).text_style(eframe::egui::TextStyle::Body),
+        RichText::new(crate::i18n::tr_args(
+            "%{title} (%{count})",
+            &[("title", &localized_title), ("count", &shown.to_string())],
+        ))
+        .text_style(eframe::egui::TextStyle::Body),
     )
     .id_salt(title)
     .default_open(kind == RefKind::Local)
@@ -497,10 +502,14 @@ fn branch_group(
     }
     if kind == RefKind::Tag {
         add_tag_requested = popup_menu::context(&group.header_response, palette, || {
-            vec![
-                popup_menu::Entry::item("Add Tag…", requested.tag_add_allowed, ())
-                    .help("Wait for the current operation to finish"),
-            ]
+            vec![popup_menu::Entry::item(
+                crate::i18n::tr_msg("Add Tag…"),
+                requested.tag_add_allowed,
+                (),
+            )
+            .help(crate::i18n::tr_msg(
+                "Wait for the current operation to finish",
+            ))]
         })
         .is_some();
     }
@@ -796,7 +805,7 @@ fn branch_row_contents(
             .append_to(&mut text, ui.style(), FontSelection::Default, Align::Center);
     }
     if branch.upstream_gone {
-        RichText::new(" ?")
+        RichText::new(crate::i18n::tr_msg(" ?"))
             .text_style(egui::TextStyle::Body)
             .color(palette.removed_text)
             .append_to(&mut text, ui.style(), FontSelection::Default, Align::Center);
@@ -838,30 +847,41 @@ fn branch_tooltip(branch: &BranchRef, kind: RefKind) -> String {
             let state = if !branch.upstream_gone {
                 String::new()
             } else if let Some(remote) = &branch.upstream_remote {
-                format!(" (gone on {remote})")
+                crate::i18n::tr_args(" (gone on %{remote})", &[("remote", remote)])
             } else {
-                " (gone)".to_owned()
+                crate::i18n::tr_msg(" (gone)")
             };
-            format!("\nUpstream: {upstream}{state}")
+            crate::i18n::tr_args(
+                "\nUpstream: %{upstream}%{state}",
+                &[("upstream", upstream), ("state", &state)],
+            )
         })
         .unwrap_or_default();
-    format!(
-        "{}\nObject: {}{}{}{}",
-        branch.full_name,
-        branch.hash,
-        upstream,
-        branch
-            .tag_subject
-            .as_ref()
-            .map(|subject| format!("\n{subject}"))
-            .unwrap_or_default(),
-        match kind {
-            RefKind::Local => "\nDouble-click to switch",
-            RefKind::Remote => {
-                "\nDouble-click to switch to a local branch or choose checkout options"
-            }
-            RefKind::Tag => "\nDouble-click to check out a detached HEAD",
-        }
+    crate::i18n::tr_args(
+        "%{name}\nObject: %{object}%{upstream}%{subject}%{action}",
+        &[
+            ("name", &branch.full_name),
+            ("object", &branch.hash),
+            ("upstream", &upstream),
+            (
+                "subject",
+                &branch
+                    .tag_subject
+                    .as_ref()
+                    .map(|subject| crate::i18n::tr_args("\n%{subject}", &[("subject", subject)]))
+                    .unwrap_or_default(),
+            ),
+            (
+                "action",
+                &crate::i18n::tr_msg(match kind {
+                    RefKind::Local => "\nDouble-click to switch",
+                    RefKind::Remote => {
+                        "\nDouble-click to switch to a local branch or choose checkout options"
+                    }
+                    RefKind::Tag => "\nDouble-click to check out a detached HEAD",
+                }),
+            ),
+        ],
     )
 }
 
@@ -1163,7 +1183,7 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                 ui.spacing_mut().item_spacing.y = 8.0;
                 ui.add_enabled_ui(!busy, |ui| {
                 ui.horizontal(|ui| {
-                        ui.label("Tag:");
+                        ui.label(crate::i18n::tr_msg("Tag:"));
                         let combo_width = ui.available_width();
                         super::controls::editable_combobox::show(
                             ui,
@@ -1175,7 +1195,7 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                             "No existing tags",
                         );
                     });
-                ui.label("Annotated Tag Message:");
+                ui.label(crate::i18n::tr_msg("Annotated Tag Message:"));
                 let message = ui.add_sized(
                     [ui.available_width(), 120.0],
                     TextEdit::multiline(&mut app.branches.new_tag_message)
@@ -1193,13 +1213,13 @@ fn tag_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                 super::controls::dialog_style::button_row(ui, |ui| {
                     let blocker = app.create_tag_blocker();
                     if ui.add_enabled(blocker.is_none(), super::controls::dialog_style::button("Add Tag & Push"))
-                        .disabled_help_text(blocker.unwrap_or(""))
-                        .on_hover_text("Create the tag and push it to the current remote")
+                        .disabled_help_text(crate::i18n::tr_blocker(blocker))
+                        .on_hover_text(crate::i18n::tr_msg("Create the tag and push it to the current remote"))
                         .clicked() {
                         app.create_tag(true);
                     }
                     if ui.add_enabled(blocker.is_none(), super::controls::dialog_style::primary("Add Tag", palette))
-                        .disabled_help_text(blocker.unwrap_or("")).dialog_accept() {
+                        .disabled_help_text(crate::i18n::tr_blocker(blocker)).dialog_accept() {
                         app.create_tag(false);
                     }
                     if ui.add_enabled(!busy, super::controls::dialog_style::button("Cancel")).dialog_cancel() {
@@ -1233,18 +1253,30 @@ fn remote_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             ui.label(dialog.remote.strip_prefix("refs/remotes/").unwrap_or(&dialog.remote));
             ui.add_enabled_ui(!app.busy(), |ui| {
                 eframe::egui::Grid::new("remote.checkout.options").min_col_width(155.0).spacing([12.0, 10.0]).show(ui, |ui| {
-                    ui.radio_value(&mut dialog.mode, 0, "Checkout local branch:");
+                    ui.radio_value(
+                    &mut dialog.mode,
+                    0,
+                    crate::i18n::tr_msg("Checkout local branch:"),
+                );
                     ui.add_enabled_ui(dialog.mode == 0, |ui| {
                         eframe::egui::ComboBox::from_id_salt("remote.local").width(280.0)
                             .selected_text(dialog.local.strip_prefix("refs/heads/").unwrap_or(&dialog.local))
                             .show_ui(ui, |ui| { for branch in app.branches.entries.iter().filter(|r| r.kind == RefKind::Local) { ui.selectable_value(&mut dialog.local, branch.full_name.clone(), &branch.name); } });
                     });
                     ui.end_row();
-                    ui.radio_value(&mut dialog.mode, 1, "Create local branch:");
+                    ui.radio_value(
+                        &mut dialog.mode,
+                        1,
+                        crate::i18n::tr_msg("Create local branch:"),
+                    );
                     ui.add_enabled(dialog.mode == 1, crate::ui::controls::singleline(&mut dialog.new_name).desired_width(280.0));
                     ui.end_row();
                 });
-                ui.radio_value(&mut dialog.mode, 2, "Don't create local branch (detached HEAD)");
+                ui.radio_value(
+                    &mut dialog.mode,
+                    2,
+                    crate::i18n::tr_msg("Don't create local branch (detached HEAD)"),
+                );
             });
         });
         super::controls::dialog_style::section(ui, palette.header, eframe::egui::Margin::symmetric(18, 12), |ui| {
@@ -1311,9 +1343,9 @@ fn rename_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                     );
                 }
                 let blocker = app.rename_branch_blocker();
-                let status = blocker.unwrap_or("Ready to rename");
+                let status = crate::i18n::tr_or(blocker, "Ready to rename");
                 ui.add(
-                    eframe::egui::Label::new(RichText::new(status).small().color(palette.muted))
+                    eframe::egui::Label::new(RichText::new(&status).small().color(palette.muted))
                         .truncate()
                         .show_tooltip_when_elided(false),
                 )
@@ -1332,7 +1364,7 @@ fn rename_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                             blocker.is_none(),
                             super::controls::dialog_style::primary("Rename", palette),
                         )
-                        .disabled_help_text(blocker.unwrap_or(""))
+                        .disabled_help_text(crate::i18n::tr_blocker(blocker))
                         .dialog_accept()
                     {
                         app.rename_branch();
@@ -1377,7 +1409,10 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
             eframe::egui::Margin::same(18),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
-                let source = format!("Create from HEAD ({})", app.branches.current_branch);
+                let source = crate::i18n::tr_args(
+                    "Create from HEAD (%{branch})",
+                    &[("branch", &app.branches.current_branch)],
+                );
                 ui.add(
                     eframe::egui::Label::new(&source)
                         .truncate()
@@ -1392,13 +1427,13 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                     );
                     ui.checkbox(
                         &mut app.branches.switch_to_new_branch,
-                        "Switch to the new branch",
+                        crate::i18n::tr_msg("Switch to the new branch"),
                     );
                 });
                 let blocker = app.create_branch_blocker();
-                let status = blocker.unwrap_or("Ready to create");
+                let status = crate::i18n::tr_or(blocker, "Ready to create");
                 ui.add(
-                    eframe::egui::Label::new(RichText::new(status).small().color(palette.muted))
+                    eframe::egui::Label::new(RichText::new(&status).small().color(palette.muted))
                         .truncate()
                         .show_tooltip_when_elided(false),
                 )
@@ -1417,7 +1452,7 @@ fn create_dialog(ui: &mut Ui, app: &mut SannyGitApp) {
                             blocker.is_none(),
                             super::controls::dialog_style::primary("Create", palette),
                         )
-                        .disabled_help_text(blocker.unwrap_or(""))
+                        .disabled_help_text(crate::i18n::tr_blocker(blocker))
                         .dialog_accept()
                     {
                         app.create_branch();
@@ -2158,7 +2193,7 @@ mod tests {
                                 );
                             } else {
                                 let _ = section_header(
-                                    RichText::new("Local Branches (1)")
+                                    RichText::new(crate::i18n::tr_msg("Local Branches (1)"))
                                         .text_style(eframe::egui::TextStyle::Body),
                                 )
                                 .id_salt("Local Branches")
@@ -2169,7 +2204,7 @@ mod tests {
                                         false,
                                         22.0,
                                         |ui| {
-                                            ui.label("feature");
+                                            ui.label(crate::i18n::tr_msg("feature"));
                                         },
                                     );
                                 });

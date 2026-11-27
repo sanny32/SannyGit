@@ -214,7 +214,7 @@ fn navigation_buttons(
             enabled && targets[index].is_some(),
             false,
         )
-        .on_hover_text(tooltips[index])
+        .on_hover_text(crate::i18n::tr_msg(tooltips[index]))
         .clicked()
         {
             selected = targets[index];
