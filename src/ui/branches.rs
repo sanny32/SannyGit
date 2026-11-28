@@ -813,7 +813,23 @@ fn branch_row_contents(
             .color(palette.removed_text)
             .append_to(&mut text, ui.style(), FontSelection::Default, Align::Center);
     }
-    if let Some(remote) = &branch.upstream_remote {
+    if !branch.upstream_gone {
+        if let Some(delta) = branch.upstream_delta {
+            let sign = match delta {
+                (0, 0) => " =",
+                (0, _) => " <",
+                (_, 0) => " >",
+                _ => " ↕",
+            };
+            RichText::new(sign).color(palette.muted).append_to(
+                &mut text,
+                ui.style(),
+                FontSelection::Default,
+                Align::Center,
+            );
+        }
+    }
+    if let Some(remote) = branch.upstream_remote.as_ref().or(branch.upstream.as_ref()) {
         let color = if branch.upstream_gone {
             palette.removed_text
         } else {
@@ -826,7 +842,18 @@ fn branch_row_contents(
     }
     // Reserve the current-branch star before the name claims the row width.
     let star = if branch.current { 22.0 } else { 0.0 };
-    let available = ui.available_width();
+    let delta = match branch.upstream_delta {
+        None | Some((0, 0)) => String::new(),
+        Some((ahead, 0)) => format!("+{ahead}"),
+        Some((0, behind)) => format!("-{behind}"),
+        Some((ahead, behind)) => format!("+{ahead} -{behind}"),
+    };
+    let badge = ui.painter().layout_no_wrap(
+        delta,
+        egui::TextStyle::Body.resolve(ui.style()),
+        palette.muted,
+    );
+    let available = ui.available_width() - badge.size().x;
     ui.scope(|ui| {
         ui.set_max_width((available - star).max(0.0));
         ui.add(
@@ -835,9 +862,14 @@ fn branch_row_contents(
                 .show_tooltip_when_elided(false),
         );
     });
-    if branch.current {
+    if branch.current || !badge.text().is_empty() {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            icons::paint(ui, Icon::Star, palette.accent, 14.0)
+            if branch.current {
+                icons::paint(ui, Icon::Star, palette.accent, 14.0);
+            }
+            if !badge.text().is_empty() {
+                ui.label(badge);
+            }
         });
     }
 }
@@ -847,7 +879,9 @@ fn branch_tooltip(branch: &BranchRef, kind: RefKind) -> String {
         .upstream
         .as_ref()
         .map(|upstream| {
-            let state = if !branch.upstream_gone {
+            let state = if let Some((ahead, behind)) = branch.upstream_delta {
+                format!(" (+{ahead} / -{behind})")
+            } else if !branch.upstream_gone {
                 String::new()
             } else if let Some(remote) = &branch.upstream_remote {
                 crate::i18n::tr_args(" (gone on %{remote})", &[("remote", remote)])
@@ -1788,6 +1822,7 @@ mod tests {
                     tag_subject: None,
                     upstream: None,
                     upstream_remote: None,
+                    upstream_delta: None,
                     upstream_gone: false,
                     current: false,
                     kind: RefKind::Local,
@@ -1853,6 +1888,7 @@ mod tests {
                 tag_subject: None,
                 upstream: None,
                 upstream_remote: None,
+                upstream_delta: None,
                 upstream_gone: false,
                 current: false,
                 kind: RefKind::Local,
@@ -1921,6 +1957,7 @@ mod tests {
             tag_subject: None,
             upstream: None,
             upstream_remote: None,
+            upstream_delta: None,
             upstream_gone: false,
             current: true,
             kind: RefKind::Local,
@@ -1957,6 +1994,7 @@ mod tests {
             tag_subject: None,
             upstream: None,
             upstream_remote: None,
+            upstream_delta: None,
             upstream_gone: false,
             current: false,
             kind: RefKind::Remote,
@@ -2021,6 +2059,7 @@ mod tests {
                     tag_subject: None,
                     upstream: None,
                     upstream_remote: None,
+                    upstream_delta: None,
                     upstream_gone: false,
                     current: false,
                     kind,
@@ -2150,6 +2189,7 @@ mod tests {
                 tag_subject: None,
                 upstream: None,
                 upstream_remote: None,
+                upstream_delta: None,
                 upstream_gone: false,
                 current: false,
                 kind: RefKind::Local,
@@ -2217,6 +2257,7 @@ mod tests {
                 tag_subject: None,
                 upstream: None,
                 upstream_remote: None,
+                upstream_delta: None,
                 upstream_gone: false,
                 current: false,
                 kind: RefKind::Local,
@@ -2316,6 +2357,7 @@ mod tests {
             tag_subject: None,
             upstream: None,
             upstream_remote: None,
+            upstream_delta: None,
             upstream_gone: false,
             current: false,
             kind,
@@ -2512,6 +2554,7 @@ mod tests {
                 branch_ref("origin/main", RefKind::Remote),
                 branch_ref("v1", RefKind::Tag),
             ];
+            refs[0].upstream_delta = Some((0, 46));
             refs[0].upstream = Some("origin/main".into());
             refs[0].upstream_remote = Some("origin".into());
             refs[1].upstream = Some("origin/release/1.x".into());
@@ -2536,7 +2579,8 @@ mod tests {
                 "Local Branches (2)",
                 "Remote Branches (1)",
                 "Tags (1)",
-                "main origin",
+                "-46",
+                "main < origin",
                 "release/1.x origin",
                 "login ? origin",
                 "signup origin",
@@ -2560,7 +2604,7 @@ mod tests {
             );
             let login_x = text_rect(&output, "login ? origin").unwrap().left();
             let flat_x = text_rect(&output, "release/1.x origin").unwrap().left();
-            let main_x = text_rect(&output, "main origin").unwrap().left();
+            let main_x = text_rect(&output, "main < origin").unwrap().left();
             let features_x = text_rect(&output, "Features (2)").unwrap().left();
             let locals_x = text_rect(&output, "Local Branches (2)").unwrap().left();
             assert_eq!(flat_x, main_x, "Slash-prefixed locals stay flat rows");
@@ -2624,7 +2668,7 @@ mod tests {
             let collapsed = panel.settle();
             assert!(!painted(&collapsed, "login ? origin"));
             assert!(painted(&collapsed, "Features (2)"));
-            assert!(painted(&collapsed, "main origin"));
+            assert!(painted(&collapsed, "main < origin"));
 
             panel.click("Features (2)");
             let expanded = panel.settle();

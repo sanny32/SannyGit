@@ -35,31 +35,3 @@ call sites of `eframe::viewport_winit_window` (`src/native_window_linux.rs`,
 `src/ui/branches.rs`).
 
 **Status:** Not started
-
-## UI — Branches panel
-
-### Local branches: upstream comparison sign and commit delta
-
-**Problem:** Local branch rows show the branch name and, when set, the remote
-label inline (`dev origin`), but not how the branch relates to that upstream.
-SmartGit paints an operator between name and remote — **`=`** when even, **`<`**
-when behind, **`>`** when ahead — and a compact count pill on the right (e.g.
-**main < origin** with **-46** when 46 commits behind) (screenshot from
-2026-11-27, **Local Branches**). Today only the current branch gets ahead/behind
-via the status bar (**↑n ↓m**); other locals with tracking show no row-level
-delta.
-
-**Goal:** For each local branch with a configured upstream, show the SmartGit-style
-comparison sign after the branch name (before or with the remote short name) and
-the numeric difference on the trailing edge of the row (**-n** behind, **+n**
-ahead, omitted or **0** when in sync). Keep the red **?** for missing upstream on
-the remote; use muted/accent colors consistent with the status bar. Unknown counts
-may show **?** until refreshed. Truncate with tooltip including full upstream and
-counts.
-
-**Likely touch points:** `src/ui/branches.rs` (`branch_row_contents` / row layout),
-`src/models.rs` (`BranchRef` — optional ahead/behind per ref), batch or cached reads
-building on `src/tracking.rs` (`read`, `git rev-list --left-right --count`),
-`src/branches.rs` (ref load after fetch), layout tests under `src/ui/branches.rs`.
-
-**Status:** Not started

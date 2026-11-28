@@ -65,6 +65,8 @@ pub struct BranchRef {
     pub upstream: Option<String>,
     /// Remote that hosts the upstream ref; `None` for local or missing upstreams.
     pub upstream_remote: Option<String>,
+    /// Commits ahead of and behind the upstream, respectively.
+    pub upstream_delta: Option<(usize, usize)>,
     /// The tracked remote branch is no longer present in the loaded remote refs.
     pub upstream_gone: bool,
     pub tag_subject: Option<String>,

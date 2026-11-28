@@ -20,7 +20,7 @@ pub fn load(git: &GitContext, root: &Path) -> Result<RefSnapshot, String> {
             "for-each-ref",
             "--sort=refname",
             "--count=5001",
-            "--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:remotename)%00%(HEAD)%00%(symref)%00%(if:equals=tag)%(objecttype)%(then)%(contents:subject)%(end)%00",
+            "--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:remotename)%00%(HEAD)%00%(symref)%00%(upstream:track,nobracket)%00%(if:equals=tag)%(objecttype)%(then)%(contents:subject)%(end)%00",
             "refs/heads/",
             "refs/remotes/",
             "refs/tags/",
@@ -125,10 +125,10 @@ fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
         let record = record
             .strip_suffix(&[0])
             .ok_or("Malformed Git ref record")?;
-        let mut parts = record.splitn(7, |b| *b == 0);
+        let mut parts = record.splitn(8, |b| *b == 0);
         let fields: Vec<_> = parts
             .by_ref()
-            .take(6)
+            .take(7)
             .map(|s| std::str::from_utf8(s).map_err(|_| "Non-UTF-8 ref names are not supported"))
             .collect::<Result<_, _>>()?;
         let subject = parts.next().ok_or("Malformed Git ref record")?;
@@ -184,6 +184,9 @@ fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
             // a resolved upstream ref there is nothing to show on the row.
             upstream_remote: (!fields[2].is_empty() && !matches!(fields[3], "" | "."))
                 .then(|| fields[3].to_owned()),
+            upstream_delta: (!fields[2].is_empty())
+                .then(|| parse_delta(fields[6]))
+                .flatten(),
             upstream_gone: false,
             current: fields[4] == "*",
             kind,
@@ -191,6 +194,21 @@ fn parse(bytes: &[u8]) -> Result<Vec<BranchRef>, String> {
     }
     mark_missing_upstreams(&mut refs, upstream_refs);
     Ok(refs)
+}
+
+fn parse_delta(track: &str) -> Option<(usize, usize)> {
+    let mut counts = (0, 0);
+    if !track.is_empty() {
+        for part in track.split(", ") {
+            let (direction, count) = part.split_once(' ')?;
+            match direction {
+                "ahead" => counts.0 = count.parse().ok()?,
+                "behind" => counts.1 = count.parse().ok()?,
+                _ => return None,
+            }
+        }
+    }
+    Some(counts)
 }
 
 /// A configured upstream counts as gone only when its remote already has loaded

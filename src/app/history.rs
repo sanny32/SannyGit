@@ -656,6 +656,7 @@ mod tests {
             hash: head.clone(),
             upstream: None,
             upstream_remote: None,
+            upstream_delta: None,
             upstream_gone: false,
             tag_subject: None,
             current: true,

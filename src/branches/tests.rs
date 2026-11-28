@@ -964,7 +964,7 @@ fn validates_names_rejects_duplicates_and_handles_unborn_head() {
 
 #[test]
 fn rejects_malformed_ref_records_and_bounds_ref_count() {
-    let record = format!("refs/heads/main\0{}\0\0\0*\0\0\0\n", "a".repeat(40));
+    let record = format!("refs/heads/main\0{}\0\0\0*\0\0\0\0\n", "a".repeat(40));
     assert_eq!(parse(record.as_bytes()).unwrap()[0].name, "main");
     assert!(parse(&record.as_bytes()[..record.len() - 1]).is_err());
     assert!(parse(b"short\0\n").is_err());
@@ -974,7 +974,7 @@ fn rejects_malformed_ref_records_and_bounds_ref_count() {
     bytes[12] = 255;
     assert!(parse(&bytes).is_err());
     let many: String = (0..=REF_LIMIT)
-        .map(|i| format!("refs/heads/b{i}\0{}\0\0\0 \0\0\0\n", "a".repeat(40)))
+        .map(|i| format!("refs/heads/b{i}\0{}\0\0\0 \0\0\0\0\n", "a".repeat(40)))
         .collect();
     assert!(parse(many.as_bytes()).is_err_and(|error| error.contains("5,000")));
 }
@@ -1014,4 +1014,12 @@ fn reads_the_commit_message_without_git_log_newline() {
         "subject\n\nbody line"
     );
     assert!(read_commit_message(&SYSTEM_GIT, &repo.0, "abc").is_err());
+}
+
+#[test]
+fn upstream_delta_preserves_both_sides_of_divergence() {
+    assert_eq!(parse_delta("ahead 2, behind 5"), Some((2, 5)));
+    assert_eq!(parse_delta("behind 46"), Some((0, 46)));
+    assert_eq!(parse_delta(""), Some((0, 0)));
+    assert_eq!(parse_delta("gone"), None);
 }
