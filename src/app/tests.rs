@@ -2,6 +2,29 @@ use super::*;
 use crate::test_support::SYSTEM_GIT;
 use eframe::egui::{self, epaint::ClippedShape, Rect, Vec2};
 
+#[test]
+fn tracking_badge_survives_same_branch_refresh_but_not_repository_switch() {
+    let first = crate::test_support::TempRepo::new();
+    let second = crate::test_support::TempRepo::new();
+    first.git(&["commit", "--allow-empty", "-m", "first"]);
+    second.git(&["commit", "--allow-empty", "-m", "second"]);
+    let mut app = SannyGitApp::with_theme(ThemeChoice::Light);
+    app.apply_snapshot(git::load(&SYSTEM_GIT, &first.0).unwrap());
+    app.tracking.status = Some(crate::tracking::Status {
+        branch: "main".into(),
+        upstream: Some("origin/main".into()),
+        ahead: Some(1),
+        behind: Some(0),
+        ..Default::default()
+    });
+    app.tracking.checked = true;
+    app.apply_snapshot(git::load(&SYSTEM_GIT, &first.0).unwrap());
+    assert_eq!(app.tracking.badge(), "↑1 ↓0");
+    app.apply_snapshot(git::load(&SYSTEM_GIT, &second.0).unwrap());
+    assert!(app.tracking.status.is_none());
+    assert!(!app.tracking.checked);
+}
+
 #[cfg(not(target_os = "macos"))]
 fn shortcut_frame(
     app: &mut SannyGitApp,

@@ -488,7 +488,7 @@ impl SannyGitApp {
     /// A matching branch name is not enough: `git commit` keeps `refs/heads/main`.
     fn sync_external_history(&mut self, head_moved: bool, explicit: bool, refs: Option<Vec<u8>>) {
         if head_moved {
-            self.tracking.invalidate();
+            self.tracking.refresh();
             self.history.reveal_head_on_reload();
         }
         let mut reload_history = explicit || head_moved;

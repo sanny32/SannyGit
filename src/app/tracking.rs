@@ -25,6 +25,8 @@ pub struct Monitor {
     cancel: Option<Arc<AtomicBool>>,
     next_read: Instant,
     next_fetch: Instant,
+    fast_pending: bool,
+    fast_worker: bool,
 }
 impl Default for Monitor {
     fn default() -> Self {
@@ -40,6 +42,8 @@ impl Default for Monitor {
             cancel: None,
             next_read: Instant::now(),
             next_fetch: Instant::now(),
+            fast_pending: true,
+            fast_worker: false,
         }
     }
 }
@@ -52,13 +56,24 @@ impl Monitor {
         if let Some(cancel) = self.cancel.take() {
             crate::git::signal_cancel(&cancel);
         }
+        if self.fast_worker {
+            self.fast_pending = true;
+        }
         self.receiver = None;
+        self.fast_worker = false;
         self.checking = false;
     }
     pub fn invalidate(&mut self) {
         self.cancel();
         self.status = None;
         self.next_read = Instant::now();
+        self.fast_pending = true;
+    }
+    /// Refresh the current branch without hiding its last known badge.
+    pub fn refresh(&mut self) {
+        self.cancel();
+        self.next_read = Instant::now();
+        self.fast_pending = true;
     }
     pub fn branch_changed(&mut self) {
         self.invalidate();
@@ -106,6 +121,7 @@ impl Monitor {
         &mut self,
         root: Option<PathBuf>,
         allow_start: bool,
+        allow_fast: bool,
         git_executable: &str,
         context: &eframe::egui::Context,
     ) {
@@ -120,9 +136,16 @@ impl Monitor {
         if let Some(receiver) = &self.receiver {
             match receiver.try_recv() {
                 Ok((result, error, fetched)) => {
+                    let fast = self.fast_worker;
                     self.receiver = None;
                     self.cancel = None;
                     self.checking = false;
+                    self.fast_worker = false;
+                    if fast {
+                        // Fill in file counts and optionally fetch after publishing
+                        // the inexpensive local counts.
+                        self.next_read = Instant::now();
+                    }
                     if error.is_some() {
                         logging::record(Level::Warn, format_args!("Automatic fetch failed"));
                         self.error = error;
@@ -150,7 +173,6 @@ impl Monitor {
                             self.status = Some(status);
                         }
                         Err(error) => {
-                            self.status = None;
                             self.error = Some(error);
                         }
                     }
@@ -159,18 +181,23 @@ impl Monitor {
                     self.receiver = None;
                     self.cancel = None;
                     self.checking = false;
+                    self.fast_worker = false;
                     self.error = Some("Remote status worker stopped".into());
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        if !allow_start || self.receiver.is_some() || Instant::now() < self.next_read {
+        if self.receiver.is_some() || Instant::now() < self.next_read {
+            return;
+        }
+        let fast = self.fast_pending;
+        if if fast { !allow_fast } else { !allow_start } {
             return;
         }
         let Some(root) = self.root.clone() else {
             return;
         };
-        let fetch = self.auto_fetch && Instant::now() >= self.next_fetch;
+        let fetch = !fast && self.auto_fetch && Instant::now() >= self.next_fetch;
         self.next_read = Instant::now() + Duration::from_secs(5);
         if fetch {
             self.next_fetch = Instant::now() + Duration::from_secs(60);
@@ -186,21 +213,25 @@ impl Monitor {
                 let git = &git_context;
                 let mut error = None;
                 let mut fetched = false;
-                let result = tracking::read(git, &root).and_then(|status| {
-                    if fetch {
-                        match tracking::fetch_upstream(git, &root, &status, &flag) {
-                            Ok(checked) => {
-                                fetched = checked || status.remote.as_deref() == Some(".")
+                let result = if fast {
+                    tracking::read_counts(git, &root)
+                } else {
+                    tracking::read(git, &root).and_then(|status| {
+                        if fetch {
+                            match tracking::fetch_upstream(git, &root, &status, &flag) {
+                                Ok(checked) => {
+                                    fetched = checked || status.remote.as_deref() == Some(".")
+                                }
+                                Err(e) => error = Some(e),
                             }
-                            Err(e) => error = Some(e),
                         }
-                    }
-                    if fetch {
-                        tracking::read(git, &root)
-                    } else {
-                        Ok(status)
-                    }
-                });
+                        if fetch {
+                            tracking::read(git, &root)
+                        } else {
+                            Ok(status)
+                        }
+                    })
+                };
                 let _ = sender.send((result, error, fetched));
                 context.request_repaint();
             }) {
@@ -208,6 +239,8 @@ impl Monitor {
                 self.receiver = Some(receiver);
                 self.cancel = Some(cancel);
                 self.checking = fetch;
+                self.fast_pending = false;
+                self.fast_worker = fast;
             }
             Err(error) => self.error = Some(format!("Cannot check upstream: {error}")),
         }
@@ -217,6 +250,7 @@ impl Monitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{GitCommandCount, TempRepo, SYSTEM_GIT};
     fn status() -> Status {
         Status {
             branch: "main".into(),
@@ -232,6 +266,7 @@ mod tests {
         monitor.receiver = Some(receiver);
         monitor.update(
             monitor.root.clone(),
+            false,
             false,
             "",
             &eframe::egui::Context::default(),
@@ -279,6 +314,7 @@ mod tests {
         monitor.update(
             Some(PathBuf::from("/other-repository")),
             false,
+            false,
             "",
             &eframe::egui::Context::default(),
         );
@@ -286,5 +322,105 @@ mod tests {
         assert!(!monitor.checked);
         monitor.set_auto_fetch(false);
         assert!(!monitor.auto_fetch);
+    }
+
+    #[test]
+    fn refreshing_discards_an_outdated_fast_read_without_clearing_the_badge() {
+        let (sender, receiver) = mpsc::channel();
+        let mut monitor = Monitor {
+            checked: true,
+            status: Some(status()),
+            receiver: Some(receiver),
+            fast_worker: true,
+            ..Default::default()
+        };
+        monitor.refresh();
+        assert!(sender.send((Ok(status()), None, false)).is_err());
+        assert!(monitor.fast_pending);
+        assert_eq!(monitor.badge(), "✓");
+    }
+
+    #[test]
+    fn failed_local_read_retains_previous_counts() {
+        let mut monitor = Monitor {
+            checked: true,
+            status: Some(Status {
+                ahead: Some(2),
+                ..status()
+            }),
+            fast_worker: true,
+            ..Default::default()
+        };
+        deliver(&mut monitor, (Err("read failed".into()), None, false));
+        assert_eq!(
+            monitor.status.as_ref().and_then(|status| status.ahead),
+            Some(2)
+        );
+        assert_eq!(monitor.badge(), "↑2 ↓0 ?");
+    }
+
+    #[test]
+    fn local_counts_refresh_before_fetch_after_commit_and_push() {
+        let repo = TempRepo::new();
+        repo.git(&["commit", "--allow-empty", "-m", "base"]);
+        let origin = repo.0.join("origin.git");
+        repo.git(&["init", "--bare", origin.to_str().unwrap()]);
+        repo.git(&["remote", "add", "origin", origin.to_str().unwrap()]);
+        repo.git(&["push", "--set-upstream", "origin", "main"]);
+        let original = tracking::read(&SYSTEM_GIT, &repo.0).unwrap();
+        let mut monitor = Monitor {
+            root: Some(repo.0.clone()),
+            status: Some(original),
+            checked: true,
+            next_read: Instant::now() + Duration::from_secs(5),
+            next_fetch: Instant::now(),
+            fast_pending: false,
+            ..Default::default()
+        };
+        let ctx = eframe::egui::Context::default();
+        let counter = GitCommandCount::new(&repo.0);
+        let refresh_counts = |monitor: &mut Monitor, expected: (u64, u64)| {
+            let before = counter.get();
+            let badge = monitor.badge();
+            monitor.refresh();
+            assert_eq!(
+                monitor.badge(),
+                badge,
+                "refresh must retain the previous badge"
+            );
+            // History and ref loading may still be active; only the fast read is allowed.
+            monitor.update(Some(repo.0.clone()), false, true, "", &ctx);
+            assert!(monitor.fast_worker && !monitor.checking);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while monitor.receiver.is_some() && Instant::now() < deadline {
+                monitor.update(Some(repo.0.clone()), false, false, "", &ctx);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(monitor.receiver.is_none(), "local counts did not finish");
+            let current = monitor.status.as_ref().unwrap();
+            assert_eq!(
+                (current.ahead, current.behind),
+                (Some(expected.0), Some(expected.1))
+            );
+            assert_eq!(
+                counter.get() - before,
+                2,
+                "only ref lookup and rev-list should run"
+            );
+            assert!(
+                monitor.next_read <= Instant::now(),
+                "full refresh should remain scheduled"
+            );
+            assert!(
+                monitor.next_fetch <= Instant::now(),
+                "fast read must not delay auto-fetch"
+            );
+        };
+        repo.git(&["commit", "--allow-empty", "-m", "local"]);
+        refresh_counts(&mut monitor, (1, 0));
+        assert_eq!(monitor.badge(), "↑1 ↓0");
+        repo.git(&["push", "origin", "main"]);
+        refresh_counts(&mut monitor, (0, 0));
+        assert_eq!(monitor.badge(), "✓");
     }
 }

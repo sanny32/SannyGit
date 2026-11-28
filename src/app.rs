@@ -1190,10 +1190,16 @@ impl SannyGitApp {
         self.invalidate_view_reads();
         self.branches.worker = None;
         let same_branch = self.branches.current_branch == snapshot.branch;
-        if !same_branch {
-            self.tracking.branch_changed();
+        let same_repository =
+            self.repositories
+                .get(self.selected_repository)
+                .is_some_and(|repository| {
+                    crate::repository::same_path(&repository.path, &snapshot.repository.path)
+                });
+        if same_repository && same_branch {
+            self.tracking.refresh();
         } else {
-            self.tracking.invalidate();
+            self.tracking.branch_changed();
         }
         self.state_current = true;
         let selected = self
@@ -2955,6 +2961,7 @@ impl eframe::App for SannyGitApp {
         self.tracking.update(
             root,
             allow_tracking,
+            !self.busy() && self.state_current,
             &self.preferences.git_executable,
             ui.ctx(),
         );

@@ -64,27 +64,6 @@ building on `src/tracking.rs` (`read`, `git rev-list --left-right --count`),
 
 **Status:** Not started
 
-## Performance — upstream badge (↑ ↓)
-
-### Faster ↑ / ↓ counts after commit and push
-
-**Problem:** The ahead/behind badge (**↑n ↓m** in the status bar and on the active
-repository row) often stays empty for about **500–1000 ms** after a successful
-**Commit** or **Push**, then updates. Users expect the counts to reflect the new
-HEAD immediately (screenshot from 2026-11-27: **↑1 ↓0**).
-
-**Goal:** Show updated local ahead/behind within one frame or a single fast
-`rev-list` pass after commit and push complete, without waiting on the periodic
-tracking worker or optional auto-fetch. Background refresh may still refine
-numbers against the remote; avoid clearing the badge to empty during that gap.
-
-**Likely touch points:** `src/app/tracking.rs` (`Monitor::update`, `invalidate`,
-`next_read` / `from_secs(5)` throttle), `src/app.rs` (`apply_snapshot` after
-commit, push/pull/fetch completion), `src/tracking.rs` (`read`, `badge`),
-`finish_ref_operation` / remote job outcomes for **Push complete**.
-
-**Status:** Not started
-
 ## UI — Branches panel (repository switch)
 
 ### Show full ref list immediately when changing repository

@@ -68,6 +68,15 @@ fn files(git: &GitContext, root: &Path, range: &str, count: u64) -> Option<usize
 }
 
 pub fn read(git: &GitContext, root: &Path) -> Result<Status, String> {
+    read_inner(git, root, true)
+}
+
+/// Read cached upstream counts without the potentially expensive file diffs.
+pub fn read_counts(git: &GitContext, root: &Path) -> Result<Status, String> {
+    read_inner(git, root, false)
+}
+
+fn read_inner(git: &GitContext, root: &Path, include_files: bool) -> Result<Status, String> {
     let output = git::text(git::run(git, root, &["for-each-ref", "--format=%(HEAD)%00%(refname)%00%(upstream)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)%00", "refs/heads/"])?)?;
     let mut status = Status::default();
     for line in output.lines() {
@@ -100,8 +109,13 @@ pub fn read(git: &GitContext, root: &Path) -> Result<Status, String> {
         let (ahead, behind) = counts(&git::text(output)?)?;
         status.ahead = Some(ahead);
         status.behind = Some(behind);
-        status.outgoing_files = files(git, root, &format!("{}...HEAD", fields[2]), ahead);
-        status.incoming_files = files(git, root, &range, behind);
+        if include_files {
+            status.outgoing_files = files(git, root, &format!("{}...HEAD", fields[2]), ahead);
+            status.incoming_files = files(git, root, &range, behind);
+        } else {
+            status.outgoing_files = (ahead == 0).then_some(0);
+            status.incoming_files = (behind == 0).then_some(0);
+        }
         return Ok(status);
     }
     Ok(status)
