@@ -63,28 +63,3 @@ building on `src/tracking.rs` (`read`, `git rev-list --left-right --count`),
 `src/branches.rs` (ref load after fetch), layout tests under `src/ui/branches.rs`.
 
 **Status:** Not started
-
-## UI — Branches panel (repository switch)
-
-### Show full ref list immediately when changing repository
-
-**Problem:** After selecting another repository, the Branches panel often shows
-only **Tags** (empty or stale) for a moment while locals and remotes are absent.
-`branches.entries` is cleared on switch and refs load asynchronously via
-`load_refs`, and `branch_group` hides empty **Local Branches** / **Remote Branches**
-sections but still paints **Tags**. The result looks like lazy, tag-only loading
-instead of the full tree.
-
-**Goal:** On repository change, present local branches, remote branches, and tags
-together as soon as the panel is visible — either keep showing the last loaded
-snapshot for that repo until the refresh completes, show all three section headers
-with a stable loading state, or block painting until `branches::load` returns.
-Avoid an intermediate UI that lists tags alone.
-
-**Likely touch points:** `src/app.rs` (`apply_snapshot`, `branches.entries.clear`,
-`reload_refs` / `load_refs`), `src/app/repositories.rs` (`reset_repository_view`),
-`src/ui/branches.rs` (`branch_group`, `local_folder_groups`, Tags special-case),
-`BranchState::apply`, tests in `src/app/working_tree.rs` and
-`src/app/repositories.rs` around repo switch.
-
-**Status:** Not started

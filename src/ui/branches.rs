@@ -114,6 +114,14 @@ pub fn show(ui: &mut Ui, app: &mut SannyGitApp) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
+            // An empty, not-yet-loaded snapshot must not look like a tree
+            // containing only tags. Keep existing rows on later refreshes.
+            if !app.branches.current
+                && app.branches.entries.is_empty()
+                && app.repositories.get(app.selected_repository).is_some()
+            {
+                return;
+            }
             // The open state is stored on the header id. This scope makes that
             // id include the repository path, so each repository keeps its own
             // expanded and collapsed groups across switches and restarts.
@@ -1702,6 +1710,60 @@ mod tests {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn initial_ref_load_never_shows_a_tags_only_tree() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            for size in [Vec2::new(1100.0, 700.0), Vec2::new(1400.0, 900.0)] {
+                let ctx = Context::default();
+                crate::theme::install_fonts(&ctx);
+                egui_extras::install_image_loaders(&ctx);
+                theme.apply(&ctx);
+                let mut app = SannyGitApp::with_theme(theme);
+                app.repositories = crate::mock_data::repositories();
+                app.selected_repository = 1;
+                for stage in 0..4 {
+                    app.branches.loading = stage == 0;
+                    app.branches.current = stage >= 2;
+                    app.branches.entries = if stage == 2 {
+                        crate::mock_data::refs()
+                    } else {
+                        Vec::new()
+                    };
+                    let mut labels = Vec::new();
+                    for _ in 0..3 {
+                        let mut output = ctx.run_ui(
+                            RawInput {
+                                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                ui.set_width(260.0);
+                                show(ui, &mut app);
+                            },
+                        );
+                        labels = output
+                            .shapes
+                            .iter()
+                            .filter_map(|shape| match &shape.shape {
+                                egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        output.textures_delta.clear();
+                    }
+                    let has = |label: &str| labels.iter().any(|text| text.starts_with(label));
+                    assert!(!has(&crate::i18n::tr_msg("Loading…")));
+                    assert_eq!(has(&crate::i18n::tr_msg("Tags")), stage >= 2);
+                    assert_eq!(has(&crate::i18n::tr_msg("Local Branches")), stage == 2);
+                    assert_eq!(has(&crate::i18n::tr_msg("Remote Branches")), stage == 2);
                 }
             }
         }
