@@ -486,6 +486,30 @@ fn inactive_repository_icon_color(palette: crate::theme::Palette) -> eframe::egu
 
 /// Classic rows are a single line. Modern rows stack the path under the name
 /// and stay only as tall as those two lines, plus the row inset.
+fn repository_icon(
+    ui: &mut Ui,
+    icon: Icon,
+    color: eframe::egui::Color32,
+) -> eframe::egui::Response {
+    const GUTTER: f32 = 16.0;
+    // Filled provider marks cover much more of their SVG viewport than the
+    // outlined Git icon. Keep their layout gutter equal while balancing weight.
+    let size = match icon {
+        Icon::GitHub | Icon::GitLab | Icon::Bitbucket => 13.0,
+        Icon::AzureDevOps => 14.0,
+        _ => GUTTER,
+    };
+    let (rect, response) = ui.allocate_exact_size(
+        eframe::egui::Vec2::splat(GUTTER),
+        eframe::egui::Sense::hover(),
+    );
+    icons::image(icon, color, size).paint_at(
+        ui,
+        eframe::egui::Rect::from_center_size(rect.center(), eframe::egui::Vec2::splat(size)),
+    );
+    response
+}
+
 fn repository_row_height(ui: &Ui, modern: bool) -> f32 {
     if !modern {
         return 24.0;
@@ -552,7 +576,7 @@ fn repository_row(
             if modern {
                 ui.spacing_mut().item_spacing.y = MODERN_REPOSITORY_PATH_GAP;
             }
-            let icon_response = ui.add(icons::image(icon, icon_color, 16.0));
+            let icon_response = repository_icon(ui, icon, icon_color);
             if active && conflicted {
                 let badge = eframe::egui::Rect::from_min_size(
                     icon_response.rect.right_bottom() - eframe::egui::Vec2::splat(10.0),
@@ -1005,7 +1029,7 @@ fn paint_repository_drag_image(
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     ui.horizontal(|ui| {
-                        ui.add(icons::image(icon, icon_color, 16.0));
+                        repository_icon(ui, icon, icon_color);
                         ui.add_sized(
                             [text_width, 16.0],
                             eframe::egui::Label::new(
@@ -1022,6 +1046,72 @@ fn paint_repository_drag_image(
 mod tests {
     use super::*;
     use eframe::egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Vec2};
+
+    #[test]
+    fn repository_icons_remain_centered_in_a_shared_gutter() {
+        for theme in [
+            crate::theme::ThemeChoice::Light,
+            crate::theme::ThemeChoice::Dark,
+        ] {
+            let context = Context::default();
+            crate::theme::install_fonts(&context);
+            egui_extras::install_image_loaders(&context);
+            theme.apply(&context);
+            let palette = theme.palette();
+            for color in [palette.text, inactive_repository_icon_color(palette)] {
+                let mut label_left = None;
+                for icon in [
+                    Icon::Repository,
+                    Icon::GitHub,
+                    Icon::GitLab,
+                    Icon::Bitbucket,
+                    Icon::AzureDevOps,
+                ] {
+                    let mut gutter = Rect::NOTHING;
+                    let mut output = context.run_ui(RawInput::default(), |ui| {
+                        ui.horizontal(|ui| {
+                            gutter = repository_icon(ui, icon, color).rect;
+                            ui.label("Repository name");
+                        });
+                    });
+                    output.textures_delta.clear();
+                    let name = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            eframe::egui::Shape::Text(text)
+                                if text.galley.job.text == "Repository name" =>
+                            {
+                                Some(text.pos.x)
+                            }
+                            _ => None,
+                        })
+                        .expect("repository label");
+                    if let Some(expected) = label_left {
+                        assert_eq!(name, expected, "{icon:?} shifted the label");
+                    } else {
+                        label_left = Some(name);
+                    }
+                    assert_eq!(gutter.size(), Vec2::splat(16.0));
+                    assert!(
+                        output.shapes.iter().any(|shape| match &shape.shape {
+                            eframe::egui::Shape::Rect(rect)
+                                if rect.brush.is_some() && rect.fill == color =>
+                            {
+                                let center = rect.rect.center();
+                                gutter.contains_rect(rect.rect)
+                                    && (center - gutter.center()).length() < 0.8
+                                    && rect.rect.width() >= 13.0
+                                    && rect.rect.width() <= 16.0
+                            }
+                            _ => false,
+                        }),
+                        "{icon:?} should be centered and visible in {theme:?}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn context_menu_targets_the_clicked_repository_without_activating_it() {

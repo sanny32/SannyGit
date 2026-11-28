@@ -64,28 +64,6 @@ building on `src/tracking.rs` (`read`, `git rev-list --left-right --count`),
 
 **Status:** Not started
 
-## UI — Repositories panel
-
-### Provider icons share the same visual size
-
-**Problem:** In the repository list, rows use `Icon::for_provider` (e.g. GitHub)
-or the generic `Icon::Repository` at a fixed 16 px layout size, but the SVG
-glyphs have different intrinsic padding and aspect ratios. GitHub marks look
-larger or heavier than the generic diamond/icon; inactive (muted) rows amplify
-the mismatch (screenshot from 2026-11-27, mixed GitHub and local repos in one
-group).
-
-**Goal:** Normalize perceived icon size across providers: same visual bounding
-box, centering, and stroke weight in the row gutter for active and inactive
-repositories. Color may still reflect selection; size and alignment should not
-shift between GitHub, GitLab, and default repository icons.
-
-**Likely touch points:** `assets/icons/` SVG viewports, `src/ui/controls/icons.rs`
-(`image`, provider mapping), `src/ui/repositories.rs` (`repository_row`, 16.0
-icon paint and drag preview).
-
-**Status:** Not started
-
 ## Performance — upstream badge (↑ ↓)
 
 ### Faster ↑ / ↓ counts after commit and push
