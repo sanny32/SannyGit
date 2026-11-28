@@ -1,0 +1,52 @@
+[
+  {
+    "name": "OpenAI",
+    "endpoint": "https://api.openai.com/v1",
+    "model": "gpt-4.1-mini"
+  },
+  {
+    "name": "Kimi",
+    "endpoint": "https://api.kimi.ai/coding/v1",
+    "model": "kimi-for-coding"
+  },
+  {
+    "name": "Google Gemini",
+    "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "model": "gemini-2.5-flash"
+  },
+  {
+    "name": "DeepSeek",
+    "endpoint": "https://api.deepseek.com/v1",
+    "model": "deepseek-chat"
+  },
+  {
+    "name": "OpenRouter",
+    "endpoint": "https://openrouter.ai/api/v1",
+    "model": "openai/gpt-4.1-mini"
+  },
+  {
+    "name": "xAI",
+    "endpoint": "https://api.x.ai/v1",
+    "model": "grok-3-mini"
+  },
+  {
+    "name": "Groq",
+    "endpoint": "https://api.groq.com/openai/v1",
+    "model": "llama-3.3-70b-versatile"
+  },
+  {
+    "name": "Mistral AI",
+    "endpoint": "https://api.mistral.ai/v1",
+    "model": "mistral-small-latest"
+  },
+  {
+    "name": "Ollama (local)",
+    "endpoint": "http://localhost:11434/v1",
+    "model": ""
+  },
+  {
+    "name": "LM Studio (local)",
+    "endpoint": "http://localhost:1234/v1",
+    "model": ""
+  }
+]

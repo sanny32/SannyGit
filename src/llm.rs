@@ -9,7 +9,7 @@ use std::{
 pub mod chatgpt;
 pub mod copilot;
 
-pub const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
+pub const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1";
 pub const DEFAULT_MODEL: &str = "gpt-4.1-mini";
 /// Cap for one new untracked file inside a commit patch sent to the model.
 pub const DEFAULT_MAX_NEW_FILE_CONTENT_BYTES: u32 = 64 * 1024;
@@ -66,64 +66,18 @@ const PROTECTED_KEYRING_SERVICE: &str = "SannyGit LLM API keys";
 const LEGACY_KEYRING_USER: &str = "llm-api-key";
 const COPILOT_KEYRING_USER: &str = "github-copilot-oauth";
 
+#[derive(Deserialize)]
 pub struct ProviderPreset {
-    pub name: &'static str,
-    pub endpoint: &'static str,
-    pub model: &'static str,
+    pub name: String,
+    pub endpoint: String,
+    pub model: String,
 }
 
-pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
-    ProviderPreset {
-        name: "OpenAI",
-        endpoint: DEFAULT_ENDPOINT,
-        model: DEFAULT_MODEL,
-    },
-    ProviderPreset {
-        name: "Kimi",
-        endpoint: "https://api.kimi.ai/coding/v1/chat/completions",
-        model: "kimi-for-coding",
-    },
-    ProviderPreset {
-        name: "Google Gemini",
-        endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-        model: "gemini-2.5-flash",
-    },
-    ProviderPreset {
-        name: "DeepSeek",
-        endpoint: "https://api.deepseek.com/v1/chat/completions",
-        model: "deepseek-chat",
-    },
-    ProviderPreset {
-        name: "OpenRouter",
-        endpoint: "https://openrouter.ai/api/v1/chat/completions",
-        model: "openai/gpt-4.1-mini",
-    },
-    ProviderPreset {
-        name: "xAI",
-        endpoint: "https://api.x.ai/v1/chat/completions",
-        model: "grok-3-mini",
-    },
-    ProviderPreset {
-        name: "Groq",
-        endpoint: "https://api.groq.com/openai/v1/chat/completions",
-        model: "llama-3.3-70b-versatile",
-    },
-    ProviderPreset {
-        name: "Mistral AI",
-        endpoint: "https://api.mistral.ai/v1/chat/completions",
-        model: "mistral-small-latest",
-    },
-    ProviderPreset {
-        name: "Ollama (local)",
-        endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "",
-    },
-    ProviderPreset {
-        name: "LM Studio (local)",
-        endpoint: "http://localhost:1234/v1/chat/completions",
-        model: "",
-    },
-];
+pub static PROVIDER_PRESETS: std::sync::LazyLock<Vec<ProviderPreset>> =
+    std::sync::LazyLock::new(|| {
+        serde_json::from_str(include_str!("../assets/ai-providers.json"))
+            .unwrap_or_else(|error| panic!("Invalid bundled AI provider presets: {error}"))
+    });
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommitMessageLanguage {
@@ -933,6 +887,13 @@ async fn read_response_body(response: &mut reqwest::Response) -> Result<Vec<u8>,
         bytes.extend_from_slice(&chunk);
     }
     Ok(bytes)
+}
+
+pub fn base_endpoint(endpoint: &str) -> &str {
+    let endpoint = endpoint.trim().trim_end_matches('/');
+    endpoint
+        .strip_suffix("/chat/completions")
+        .unwrap_or(endpoint)
 }
 
 fn chat_completions_endpoint(endpoint: &str) -> String {

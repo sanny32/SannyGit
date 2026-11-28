@@ -2093,7 +2093,8 @@ fn llm_api_form(
                 .spacing([8.0, 6.0])
                 .show(ui, |ui| {
                     form_label(ui, &crate::i18n::tr_msg("Endpoint:"));
-                    let mut endpoint = draft.config.endpoint.clone();
+                    let original_endpoint = crate::llm::base_endpoint(&draft.config.endpoint);
+                    let mut endpoint = original_endpoint.to_owned();
                     let endpoints: Vec<_> = crate::llm::PROVIDER_PRESETS
                         .iter()
                         .map(|provider| provider.endpoint.to_owned())
@@ -2112,12 +2113,12 @@ fn llm_api_form(
                     let custom_endpoint = crate::i18n::tr_msg("Custom endpoint");
                     let provider = crate::llm::PROVIDER_PRESETS.iter()
                         .find(|provider| provider.endpoint == endpoint)
-                        .map_or(custom_endpoint.as_str(), |provider| provider.name);
+                        .map_or(custom_endpoint.as_str(), |provider| provider.name.as_str());
                     endpoint_response.clone().help_text(crate::i18n::tr_args(
                         "%{provider}. HTTPS is required outside loopback. HTTP is allowed for localhost and loopback IPs. Redirects are blocked. Use the API key field; URL credentials, queries and fragments are rejected.",
                         &[("provider", provider)],
                     ));
-                    if endpoint != draft.config.endpoint {
+                    if endpoint != original_endpoint {
                         draft.config.endpoint = endpoint;
                         draft.config.api_key.clear();
                         draft.api_key_dirty = false;

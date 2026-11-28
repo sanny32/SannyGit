@@ -431,7 +431,10 @@ fn accepts_base_urls_and_full_chat_completions_endpoints() {
             " https://api.kimi.ai/coding/v1/chat/completions ",
             "https://api.kimi.ai/coding/v1/chat/completions",
         ),
-        (DEFAULT_ENDPOINT, DEFAULT_ENDPOINT),
+        (
+            DEFAULT_ENDPOINT,
+            "https://api.openai.com/v1/chat/completions",
+        ),
     ] {
         assert_eq!(chat_completions_endpoint(input), expected);
     }
@@ -440,11 +443,19 @@ fn accepts_base_urls_and_full_chat_completions_endpoints() {
 #[test]
 fn provider_presets_have_unique_endpoints_and_models() {
     let mut endpoints = std::collections::HashSet::new();
-    for provider in PROVIDER_PRESETS {
+    for provider in PROVIDER_PRESETS.iter() {
         assert!(!provider.name.is_empty());
         assert!(!provider.model.is_empty() || provider.name.ends_with("(local)"));
-        assert!(provider.endpoint.ends_with("/chat/completions"));
-        assert!(endpoints.insert(provider.endpoint));
+        assert!(!provider.endpoint.ends_with("/chat/completions"));
+        let config = Config {
+            endpoint: provider.endpoint.clone(),
+            ..Config::default()
+        };
+        assert_eq!(
+            request_endpoint(&config).unwrap(),
+            format!("{}/chat/completions", provider.endpoint)
+        );
+        assert!(endpoints.insert(&provider.endpoint));
     }
     assert_eq!(PROVIDER_PRESETS[0].endpoint, DEFAULT_ENDPOINT);
     assert_eq!(PROVIDER_PRESETS[0].model, DEFAULT_MODEL);
@@ -467,7 +478,10 @@ fn repository_credentials_are_isolated_from_global_and_other_repositories() {
     let global = credential_user(DEFAULT_ENDPOINT, None);
     let first = credential_user(DEFAULT_ENDPOINT, Some("/work/first"));
     let second = credential_user(DEFAULT_ENDPOINT, Some("/work/second"));
-    assert_eq!(global, format!("llm-api-key:{DEFAULT_ENDPOINT}"));
+    assert_eq!(
+        global,
+        format!("llm-api-key:{DEFAULT_ENDPOINT}/chat/completions")
+    );
     assert_ne!(global, first);
     assert_ne!(first, second);
     assert_eq!(

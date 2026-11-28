@@ -177,8 +177,8 @@ fn connection_indicator(app: &SannyGitApp) -> Option<(Icon, String)> {
 fn api_tooltip(config: &Config) -> String {
     let name = crate::llm::PROVIDER_PRESETS
         .iter()
-        .find(|preset| preset.endpoint == config.endpoint.trim())
-        .map(|preset| preset.name)
+        .find(|preset| preset.endpoint == crate::llm::base_endpoint(&config.endpoint))
+        .map(|preset| preset.name.as_str())
         .unwrap_or("OpenAI-compatible API");
     let model = config.model.trim();
     if model.is_empty() {
