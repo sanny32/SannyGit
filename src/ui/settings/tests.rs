@@ -1134,6 +1134,116 @@ fn restore_all_confirmations_clears_skips_on_ok_and_reopens_unchecked() {
 }
 
 #[test]
+fn settings_pages_share_shell_geometry_and_background() {
+    for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
+        for size in [Vec2::new(680.0, 380.0), PREFERENCES_SIZE] {
+            let context = egui::Context::default();
+            crate::theme::install_fonts(&context);
+            egui_extras::install_image_loaders(&context);
+            theme.apply(&context);
+            let mut app = SannyGitApp::with_theme(theme);
+            app.repositories = vec![crate::models::Repository {
+                name: "Project".into(),
+                path: "/project".into(),
+            }];
+            app.selected_repository = 0;
+            app.settings_window.llm_repository = Some("/project".into());
+            let mut reference = None;
+            let mut language_left = None;
+            let mut footer_position = None;
+            for (repository, page, title) in [
+                (false, SettingsPage::General, "User Interface"),
+                (false, SettingsPage::Appearance, "Appearance"),
+                (false, SettingsPage::DateTime, "Date & Time"),
+                (false, SettingsPage::Logging, "Logging"),
+                (false, SettingsPage::Git, "Git executable"),
+                (false, SettingsPage::Remote, "Remote"),
+                (false, SettingsPage::Llm, "AI"),
+                (false, SettingsPage::CommitMessages, "Commit messages"),
+                (false, SettingsPage::CommitContext, "Context"),
+                (false, SettingsPage::KeyboardShortcuts, "Keyboard Shortcuts"),
+                (true, SettingsPage::Llm, "AI"),
+                (true, SettingsPage::CommitMessages, "Commit messages"),
+                (true, SettingsPage::CommitContext, "Context"),
+            ] {
+                app.settings_window.page = page;
+                let mut output = context.run_ui(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        if repository {
+                            repository_window_contents(ui, &mut app)
+                        } else {
+                            window_contents(ui, &mut app)
+                        }
+                    },
+                );
+                output.textures_delta.clear();
+                let heading = output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == title && text.pos.x > 206.0 => Some(text.pos),
+                    _ => None,
+                }).unwrap_or_else(|| panic!("missing page title {title} ({theme:?}, {size:?}, repository={repository})"));
+                if let Some(expected) = reference {
+                    assert_eq!(
+                        heading, expected,
+                        "misaligned title {title} ({theme:?}, repository={repository})"
+                    );
+                } else {
+                    reference = Some(heading);
+                }
+                assert!(
+                    output.shapes.iter().any(|shape| matches!(
+                        &shape.shape, egui::Shape::Rect(rect)
+                            if rect.fill == app.palette().header && rect.rect.left() >= 205.0
+                                && rect.rect.width() > 300.0 && rect.rect.height() > 200.0
+                    )),
+                    "missing shared page background for {title}"
+                );
+                for label in ["OK", "Cancel"] {
+                    assert!(
+                        visible_text(&output.shapes, label),
+                        "missing footer button {label} on {title}"
+                    );
+                }
+                if matches!(page, SettingsPage::General | SettingsPage::CommitMessages) {
+                    let left = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text)
+                                if text.galley.job.text == "Language:" && text.pos.x > 206.0 =>
+                            {
+                                Some(text.pos.x)
+                            }
+                            _ => None,
+                        })
+                        .expect("missing language label");
+                    if let Some(expected) = language_left {
+                        assert_eq!(
+                            left, expected,
+                            "language fields should share the same left edge"
+                        );
+                    } else {
+                        language_left = Some(left);
+                    }
+                }
+                let ok = text_rect(&output.shapes, "OK").expect("missing OK button");
+                if let Some(expected) = footer_position {
+                    assert_eq!(
+                        ok, expected,
+                        "footer moved on {title} (repository={repository})"
+                    );
+                } else {
+                    footer_position = Some(ok);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn preferences_pages_fit_at_the_minimum_size_in_both_themes() {
     for theme in [ThemeChoice::Light, ThemeChoice::Dark] {
         let context = egui::Context::default();

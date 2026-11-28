@@ -194,36 +194,47 @@ fn scrollable_page(
         .show(ui, |ui| draw(ui));
 }
 
+// Settings pages share a background, padding and title style. Editors that
+// consume the remaining height stay fixed; other pages scroll within the shell.
+fn settings_page_panel(
+    ui: &mut Ui,
+    palette: Palette,
+    page: SettingsPage,
+    repository: bool,
+    mut draw: impl FnMut(&mut Ui),
+) {
+    CentralPanel::default()
+        .frame(Frame::new().fill(palette.header).inner_margin(12))
+        .show(ui, |ui| {
+            let content_height = ui.available_height();
+            if page == SettingsPage::Llm && content_height < 350.0 {
+                ui.spacing_mut().item_spacing.y = 3.0;
+            }
+            if matches!(
+                page,
+                SettingsPage::CommitMessages | SettingsPage::KeyboardShortcuts
+            ) {
+                fixed_height_page(ui, content_height, |ui| draw(ui));
+            } else {
+                let id = if repository {
+                    "repository.preferences.page"
+                } else {
+                    "preferences.page"
+                };
+                scrollable_page(ui, content_height, id, |ui| draw(ui));
+            }
+        });
+}
+
 fn window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     let palette = app.palette();
     dialog_style::prepare_keyboard(ui);
     ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
     footer(ui, app, palette, false);
     navigation(ui, app, palette);
-    let page_background = match app.settings_window.page {
-        SettingsPage::Llm => palette.panel_alt,
-        _ => palette.header,
-    };
-    let page_margin = Margin::same(12);
-    CentralPanel::default()
-        .frame(Frame::new().fill(page_background).inner_margin(page_margin))
-        .show(ui, |ui| {
-            let page_height = ui.available_height();
-            if app.settings_window.page == SettingsPage::Llm && page_height < 350.0 {
-                ui.spacing_mut().item_spacing.y = 3.0;
-            }
-            let content_height = page_height;
-            if matches!(
-                app.settings_window.page,
-                SettingsPage::CommitMessages | SettingsPage::KeyboardShortcuts
-            ) {
-                fixed_height_page(ui, content_height, |ui| page(ui, app, palette));
-            } else {
-                scrollable_page(ui, content_height, "preferences.page", |ui| {
-                    page(ui, app, palette)
-                });
-            }
-        });
+    settings_page_panel(ui, palette, app.settings_window.page, false, |ui| {
+        page(ui, app, palette)
+    });
     super::show_errors(ui, app);
 }
 
@@ -233,20 +244,9 @@ fn repository_window_contents(ui: &mut Ui, app: &mut SannyGitApp) {
     ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
     footer(ui, app, palette, true);
     repository_navigation(ui, app, palette);
-    CentralPanel::default()
-        .frame(Frame::new().fill(palette.panel_alt).inner_margin(12))
-        .show(ui, |ui| {
-            let page_height = ui.available_height();
-            let content_height = page_height;
-            match app.settings_window.page {
-                SettingsPage::CommitMessages => {
-                    fixed_height_page(ui, content_height, |ui| repository_page(ui, app, palette));
-                }
-                _ => scrollable_page(ui, content_height, "repository.preferences.page", |ui| {
-                    repository_page(ui, app, palette)
-                }),
-            }
-        });
+    settings_page_panel(ui, palette, app.settings_window.page, true, |ui| {
+        repository_page(ui, app, palette)
+    });
     super::show_errors(ui, app);
 }
 
@@ -591,7 +591,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
             ui.spacing_mut().item_spacing.y = 4.0;
             heading(ui, &crate::i18n::tr_msg("User Interface"));
             ui.horizontal(|ui| {
-                ui.label(crate::i18n::tr_msg("Language:"));
+                form_label(ui, "Language:");
                 egui::ComboBox::from_id_salt("preferences.language")
                     .selected_text(app.settings_window.preferences.language.label())
                     .width(150.0)
@@ -795,7 +795,7 @@ fn page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette) {
                     label(ui, "Log level:");
                     egui::ComboBox::from_id_salt("preferences.logging.level")
                         .selected_text(crate::i18n::tr_msg(level.label()))
-                        .width(160.0)
+                        .width(150.0)
                         .show_ui(ui, |ui| {
                             for option in Level::ALL {
                                 ui.selectable_value(
@@ -1357,6 +1357,7 @@ fn repository_ai_page(ui: &mut Ui, app: &mut SannyGitApp, palette: Palette, path
             "Model settings used to generate commit messages for %{name}. Matching Preferences uses the application defaults.",
             &[("name", name)],
         ))
+        .small()
         .color(palette.muted),
     );
     ui.add_space(8.0);
@@ -1422,6 +1423,7 @@ fn ai_page(
             RichText::new(crate::i18n::tr_msg(
                 "Connect a service to generate commit messages.",
             ))
+            .small()
             .color(palette.muted),
         );
     }
@@ -2264,37 +2266,39 @@ fn commit_context_page(
         RichText::new(crate::i18n::tr_msg(
             "What is sent when you generate a commit message.",
         ))
+        .small()
         .color(palette.muted),
     );
     ui.add_space(8.0);
-    egui::Grid::new(format!("{id_prefix}.fields"))
-        .spacing([12.0, 6.0])
-        .show(ui, |ui| {
-            form_label(ui, &crate::i18n::tr_msg("Changes:"));
-            egui::ComboBox::from_id_salt(format!("{id_prefix}.generation_scope"))
-                .selected_text(crate::i18n::tr_msg(config.generation_scope.label()))
-                .width(200.0)
-                .show_ui(ui, |ui| {
-                    for scope in [
-                        crate::llm::CommitGenerationScope::FollowCommitPanel,
-                        crate::llm::CommitGenerationScope::AllChanges,
-                        crate::llm::CommitGenerationScope::StagedOnly,
-                    ] {
-                        ui.selectable_value(
-                            &mut config.generation_scope,
-                            scope,
-                            crate::i18n::tr_msg(scope.label()),
-                        );
-                    }
-                })
-                .response
-                .help_text(crate::i18n::tr_msg(
-                    "Used only when generating a commit message.",
-                ));
-            ui.end_row();
-            form_label(ui, &crate::i18n::tr_msg("Patch size:"));
-            let mut limit = config.max_patch_bytes;
-            egui::ComboBox::from_id_salt(format!("{id_prefix}.patch_limit"))
+    group(ui, palette, "Changes", |ui| {
+        egui::Grid::new(format!("{id_prefix}.fields"))
+            .spacing([12.0, 6.0])
+            .show(ui, |ui| {
+                form_label(ui, &crate::i18n::tr_msg("Changes:"));
+                egui::ComboBox::from_id_salt(format!("{id_prefix}.generation_scope"))
+                    .selected_text(crate::i18n::tr_msg(config.generation_scope.label()))
+                    .width(200.0)
+                    .show_ui(ui, |ui| {
+                        for scope in [
+                            crate::llm::CommitGenerationScope::FollowCommitPanel,
+                            crate::llm::CommitGenerationScope::AllChanges,
+                            crate::llm::CommitGenerationScope::StagedOnly,
+                        ] {
+                            ui.selectable_value(
+                                &mut config.generation_scope,
+                                scope,
+                                crate::i18n::tr_msg(scope.label()),
+                            );
+                        }
+                    })
+                    .response
+                    .help_text(crate::i18n::tr_msg(
+                        "Used only when generating a commit message.",
+                    ));
+                ui.end_row();
+                form_label(ui, &crate::i18n::tr_msg("Patch size:"));
+                let mut limit = config.max_patch_bytes;
+                egui::ComboBox::from_id_salt(format!("{id_prefix}.patch_limit"))
                 .selected_text(crate::llm::patch_byte_limit_label(limit))
                 .width(200.0)
                 .show_ui(ui, |ui| {
@@ -2306,29 +2310,30 @@ fn commit_context_page(
                 .help_text(crate::i18n::tr_msg(
                     "Generation stops if the diff is larger. Each new file sends at most 64 KiB.",
                 ));
-            config.max_patch_bytes = limit;
-            ui.end_row();
-        });
-    ui.add_space(4.0);
-    ui.checkbox(
-        &mut config.include_branch_in_prompt,
-        crate::i18n::tr_msg("Include the current branch name"),
-    );
-    ui.add_space(6.0);
-    ui.label(crate::i18n::tr_msg("Excluded paths:"));
-    ui.label(
-        RichText::new(crate::i18n::tr_msg(
-            "One pattern per line. Matching files are left out.",
-        ))
-        .small()
-        .color(palette.muted),
-    );
-    egui::TextEdit::multiline(&mut config.patch_path_excludes)
-        .id_salt(format!("{id_prefix}.path_excludes"))
-        .desired_width(f32::INFINITY)
-        .desired_rows(4)
-        .hint_text("*.lock\npackage-lock.json\ndist/")
-        .show(ui);
+                config.max_patch_bytes = limit;
+                ui.end_row();
+            });
+        ui.add_space(4.0);
+        ui.checkbox(
+            &mut config.include_branch_in_prompt,
+            crate::i18n::tr_msg("Include the current branch name"),
+        );
+        ui.add_space(6.0);
+        ui.label(crate::i18n::tr_msg("Excluded paths:"));
+        ui.label(
+            RichText::new(crate::i18n::tr_msg(
+                "One pattern per line. Matching files are left out.",
+            ))
+            .small()
+            .color(palette.muted),
+        );
+        egui::TextEdit::multiline(&mut config.patch_path_excludes)
+            .id_salt(format!("{id_prefix}.path_excludes"))
+            .desired_width(f32::INFINITY)
+            .desired_rows(4)
+            .hint_text("*.lock\npackage-lock.json\ndist/")
+            .show(ui);
+    });
 }
 
 fn commit_message_language_selector(
@@ -2339,7 +2344,7 @@ fn commit_message_language_selector(
     mut apply: impl FnMut(crate::llm::CommitMessageLanguage),
 ) {
     ui.horizontal(|ui| {
-        ui.label(crate::i18n::tr_msg("Language:"));
+        form_label(ui, "Language:");
         let previous = selected;
         egui::ComboBox::from_id_salt(id)
             .selected_text(selected.label())
